@@ -1,0 +1,142 @@
+/* ============================================================
+   CONTROL DE ENGRASE - OPEN PIT — sync.js
+   Sincronización offline-first contra una base de datos remota
+   (Supabase / PostgREST). Todo se escribe primero en IndexedDB
+   (funciona sin internet) y se empuja/hala del servidor cuando
+   hay conexión.
+   ============================================================ */
+
+const Sync = {
+  syncing: false,
+  listeners: [],
+
+  onChange(fn) { this.listeners.push(fn); },
+  notify(state) { this.listeners.forEach(fn => { try { fn(state); } catch (e) {} }); },
+
+  async isConfigured() {
+    const cfg = await DB.getConfig();
+    return !!(cfg && cfg.url && cfg.anonKey);
+  },
+
+  async testConnection(url, anonKey) {
+    const clean = url.trim().replace(/\/+$/, '');
+    if (!/^https:\/\//i.test(clean)) {
+      throw new Error('La URL debe empezar con https:// (cópiala tal cual aparece en Project Settings → API → Project URL).');
+    }
+    let resp;
+    try {
+      resp = await fetch(`${clean}/rest/v1/engrase_sync?select=store&limit=1`, {
+        headers: { apikey: anonKey.trim(), Authorization: `Bearer ${anonKey.trim()}` }
+      });
+    } catch (networkErr) {
+      throw new Error('No se pudo contactar el servidor (sin internet, la URL está mal escrita, o el navegador bloqueó la conexión). Revisa que tengas datos/wifi activos y que la URL sea exactamente la de Supabase.');
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error('Conectó al servidor pero la llave (anon key) fue rechazada. Verifica que copiaste la "anon public key" completa, sin espacios ni saltos de línea.');
+    }
+    if (resp.status === 404) {
+      throw new Error('El servidor respondió pero no encuentra la tabla "engrase_sync". Ejecuta el script schema.sql en el SQL Editor de Supabase.');
+    }
+    if (!resp.ok) throw new Error(`Respuesta ${resp.status} del servidor. Verifica la URL, la llave y que ejecutaste el script SQL.`);
+    return true;
+  },
+
+  async saveConfig(url, anonKey) {
+    const clean = url.trim().replace(/\/+$/, '');
+    const key = anonKey.trim();
+    await this.testConnection(clean, key);
+    const prev = (await DB.getConfig()) || {};
+    await DB.setConfig({ ...prev, url: clean, anonKey: key });
+    return true;
+  },
+
+  async pendingCount() {
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url) return 0;
+    let count = 0;
+    for (const store of STORES) {
+      const rows = await DB.all(store);
+      count += rows.filter(r => !cfg.lastPush || new Date(r.updatedAt) > new Date(cfg.lastPush)).length;
+    }
+    return count;
+  },
+
+  async pushAll() {
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
+    let pushed = 0;
+    let newestSeen = cfg.lastPush || '1970-01-01T00:00:00.000Z';
+
+    for (const store of STORES) {
+      const rows = await DB.all(store);
+      const toPush = rows.filter(r => !cfg.lastPush || new Date(r.updatedAt) > new Date(cfg.lastPush));
+      if (!toPush.length) continue;
+      const body = toPush.map(r => ({
+        store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
+      }));
+      const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${cfg.anonKey}`,
+          Prefer: 'resolution=merge-duplicates,return=minimal'
+        },
+        body: JSON.stringify(body)
+      });
+      if (!resp.ok) throw new Error(`Error al subir ${store}: ${resp.status}`);
+      pushed += toPush.length;
+      toPush.forEach(r => { if (r.updatedAt > newestSeen) newestSeen = r.updatedAt; });
+    }
+    cfg.lastPush = newestSeen;
+    await DB.setConfig(cfg);
+    return { ok: true, pushed };
+  },
+
+  async pullAll() {
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
+    const since = cfg.lastPull || '1970-01-01T00:00:00.000Z';
+    const resp = await fetch(
+      `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
+      { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+    );
+    if (!resp.ok) throw new Error(`Error al descargar cambios: ${resp.status}`);
+    const rows = await resp.json();
+    let maxUpdated = since;
+    for (const row of rows) {
+      if (!STORES.includes(row.store)) continue;
+      const rec = row.payload;
+      rec.active = !row.deleted;
+      await DB.put(row.store, rec);
+      if (row.updated_at > maxUpdated) maxUpdated = row.updated_at;
+    }
+    cfg.lastPull = maxUpdated;
+    await DB.setConfig(cfg);
+    return { ok: true, pulled: rows.length };
+  },
+
+  async fullSync() {
+    if (this.syncing) return;
+    if (!(await this.isConfigured())) { this.notify({ status: 'unconfigured' }); return; }
+    if (!navigator.onLine) { this.notify({ status: 'offline' }); return; }
+    this.syncing = true;
+    this.notify({ status: 'syncing' });
+    try {
+      const pushRes = await this.pushAll();
+      const pullRes = await this.pullAll();
+      this.notify({ status: 'ok', pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0, at: nowISO() });
+    } catch (err) {
+      console.error('Sync error', err);
+      this.notify({ status: 'error', message: err.message });
+    } finally {
+      this.syncing = false;
+    }
+  },
+
+  startAuto() {
+    window.addEventListener('online', () => this.fullSync());
+    setInterval(() => { if (navigator.onLine) this.fullSync(); }, 45000);
+    if (navigator.onLine) this.fullSync();
+  }
+};
