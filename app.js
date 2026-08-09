@@ -1493,22 +1493,31 @@ async function renderPlan() {
   const lubricants = await DB.allActive('lubricants');
   const types = await DB.allActive('equipment_types');
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+  let bulkMode = false;
+  const selected = new Set();
 
   c.innerHTML = `
     <div class="toolbar">
       ${canEdit ? `<button class="btn" id="pts-import">⇪ Importar puntos de engrase desde Excel</button>` : ''}
+      ${canEdit ? `<button class="btn" id="plan-bulk-toggle">☑ Configurar plan en lote</button>` : ''}
       <input type="file" id="pts-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
+    </div>
+    <div id="plan-bulk-bar" class="bulk-bar hidden">
+      <span id="plan-bulk-count">0 seleccionados</span>
+      <button class="btn btn-sm btn-accent" id="plan-bulk-apply">Aplicar plan a seleccionados</button>
+      <button class="btn btn-sm" id="plan-bulk-cancel">Cancelar</button>
     </div>
     <div class="panel">
       <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
       <table class="data-table">
-        <thead><tr><th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
+        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
         <tbody>
           ${(await Promise.all(equipos.map(async e => {
             const plan = plans.find(p => p.equipmentId === e.id);
             const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
             const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
-            return `<tr>
+            return `<tr data-row-id="${e.id}">
+              ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${e.id}"/></td>` : ''}
               <td class="mono">${e.code}</td>
               <td>${e.brand} ${e.model}</td>
               <td>${plan ? plan.controlType : '—'}</td>
@@ -1521,6 +1530,7 @@ async function renderPlan() {
         </tbody>
       </table>
     </div>`;
+  makeTablesResponsive(c);
 
   if (canEdit) {
     $('#pts-import').addEventListener('click', () => $('#pts-import-file').click());
@@ -1534,6 +1544,106 @@ async function renderPlan() {
 
   $$('button[data-eq]', c).forEach(btn => {
     btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
+  });
+
+  if (!canEdit) return;
+
+  function updateBulkUI() {
+    $$('.plan-bulk-check', c).forEach(chk => chk.classList.toggle('hidden', !bulkMode));
+    $('#plan-bulk-bar').classList.toggle('hidden', !bulkMode);
+    $('#plan-bulk-count').textContent = `${selected.size} seleccionados`;
+  }
+
+  $('#plan-bulk-toggle').addEventListener('click', () => {
+    bulkMode = !bulkMode;
+    selected.clear();
+    updateBulkUI();
+  });
+  $('#plan-bulk-cancel').addEventListener('click', () => {
+    bulkMode = false;
+    selected.clear();
+    updateBulkUI();
+  });
+  $$('.plan-bulk-check', c).forEach(chk => {
+    chk.addEventListener('change', () => {
+      chk.checked ? selected.add(chk.dataset.id) : selected.delete(chk.dataset.id);
+      $('#plan-bulk-count').textContent = `${selected.size} seleccionados`;
+    });
+  });
+  $('#plan-bulk-apply').addEventListener('click', () => {
+    if (!selected.size) { alert('Selecciona al menos un equipo.'); return; }
+    openBulkPlanForm(Array.from(selected));
+  });
+}
+
+/* ---------- Configurar el mismo plan de engrase para varios equipos a la vez ---------- */
+function openBulkPlanForm(equipmentIds) {
+  openModal(`Configurar plan para ${equipmentIds.length} equipo(s)`, `
+    <p class="dim">Esto crea o actualiza el plan de cada equipo seleccionado con estos mismos valores. Si un equipo ya tenía un plan por horas, su horómetro de referencia se toma del horómetro actual de CADA equipo (no un valor compartido). Los puntos de engrase no se tocan aquí — agrégalos por equipo o con "Importar puntos de engrase desde Excel".</p>
+    <form id="bulk-plan-form" class="form-grid">
+      <label class="span-2">Tipo de control
+        <select name="controlType" id="bulk-plan-control-type">
+          ${['Horas de operación', 'Día y turno de la semana', 'Fecha/calendario', 'Turno', 'Combinación de horas y calendario'].map(o => `<option>${o}</option>`).join('')}
+        </select>
+      </label>
+      <div id="bulk-hours-fields" class="span-2 form-grid" style="padding:0">
+        <label>Frecuencia (horas)<input type="number" name="frequency" value="50"/></label>
+        <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${App.generalSettings.defaultAlertYellowHours}"/></label>
+      </div>
+      <div id="bulk-weekday-fields" class="span-2 hidden">
+        <label>Días de engrase asignados
+          <div class="weekday-picker">
+            ${SCHEDULE_WEEKDAYS.map(d => `
+              <label class="weekday-chip">
+                <input type="checkbox" name="assignedDays" value="${d}"/>
+                <span>${d.slice(0, 3)}</span>
+              </label>`).join('')}
+          </div>
+        </label>
+      </div>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Aplicar a ${equipmentIds.length} equipo(s)</button></div>
+    </form>
+  `);
+
+  $('#bulk-plan-control-type').addEventListener('change', (e) => {
+    const weekday = e.target.value === 'Día y turno de la semana';
+    $('#bulk-hours-fields').classList.toggle('hidden', weekday);
+    $('#bulk-weekday-fields').classList.toggle('hidden', !weekday);
+  });
+
+  $('#bulk-plan-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const controlType = fd.get('controlType');
+    const weekday = controlType === 'Día y turno de la semana';
+    const assignedDays = fd.getAll('assignedDays');
+    const frequency = parseFloat(fd.get('frequency')) || 0;
+    const alertYellowHours = parseFloat(fd.get('alertYellowHours')) || App.generalSettings.defaultAlertYellowHours;
+
+    const allPlans = await DB.allActive('lubrication_plans');
+    let created = 0, updated = 0;
+    for (const eqId of equipmentIds) {
+      const equipment = await DB.get('equipment', eqId);
+      let plan = allPlans.find(p => p.equipmentId === eqId);
+      const obj = { controlType };
+      if (weekday) {
+        obj.assignedDays = assignedDays;
+        obj.frequency = plan ? plan.frequency : 0;
+        obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
+        obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
+      } else {
+        obj.frequency = frequency;
+        obj.alertYellowHours = alertYellowHours;
+        obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter; // cada equipo usa su propio horómetro
+        obj.assignedDays = plan ? plan.assignedDays : [];
+      }
+      if (plan) { Object.assign(plan, obj); updated++; }
+      else { plan = stamp({ id: uid('plan'), equipmentId: eqId, ...obj }, App.currentUser.name); allPlans.push(plan); created++; }
+      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+    }
+    await logAudit('PLAN_LOTE_APLICADO', `${created} creados, ${updated} actualizados`, App.currentUser.name);
+    closeModal();
+    navigate('plan');
   });
 }
 
@@ -3013,17 +3123,44 @@ function familySilhouetteSvg(kind) {
   return svgs[kind] || svgs.generico;
 }
 
-function familyCardHTML(fam) {
+const DEFAULT_FAQ = [
+  { id: 'faq1', question: '¿Qué significa cada color del semáforo?', answer: '🟢 Verde: al día. 🟡 Amarillo: próximo a vencer (o programado para hoy en equipos con control por día/turno). 🔴 Rojo: vencido, requiere atención. ⚪ Gris: equipo detenido o sin plan configurado.' },
+  { id: 'faq2', question: '¿Qué hago si un punto de engrase no se puede lubricar?', answer: 'En el checklist, desmarca el punto y selecciona el motivo (grasera dañada, punto inaccesible, etc.). Queda registrado para que mantenimiento le dé seguimiento.' },
+  { id: 'faq3', question: '¿Cuándo uso control "por horas" y cuándo "por día y turno"?', answer: 'Usa horas cuando el equipo tiene horómetro y se actualiza seguido. Usa "Día y turno de la semana" cuando no se registra horómetro a diario — el plan de la Mina Volcán es un ejemplo de esto.' },
+  { id: 'faq4', question: '¿La app funciona sin internet?', answer: 'Sí. Todo se guarda primero en el celular y se sincroniza solo cuando hay conexión.' }
+];
+
+// Los puntos pueden venir como texto plano (formato viejo) o como {text, photo}
+// (formato nuevo, con foto). Esto normaliza cualquiera de los dos a objeto.
+function normalizePoint(p) {
+  if (typeof p === 'string') return { id: uid('pt'), text: p, photo: null };
+  return { id: p.id || uid('pt'), text: p.text || '', photo: p.photo || null };
+}
+
+async function getHelpContent() {
+  let help = await DB.get('settings', 'help_content');
+  if (!help) {
+    help = stamp({ id: 'help_content', families: EQUIPMENT_FAMILIES, faq: DEFAULT_FAQ }, 'sistema');
+    await DB.put('settings', help);
+  }
+  help.families.forEach(f => f.zones.forEach(z => { z.points = (z.points || []).map(normalizePoint); }));
+  return help;
+}
+
+function familyCardHTML(fam, canEdit) {
   return `
-    <div class="panel family-card">
-      <div class="panel-head"><h3>${fam.name}</h3></div>
+    <div class="panel family-card" data-family-id="${fam.id}">
+      <div class="panel-head">
+        <h3>${fam.name}</h3>
+        ${canEdit ? `<button class="btn btn-sm family-edit-btn" data-id="${fam.id}">Editar</button>` : ''}
+      </div>
       <div class="family-body">
         <div class="family-diagram">${familySilhouetteSvg(fam.svg)}</div>
         <div class="family-zones">
           ${fam.zones.map(z => `
             <div class="family-zone">
               <div class="family-zone-title"><span class="dot" style="background:${z.color}"></span>${z.name}</div>
-              <ul class="family-zone-list">${z.points.map(p => `<li>${p}</li>`).join('')}</ul>
+              <ul class="family-zone-list">${z.points.map(p => `<li>${p.photo ? photoThumbHTML(p.photo, p.text) : ''}<span>${p.text}</span></li>`).join('')}</ul>
             </div>`).join('')}
         </div>
       </div>
@@ -3033,21 +3170,220 @@ function familyCardHTML(fam) {
 
 async function renderAyuda() {
   const c = $('#app-content');
+  const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+  const help = await getHelpContent();
+
   c.innerHTML = `
     <div class="panel">
       <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
       <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
+      ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">+ Agregar familia de equipo</button></div>` : ''}
     </div>
-    ${EQUIPMENT_FAMILIES.map(familyCardHTML).join('')}
+    ${help.families.map(f => familyCardHTML(f, canEdit)).join('')}
     <div class="panel">
-      <div class="panel-head"><h3>Preguntas frecuentes</h3></div>
+      <div class="panel-head">
+        <h3>Preguntas frecuentes</h3>
+        ${canEdit ? `<button class="btn btn-sm" id="faq-edit-btn">Editar preguntas</button>` : ''}
+      </div>
       <div style="padding:4px 14px 14px">
-        <details class="faq-item"><summary>¿Qué significa cada color del semáforo?</summary><p>🟢 Verde: al día. 🟡 Amarillo: próximo a vencer (o programado para hoy en equipos con control por día/turno). 🔴 Rojo: vencido, requiere atención. ⚪ Gris: equipo detenido o sin plan configurado.</p></details>
-        <details class="faq-item"><summary>¿Qué hago si un punto de engrase no se puede lubricar?</summary><p>En el checklist, desmarca el punto y selecciona el motivo (grasera dañada, punto inaccesible, etc.). Queda registrado para que mantenimiento le dé seguimiento.</p></details>
-        <details class="faq-item"><summary>¿Cuándo uso control "por horas" y cuándo "por día y turno"?</summary><p>Usa horas cuando el equipo tiene horómetro y se actualiza seguido. Usa "Día y turno de la semana" cuando no se registra horómetro a diario — el plan de la Mina Volcán es un ejemplo de esto.</p></details>
-        <details class="faq-item"><summary>¿La app funciona sin internet?</summary><p>Sí. Todo se guarda primero en el celular y se sincroniza solo cuando hay conexión.</p></details>
+        ${help.faq.map(f => `<details class="faq-item"><summary>${f.question}</summary><p>${f.answer}</p></details>`).join('') || '<div class="empty-state">Sin preguntas todavía.</div>'}
       </div>
     </div>`;
+  wirePhotoThumbs(c);
+
+  if (!canEdit) return;
+  $('#family-add-btn').addEventListener('click', () => openFamilyEditForm(help, null));
+  $('#faq-edit-btn').addEventListener('click', () => openFaqEditForm(help));
+  $$('.family-edit-btn', c).forEach(btn => {
+    btn.addEventListener('click', () => openFamilyEditForm(help, help.families.find(f => f.id === btn.dataset.id)));
+  });
+}
+
+/* ---------- Edición de familias de equipo (solo Administrador) ---------- */
+function openFamilyEditForm(help, existing) {
+  const fam = existing || { id: uid('fam'), name: '', svg: 'generico', generic: true, zones: [{ name: 'General', color: 'var(--accent)', points: [] }] };
+  const isNew = !existing;
+
+  function bodyHTML() {
+    return `
+      <form id="family-form">
+        <label>Nombre de la familia<input required id="fam-name" value="${fam.name}"/></label>
+        <div id="fam-zones-area" style="margin-top:14px"></div>
+        <button type="button" class="btn btn-sm" id="fam-add-zone">+ Agregar zona</button>
+        <div class="modal-actions">
+          ${!isNew ? `<button type="button" class="btn btn-danger" id="fam-delete">Eliminar familia</button>` : ''}
+          <button type="submit" class="btn btn-accent">Guardar</button>
+        </div>
+      </form>`;
+  }
+
+  function pointRowEditorHTML(p) {
+    return `
+      <div class="pt-editor-row" data-existing-photo="${p.photo || ''}">
+        <div class="pt-editor-top">
+          <input class="pt-text" placeholder="Ej. Cilindro de dirección izquierdo" value="${p.text}"/>
+          <button type="button" class="btn btn-sm btn-danger pt-remove-row">✕</button>
+        </div>
+        ${p.photo ? `
+          <div class="pt-current-photo">
+            ${photoThumbHTML(p.photo, p.text)}
+            <label class="pt-remove-photo-label"><input type="checkbox" class="pt-remove-photo"/> Quitar esta foto</label>
+          </div>` : ''}
+        ${photoFieldHTML()}
+      </div>`;
+  }
+
+  function zonesHTML() {
+    const colors = [['var(--green)', 'Verde'], ['var(--accent)', 'Ámbar'], ['var(--red)', 'Rojo']];
+    return fam.zones.map((z, i) => `
+      <div class="fam-zone-editor" data-zi="${i}">
+        <div class="form-grid">
+          <label>Nombre de zona<input class="fz-name" value="${z.name}"/></label>
+          <label>Color
+            <select class="fz-color">${colors.map(([v, l]) => `<option value="${v}" ${z.color === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          </label>
+        </div>
+        <div class="pt-list" data-zi="${i}">
+          ${z.points.map(pointRowEditorHTML).join('') || '<div class="empty-state">Sin puntos todavía.</div>'}
+        </div>
+        <div class="row-actions" style="margin-top:8px">
+          <button type="button" class="btn btn-sm pt-add" data-zi="${i}">+ Agregar punto con foto</button>
+          <button type="button" class="btn btn-sm btn-danger fz-remove">Eliminar esta zona</button>
+        </div>
+      </div>`).join('');
+  }
+
+  openModal(isNew ? 'Nueva familia de equipo' : `Editar · ${fam.name}`, bodyHTML());
+
+  function renderZones() {
+    $('#fam-zones-area').innerHTML = zonesHTML();
+    $$('.pt-editor-row', $('#fam-zones-area')).forEach(row => wirePhotoField(row));
+    wirePhotoThumbs($('#fam-zones-area'));
+    wireZoneEvents();
+  }
+
+  function wireZoneEvents() {
+    $$('.fz-remove', $('#fam-zones-area')).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = parseInt(btn.closest('.fam-zone-editor').dataset.zi, 10);
+        fam.zones.splice(i, 1);
+        renderZones();
+      });
+    });
+    $$('.pt-add', $('#fam-zones-area')).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const zi = parseInt(btn.dataset.zi, 10);
+        fam.zones[zi].points.push({ id: uid('pt'), text: '', photo: null });
+        renderZones();
+      });
+    });
+    $$('.pt-remove-row', $('#fam-zones-area')).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const zoneEl = btn.closest('.fam-zone-editor');
+        const zi = parseInt(zoneEl.dataset.zi, 10);
+        const rowEl = btn.closest('.pt-editor-row');
+        const pi = Array.from(zoneEl.querySelectorAll('.pt-editor-row')).indexOf(rowEl);
+        fam.zones[zi].points.splice(pi, 1);
+        renderZones();
+      });
+    });
+  }
+
+  renderZones();
+
+  $('#fam-add-zone').addEventListener('click', () => {
+    fam.zones.push({ name: '', color: 'var(--accent)', points: [] });
+    renderZones();
+  });
+
+  $('#fam-delete')?.addEventListener('click', async () => {
+    if (!confirm(`¿Eliminar la familia "${fam.name}"? Esto no afecta los planes de engrase ya configurados por equipo, solo esta guía.`)) return;
+    help.families = help.families.filter(f => f.id !== fam.id);
+    await DB.put('settings', stamp(help, App.currentUser.name));
+    await logAudit('AYUDA_ACTUALIZADA', `Familia eliminada: ${fam.name}`, App.currentUser.name);
+    closeModal();
+    renderAyuda();
+  });
+
+  $('#family-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    fam.name = $('#fam-name').value.trim() || 'Sin nombre';
+
+    const zoneEls = $$('.fam-zone-editor', $('#fam-zones-area'));
+    for (let zi = 0; zi < zoneEls.length; zi++) {
+      const zoneEl = zoneEls[zi];
+      fam.zones[zi].name = zoneEl.querySelector('.fz-name').value.trim() || 'Zona';
+      fam.zones[zi].color = zoneEl.querySelector('.fz-color').value;
+
+      const rowEls = $$('.pt-editor-row', zoneEl);
+      for (let pi = 0; pi < rowEls.length; pi++) {
+        const row = rowEls[pi];
+        const text = row.querySelector('.pt-text').value.trim();
+        const newPhoto = await getSelectedPhotoDataURL(row);
+        const removeChecked = row.querySelector('.pt-remove-photo')?.checked;
+        const existingPhoto = row.dataset.existingPhoto || null;
+        fam.zones[zi].points[pi].text = text;
+        fam.zones[zi].points[pi].photo = newPhoto || (removeChecked ? null : existingPhoto);
+      }
+      // descarta puntos que quedaron sin texto y sin foto
+      fam.zones[zi].points = fam.zones[zi].points.filter(p => p.text || p.photo);
+    }
+
+    if (isNew) help.families.push(fam);
+    await DB.put('settings', stamp(help, App.currentUser.name));
+    await logAudit('AYUDA_ACTUALIZADA', `Familia guardada: ${fam.name}`, App.currentUser.name);
+    closeModal();
+    renderAyuda();
+  });
+}
+
+/* ---------- Edición de preguntas frecuentes (solo Administrador) ---------- */
+function openFaqEditForm(help) {
+  function bodyHTML() {
+    return `
+      <div id="faq-editor-area">
+        ${help.faq.map((f, i) => `
+          <div class="faq-editor-row" data-fi="${i}">
+            <input class="faq-q" placeholder="Pregunta" value="${f.question}"/>
+            <textarea class="faq-a" placeholder="Respuesta" rows="2">${f.answer}</textarea>
+            <button type="button" class="btn btn-sm btn-danger faq-remove">Eliminar</button>
+          </div>`).join('')}
+      </div>
+      <button type="button" class="btn btn-sm" id="faq-add-btn">+ Agregar pregunta</button>
+      <div class="modal-actions"><button type="button" class="btn btn-accent" id="faq-save-btn">Guardar</button></div>`;
+  }
+  openModal('Editar preguntas frecuentes', bodyHTML());
+
+  function wireRemove() {
+    $$('.faq-remove', $('#faq-editor-area')).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = parseInt(btn.closest('.faq-editor-row').dataset.fi, 10);
+        help.faq.splice(i, 1);
+        $('#faq-editor-area').outerHTML = bodyHTML();
+        wireAll();
+      });
+    });
+  }
+  function wireAll() {
+    wireRemove();
+    $('#faq-add-btn').addEventListener('click', () => {
+      help.faq.push({ id: uid('faq'), question: '', answer: '' });
+      $('#faq-editor-area').outerHTML = bodyHTML();
+      wireAll();
+    });
+    $('#faq-save-btn').addEventListener('click', async () => {
+      $$('.faq-editor-row').forEach((el, i) => {
+        help.faq[i].question = el.querySelector('.faq-q').value.trim();
+        help.faq[i].answer = el.querySelector('.faq-a').value.trim();
+      });
+      help.faq = help.faq.filter(f => f.question); // descarta preguntas vacías
+      await DB.put('settings', stamp(help, App.currentUser.name));
+      await logAudit('AYUDA_ACTUALIZADA', 'Preguntas frecuentes actualizadas', App.currentUser.name);
+      closeModal();
+      renderAyuda();
+    });
+  }
+  wireAll();
 }
 
 /* ---------- Gestor genérico de listas simples {id, name} (cuadrillas, ubicaciones, categorías) ---------- */

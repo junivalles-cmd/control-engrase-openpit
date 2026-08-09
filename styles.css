@@ -367,11 +367,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .family-svg { width: 100%; height: auto; display: block; }
 .family-zones { flex: 1 1 260px; display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
 .family-zone-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 4px; }
-.family-zone-list { margin: 0; padding-left: 22px; font-size: 13px; color: var(--text-dim); display: flex; flex-direction: column; gap: 3px; }
+.family-zone-list { margin: 0; padding-left: 22px; font-size: 13px; color: var(--text-dim); display: flex; flex-direction: column; gap: 6px; }
+.family-zone-list li { display: flex; align-items: center; gap: 8px; }
+.family-zone-list .photo-thumb { flex: none; }
 .faq-item { border-bottom: 1px solid var(--border); padding: 10px 0; }
 .faq-item summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
 .faq-item p { color: var(--text-dim); font-size: 13px; margin: 8px 0 2px; line-height: 1.5; }
 @media (max-width: 700px) { .family-diagram { flex: 1 1 100%; } }
+
+/* ---------------- Editor de familias y FAQ de Ayuda (admin) ---------------- */
+.fam-zone-editor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--surface-2); }
+.pt-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.pt-editor-row { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--surface); }
+.pt-editor-top { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.pt-editor-top .pt-text { flex: 1; }
+.pt-current-photo { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12px; color: var(--text-dim); }
+.pt-remove-photo-label { display: flex; align-items: center; gap: 5px; }
+.faq-editor-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
 
 /* ---------------- Forms ---------------- */
 .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
