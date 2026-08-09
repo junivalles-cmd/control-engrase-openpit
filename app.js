@@ -220,6 +220,7 @@ async function openQrScanner() {
 
 const NOTIF_ID_DAILY_TASKS = 1001;
 const NOTIF_ID_COMPLIANCE = 1002;
+const NOTIF_ID_WEEKDAY_PLAN = 1003;
 
 /* ---------- Validación de horómetro (evita errores de digitación) ---------- */
 function validateHourmeterChange(oldValue, newValue) {
@@ -338,9 +339,10 @@ async function refreshLocalNotifications() {
   try {
     const settings = (await DB.get('settings', 'notifications')) || {
       enabled: true, lubricadorDiaHour: 6, lubricadorDiaMinute: 0,
-      lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0
+      lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0,
+      weekdayPlanEnabled: false, weekdayPlanHour: 7, weekdayPlanMinute: 30
     };
-    await LN.cancel({ notifications: [{ id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }] });
+    await LN.cancel({ notifications: [{ id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN }] });
     if (!settings.enabled) return;
 
     const perm = await LN.checkPermissions();
@@ -380,6 +382,21 @@ async function refreshLocalNotifications() {
         body: `Cumplimiento actual: ${compliance}%. ${vencidos} vencido(s), ${proximos} próximo(s) a vencer.`,
         schedule: { at: nextTimeAt(settings.complianceHour, settings.complianceMinute), every: 'day', repeats: true }
       });
+    }
+
+    // Aviso específico de equipos con plan "Día y turno de la semana" — hora aparte,
+    // configurable por Administrador o Planificador en Configuración → Notificaciones.
+    if (settings.weekdayPlanEnabled && ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role)) {
+      const weekdayStatuses = statuses.filter(x => x.s.plan && x.s.plan.controlType === 'Día y turno de la semana');
+      const dueToday = weekdayStatuses.filter(x => x.s.code === 'AMARILLO' || x.s.code === 'ROJO');
+      if (dueToday.length) {
+        notifications.push({
+          id: NOTIF_ID_WEEKDAY_PLAN,
+          title: 'Equipos con plan por día/turno',
+          body: `${dueToday.length} equipo(s) con plan por día y turno están pendientes o vencidos hoy.`,
+          schedule: { at: nextTimeAt(settings.weekdayPlanHour, settings.weekdayPlanMinute), every: 'day', repeats: true }
+        });
+      }
     }
 
     if (notifications.length) await LN.schedule({ notifications });
@@ -2381,35 +2398,58 @@ async function renderLubricantes() {
     </div>
     <div class="panel">
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (kg)</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (kg)</th>${canEdit ? '<th></th>' : ''}</tr></thead>
         <tbody>
           ${lubricants.map(l => {
             const total = records.filter(r => r.greaseType === l.id).reduce((s, r) => s + (r.qty || 0), 0);
-            return `<tr><td>${l.name}</td><td>${l.brand}</td><td>${l.type}</td><td>${l.grade}</td><td class="mono">${l.code}</td><td class="mono">${fmt(total, 1)}</td></tr>`;
-          }).join('')}
+            return `<tr>
+              <td>${l.name}</td><td>${l.brand}</td><td>${l.type}</td><td>${l.grade}</td><td class="mono">${l.code}</td><td class="mono">${fmt(total, 1)}</td>
+              ${canEdit ? `<td class="row-actions">
+                <button class="btn btn-sm lub-edit" data-id="${l.id}">Editar</button>
+                <button class="btn btn-sm btn-danger lub-remove" data-id="${l.id}">Eliminar</button>
+              </td>` : ''}
+            </tr>`;
+          }).join('') || `<tr><td colspan="${canEdit ? 7 : 6}" class="empty-state">Sin lubricantes registrados.</td></tr>`}
         </tbody>
       </table>
     </div>`;
+  makeTablesResponsive(c);
 
-  $('#btn-new-lub')?.addEventListener('click', () => {
-    openModal('Nuevo lubricante', `
+  function lubForm(existing) {
+    const l = existing || { name: '', brand: '', type: '', grade: '', code: '', unit: 'kg' };
+    openModal(existing ? `Editar · ${existing.name}` : 'Nuevo lubricante', `
       <form id="lub-form" class="form-grid">
-        <label>Nombre<input required name="name"/></label>
-        <label>Marca<input name="brand"/></label>
-        <label>Tipo<input name="type"/></label>
-        <label>Grado<input name="grade" placeholder="NLGI 2"/></label>
-        <label>Código interno<input name="code"/></label>
-        <label>Unidad<input name="unit" value="kg"/></label>
-        <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+        <label>Nombre<input required name="name" value="${l.name}"/></label>
+        <label>Marca<input name="brand" value="${l.brand}"/></label>
+        <label>Tipo<input name="type" value="${l.type}"/></label>
+        <label>Grado<input name="grade" placeholder="NLGI 2" value="${l.grade}"/></label>
+        <label>Código interno<input name="code" value="${l.code}"/></label>
+        <label>Unidad<input name="unit" value="${l.unit || 'kg'}"/></label>
+        <div class="modal-actions"><button type="submit" class="btn btn-accent">${existing ? 'Guardar cambios' : 'Guardar'}</button></div>
       </form>`);
     $('#lub-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const fd = Object.fromEntries(new FormData(ev.target).entries());
-      await DB.put('lubricants', stamp({ id: uid('lub'), ...fd }, App.currentUser.name));
+      const obj = existing ? Object.assign(existing, fd) : { id: uid('lub'), ...fd, active: true };
+      await DB.put('lubricants', stamp(obj, App.currentUser.name));
+      await logAudit(existing ? 'LUBRICANTE_EDITADO' : 'LUBRICANTE_CREADO', fd.name, App.currentUser.name);
       closeModal();
       renderLubricantes();
     });
-  });
+  }
+
+  $('#btn-new-lub')?.addEventListener('click', () => lubForm(null));
+  $$('.lub-edit', c).forEach(btn => btn.addEventListener('click', async () => {
+    lubForm(await DB.get('lubricants', btn.dataset.id));
+  }));
+  $$('.lub-remove', c).forEach(btn => btn.addEventListener('click', async () => {
+    const l = await DB.get('lubricants', btn.dataset.id);
+    if (!confirm(`¿Eliminar "${l.name}"? Los engrases que ya lo usaron conservan el historial, solo deja de aparecer como opción para elegir.`)) return;
+    l.active = false;
+    await DB.put('lubricants', stamp(l, App.currentUser.name));
+    await logAudit('LUBRICANTE_ELIMINADO', l.name, App.currentUser.name);
+    renderLubricantes();
+  }));
 }
 
 /* ============================================================
@@ -2524,11 +2564,11 @@ async function renderReportes() {
   const compliance = total ? Math.round(((total - vencidos) / total) * 100) : 0;
 
   const today = new Date();
-  const defaultFrom = new Date(today); defaultFrom.setDate(defaultFrom.getDate() - 30);
   const toInput = today.toISOString().slice(0, 10);
-  const fromInput = defaultFrom.toISOString().slice(0, 10);
+  const fromInput = ''; // sin límite por defecto — antes ocultaba silenciosamente todo lo anterior a 30 días
 
   c.innerHTML = `
+    ${total === 0 ? `<div class="panel"><div class="empty-state">No hay equipos registrados en este dispositivo todavía. Si ya los cargaste en otro dispositivo, ve a Configuración → Sincronización y confirma que esté conectado — puede que falte sincronizar.</div></div>` : ''}
     <div class="kpi-grid">
       ${kpiCard('TOTAL EQUIPOS', total, 'neutral')}
       ${kpiCard('AL DÍA', alDia, 'green')}
@@ -2621,6 +2661,19 @@ async function renderReportes() {
 
   function drawCharts() {
     destroyCharts();
+    if (!window.Chart) {
+      $$('.chart-box', c).forEach(box => box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>');
+      return;
+    }
+    try {
+      drawChartsInner();
+    } catch (err) {
+      console.error('Error dibujando reportes', err);
+      $$('.chart-box', c).forEach(box => box.innerHTML = `<div class="empty-state">No se pudo generar esta gráfica (${err.message}).</div>`);
+    }
+  }
+
+  function drawChartsInner() {
     const records = applyFilters();
     const CHART_TEXT = '#9BA3AA';
     const GRID = 'rgba(255,255,255,0.06)';
@@ -3536,7 +3589,8 @@ async function renderConfig() {
   const pending = await Sync.pendingCount();
   const notif = (await DB.get('settings', 'notifications')) || {
     id: 'notifications', enabled: true, lubricadorDiaHour: 6, lubricadorDiaMinute: 0,
-    lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0
+    lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0,
+    weekdayPlanEnabled: false, weekdayPlanHour: 7, weekdayPlanMinute: 30
   };
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
@@ -3575,6 +3629,12 @@ async function renderConfig() {
           <label>Aviso al Lubricador · Turno Día<input type="time" name="lubricadorDia" value="${timeVal(notif.lubricadorDiaHour, notif.lubricadorDiaMinute)}"/></label>
           <label>Aviso al Lubricador · Turno Noche<input type="time" name="lubricadorNoche" value="${timeVal(notif.lubricadorNocheHour, notif.lubricadorNocheMinute)}"/></label>
           <label>Aviso de cumplimiento (Admin/Planificador/Supervisor)<input type="time" name="compliance" value="${timeVal(notif.complianceHour, notif.complianceMinute)}"/></label>
+          <label class="span-2">
+            <span style="display:flex; align-items:center; gap:8px; flex-direction:row">
+              <input type="checkbox" name="weekdayPlanEnabled" ${notif.weekdayPlanEnabled ? 'checked' : ''} style="width:20px;height:20px"/> Activar aviso aparte para equipos con plan "Día y turno de la semana"
+            </span>
+          </label>
+          <label>Hora del aviso de plan por día/turno (Admin/Planificador)<input type="time" name="weekdayPlan" value="${timeVal(notif.weekdayPlanHour ?? 7, notif.weekdayPlanMinute ?? 30)}"/></label>
           <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
             <button type="submit" class="btn btn-accent">Guardar horarios</button>
           </div>
@@ -3674,11 +3734,13 @@ async function renderConfig() {
     const [dh, dm] = fd.lubricadorDia.split(':').map(Number);
     const [nh, nm] = fd.lubricadorNoche.split(':').map(Number);
     const [ch, cm] = fd.compliance.split(':').map(Number);
+    const [wh, wm] = fd.weekdayPlan.split(':').map(Number);
     await DB.put('settings', stamp({
       id: 'notifications', enabled: !!fd.enabled,
       lubricadorDiaHour: dh, lubricadorDiaMinute: dm,
       lubricadorNocheHour: nh, lubricadorNocheMinute: nm,
-      complianceHour: ch, complianceMinute: cm
+      complianceHour: ch, complianceMinute: cm,
+      weekdayPlanEnabled: !!fd.weekdayPlanEnabled, weekdayPlanHour: wh, weekdayPlanMinute: wm
     }, App.currentUser.name));
     await logAudit('NOTIFICACIONES_CONFIGURADAS', fd.enabled ? 'Activadas' : 'Desactivadas', App.currentUser.name);
     await refreshLocalNotifications();

@@ -140,9 +140,10 @@ async function seedIfEmpty() {
   for (const l of locations) await DB.put('locations', stamp(l, 'sistema'));
 
   const types = [
-    'Camión Articulado', 'Camión Volquete', 'Excavadora', 'Tractor de Oruga',
-    'Cargador Frontal', 'Motoniveladora', 'Retroexcavadora', 'Perforadora', 'Equipo Auxiliar'
-  ].map(name => ({ id: uid('type'), name, active: true }));
+    ['type_articulado', 'Camión Articulado'], ['type_volquete', 'Camión Volquete'], ['type_excavadora', 'Excavadora'],
+    ['type_tractor', 'Tractor de Oruga'], ['type_cargador', 'Cargador Frontal'], ['type_motoniveladora', 'Motoniveladora'],
+    ['type_retro', 'Retroexcavadora'], ['type_perforadora', 'Perforadora'], ['type_auxiliar', 'Equipo Auxiliar']
+  ].map(([id, name]) => ({ id, name, active: true }));
   for (const t of types) await DB.put('equipment_types', stamp(t, 'sistema'));
 
   const cuadrillas_seed = [
@@ -162,9 +163,9 @@ async function seedIfEmpty() {
   for (const u of users_seed) await DB.put('users', stamp(u, 'sistema'));
 
   const lubricants = [
-    { id: uid('lub'), name: 'Grasa EP2', brand: 'Mobil', type: 'Multiuso', grade: 'NLGI 2', code: 'GR-EP2', unit: 'kg', active: true },
-    { id: uid('lub'), name: 'Grasa Moly', brand: 'Shell', type: 'Alta presión', grade: 'NLGI 2', code: 'GR-MOLY', unit: 'kg', active: true },
-    { id: uid('lub'), name: 'Grasa Alta Temperatura', brand: 'Chevron', type: 'Alta temperatura', grade: 'NLGI 2', code: 'GR-HT', unit: 'kg', active: true }
+    { id: 'lub_ep2', name: 'Grasa EP2', brand: 'Mobil', type: 'Multiuso', grade: 'NLGI 2', code: 'GR-EP2', unit: 'kg', active: true },
+    { id: 'lub_moly', name: 'Grasa Moly', brand: 'Shell', type: 'Alta presión', grade: 'NLGI 2', code: 'GR-MOLY', unit: 'kg', active: true },
+    { id: 'lub_ht', name: 'Grasa Alta Temperatura', brand: 'Chevron', type: 'Alta temperatura', grade: 'NLGI 2', code: 'GR-HT', unit: 'kg', active: true }
   ];
   for (const l of lubricants) await DB.put('lubricants', stamp(l, 'sistema'));
 
@@ -174,22 +175,22 @@ async function seedIfEmpty() {
 
   const equipos = [
     {
-      id: uid('eq'), code: '45-86', description: 'Camión Articulado', brand: 'Caterpillar', model: '745C',
+      id: 'eq_demo_4586', code: '45-86', description: 'Camión Articulado', brand: 'Caterpillar', model: '745C',
       serial: 'CAT745C-0086', typeId: typeArt, locationId: 'loc_pit1', status: 'Operativo',
       hourmeter: 28470, shiftId: 'shift_dia', photo: null, active: true
     },
     {
-      id: uid('eq'), code: '45-69', description: 'Camión Articulado', brand: 'Caterpillar', model: '740B',
+      id: 'eq_demo_4569', code: '45-69', description: 'Camión Articulado', brand: 'Caterpillar', model: '740B',
       serial: 'CAT740B-0069', typeId: typeArt, locationId: 'loc_pit1', status: 'Operativo',
       hourmeter: 21492, shiftId: 'shift_dia', photo: null, active: true
     },
     {
-      id: uid('eq'), code: '05-68', description: 'Tractor de Oruga', brand: 'Caterpillar', model: 'D8T',
+      id: 'eq_demo_0568', code: '05-68', description: 'Tractor de Oruga', brand: 'Caterpillar', model: 'D8T',
       serial: 'CATD8T-0568', typeId: typeTrac, locationId: 'loc_botadero', status: 'Operativo',
       hourmeter: 14215, shiftId: 'shift_noche', photo: null, active: true
     },
     {
-      id: uid('eq'), code: '12-31', description: 'Camión Volquete', brand: 'Volvo', model: 'FMX 500',
+      id: 'eq_demo_1231', code: '12-31', description: 'Camión Volquete', brand: 'Volvo', model: 'FMX 500',
       serial: 'VOLFMX-1231', typeId: typeVolq, locationId: 'loc_pit1', status: 'Operativo',
       hourmeter: 9800, shiftId: 'shift_dia', photo: null, active: true
     }
@@ -206,7 +207,7 @@ async function seedIfEmpty() {
   const planes = [];
   for (const eq of equipos) {
     const plan = stamp({
-      id: uid('plan'), equipmentId: eq.id, controlType: 'Horas de operación',
+      id: `plan_${eq.id}`, equipmentId: eq.id, controlType: 'Horas de operación',
       frequency: 50, lastGreaseHour: eq.hourmeter - (eq.code === '05-68' ? 65 : (eq.code === '45-69' ? 42 : 20)),
       alertYellowHours: 10, active: true
     }, 'sistema');
@@ -216,7 +217,7 @@ async function seedIfEmpty() {
     const puntos = puntosBase[eq.typeId] || ['Puntos generales'];
     for (const p of puntos) {
       await DB.put('lubrication_points', stamp({
-        id: uid('pt'), planId: plan.id, system: 'General', component: p, point: p,
+        id: `pt_${eq.id}_${p.replace(/\s+/g, '')}`, planId: plan.id, system: 'General', component: p, point: p,
         greaseType: lubricants[0].id, recommendedQty: 0.5, frequency: 50, notes: '', active: true
       }, 'sistema'));
     }
