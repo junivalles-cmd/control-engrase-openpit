@@ -71,6 +71,8 @@ Créalas ahora, te ahorra ir y venir después:
 
 ## PARTE 5 — Compilar la app de Android
 
+**Si ya habías creado la carpeta `android/` en una sesión anterior** (para actualizar el ícono que se veía mal, por ejemplo): solo necesitas correr `npm install`, luego `npm run icons`, luego `npx cap sync android`, y recompilar en Android Studio — no hace falta borrar ni empezar de cero.
+
 1. Descomprime **CONTROL_ENGRASE_APP_ANDROID.zip** en una carpeta de tu computadora
 2. Abre una terminal **dentro de esa carpeta** (en el Explorador de Windows, escribe `cmd` en la barra de direcciones; en Mac, clic derecho → Nueva terminal en la carpeta)
 3. Instala las dependencias:
@@ -81,23 +83,28 @@ Créalas ahora, te ahorra ir y venir después:
    ```
    npx cap add android
    ```
-5. Copia los archivos de la app al proyecto Android:
+5. Genera el ícono nativo real de la app (esto es lo que faltaba antes — sin este paso, Android usa un ícono de plantilla genérico sin importar qué archivos tengas en `www/`):
+   ```
+   npm run icons
+   ```
+   Esto lee el archivo `assets/icon.png` que ya viene en el proyecto y genera automáticamente todos los tamaños que Android necesita.
+6. Copia los archivos de la app al proyecto Android:
    ```
    npx cap sync android
    ```
-6. Abre el proyecto en Android Studio:
+8. Abre el proyecto en Android Studio:
    ```
    npx cap open android
    ```
    (si no abre solo, abre Android Studio manualmente → Open → selecciona la carpeta `android` dentro de tu proyecto)
-7. Espera el "Gradle Sync" (barra de progreso abajo, puede tardar varios minutos la primera vez)
-8. **Build → Generate Signed Bundle / APK...** → elige **APK** → Next
-9. Como no tienes un keystore todavía, dale **Create new...**
-   - Guarda el archivo `.jks` en un lugar seguro
-   - Pon una contraseña y **anótala** — la necesitas para futuras actualizaciones de la app
-   - Llena los datos (nombre, organización — pueden ser genéricos)
-10. Elige **release** → Finish
-11. Espera a que compile. Notificación abajo a la derecha: "APK(s) generated successfully" → clic en **"locate"** → ahí está tu `app-release.apk`
+9. Espera el "Gradle Sync" (barra de progreso abajo, puede tardar varios minutos la primera vez)
+10. **Build → Generate Signed Bundle / APK...** → elige **APK** → Next
+11. Como no tienes un keystore todavía, dale **Create new...**
+    - Guarda el archivo `.jks` en un lugar seguro
+    - Pon una contraseña y **anótala** — la necesitas para futuras actualizaciones de la app
+    - Llena los datos (nombre, organización — pueden ser genéricos)
+12. Elige **release** → Finish
+13. Espera a que compile. Notificación abajo a la derecha: "APK(s) generated successfully" → clic en **"locate"** → ahí está tu `app-release.apk`
 
 ---
 

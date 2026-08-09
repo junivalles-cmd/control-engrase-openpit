@@ -1591,6 +1591,13 @@ function openBulkPlanForm(equipmentIds) {
         <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${App.generalSettings.defaultAlertYellowHours}"/></label>
       </div>
       <div id="bulk-weekday-fields" class="span-2 hidden">
+        <label>Turno
+          <select name="shiftId">
+            <option value="shift_dia">Turno Día</option>
+            <option value="shift_noche">Turno Noche</option>
+          </select>
+          <span class="field-hint">También actualiza el turno de cada equipo seleccionado, para que coincida con "Mi Turno" del lubricador.</span>
+        </label>
         <label>Días de engrase asignados
           <div class="weekday-picker">
             ${SCHEDULE_WEEKDAYS.map(d => `
@@ -1617,6 +1624,7 @@ function openBulkPlanForm(equipmentIds) {
     const controlType = fd.get('controlType');
     const weekday = controlType === 'Día y turno de la semana';
     const assignedDays = fd.getAll('assignedDays');
+    const shiftId = fd.get('shiftId');
     const frequency = parseFloat(fd.get('frequency')) || 0;
     const alertYellowHours = parseFloat(fd.get('alertYellowHours')) || App.generalSettings.defaultAlertYellowHours;
 
@@ -1628,9 +1636,14 @@ function openBulkPlanForm(equipmentIds) {
       const obj = { controlType };
       if (weekday) {
         obj.assignedDays = assignedDays;
+        obj.shiftId = shiftId;
         obj.frequency = plan ? plan.frequency : 0;
         obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
         obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
+        if (equipment.shiftId !== shiftId) {
+          equipment.shiftId = shiftId;
+          await DB.put('equipment', stamp(equipment, App.currentUser.name));
+        }
       } else {
         obj.frequency = frequency;
         obj.alertYellowHours = alertYellowHours;
@@ -1750,6 +1763,13 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       </div>
 
       <div id="weekday-fields" class="span-2 ${isWeekday ? '' : 'hidden'}">
+        <label>Turno
+          <select name="shiftId">
+            <option value="shift_dia" ${equipment.shiftId === 'shift_dia' ? 'selected' : ''}>Turno Día</option>
+            <option value="shift_noche" ${equipment.shiftId === 'shift_noche' ? 'selected' : ''}>Turno Noche</option>
+          </select>
+          <span class="field-hint">También actualiza el turno del equipo, para que coincida con "Mi Turno" del lubricador.</span>
+        </label>
         <label>Días de engrase asignados
           <div class="weekday-picker">
             ${SCHEDULE_WEEKDAYS.map(d => `
@@ -1786,9 +1806,14 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     const obj = { controlType };
     if (weekday) {
       obj.assignedDays = fd.getAll('assignedDays');
+      obj.shiftId = fd.get('shiftId');
       obj.frequency = plan ? plan.frequency : 0;
       obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
       obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
+      if (equipment.shiftId !== obj.shiftId) {
+        equipment.shiftId = obj.shiftId;
+        await DB.put('equipment', stamp(equipment, App.currentUser.name));
+      }
     } else {
       obj.frequency = parseFloat(fd.get('frequency'));
       obj.lastGreaseHour = parseFloat(fd.get('lastGreaseHour'));
