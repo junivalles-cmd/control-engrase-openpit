@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v6';
+const CACHE = 'engrase-openpit-v7';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   './favicon.png', './apple-touch-icon.png',
@@ -11,12 +11,12 @@ const ASSETS = [
 // después del primer uso. Se cachean por separado y con manejo de error individual, para
 // que si una falla (ej. sin internet en la instalación) no tumbe la instalación completa.
 const CDN_ASSETS = [
-  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js'
+  'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js',
+  'https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js',
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'
 ];
 
 self.addEventListener('install', (e) => {
@@ -47,7 +47,7 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const reqUrl = new URL(e.request.url);
   const sameOrigin = reqUrl.origin === self.location.origin;
-  const isKnownCdn = reqUrl.origin === 'https://cdnjs.cloudflare.com';
+  const isKnownCdn = reqUrl.origin === 'https://cdn.jsdelivr.net';
 
   // Solo controlamos archivos propios de la app y las librerías CDN conocidas (arriba).
   // Cualquier otra petición cross-origin (Supabase, Capacitor, etc.) se deja pasar sin

@@ -46,7 +46,7 @@ function tx(storeName, mode = 'readonly') {
 }
 
 const DB = {
-  async init() { await openDB(); await seedIfEmpty(); await seedCuadrillasIfMissing(); },
+  async init() { await openDB(); await seedIfEmpty(); await seedCuadrillasIfMissing(); await ensureDefaultSyncConfig(); },
 
   put(store, obj) {
     return new Promise((res, rej) => {
@@ -245,4 +245,27 @@ async function seedCuadrillasIfMissing() {
     { id: 'cuad_d', name: 'Cuadrilla D', active: true }
   ];
   for (const cq of cuadrillas_seed) await DB.put('cuadrillas', stamp(cq, 'sistema'));
+}
+
+/* ============================================================
+   CONFIGURACIÓN DE SUPABASE PRE-CARGADA
+   Así cada dispositivo (web o app) que abra esta copia ya queda
+   conectado a la base de datos remota sin configurarlo a mano.
+   Si el Administrador cambia la URL/llave desde
+   Configuración → Sincronización, ese cambio manual queda respetado y
+   esta función ya no lo vuelve a sobreescribir.
+   ============================================================ */
+const DEFAULT_SYNC_CONFIG = {
+  url: 'https://havrirlapjyqrffgalqx.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhdnJpcmxhcGp5cXJmZmdhbHF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyMTQwNzcsImV4cCI6MjEwMTc5MDA3N30.ikrxDitXQk3Qi-MhDaW4W8shToMyGezSQ9GQw7m6xR0'
+};
+
+async function ensureDefaultSyncConfig() {
+  try {
+    const existing = await DB.getConfig();
+    if (existing && existing.url) return; // ya configurado (por esta función antes, o a mano por el admin) — no tocar
+    await DB.setConfig({ url: DEFAULT_SYNC_CONFIG.url, anonKey: DEFAULT_SYNC_CONFIG.anonKey });
+  } catch (e) {
+    console.warn('No se pudo precargar la configuración de Supabase', e);
+  }
 }

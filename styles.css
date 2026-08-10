@@ -247,6 +247,13 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .menu-item.active .menu-icon, .lub-nav-item.active .menu-icon, .bottom-item.active .menu-icon { opacity: 1; }
 
+/* Íconos dentro de botones de texto (no el menú lateral) */
+.btn-icon {
+  width: 14px; height: 14px; flex: none; background: currentColor; opacity: 0.9;
+  -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; display: inline-block; vertical-align: -2px; margin-right: 6px;
+}
+
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .topbar {
   display: flex; align-items: center; gap: 12px; padding: 12px 20px;
@@ -311,6 +318,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px; border-left: 4px solid var(--border);
 }
+.kpi-card.kpi-clickable { cursor: pointer; transition: transform 0.1s ease, border-color 0.15s ease; }
+.kpi-card.kpi-clickable:hover { border-color: var(--accent); }
+.kpi-card.kpi-clickable:active { transform: scale(0.98); }
 .kpi-card.tone-green { border-left-color: var(--green); }
 .kpi-card.tone-amber { border-left-color: var(--amber); }
 .kpi-card.tone-red { border-left-color: var(--red); }
@@ -398,6 +408,11 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   padding: 9px 12px; border-radius: 8px; font-size: 13px; min-width: 200px;
 }
+.input-search {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2210.5%22%20cy%3D%2210.5%22%20r%3D%226.5%22%20fill%3D%22none%22%20stroke%3D%22%239BA3AA%22%20stroke-width%3D%222.3%22%2F%3E%3Cline%20x1%3D%2215.5%22%20y1%3D%2215.5%22%20x2%3D%2220.5%22%20y2%3D%2220.5%22%20stroke%3D%22%239BA3AA%22%20stroke-width%3D%222.3%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat; background-position: 12px center; background-size: 16px;
+  padding-left: 36px;
+}
 .input-sm { min-width: 110px; padding: 6px 8px; font-size: 14px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
 @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
@@ -413,6 +428,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .btn {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center;
 }
 .btn:hover { border-color: var(--accent); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
@@ -723,4 +739,44 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .icon-logout {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M9%203H5a2%202%200%200%200-2%202v14a2%202%200%200%200%202%202h4%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M16%208l5%204-5%204%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Crect%20x%3D%2210.5%22%20y%3D%2211%22%20width%3D%229.5%22%20height%3D%222%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M9%203H5a2%202%200%200%200-2%202v14a2%202%200%200%200%202%202h4%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M16%208l5%204-5%204%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Crect%20x%3D%2210.5%22%20y%3D%2211%22%20width%3D%229.5%22%20height%3D%222%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+}
+.icon-plus {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20x%3D%2210.7%22%20y%3D%223%22%20width%3D%222.6%22%20height%3D%2218%22%20rx%3D%221.3%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%223%22%20y%3D%2210.7%22%20width%3D%2218%22%20height%3D%222.6%22%20rx%3D%221.3%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20x%3D%2210.7%22%20y%3D%223%22%20width%3D%222.6%22%20height%3D%2218%22%20rx%3D%221.3%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%223%22%20y%3D%2210.7%22%20width%3D%2218%22%20height%3D%222.6%22%20rx%3D%221.3%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+}
+.icon-edit {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M3%2017.25V21h3.75L17.8%209.94l-3.75-3.75L3%2017.25Z%22/%3E%3Cpath%20d%3D%22M20.7%207.04a1%201%200%200%200%200-1.41L18.87%203.8a1%201%200%200%200-1.41%200l-1.83%201.83%203.75%203.75%201.32-1.34Z%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M3%2017.25V21h3.75L17.8%209.94l-3.75-3.75L3%2017.25Z%22/%3E%3Cpath%20d%3D%22M20.7%207.04a1%201%200%200%200%200-1.41L18.87%203.8a1%201%200%200%200-1.41%200l-1.83%201.83%203.75%203.75%201.32-1.34Z%22/%3E%3C/svg%3E");
+}
+.icon-trash {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M5%207h14l-1.2%2013.2A2%202%200%200%201%2015.8%2022H8.2a2%202%200%200%201-2-1.8L5%207Z%22/%3E%3Cpath%20d%3D%22M9%203.5h6l1%202H8l1-2Z%22/%3E%3Crect%20x%3D%223%22%20y%3D%225.2%22%20width%3D%2218%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M5%207h14l-1.2%2013.2A2%202%200%200%201%2015.8%2022H8.2a2%202%200%200%201-2-1.8L5%207Z%22/%3E%3Cpath%20d%3D%22M9%203.5h6l1%202H8l1-2Z%22/%3E%3Crect%20x%3D%223%22%20y%3D%225.2%22%20width%3D%2218%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+}
+.icon-save {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M4%203h13l3%203v15H4Z%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%227%22%20y%3D%223%22%20width%3D%229%22%20height%3D%226%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%227%22%20y%3D%2214%22%20width%3D%2210%22%20height%3D%227%22%20fill%3D%22%23000%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M4%203h13l3%203v15H4Z%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%227%22%20y%3D%223%22%20width%3D%229%22%20height%3D%226%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%227%22%20y%3D%2214%22%20width%3D%2210%22%20height%3D%227%22%20fill%3D%22%23000%22/%3E%3C/svg%3E");
+}
+.icon-upload {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M11%204.5a1%201%200%200%201%202%200v9.4l3-3%201.4%201.4-5.4%205.4-5.4-5.4L8%2010.9l3%203V4.5Z%22/%3E%3Crect%20x%3D%224%22%20y%3D%2219%22%20width%3D%2216%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M11%204.5a1%201%200%200%201%202%200v9.4l3-3%201.4%201.4-5.4%205.4-5.4-5.4L8%2010.9l3%203V4.5Z%22/%3E%3Crect%20x%3D%224%22%20y%3D%2219%22%20width%3D%2216%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+}
+.icon-download {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M13%2019.5a1%201%200%200%201-2%200v-9.4l-3%203-1.4-1.4L12%206.3l5.4%205.4L16%2013.1l-3-3v9.4Z%22/%3E%3Crect%20x%3D%224%22%20y%3D%223%22%20width%3D%2216%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M13%2019.5a1%201%200%200%201-2%200v-9.4l-3%203-1.4-1.4L12%206.3l5.4%205.4L16%2013.1l-3-3v9.4Z%22/%3E%3Crect%20x%3D%224%22%20y%3D%223%22%20width%3D%2216%22%20height%3D%222%22%20rx%3D%221%22/%3E%3C/svg%3E");
+}
+.icon-print {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Crect%20x%3D%226%22%20y%3D%222.5%22%20width%3D%2212%22%20height%3D%226%22%20/%3E%3Crect%20x%3D%222.5%22%20y%3D%228%22%20width%3D%2219%22%20height%3D%229%22%20rx%3D%221.5%22/%3E%3Crect%20x%3D%226%22%20y%3D%2213.5%22%20width%3D%2212%22%20height%3D%228%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%227.3%22%20y%3D%2215%22%20width%3D%229.4%22%20height%3D%221.6%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%227.3%22%20y%3D%2218%22%20width%3D%229.4%22%20height%3D%221.6%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Crect%20x%3D%226%22%20y%3D%222.5%22%20width%3D%2212%22%20height%3D%226%22%20/%3E%3Crect%20x%3D%222.5%22%20y%3D%228%22%20width%3D%2219%22%20height%3D%229%22%20rx%3D%221.5%22/%3E%3Crect%20x%3D%226%22%20y%3D%2213.5%22%20width%3D%2212%22%20height%3D%228%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%227.3%22%20y%3D%2215%22%20width%3D%229.4%22%20height%3D%221.6%22%20fill%3D%22%23fff%22/%3E%3Crect%20x%3D%227.3%22%20y%3D%2218%22%20width%3D%229.4%22%20height%3D%221.6%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+}
+.icon-qr {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%2214%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%223%22%20y%3D%2214%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%225.3%22%20y%3D%225.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%2216.3%22%20y%3D%225.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%225.3%22%20y%3D%2216.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%2214%22%20y%3D%2214%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2218%22%20y%3D%2214%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2214%22%20y%3D%2218%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2218%22%20y%3D%2218%22%20width%3D%223%22%20height%3D%223%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%2214%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%223%22%20y%3D%2214%22%20width%3D%227%22%20height%3D%227%22/%3E%3Crect%20x%3D%225.3%22%20y%3D%225.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%2216.3%22%20y%3D%225.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%225.3%22%20y%3D%2216.3%22%20width%3D%222.4%22%20height%3D%222.4%22%20fill%3D%22%23000%22/%3E%3Crect%20x%3D%2214%22%20y%3D%2214%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2218%22%20y%3D%2214%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2214%22%20y%3D%2218%22%20width%3D%223%22%20height%3D%223%22/%3E%3Crect%20x%3D%2218%22%20y%3D%2218%22%20width%3D%223%22%20height%3D%223%22/%3E%3C/svg%3E");
+}
+.icon-camera {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M9%204%207.5%206.5H4A1.5%201.5%200%200%200%202.5%208v11A1.5%201.5%200%200%200%204%2020.5h16A1.5%201.5%200%200%200%2021.5%2019V8A1.5%201.5%200%200%200%2020%206.5h-3.5L15%204Z%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%224%22%20fill%3D%22%23000%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%222.1%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M9%204%207.5%206.5H4A1.5%201.5%200%200%200%202.5%208v11A1.5%201.5%200%200%200%204%2020.5h16A1.5%201.5%200%200%200%2021.5%2019V8A1.5%201.5%200%200%200%2020%206.5h-3.5L15%204Z%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%224%22%20fill%3D%22%23000%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%222.1%22%20fill%3D%22%23fff%22/%3E%3C/svg%3E");
+}
+.icon-search {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2210.5%22%20cy%3D%2210.5%22%20r%3D%226.5%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22/%3E%3Crect%20x%3D%2214.8%22%20y%3D%2216%22%20width%3D%222.3%22%20height%3D%227%22%20rx%3D%221.1%22%20fill%3D%22%23fff%22%20transform%3D%22rotate%28-45%2016%2017.3%29%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2210.5%22%20cy%3D%2210.5%22%20r%3D%226.5%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.3%22/%3E%3Crect%20x%3D%2214.8%22%20y%3D%2216%22%20width%3D%222.3%22%20height%3D%227%22%20rx%3D%221.1%22%20fill%3D%22%23fff%22%20transform%3D%22rotate%28-45%2016%2017.3%29%22/%3E%3C/svg%3E");
 }

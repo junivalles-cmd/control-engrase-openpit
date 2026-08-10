@@ -22,7 +22,7 @@ async function pickPhotoNative() {
   if (!Camera) return null;
   try {
     const photo = await Camera.getPhoto({
-      quality: 70, width: 1000, resultType: 'dataUrl', source: 'PROMPT', allowEditing: false
+      quality: 70, width: 1000, resultType: 'dataUrl', source: 'CAMERA', allowEditing: false
     });
     return photo?.dataUrl || null;
   } catch (e) {
@@ -34,7 +34,7 @@ function photoFieldHTML() {
   return `
     <label class="span-2">Fotografía (opcional)
       <div class="photo-field-native hidden">
-        <button type="button" class="btn photo-pick-btn">📷 Agregar foto (cámara o galería)</button>
+        <button type="button" class="btn photo-pick-btn">${ic("camera")}Agregar foto (cámara o galería)</button>
         <div class="photo-preview-wrap hidden">
           <img class="photo-preview"/>
           <button type="button" class="btn btn-sm btn-danger photo-remove-btn">Quitar foto</button>
@@ -100,15 +100,35 @@ async function recentEquiposHTML(onClickFnName) {
     </div>`;
 }
 
-/* ---------- Códigos QR: generar por equipo y escanear ---------- */
-const QR_PREFIX = 'ENGRASE-EQ:';
+/* ---------- Códigos QR: generar por equipo y escanear ----------
+   El QR codifica un LINK real (no un texto suelto). Así, cualquier cámara del
+   celular lo reconoce y ofrece abrirlo — antes usábamos un texto tipo
+   "ENGRASE-EQ:xxx" que Android intentaba abrir como enlace y fallaba con
+   "no hay ninguna app asociada", porque no era una URL válida. */
+function qrValueForEquipment(equipment) {
+  return `${location.origin}${location.pathname}#eq=${equipment.id}`;
+}
+
+function parseEquipmentIdFromScan(text) {
+  const raw = text.trim();
+  try {
+    const url = new URL(raw);
+    const hashMatch = /#eq=([^&]+)/.exec(url.hash);
+    if (hashMatch) return decodeURIComponent(hashMatch[1]);
+  } catch (e) { /* no era una URL completa, seguimos con los formatos viejos */ }
+  const hashOnlyMatch = /#eq=([^&]+)/.exec(raw);
+  if (hashOnlyMatch) return decodeURIComponent(hashOnlyMatch[1]);
+  if (raw.startsWith('ENGRASE-EQ:')) return raw.slice('ENGRASE-EQ:'.length); // compatibilidad con etiquetas viejas ya impresas
+  return raw;
+}
 
 async function printAllQRCodes(equipos) {
   if (!equipos.length) { alert('No hay equipos para imprimir.'); return; }
   if (!window.QRious) { alert('No se pudo cargar el generador de QR (revisa tu conexión la primera vez que uses esta función).'); return; }
+  if (isNative() && !confirm('Estás generando estas etiquetas desde la app instalada — el link que llevan solo va a funcionar bien si las generas desde la versión web. ¿Quieres continuar de todas formas?')) return;
 
   const items = equipos.map(e => {
-    const qr = new QRious({ value: QR_PREFIX + e.id, size: 200 });
+    const qr = new QRious({ value: qrValueForEquipment(e), size: 200 });
     return { e, dataUrl: qr.toDataURL() };
   });
 
@@ -141,16 +161,18 @@ async function printAllQRCodes(equipos) {
 }
 
 function openEquipmentQR(equipment) {
+  const nativeWarning = isNative() ? `<p style="color:var(--amber); font-size:12px">⚠ Estás generando este QR desde la app instalada — para que cualquier celular pueda escanearlo, genera e imprime las etiquetas desde la versión web en vez de la app.</p>` : '';
   openModal(`Código QR · ${equipment.code}`, `
     <div style="text-align:center">
       <canvas id="qr-canvas"></canvas>
-      <p class="dim" style="margin-top:10px">Imprime esta etiqueta y pégala en el equipo. Desde "Escanear QR" se abre directo el checklist de este equipo, sin buscarlo en la lista.</p>
-      <button class="btn btn-accent" id="btn-print-qr">🖨 Imprimir etiqueta</button>
+      <p class="dim" style="margin-top:10px">Imprime esta etiqueta y pégala en el equipo. Cualquier cámara del celular lo reconoce — no hace falta abrir la app primero.</p>
+      ${nativeWarning}
+      <button class="btn btn-accent" id="btn-print-qr">${ic("print")}Imprimir etiqueta</button>
     </div>
   `);
   try {
     // eslint-disable-next-line no-new
-    new QRious({ element: $('#qr-canvas'), value: QR_PREFIX + equipment.id, size: 220, background: '#ffffff', foreground: '#14171A' });
+    new QRious({ element: $('#qr-canvas'), value: qrValueForEquipment(equipment), size: 220, background: '#ffffff', foreground: '#14171A' });
   } catch (e) { $('#qr-canvas').replaceWith('No se pudo generar el código QR (sin conexión la primera vez que se usa esta función).'); }
   $('#btn-print-qr').addEventListener('click', () => {
     const win = window.open('', '_blank');
@@ -182,9 +204,24 @@ function decodeQrFromDataUrl(dataUrl) {
   img.src = dataUrl;
 }
 
+// Si la app se abrió (o ya estaba abierta) por el link de un QR escaneado con
+// CUALQUIER cámara — no solo nuestro botón "Escanear QR" — esto salta directo al equipo.
+async function handleQrDeepLink() {
+  const match = /#eq=([^&]+)/.exec(location.hash);
+  if (!match) return;
+  const id = decodeURIComponent(match[1]);
+  history.replaceState(null, '', location.pathname + location.search); // limpia el hash para no repetirlo
+  const equipment = await DB.get('equipment', id);
+  if (!equipment || equipment.active === false) return;
+  if (App.currentUser.role === 'LUBRICADOR') {
+    await startLubricadorGreaseFlow(equipment.id);
+  } else {
+    openEquipmentDetail(equipment.id);
+  }
+}
+
 async function handleScannedQR(text) {
-  const raw = text.trim();
-  const id = raw.startsWith(QR_PREFIX) ? raw.slice(QR_PREFIX.length) : raw;
+  const id = parseEquipmentIdFromScan(text);
   const equipment = await DB.get('equipment', id);
   if (!equipment || equipment.active === false) {
     alert('Este código QR no corresponde a ningún equipo activo del sistema.');
@@ -346,6 +383,7 @@ async function refreshLocalNotifications() {
     if (!settings.enabled) return;
 
     const perm = await LN.checkPermissions();
+    if (perm.display === 'denied') return; // ya lo rechazó antes — no volver a preguntar cada vez que entra
     if (perm.display !== 'granted') {
       const req = await LN.requestPermissions();
       if (req.display !== 'granted') return;
@@ -415,6 +453,7 @@ const PERMISSIONS = {
 
 /* ---------- utilidades ---------- */
 const $ = (sel, el = document) => el.querySelector(sel);
+const ic = (name) => `<span class="btn-icon icon-${name}"></span>`;
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 const fmt = (n, d = 0) => Number(n).toLocaleString('es-NI', { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -799,7 +838,11 @@ function boot() {
   Sync.fullSync();
   refreshLocalNotifications();
   refreshAppBadge();
-  initPushNotifications();
+  // Nota: las notificaciones push (initPushNotifications) YA NO se activan solas aquí.
+  // Necesitan un proyecto de Firebase configurado (google-services.json en el proyecto
+  // Android) — si se llaman sin eso, la app se cierra de golpe. Ahora solo se activan
+  // cuando el Administrador las prende a propósito desde Configuración → Notificaciones push,
+  // una vez que Firebase ya está listo.
   if (App.currentUser.role === 'LUBRICADOR') { bootLubricador(); return; }
   const allowed = PERMISSIONS[App.currentUser.role] || [];
   document.body.innerHTML = `
@@ -860,6 +903,7 @@ function boot() {
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
   navigate(allowed.includes('dashboard') ? 'dashboard' : allowed[0]);
+  handleQrDeepLink();
 }
 
 function updateShiftBadge() {
@@ -950,6 +994,7 @@ function bootLubricador() {
 
   App.route = 'turno';
   renderLubricadorHome();
+  handleQrDeepLink();
 }
 
 async function renderLubricadorHome() {
@@ -977,7 +1022,7 @@ async function renderLubricadorHome() {
         <h2 class="lub-heading">Equipos del turno ${shift === 'shift_dia' ? 'Día' : 'Noche'}</h2>
         <p class="lub-sub">Toca un equipo para registrar el engrase.${myCuadrillaName ? ' · ' + myCuadrillaName : ''}</p>
       </div>
-      <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">📷 Escanear QR</button>
+      <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
     </div>
     ${await recentEquiposHTML()}
     <div class="lub-eq-list">
@@ -995,7 +1040,7 @@ async function renderLubricadorHome() {
           </div>
         </button>`).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCuadrillaName ? ' para ' + myCuadrillaName : ''}.</div>`}
     </div>
-    <button class="lub-anomaly-fab" id="lub-fab-anomaly">⚠ Reportar anomalía</button>
+    <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
   `;
   $$('.lub-eq-btn', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
@@ -1018,18 +1063,121 @@ async function renderLubricadorHistorial() {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 30);
   const equipos = await DB.allActive('equipment');
+  const todayStr = new Date().toDateString();
   c.innerHTML = `
     <h2 class="lub-heading">Mis últimos engrases</h2>
     <div class="lub-record-list">
       ${records.map(r => {
         const eq = equipos.find(e => e.id === r.equipmentId);
+        const editable = new Date(r.date).toDateString() === todayStr;
         return `<div class="lub-record-card">
           <div class="lub-eq-top"><span class="lub-eq-code">${eq ? eq.code : '—'}</span><span class="dim">${fmtDate(r.date)}</span></div>
           <div class="lub-eq-model">${eq ? eq.brand + ' ' + eq.model : ''}</div>
           <div class="lub-eq-bottom"><span class="mono">${fmt(r.hourmeter)} h</span><span>${r.condition}</span></div>
+          ${editable ? `<button class="btn btn-sm lub-edit-record" data-id="${r.id}" style="margin-top:8px; width:100%">✏ Editar este engrase</button>` : `<div class="dim" style="margin-top:6px; font-size:11px">Solo se puede editar el mismo día que se registró.</div>`}
         </div>`;
       }).join('') || `<div class="empty-state">Aún no has registrado engrases.</div>`}
     </div>`;
+  $$('.lub-edit-record', c).forEach(btn => {
+    btn.addEventListener('click', async () => openEditGreaseRecordForm(await DB.get('lubrication_records', btn.dataset.id)));
+  });
+}
+
+/* ---------- Editar un engrase ya registrado (mismo día, para corregir errores) ---------- */
+async function openEditGreaseRecordForm(record) {
+  const equipment = await DB.get('equipment', record.equipmentId);
+  const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === record.equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const isLatest = allRecords.length && allRecords[0].id === record.id;
+  const lubricants = await DB.allActive('lubricants');
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === record.equipmentId);
+  const details = record.details || [];
+
+  openModal(`Editar engrase · ${equipment.code}`, `
+    <p class="dim">Registrado el ${fmtDate(record.date)} por ${record.userName}. ${isLatest
+      ? 'Este es el registro más reciente de este equipo — si cambias el horómetro, también se actualiza el horómetro actual del equipo.'
+      : 'Este NO es el registro más reciente de este equipo — cambiar el horómetro aquí solo corrige este registro histórico, no toca el horómetro actual del equipo.'}</p>
+    <form id="edit-grease-form">
+      <div class="form-grid">
+        <label class="span-2">Horómetro<input required type="number" step="0.1" name="hourmeter" value="${record.hourmeter}" class="big-input"/></label>
+        <label>Tipo de grasa
+          <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === record.greaseType ? 'selected' : ''}>${l.name}</option>`).join('')}</select>
+        </label>
+        <label>Cantidad (kg)<input type="number" step="0.1" name="qty" value="${record.qty}"/></label>
+      </div>
+      ${details.length ? `
+      <div class="checklist-head"><h4>Checklist</h4></div>
+      <div id="edit-checklist">
+        ${details.map((d, i) => `
+          <div class="checklist-item" data-idx="${i}">
+            <label class="check-row">
+              <input type="checkbox" class="chk-done" ${d.done ? 'checked' : ''}/>
+              <span class="check-row-text">${d.pointName}</span>
+              <span class="check-row-mark">✓</span>
+            </label>
+            <select class="chk-reason ${d.done ? 'hidden' : ''}">
+              <option value="">¿Por qué no se realizó?</option>
+              ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option ${d.reason === o ? 'selected' : ''}>${o}</option>`).join('')}
+            </select>
+          </div>`).join('')}
+      </div>` : ''}
+      <div class="form-grid" style="margin-top:14px">
+        <label>Condición encontrada
+          <select name="condition">${['Normal', 'Con desgaste', 'Requiere atención'].map(o => `<option ${o === record.condition ? 'selected' : ''}>${o}</option>`).join('')}</select>
+        </label>
+        <label class="span-2">Observaciones<textarea name="notes" rows="2">${record.notes || ''}</textarea></label>
+        ${photoFieldHTML()}
+      </div>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar cambios</button></div>
+    </form>
+  `);
+
+  if (record.photo) {
+    const preview = $('.photo-preview');
+    // Muestra la foto ya guardada como referencia (se reemplaza solo si eligen una nueva)
+    const wrap = document.createElement('div');
+    wrap.className = 'pt-current-photo';
+    wrap.innerHTML = `Foto actual: ${photoThumbHTML(record.photo, equipment.code)}`;
+    $('#edit-grease-form').querySelector('.photo-field-web, .photo-field-native')?.before(wrap);
+    wirePhotoThumbs($('#edit-grease-form'));
+  }
+  wirePhotoField($('#edit-grease-form'));
+  $$('.chk-done', $('#edit-checklist')).forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      e.target.closest('.checklist-item').querySelector('.chk-reason').classList.toggle('hidden', e.target.checked);
+    });
+  });
+
+  $('#edit-grease-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const newHourmeter = parseFloat(fd.hourmeter);
+    if (isLatest && !confirmHourmeterChange(equipment.hourmeter, newHourmeter)) return;
+
+    const newDetails = $$('.checklist-item', $('#edit-checklist')).map((item, i) => ({
+      pointId: details[i].pointId, pointName: details[i].pointName,
+      done: item.querySelector('.chk-done').checked,
+      reason: item.querySelector('.chk-reason').value || null
+    }));
+    const newPhoto = await getSelectedPhotoDataURL(ev.target);
+
+    record.hourmeter = newHourmeter;
+    record.greaseType = fd.greaseType;
+    record.qty = parseFloat(fd.qty || 0);
+    record.condition = fd.condition;
+    record.notes = fd.notes;
+    if (details.length) record.details = newDetails;
+    if (newPhoto) record.photo = newPhoto;
+    await DB.put('lubrication_records', stamp(record, App.currentUser.name));
+
+    if (isLatest) {
+      equipment.hourmeter = newHourmeter;
+      await DB.put('equipment', stamp(equipment, App.currentUser.name));
+      if (plan) { plan.lastGreaseHour = newHourmeter; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
+    }
+    await logAudit('ENGRASE_EDITADO', `${equipment.code} · registro del ${fmtDate(record.date)}`, App.currentUser.name);
+    closeModal();
+    renderLubricadorHistorial();
+  });
 }
 
 /* ============================================================
@@ -1056,14 +1204,15 @@ async function renderDashboard() {
     .filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
     .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
 
+  const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
   c.innerHTML = `
     <div class="kpi-grid">
-      ${kpiCard('TOTAL EQUIPOS', equipos.length, 'neutral')}
-      ${kpiCard('AL DÍA', counts.VERDE, 'green')}
-      ${kpiCard('PRÓXIMOS A ENGRASE', counts.AMARILLO, 'amber')}
-      ${kpiCard('ENGRASE VENCIDO', counts.ROJO, 'red')}
-      ${kpiCard('REALIZADOS HOY', doneToday, 'neutral')}
-      ${kpiCard('ANOMALÍAS ABIERTAS', openAnomalies, 'amber')}
+      ${kpiCard('TOTAL EQUIPOS', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'equipos' : null)}
+      ${kpiCard('AL DÍA', counts.VERDE, 'green', allowedRoutes.includes('equipos') ? 'equipos' : null)}
+      ${kpiCard('PRÓXIMOS A ENGRASE', counts.AMARILLO, 'amber', 'attention')}
+      ${kpiCard('ENGRASE VENCIDO', counts.ROJO, 'red', 'attention')}
+      ${kpiCard('REALIZADOS HOY', doneToday, 'neutral', allowedRoutes.includes('historial') ? 'historial' : null)}
+      ${kpiCard('ANOMALÍAS ABIERTAS', openAnomalies, 'amber', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
     </div>
 
     <div class="panel">
@@ -1074,7 +1223,7 @@ async function renderDashboard() {
       <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="dash-attention-panel">
       <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
       ${attention.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
       <table class="data-table">
@@ -1101,6 +1250,21 @@ async function renderDashboard() {
     </div>
     ${colorLegendHTML()}
   `;
+
+  $$('.kpi-clickable', c).forEach(card => {
+    card.addEventListener('click', () => {
+      const action = card.dataset.kpiAction;
+      if (action === 'attention') {
+        $('#dash-attention-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (action === 'anomalias') {
+        navigate('anomalias');
+      } else if (action === 'equipos') {
+        navigate('equipos');
+      } else if (action === 'historial') {
+        navigate('historial');
+      }
+    });
+  });
 }
 
 function colorLegendHTML() {
@@ -1113,8 +1277,8 @@ function colorLegendHTML() {
     </div>`;
 }
 
-function kpiCard(label, value, tone) {
-  return `<div class="kpi-card tone-${tone}">
+function kpiCard(label, value, tone, action) {
+  return `<div class="kpi-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
     <div class="kpi-value">${fmt(value)}</div>
     <div class="kpi-label">${label}</div>
   </div>`;
@@ -1167,16 +1331,17 @@ async function renderEquipos() {
 
   c.innerHTML = `
     <div class="toolbar">
-      <input id="eq-search" class="input" placeholder="Buscar por código, ubicación, punto de engrase…" />
-      ${canEdit ? `<button class="btn btn-accent" id="eq-new">+ Nuevo equipo</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-import">⇪ Importar desde Excel</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-bulk-toggle">☑ Reasignar en lote</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-print-all-qr">🖨 Imprimir QR de todos</button>` : ''}
+      <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
+      ${canEdit ? `<button class="btn btn-accent" id="eq-new">${ic("plus")}Nuevo equipo</button>` : ''}
+      ${canEdit ? `<button class="btn" id="eq-import">${ic("upload")}Importar desde Excel</button>` : ''}
+      ${canEdit ? `<button class="btn" id="eq-bulk-toggle">${ic("edit")}Editar en lote</button>` : ''}
+      ${canEdit ? `<button class="btn" id="eq-print-all-qr">${ic("print")}Imprimir QR de todos</button>` : ''}
       <input type="file" id="eq-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div id="eq-bulk-bar" class="bulk-bar hidden">
       <span id="eq-bulk-count">0 seleccionados</span>
-      <button class="btn btn-sm btn-accent" id="eq-bulk-apply">Reasignar ubicación/turno</button>
+      <button class="btn btn-sm btn-accent" id="eq-bulk-apply">Editar en lote</button>
+      <button class="btn btn-sm btn-danger" id="eq-bulk-delete">Eliminar seleccionados</button>
       <button class="btn btn-sm" id="eq-bulk-cancel">Cancelar</button>
     </div>
     <div id="eq-recents"></div>
@@ -1242,13 +1407,19 @@ async function renderEquipos() {
     });
     $('#eq-bulk-apply').addEventListener('click', () => {
       if (!selected.size) { alert('Selecciona al menos un equipo.'); return; }
-      openModal(`Reasignar ${selected.size} equipo(s)`, `
+      openModal(`Editar ${selected.size} equipo(s)`, `
         <form id="bulk-form" class="form-grid">
           <label>Nueva ubicación (déjalo en blanco para no cambiarla)
             <select name="locationId"><option value="">— No cambiar —</option>${locations.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
           </label>
           <label>Nuevo turno (déjalo en blanco para no cambiarlo)
             <select name="shiftId"><option value="">— No cambiar —</option><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+          </label>
+          <label>Nueva categoría (déjalo en blanco para no cambiarla)
+            <select name="typeId"><option value="">— No cambiar —</option>${types.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}</select>
+          </label>
+          <label>Nuevo estado (déjalo en blanco para no cambiarlo)
+            <select name="status"><option value="">— No cambiar —</option>${['Operativo', 'Detenido', 'En mantenimiento', 'Fuera de servicio'].map(s => `<option>${s}</option>`).join('')}</select>
           </label>
           <div class="modal-actions"><button type="submit" class="btn btn-accent">Aplicar a ${selected.size} equipo(s)</button></div>
         </form>
@@ -1260,12 +1431,27 @@ async function renderEquipos() {
           const eq = await DB.get('equipment', id);
           if (fd.locationId) eq.locationId = fd.locationId;
           if (fd.shiftId) eq.shiftId = fd.shiftId;
+          if (fd.typeId) eq.typeId = fd.typeId;
+          if (fd.status) eq.status = fd.status;
           await DB.put('equipment', stamp(eq, App.currentUser.name));
         }
-        await logAudit('EQUIPOS_REASIGNADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
+        await logAudit('EQUIPOS_EDITADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
         closeModal();
         navigate('equipos');
       });
+    });
+    $('#eq-bulk-delete').addEventListener('click', async () => {
+      if (!selected.size) { alert('Selecciona al menos un equipo.'); return; }
+      if (!confirm(`¿Eliminar ${selected.size} equipo(s)? Es un borrado lógico — el historial de cada uno se conserva en auditoría, pero dejan de aparecer en la app. Esta acción no se puede deshacer desde la interfaz.`)) return;
+      for (const id of selected) {
+        const eq = await DB.get('equipment', id);
+        eq.active = false;
+        await DB.put('equipment', stamp(eq, App.currentUser.name));
+        const eqPlans = (await DB.allActive('lubrication_plans')).filter(p => p.equipmentId === id);
+        for (const plan of eqPlans) { plan.active = false; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
+      }
+      await logAudit('EQUIPOS_ELIMINADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
+      navigate('equipos');
     });
   }
 
@@ -1391,9 +1577,9 @@ async function openEquipmentDetail(id) {
       ${s.nextHour !== undefined ? `<div><b>Próximo engrase</b><div class="mono">${fmt(s.nextHour)} h</div></div>` : ''}
     </div>
     <div class="modal-actions">
-      ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">Eliminar equipo</button>` : ''}
-      ${canEdit ? `<button class="btn" id="btn-edit-eq">Editar</button>` : ''}
-      <button class="btn" id="btn-view-qr">🔳 Código QR</button>
+      ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
+      ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
+      <button class="btn" id="btn-view-qr">${ic("qr")}Código QR</button>
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -1472,7 +1658,7 @@ async function openEquipmentForm(equipment, types, locations) {
         <span class="field-hint">Si asignas una cuadrilla, solo los lubricadores de esa cuadrilla verán este equipo en "Mi Turno" — evita que dos cuadrillas lo engrasen el mismo día.</span>
       </label>
       <div class="modal-actions">
-        <button type="submit" class="btn btn-accent">Guardar</button>
+        <button type="submit" class="btn btn-accent">${ic("save")}Guardar</button>
       </div>
     </form>
   `);
@@ -1515,13 +1701,13 @@ async function renderPlan() {
 
   c.innerHTML = `
     <div class="toolbar">
-      ${canEdit ? `<button class="btn" id="pts-import">⇪ Importar puntos de engrase desde Excel</button>` : ''}
-      ${canEdit ? `<button class="btn" id="plan-bulk-toggle">☑ Configurar plan en lote</button>` : ''}
+      ${canEdit ? `<button class="btn" id="pts-import">${ic("upload")}Importar puntos de engrase desde Excel</button>` : ''}
+      ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
       <input type="file" id="pts-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div id="plan-bulk-bar" class="bulk-bar hidden">
       <span id="plan-bulk-count">0 seleccionados</span>
-      <button class="btn btn-sm btn-accent" id="plan-bulk-apply">Aplicar plan a seleccionados</button>
+      <button class="btn btn-sm btn-accent" id="plan-bulk-apply">${ic("check")}Aplicar plan a seleccionados</button>
       <button class="btn btn-sm" id="plan-bulk-cancel">Cancelar</button>
     </div>
     <div class="panel">
@@ -1541,7 +1727,7 @@ async function renderPlan() {
               <td class="mono">${plan ? (isWeekday ? (plan.assignedDays || []).map(d => d.slice(0, 3)).join(', ') || 'sin días' : plan.frequency + ' h') : '—'}</td>
               <td class="mono">${plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—'}</td>
               <td>${points.length}</td>
-              <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">Configurar</button></td>
+              <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">${ic("edit")}Configurar</button></td>
             </tr>`;
           }))).join('')}
         </tbody>
@@ -1625,7 +1811,7 @@ function openBulkPlanForm(equipmentIds) {
           </div>
         </label>
       </div>
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">Aplicar a ${equipmentIds.length} equipo(s)</button></div>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("check")}Aplicar a ${equipmentIds.length} equipo(s)</button></div>
     </form>
   `);
 
@@ -1799,13 +1985,13 @@ async function openPlanForm(equipmentId, planId, lubricants) {
         </label>
       </div>
 
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar plan</button></div>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar plan</button></div>
     </form>
     <div class="panel-head" style="margin-top:16px"><h3>Puntos de engrase</h3></div>
     <div id="points-list">
       ${points.map(p => pointRow(p, lubricants)).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
     </div>
-    <button class="btn btn-sm" id="btn-add-point" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>+ Agregar punto</button>
+    <button class="btn btn-sm" id="btn-add-point" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>${ic("plus")}Agregar punto</button>
   `);
 
   $('#plan-control-type').addEventListener('change', (e) => {
@@ -1864,8 +2050,8 @@ function pointRow(p, lubricants) {
     ${p.photo ? photoThumbHTML(p.photo, p.point) : ''}
     <div><b>${p.point}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} kg</div></div>
     <div class="row-actions">
-      <button class="btn btn-sm point-edit" data-id="${p.id}">Editar</button>
-      <button class="btn btn-sm btn-danger point-del" data-id="${p.id}">Eliminar</button>
+      <button class="btn btn-sm point-edit" data-id="${p.id}">${ic("edit")}Editar</button>
+      <button class="btn btn-sm btn-danger point-del" data-id="${p.id}">${ic("trash")}Eliminar</button>
     </div>
   </div>`;
 }
@@ -2003,7 +2189,7 @@ async function startGreaseFlow(equipmentId, target) {
 
         <div class="checklist-head">
           <h4>Checklist de puntos de engrase</h4>
-          ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">Marcar todos</button>` : ''}
+          ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
         </div>
         ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
         <div id="checklist">
@@ -2033,8 +2219,8 @@ async function startGreaseFlow(equipmentId, target) {
         </div>
 
         <div class="modal-actions">
-          <button type="button" class="btn" id="btn-report-anomaly">⚠ Reportar anomalía</button>
-          <button type="submit" class="btn btn-accent">✓ Finalizar engrase</button>
+          <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
+          <button type="submit" class="btn btn-accent">${ic("check")}Finalizar engrase</button>
         </div>
         <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>
       </form>
@@ -2198,7 +2384,7 @@ async function renderHorometros() {
   const equipos = await DB.allActive('equipment');
   c.innerHTML = `
     <div class="toolbar">
-      <button class="btn" id="hm-import">⇪ Importar horómetros desde Excel</button>
+      <button class="btn" id="hm-import">${ic("upload")}Importar horómetros desde Excel</button>
       <input type="file" id="hm-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div class="panel">
@@ -2212,7 +2398,7 @@ async function renderHorometros() {
               <td>${e.brand} ${e.model}</td>
               <td class="mono">${fmt(e.hourmeter)} h</td>
               <td><input type="number" step="0.1" class="input input-sm hm-input" value="${e.hourmeter}"/></td>
-              <td><button class="btn btn-sm btn-accent hm-save">Guardar</button></td>
+              <td><button class="btn btn-sm btn-accent hm-save">${ic("save")}Guardar</button></td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -2302,7 +2488,7 @@ async function renderAnomalias() {
         <option value="">Todos los estados</option>
         <option>Abierta</option><option>En atención</option><option>Cerrada</option>
       </select>
-      <button class="btn btn-accent" id="btn-new-anom">+ Nueva anomalía</button>
+      <button class="btn btn-accent" id="btn-new-anom">${ic("plus")}Nueva anomalía</button>
     </div>
     <div class="panel">
       <table class="data-table" id="anom-table">
@@ -2326,7 +2512,7 @@ async function renderAnomalias() {
         <td>${a.createdBy}</td>
         <td>${a.status}</td>
         <td>${photoThumbHTML(a.photo, `${eq ? eq.code : ''} · ${a.component}`)}</td>
-        <td>${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm" data-id="${a.id}">Cerrar</button>` : ''}</td>
+        <td>${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty-state">Sin anomalías registradas.</td></tr>';
     wirePhotoThumbs($('#anom-table'));
@@ -2366,7 +2552,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel) {
         </select>
       </label>
       ${photoFieldHTML()}
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">Registrar anomalía</button></div>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("alert")}Registrar anomalía</button></div>
     </form>
   `);
   wirePhotoField($('#anom-form'));
@@ -2394,7 +2580,7 @@ async function renderLubricantes() {
 
   c.innerHTML = `
     <div class="toolbar">
-      ${canEdit ? `<button class="btn btn-accent" id="btn-new-lub">+ Nuevo lubricante</button>` : '<span></span>'}
+      ${canEdit ? `<button class="btn btn-accent" id="btn-new-lub">${ic("plus")}Nuevo lubricante</button>` : '<span></span>'}
     </div>
     <div class="panel">
       <table class="data-table">
@@ -2405,8 +2591,8 @@ async function renderLubricantes() {
             return `<tr>
               <td>${l.name}</td><td>${l.brand}</td><td>${l.type}</td><td>${l.grade}</td><td class="mono">${l.code}</td><td class="mono">${fmt(total, 1)}</td>
               ${canEdit ? `<td class="row-actions">
-                <button class="btn btn-sm lub-edit" data-id="${l.id}">Editar</button>
-                <button class="btn btn-sm btn-danger lub-remove" data-id="${l.id}">Eliminar</button>
+                <button class="btn btn-sm lub-edit" data-id="${l.id}">${ic("edit")}Editar</button>
+                <button class="btn btn-sm btn-danger lub-remove" data-id="${l.id}">${ic("trash")}Eliminar</button>
               </td>` : ''}
             </tr>`;
           }).join('') || `<tr><td colspan="${canEdit ? 7 : 6}" class="empty-state">Sin lubricantes registrados.</td></tr>`}
@@ -2514,7 +2700,7 @@ async function drawHistory(equipmentId) {
             <td class="mono">${fmt(r.qty, 1)} kg</td>
             <td>${r.condition}</td>
             <td>${photoThumbHTML(r.photo, `${equipment.code} · ${fmtDate(r.date)}`)}</td>
-            ${isAdmin ? `<td><button class="btn btn-sm btn-danger btn-del-record" data-id="${r.id}">Eliminar</button></td>` : ''}
+            ${isAdmin ? `<td><button class="btn btn-sm btn-danger btn-del-record" data-id="${r.id}">${ic("trash")}Eliminar</button></td>` : ''}
           </tr>`).join('') || `<tr><td colspan="${isAdmin ? 9 : 8}" class="empty-state">Sin registros.</td></tr>`}
         </tbody>
       </table>
@@ -2625,17 +2811,17 @@ async function renderReportes() {
       <div class="panel-head"><h3>Informes ejecutivos</h3></div>
       <div style="padding:0 14px 6px" class="dim">Listos para imprimir o enviar por correo. Usan los mismos filtros de fecha/equipo/turno/responsable de arriba.</div>
       <div class="toolbar" style="padding:0 14px 14px">
-        <button class="btn btn-accent" id="exp-pdf">📄 Informe ejecutivo (PDF)</button>
-        <button class="btn btn-accent" id="exp-excel">📊 Informe completo (Excel)</button>
+        <button class="btn btn-accent" id="exp-pdf">${ic("download")}Informe ejecutivo (PDF)</button>
+        <button class="btn btn-accent" id="exp-excel">${ic("download")}Informe completo (Excel)</button>
       </div>
     </div>
 
     <div class="panel">
       <div class="panel-head"><h3>Exportar por separado (CSV)</h3></div>
       <div class="toolbar" style="padding:0 14px 14px">
-        <button class="btn" id="exp-cumplimiento">Cumplimiento (CSV)</button>
-        <button class="btn" id="exp-historico">Histórico de engrases (CSV)</button>
-        <button class="btn" id="exp-anomalias">Anomalías (CSV)</button>
+        <button class="btn" id="exp-cumplimiento">${ic("download")}Cumplimiento (CSV)</button>
+        <button class="btn" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
+        <button class="btn" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
       </div>
     </div>`;
 
@@ -3033,7 +3219,7 @@ async function renderUsuarios() {
 
   c.innerHTML = `
     <div class="toolbar">
-      <button class="btn btn-accent" id="btn-new-lubricador">+ Nuevo lubricador</button>
+      <button class="btn btn-accent" id="btn-new-lubricador">${ic("plus")}Nuevo lubricador</button>
       ${!isSupervisor ? `<button class="btn" id="btn-new-user">+ Otro tipo de usuario</button>` : ''}
     </div>
     <div class="panel">
@@ -3044,8 +3230,8 @@ async function renderUsuarios() {
             <td>${u.name}</td><td class="mono">${u.username}</td><td>${u.role}</td>
             <td>${u.role === 'LUBRICADOR' ? ((cuadrillas.find(cq => cq.id === u.cuadrillaId) || {}).name || '—') : '—'}</td>
             <td class="row-actions">
-              <button class="btn btn-sm" data-edit="${u.id}">Editar</button>
-              ${u.id !== App.currentUser.id ? `<button class="btn btn-sm btn-danger" data-deactivate="${u.id}">Desactivar</button>` : ''}
+              <button class="btn btn-sm" data-edit="${u.id}">${ic("edit")}Editar</button>
+              ${u.id !== App.currentUser.id ? `<button class="btn btn-sm btn-danger" data-deactivate="${u.id}">${ic("trash")}Desactivar</button>` : ''}
             </td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin usuarios lubricadores registrados.</td></tr>'}
         </tbody>
       </table>
@@ -3230,7 +3416,7 @@ function familyCardHTML(fam, canEdit) {
     <div class="panel family-card" data-family-id="${fam.id}">
       <div class="panel-head">
         <h3>${fam.name}</h3>
-        ${canEdit ? `<button class="btn btn-sm family-edit-btn" data-id="${fam.id}">Editar</button>` : ''}
+        ${canEdit ? `<button class="btn btn-sm family-edit-btn" data-id="${fam.id}">${ic("edit")}Editar</button>` : ''}
       </div>
       <div class="family-body">
         <div class="family-diagram">${familySilhouetteSvg(fam.svg)}</div>
@@ -3255,7 +3441,7 @@ async function renderAyuda() {
     <div class="panel">
       <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
       <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
-      ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">+ Agregar familia de equipo</button></div>` : ''}
+      ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
     </div>
     ${help.families.map(f => familyCardHTML(f, canEdit)).join('')}
     <div class="panel">
@@ -3287,10 +3473,10 @@ function openFamilyEditForm(help, existing) {
       <form id="family-form">
         <label>Nombre de la familia<input required id="fam-name" value="${fam.name}"/></label>
         <div id="fam-zones-area" style="margin-top:14px"></div>
-        <button type="button" class="btn btn-sm" id="fam-add-zone">+ Agregar zona</button>
+        <button type="button" class="btn btn-sm" id="fam-add-zone">${ic("plus")}Agregar zona</button>
         <div class="modal-actions">
-          ${!isNew ? `<button type="button" class="btn btn-danger" id="fam-delete">Eliminar familia</button>` : ''}
-          <button type="submit" class="btn btn-accent">Guardar</button>
+          ${!isNew ? `<button type="button" class="btn btn-danger" id="fam-delete">${ic("trash")}Eliminar familia</button>` : ''}
+          <button type="submit" class="btn btn-accent">${ic("save")}Guardar</button>
         </div>
       </form>`;
   }
@@ -3325,7 +3511,7 @@ function openFamilyEditForm(help, existing) {
           ${z.points.map(pointRowEditorHTML).join('') || '<div class="empty-state">Sin puntos todavía.</div>'}
         </div>
         <div class="row-actions" style="margin-top:8px">
-          <button type="button" class="btn btn-sm pt-add" data-zi="${i}">+ Agregar punto con foto</button>
+          <button type="button" class="btn btn-sm pt-add" data-zi="${i}">${ic("plus")}Agregar punto con foto</button>
           <button type="button" class="btn btn-sm btn-danger fz-remove">Eliminar esta zona</button>
         </div>
       </div>`).join('');
@@ -3424,11 +3610,11 @@ function openFaqEditForm(help) {
           <div class="faq-editor-row" data-fi="${i}">
             <input class="faq-q" placeholder="Pregunta" value="${f.question}"/>
             <textarea class="faq-a" placeholder="Respuesta" rows="2">${f.answer}</textarea>
-            <button type="button" class="btn btn-sm btn-danger faq-remove">Eliminar</button>
+            <button type="button" class="btn btn-sm btn-danger faq-remove">${ic("trash")}Eliminar</button>
           </div>`).join('')}
       </div>
-      <button type="button" class="btn btn-sm" id="faq-add-btn">+ Agregar pregunta</button>
-      <div class="modal-actions"><button type="button" class="btn btn-accent" id="faq-save-btn">Guardar</button></div>`;
+      <button type="button" class="btn btn-sm" id="faq-add-btn">${ic("plus")}Agregar pregunta</button>
+      <div class="modal-actions"><button type="button" class="btn btn-accent" id="faq-save-btn">${ic("save")}Guardar</button></div>`;
   }
   openModal('Editar preguntas frecuentes', bodyHTML());
 
@@ -3477,13 +3663,13 @@ async function simpleListPanelHTML(store, title, hint) {
             <span class="simple-list-name">${it.name}</span>
             <div class="row-actions">
               <button class="btn btn-sm sl-rename">Renombrar</button>
-              <button class="btn btn-sm btn-danger sl-remove">Eliminar</button>
+              <button class="btn btn-sm btn-danger sl-remove">${ic("trash")}Eliminar</button>
             </div>
           </div>`).join('') || '<div class="empty-state">Sin elementos todavía.</div>'}
       </div>
       <div class="toolbar" style="padding:10px 14px">
         <input class="input sl-new-input" placeholder="Nombre nuevo…"/>
-        <button class="btn btn-accent sl-add">+ Agregar</button>
+        <button class="btn btn-accent sl-add">${ic("plus")}Agregar</button>
       </div>
     </div>`;
 }
@@ -3607,7 +3793,7 @@ async function renderConfig() {
           <label>Alerta amarilla por defecto (horas antes)<input type="number" name="defaultAlertYellowHours" value="${gen.defaultAlertYellowHours}"/></label>
           <label>Meta de cumplimiento de flota (%)<input type="number" min="1" max="100" name="complianceTarget" value="${gen.complianceTarget}"/></label>
           <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
-            <button type="submit" class="btn btn-accent">Guardar</button>
+            <button type="submit" class="btn btn-accent">${ic("save")}Guardar</button>
           </div>
         </form>
       </div>
@@ -3645,11 +3831,12 @@ async function renderConfig() {
     <div class="panel">
       <div class="panel-head"><h3>Notificaciones push (llegan aunque la app esté cerrada)</h3></div>
       <div style="padding:14px">
-        <p class="dim">Requieren un proyecto de Firebase configurado (ver guía aparte). Cuando un usuario abre la app instalada, su celular queda registrado aquí automáticamente.</p>
+        <p class="dim">Requieren un proyecto de Firebase configurado (ver guía aparte) — si activas esto SIN haber configurado Firebase primero (google-services.json en el proyecto Android), la app se puede cerrar de golpe al intentar registrarse. Solo actívalo si ya seguiste la guía de Firebase.</p>
         <div id="push-status" class="dim" style="margin-bottom:10px">
           ${window.Capacitor?.Plugins?.PushNotifications ? 'Este dispositivo soporta notificaciones push.' : 'Este dispositivo (navegador web) no recibe notificaciones push — solo la app instalada en Android las recibe.'}
         </div>
-        <div id="push-tokens-list"></div>
+        ${window.Capacitor?.Plugins?.PushNotifications ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
+        <div id="push-tokens-list" style="margin-top:14px"></div>
       </div>
     </div>
     <div class="panel">
@@ -3675,8 +3862,8 @@ async function renderConfig() {
       <div style="padding:14px">
         <p class="dim">Descarga una copia de absolutamente todo (equipos, planes, engrases, anomalías, usuarios, etc.) en un solo archivo. Guárdala en un lugar seguro fuera de la nube — sirve para recuperar información si algo sale mal, o para migrar a otro proyecto de Supabase.</p>
         <div class="toolbar">
-          <button class="btn btn-accent" id="btn-export-backup">⬇ Descargar copia completa</button>
-          <button class="btn" id="btn-import-backup">⬆ Restaurar desde archivo</button>
+          <button class="btn btn-accent" id="btn-export-backup">${ic("download")}Descargar copia completa</button>
+          <button class="btn" id="btn-import-backup">${ic("upload")}Restaurar desde archivo</button>
           <input type="file" id="backup-file-input" accept=".json" class="hidden"/>
         </div>
         <p class="dim" style="margin-top:6px">Restaurar NO borra lo que ya tienes — combina los datos del archivo con los actuales (si un registro existe en ambos, gana el más reciente).</p>
@@ -3720,12 +3907,19 @@ async function renderConfig() {
   wireSimpleListPanel(c, 'locations', () => renderConfig());
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
+  $('#btn-enable-push')?.addEventListener('click', async () => {
+    if (!confirm('Esto solo debe activarse si ya seguiste la guía de Firebase (google-services.json ya está en el proyecto Android y recompilaste la app). ¿Ya lo hiciste?')) return;
+    await initPushNotifications();
+    alert('Listo. Si Firebase está bien configurado, este dispositivo debería aparecer en la lista de abajo en unos segundos (puede que tengas que volver a entrar a esta pantalla).');
+    renderConfig();
+  });
+
   const pushTokens = (await DB.allActive('push_tokens'));
   $('#push-tokens-list').innerHTML = pushTokens.length ? `
     <table class="data-table">
       <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th></tr></thead>
       <tbody>${pushTokens.map(t => `<tr><td>${t.userName}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
-    </table>` : '<div class="empty-state">Nadie ha abierto la app instalada todavía (o Firebase aún no está configurado).</div>';
+    </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
   makeTablesResponsive($('#push-tokens-list'));
 
   $('#notif-form').addEventListener('submit', async (ev) => {
