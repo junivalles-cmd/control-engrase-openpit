@@ -1214,6 +1214,19 @@ async function renderDashboard() {
     .filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
     .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
 
+  // Días desde el último engrase registrado de cada equipo (sea cual sea su tipo de control)
+  const lastRecordByEquipo = {};
+  records.forEach(r => {
+    if (!lastRecordByEquipo[r.equipmentId] || new Date(r.date) > new Date(lastRecordByEquipo[r.equipmentId])) {
+      lastRecordByEquipo[r.equipmentId] = r.date;
+    }
+  });
+  function daysSinceLastGrease(equipmentId) {
+    const last = lastRecordByEquipo[equipmentId];
+    if (!last) return null;
+    return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
+  }
+
   const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
   c.innerHTML = `
     <div class="kpi-grid">
@@ -1236,19 +1249,17 @@ async function renderDashboard() {
     <div class="panel" id="dash-attention-panel">
       <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
       ${attention.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
-      <table class="data-table">
-        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Horómetro</th><th>Próximo</th><th>Restante</th></tr></thead>
-        <tbody>
-          ${attention.map(x => `
-            <tr>
-              <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
-              <td class="mono">${x.e.code}</td>
-              <td>${x.e.brand} ${x.e.model}</td>
-              <td class="mono">${fmt(x.e.hourmeter)} h</td>
-              <td class="mono">${x.s.nextHour !== undefined ? fmt(x.s.nextHour) + ' h' : '—'}</td>
-              <td class="mono" style="color:${STATUS_COLOR[x.s.code]}">${x.s.remaining !== undefined && x.s.remaining !== null ? (x.s.remaining < 0 ? '+' + fmt(Math.abs(x.s.remaining)) + ' h atraso' : fmt(x.s.remaining) + ' h') : '—'}</td>
-            </tr>`).join('')}
-        </tbody>
+      <div class="toolbar" style="padding:0 14px 10px">
+        <label class="filter-label">Turno
+          <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+        </label>
+        <label class="filter-label">Día asignado
+          <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
+        </label>
+      </div>
+      <table class="data-table" id="att-table">
+        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Control</th><th>Horómetro</th><th>Próximo / Día asignado</th><th>Restante / Atraso</th><th>Días sin engrase</th></tr></thead>
+        <tbody id="att-tbody"></tbody>
       </table>`}
     </div>
 
@@ -1275,6 +1286,55 @@ async function renderDashboard() {
       }
     });
   });
+
+  function drawAttentionTable() {
+    const tbody = $('#att-tbody');
+    if (!tbody) return;
+    const turnoFilter = $('#att-turno').value;
+    const diaFilter = $('#att-dia').value;
+
+    const filtered = attention.filter(x => {
+      if (turnoFilter && x.e.shiftId !== turnoFilter) return false;
+      if (diaFilter) {
+        if (!x.s.plan || !x.s.plan.assignedDays || !x.s.plan.assignedDays.includes(diaFilter)) return false;
+      }
+      return true;
+    });
+
+    tbody.innerHTML = filtered.map(x => {
+      const isWeekday = !!x.s.scheduleDate;
+      const isHours = x.s.nextHour !== undefined;
+      let controlLabel = '—', nextCol = '—', restCol = '—';
+      if (isHours) {
+        controlLabel = 'Por horas';
+        nextCol = fmt(x.s.nextHour) + ' h';
+        restCol = x.s.remaining !== undefined && x.s.remaining !== null
+          ? (x.s.remaining < 0 ? '+' + fmt(Math.abs(x.s.remaining)) + ' h atraso' : fmt(x.s.remaining) + ' h')
+          : '—';
+      } else if (isWeekday) {
+        controlLabel = 'Día/turno';
+        nextCol = WEEKDAY_NAMES[x.s.scheduleDate.getDay()];
+        const diffDays = Math.floor((new Date().setHours(0, 0, 0, 0) - x.s.scheduleDate.getTime()) / 86400000);
+        restCol = x.s.code === 'ROJO' ? `${diffDays} día(s) atraso` : (x.s.code === 'AMARILLO' ? 'Programado hoy' : '—');
+      }
+      const dsg = daysSinceLastGrease(x.e.id);
+      return `<tr>
+        <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
+        <td class="mono">${x.e.code}</td>
+        <td>${x.e.brand} ${x.e.model}</td>
+        <td>${x.e.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+        <td>${controlLabel}</td>
+        <td class="mono">${isHours ? fmt(x.e.hourmeter) + ' h' : '—'}</td>
+        <td class="mono">${nextCol}</td>
+        <td class="mono" style="color:${STATUS_COLOR[x.s.code]}">${restCol}</td>
+        <td class="mono">${dsg === null ? 'Nunca registrado' : dsg + ' día(s)'}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="9" class="empty-state">Sin equipos para este filtro.</td></tr>`;
+    makeTablesResponsive($('#dash-attention-panel'));
+  }
+  drawAttentionTable();
+  $('#att-turno')?.addEventListener('change', drawAttentionTable);
+  $('#att-dia')?.addEventListener('change', drawAttentionTable);
 }
 
 function colorLegendHTML() {
