@@ -68,7 +68,7 @@ const Sync = {
     let count = 0;
     for (const store of STORES) {
       const rows = await DB.all(store);
-      count += rows.filter(r => !cfg.lastPush || new Date(r.updatedAt) > new Date(cfg.lastPush)).length;
+      count += rows.filter(r => r._pushedVersion !== r.updatedAt).length;
     }
     return count;
   },
@@ -106,38 +106,53 @@ const Sync = {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
     let pushed = 0;
-    let newestSeen = cfg.lastPush || '1970-01-01T00:00:00.000Z';
+    const errors = [];
 
     for (const store of STORES) {
-      const rows = await DB.all(store);
-      const toPush = rows.filter(r => !cfg.lastPush || new Date(r.updatedAt) > new Date(cfg.lastPush));
-      if (!toPush.length) continue;
+      try {
+        const rows = await DB.all(store);
+        // Antes comparábamos la hora del cambio contra "la última vez que sincronicé"
+        // (cfg.lastPush) — si el reloj de algún dispositivo estaba desajustado, un
+        // cambio nuevo podía parecer "más viejo" que ese punto y nunca subir. Ahora
+        // cada registro se marca individualmente al confirmarse: se sube si su versión
+        // actual (updatedAt) todavía no coincide con la última versión confirmada por
+        // el servidor (_pushedVersion) — no depende de comparar relojes entre equipos.
+        const toPush = rows.filter(r => r._pushedVersion !== r.updatedAt);
+        if (!toPush.length) continue;
 
-      const preparedRows = [];
-      for (const r of toPush) {
-        preparedRows.push(await this.uploadPhotoIfNeeded(store, r, cfg));
+        const preparedRows = [];
+        for (const r of toPush) {
+          preparedRows.push(await this.uploadPhotoIfNeeded(store, r, cfg));
+        }
+
+        const body = preparedRows.map(r => ({
+          store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
+        }));
+        const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: cfg.anonKey,
+            Authorization: `Bearer ${cfg.anonKey}`,
+            Prefer: 'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error(`${resp.status}`);
+        pushed += toPush.length;
+        // Confirma cada registro por separado — solo AHORA que el servidor lo aceptó.
+        for (const r of toPush) {
+          r._pushedVersion = r.updatedAt;
+          await DB.put(store, r);
+        }
+      } catch (err) {
+        // Un problema en UN store (ej. una foto que no subió, un error de red puntual) ya
+        // no frena a los demás — seguimos con el resto y avisamos al final cuáles fallaron.
+        console.error(`Error al subir el store "${store}"`, err);
+        errors.push(store);
       }
-
-      const body = preparedRows.map(r => ({
-        store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
-      }));
-      const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: cfg.anonKey,
-          Authorization: `Bearer ${cfg.anonKey}`,
-          Prefer: 'resolution=merge-duplicates,return=minimal'
-        },
-        body: JSON.stringify(body)
-      });
-      if (!resp.ok) throw new Error(`Error al subir ${store}: ${resp.status}`);
-      pushed += toPush.length;
-      toPush.forEach(r => { if (r.updatedAt > newestSeen) newestSeen = r.updatedAt; });
     }
-    cfg.lastPush = newestSeen;
-    await DB.setConfig(cfg);
-    return { ok: true, pushed };
+    return { ok: errors.length === 0, pushed, errors };
   },
 
   async pullAll() {
@@ -156,6 +171,13 @@ const Sync = {
       if (!STORES.includes(row.store)) continue;
       const rec = row.payload;
       rec.active = !row.deleted;
+      // Si ya tenemos localmente la foto completa (base64, funciona sin internet) y lo que
+      // llega del servidor es solo el link (porque este mismo dispositivo ya la subió antes),
+      // NO la reemplazamos — conservamos la copia completa para seguir viéndola sin conexión.
+      const existing = await DB.get(row.store, rec.id).catch(() => null);
+      if (existing && existing.photo && existing.photo.startsWith('data:image') && rec.photo && !rec.photo.startsWith('data:image')) {
+        rec.photo = existing.photo;
+      }
       await DB.put(row.store, rec);
       if (row.store === 'anomalies' && !row.deleted) newAnomalies.push(rec);
       if (row.updated_at > maxUpdated) maxUpdated = row.updated_at;
@@ -174,7 +196,12 @@ const Sync = {
     try {
       const pushRes = await this.pushAll();
       const pullRes = await this.pullAll();
-      this.notify({ status: 'ok', pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0, newAnomalies: pullRes.newAnomalies || [], at: nowISO() });
+      const hasErrors = pushRes.errors && pushRes.errors.length;
+      this.notify({
+        status: hasErrors ? 'partial' : 'ok',
+        pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0,
+        errors: pushRes.errors || [], newAnomalies: pullRes.newAnomalies || [], at: nowISO()
+      });
     } catch (err) {
       console.error('Sync error', err);
       this.notify({ status: 'error', message: err.message });

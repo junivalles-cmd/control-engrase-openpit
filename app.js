@@ -17,12 +17,12 @@ function isNative() {
 }
 
 /* ---------- Cámara / galería nativa ---------- */
-async function pickPhotoNative() {
+async function pickPhotoNative(source) {
   const Camera = window.Capacitor?.Plugins?.Camera;
   if (!Camera) return null;
   try {
     const photo = await Camera.getPhoto({
-      quality: 70, width: 1000, resultType: 'dataUrl', source: 'CAMERA', allowEditing: false
+      quality: 70, width: 1000, resultType: 'dataUrl', source: source || 'CAMERA', allowEditing: false
     });
     return photo?.dataUrl || null;
   } catch (e) {
@@ -34,7 +34,10 @@ function photoFieldHTML() {
   return `
     <label class="span-2">Fotografía (opcional)
       <div class="photo-field-native hidden">
-        <button type="button" class="btn photo-pick-btn">${ic("camera")}Agregar foto (cámara o galería)</button>
+        <div class="photo-pick-row">
+          <button type="button" class="btn photo-pick-camera-btn">${ic("camera")}Tomar foto</button>
+          <button type="button" class="btn photo-pick-gallery-btn">${ic("gallery")}Elegir de galería</button>
+        </div>
         <div class="photo-preview-wrap hidden">
           <img class="photo-preview"/>
           <button type="button" class="btn btn-sm btn-danger photo-remove-btn">Quitar foto</button>
@@ -52,14 +55,16 @@ function wirePhotoField(container) {
   container.querySelector('.photo-field-native')?.classList.toggle('hidden', !nat);
   container.querySelector('.photo-field-web')?.classList.toggle('hidden', nat);
 
-  container.querySelector('.photo-pick-btn')?.addEventListener('click', async () => {
-    const dataUrl = await pickPhotoNative();
+  const pickAndPreview = async (source) => {
+    const dataUrl = await pickPhotoNative(source);
     if (!dataUrl) return;
     const img = container.querySelector('.photo-preview');
     img.src = dataUrl;
     img.dataset.photo = dataUrl;
     container.querySelector('.photo-preview-wrap').classList.remove('hidden');
-  });
+  };
+  container.querySelector('.photo-pick-camera-btn')?.addEventListener('click', () => pickAndPreview('CAMERA'));
+  container.querySelector('.photo-pick-gallery-btn')?.addEventListener('click', () => pickAndPreview('PHOTOS'));
   container.querySelector('.photo-remove-btn')?.addEventListener('click', () => {
     const img = container.querySelector('.photo-preview');
     img.removeAttribute('src');
@@ -707,6 +712,11 @@ function updateConnBadge() {
   } else if (lastSyncState.status === 'error') {
     b.textContent = 'ERROR DE SINCRONIZACIÓN';
     b.className = 'conn-badge conn-off';
+    b.title = lastSyncState.message || '';
+  } else if (lastSyncState.status === 'partial') {
+    b.textContent = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;
+    b.className = 'conn-badge conn-warn';
+    b.title = 'Falló: ' + lastSyncState.errors.join(', ') + ' — se reintenta solo en la próxima sincronización.';
   } else {
     b.textContent = 'SINCRONIZADO';
     b.className = 'conn-badge conn-ok';
@@ -2028,7 +2038,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
     await logAudit('PLAN_GUARDADO', `Plan de ${equipment.code}`, App.currentUser.name);
     closeModal();
-    navigate('plan');
+    openPlanForm(equipmentId, plan.id, lubricants); // reabre en el mismo equipo, ya con el botón de agregar puntos habilitado
   });
 
   $('#btn-add-point')?.addEventListener('click', () => {
@@ -2057,7 +2067,8 @@ function pointRow(p, lubricants) {
 }
 
 function openPointForm(planId, pointId, lubricants) {
-  DB.get('lubrication_points', pointId).then(existing => {
+  const loadExisting = pointId ? DB.get('lubrication_points', pointId) : Promise.resolve(null);
+  loadExisting.then(existing => {
     const p = existing || { system: 'General', component: '', point: '', greaseType: lubricants[0]?.id, recommendedQty: 0.5, frequency: 50, notes: '', photo: null };
     openModal(pointId ? 'Editar punto' : 'Nuevo punto de engrase', `
       <form id="point-form" class="form-grid">
@@ -2512,13 +2523,19 @@ async function renderAnomalias() {
         <td>${a.createdBy}</td>
         <td>${a.status}</td>
         <td>${photoThumbHTML(a.photo, `${eq ? eq.code : ''} · ${a.component}`)}</td>
-        <td>${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}</td>
+        <td class="row-actions">
+          <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
+          ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
+        </td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty-state">Sin anomalías registradas.</td></tr>';
     wirePhotoThumbs($('#anom-table'));
     makeTablesResponsive($('#anom-table').closest('.panel'));
 
-    $$('button[data-id]', c).forEach(b => b.addEventListener('click', async () => {
+    $$('.anom-edit', c).forEach(b => b.addEventListener('click', async () => {
+      openAnomalyForm(null, null, await DB.get('anomalies', b.dataset.id));
+    }));
+    $$('button[data-id]:not(.anom-edit)', c).forEach(b => b.addEventListener('click', async () => {
       const a = await DB.get('anomalies', b.dataset.id);
       a.status = 'Cerrada';
       await DB.put('anomalies', stamp(a, App.currentUser.name));
@@ -2531,39 +2548,47 @@ async function renderAnomalias() {
   $('#btn-new-anom').addEventListener('click', () => openAnomalyForm());
 }
 
-async function openAnomalyForm(equipmentId, equipmentLabel) {
+async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
   const equipos = await DB.allActive('equipment');
-  openModal('Reportar anomalía', `
+  const a = existing || { equipmentId, component: '', description: '', criticality: 'Alta', photo: null };
+  const componentOptions = ['Grasera dañada', 'Línea de grasa rota', 'Falta de lubricación', 'Buje con juego', 'Pin con desgaste', 'Fuga de aceite', 'Fuga de grasa', 'Sello dañado', 'Manguera dañada', 'Componente flojo', 'Daño estructural', 'Otro'];
+  openModal(existing ? `Editar anomalía · ${existing.component}` : 'Reportar anomalía', `
     <form id="anom-form" class="form-grid">
       <label>Equipo
         <select name="equipmentId">
-          ${equipos.map(e => `<option value="${e.id}" ${e.id === equipmentId ? 'selected' : ''}>${e.code} · ${e.brand} ${e.model}</option>`).join('')}
+          ${equipos.map(e => `<option value="${e.id}" ${e.id === (a.equipmentId || equipmentId) ? 'selected' : ''}>${e.code} · ${e.brand} ${e.model}</option>`).join('')}
         </select>
       </label>
       <label>Tipo de anomalía
         <select name="component">
-          ${['Grasera dañada', 'Línea de grasa rota', 'Falta de lubricación', 'Buje con juego', 'Pin con desgaste', 'Fuga de aceite', 'Fuga de grasa', 'Sello dañado', 'Manguera dañada', 'Componente flojo', 'Daño estructural', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+          ${componentOptions.map(o => `<option ${o === a.component ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </label>
-      <label>Descripción<textarea required name="description" rows="2"></textarea></label>
+      <label>Descripción<textarea required name="description" rows="2">${a.description || ''}</textarea></label>
       <label>Criticidad
         <select name="criticality">
-          <option>Baja</option><option>Media</option><option selected>Alta</option><option>Crítica</option>
+          ${['Baja', 'Media', 'Alta', 'Crítica'].map(o => `<option ${o === a.criticality ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </label>
+      ${existing && existing.status ? `<label>Estado
+        <select name="status">${['Abierta', 'En atención', 'Cerrada'].map(o => `<option ${o === existing.status ? 'selected' : ''}>${o}</option>`).join('')}</select>
+      </label>` : ''}
       ${photoFieldHTML()}
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("alert")}Registrar anomalía</button></div>
+      ${a.photo ? `<div class="span-2">Foto actual: ${photoThumbHTML(a.photo, a.component)}</div>` : ''}
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic(existing ? "save" : "alert")}${existing ? 'Guardar cambios' : 'Registrar anomalía'}</button></div>
     </form>
   `);
   wirePhotoField($('#anom-form'));
+  wirePhotoThumbs($('#anom-form'));
   $('#anom-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     delete fd.photo;
-    const photoData = await getSelectedPhotoDataURL(ev.target);
-    const anomaly = stamp({ id: uid('anom'), status: 'Abierta', ...fd, photo: photoData }, App.currentUser.name);
-    await DB.put('anomalies', anomaly);
-    await logAudit('ANOMALIA_CREADA', anomaly.component, App.currentUser.name);
+    const newPhoto = await getSelectedPhotoDataURL(ev.target);
+    if (newPhoto) fd.photo = newPhoto;
+    const anomaly = existing ? Object.assign(existing, fd) : stamp({ id: uid('anom'), status: 'Abierta', ...fd }, App.currentUser.name);
+    await DB.put('anomalies', stamp(anomaly, App.currentUser.name));
+    await logAudit(existing ? 'ANOMALIA_EDITADA' : 'ANOMALIA_CREADA', anomaly.component, App.currentUser.name);
     closeModal();
     if (App.route === 'anomalias') renderAnomalias();
   });
@@ -2644,7 +2669,32 @@ async function renderLubricantes() {
 async function renderHistorial() {
   const c = $('#app-content');
   const equipos = await DB.allActive('equipment');
+  const types = await DB.allActive('equipment_types');
+  const today = new Date().toISOString().slice(0, 10);
   c.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><h3>Buscar en todo el historial</h3></div>
+      <div class="toolbar" style="padding:0 14px 14px">
+        <label class="filter-label">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
+        <label class="filter-label">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
+        <label class="filter-label">Turno
+          <select id="gh-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+        </label>
+        <label class="filter-label">Familia
+          <select id="gh-familia" class="input input-sm"><option value="">Todas</option>${types.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}</select>
+        </label>
+        <label class="filter-label">Estado del equipo
+          <select id="gh-estado" class="input input-sm">
+            <option value="">Todos</option>
+            <option value="ROJO">Vencidos</option>
+            <option value="AMARILLO">Próximos</option>
+            <option value="VERDE">Al día</option>
+          </select>
+        </label>
+        <button class="btn btn-accent" id="gh-apply">${ic("search")}Buscar</button>
+      </div>
+      <div id="gh-results"></div>
+    </div>
     <div class="panel">
       <div class="panel-head"><h3>Historial por equipo</h3></div>
       <select id="hist-equipo" class="input">
@@ -2659,6 +2709,58 @@ async function renderHistorial() {
     if (!id) { $('#hist-area').innerHTML = ''; return; }
     await drawHistory(id);
   });
+
+  async function runGeneralSearch() {
+    const from = $('#gh-from').value ? new Date($('#gh-from').value + 'T00:00:00') : null;
+    const to = $('#gh-to').value ? new Date($('#gh-to').value + 'T23:59:59') : null;
+    const turno = $('#gh-turno').value;
+    const familia = $('#gh-familia').value;
+    const estado = $('#gh-estado').value;
+
+    let matchEquipos = equipos;
+    if (familia) matchEquipos = matchEquipos.filter(e => e.typeId === familia);
+    if (estado) {
+      const statuses = await computeAllStatuses(matchEquipos);
+      const okIds = new Set(statuses.filter(x => x.s.code === estado).map(x => x.e.id));
+      matchEquipos = matchEquipos.filter(e => okIds.has(e.id));
+    }
+    const matchIds = new Set(matchEquipos.map(e => e.id));
+
+    const allRecords = await DB.allActive('lubrication_records');
+    const results = allRecords.filter(r => {
+      if (!matchIds.has(r.equipmentId)) return false;
+      const d = new Date(r.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      if (turno && r.shiftId !== turno) return false;
+      return true;
+    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const lubricants = await DB.allActive('lubricants');
+    $('#gh-results').innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Foto</th></tr></thead>
+        <tbody>${results.map(r => {
+          const eq = equipos.find(e => e.id === r.equipmentId);
+          return `<tr>
+            <td>${fmtDate(r.date)}</td>
+            <td class="mono">${eq ? eq.code : '—'}</td>
+            <td>${eq ? eq.brand + ' ' + eq.model : '—'}</td>
+            <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+            <td>${r.userName}</td>
+            <td class="mono">${fmt(r.hourmeter)} h</td>
+            <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
+            <td>${r.condition}</td>
+            <td>${photoThumbHTML(r.photo, eq ? eq.code : '')}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="9" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
+      </table>`;
+    makeTablesResponsive($('#gh-results'));
+    wirePhotoThumbs($('#gh-results'));
+  }
+
+  $('#gh-apply').addEventListener('click', runGeneralSearch);
+  runGeneralSearch();
 }
 
 async function drawHistory(equipmentId) {
@@ -3853,7 +3955,7 @@ async function renderConfig() {
           </div>
         </form>
         <div id="sync-status" class="dim" style="margin-top:10px">
-          ${cfg.url ? `Servidor conectado. Última subida: ${cfg.lastPush ? fmtDate(cfg.lastPush) : 'nunca'} · Última descarga: ${cfg.lastPull ? fmtDate(cfg.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
+          ${cfg.url ? `Servidor conectado. Última descarga: ${cfg.lastPull ? fmtDate(cfg.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
         </div>
       </div>
     </div>

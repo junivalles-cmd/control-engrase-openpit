@@ -169,59 +169,9 @@ async function seedIfEmpty() {
   ];
   for (const l of lubricants) await DB.put('lubricants', stamp(l, 'sistema'));
 
-  const typeArt = types.find(t => t.name === 'Camión Articulado').id;
-  const typeVolq = types.find(t => t.name === 'Camión Volquete').id;
-  const typeTrac = types.find(t => t.name === 'Tractor de Oruga').id;
-
-  const equipos = [
-    {
-      id: 'eq_demo_4586', code: '45-86', description: 'Camión Articulado', brand: 'Caterpillar', model: '745C',
-      serial: 'CAT745C-0086', typeId: typeArt, locationId: 'loc_pit1', status: 'Operativo',
-      hourmeter: 28470, shiftId: 'shift_dia', photo: null, active: true
-    },
-    {
-      id: 'eq_demo_4569', code: '45-69', description: 'Camión Articulado', brand: 'Caterpillar', model: '740B',
-      serial: 'CAT740B-0069', typeId: typeArt, locationId: 'loc_pit1', status: 'Operativo',
-      hourmeter: 21492, shiftId: 'shift_dia', photo: null, active: true
-    },
-    {
-      id: 'eq_demo_0568', code: '05-68', description: 'Tractor de Oruga', brand: 'Caterpillar', model: 'D8T',
-      serial: 'CATD8T-0568', typeId: typeTrac, locationId: 'loc_botadero', status: 'Operativo',
-      hourmeter: 14215, shiftId: 'shift_noche', photo: null, active: true
-    },
-    {
-      id: 'eq_demo_1231', code: '12-31', description: 'Camión Volquete', brand: 'Volvo', model: 'FMX 500',
-      serial: 'VOLFMX-1231', typeId: typeVolq, locationId: 'loc_pit1', status: 'Operativo',
-      hourmeter: 9800, shiftId: 'shift_dia', photo: null, active: true
-    }
-  ];
-  for (const e of equipos) await DB.put('equipment', stamp(e, 'sistema'));
-
-  // Puntos de engrase estándar por tipo (plantilla simplificada)
-  const puntosBase = {
-    [typeArt]: ['Articulación central', 'Pines de tolva', 'Cardanes', 'Crucetas', 'Suspensión', 'Dirección'],
-    [typeVolq]: ['Pines de tolva', 'Ejes', 'Suspensión', 'Dirección', 'Cardanes'],
-    [typeTrac]: ['Pines de cuchilla', 'Cilindros de inclinación', 'Rodillos', 'Pasadores de bastidor', 'Bisagras']
-  };
-
-  const planes = [];
-  for (const eq of equipos) {
-    const plan = stamp({
-      id: `plan_${eq.id}`, equipmentId: eq.id, controlType: 'Horas de operación',
-      frequency: 50, lastGreaseHour: eq.hourmeter - (eq.code === '05-68' ? 65 : (eq.code === '45-69' ? 42 : 20)),
-      alertYellowHours: 10, active: true
-    }, 'sistema');
-    planes.push(plan);
-    await DB.put('lubrication_plans', plan);
-
-    const puntos = puntosBase[eq.typeId] || ['Puntos generales'];
-    for (const p of puntos) {
-      await DB.put('lubrication_points', stamp({
-        id: `pt_${eq.id}_${p.replace(/\s+/g, '')}`, planId: plan.id, system: 'General', component: p, point: p,
-        greaseType: lubricants[0].id, recommendedQty: 0.5, frequency: 50, notes: '', active: true
-      }, 'sistema'));
-    }
-  }
+  // Nota: antes aquí se creaban 4 equipos de ejemplo (camiones/tractor de prueba) con sus
+  // puntos de engrase. Se quitó — cada instalación nueva arranca con el catálogo base
+  // (turnos, ubicaciones, categorías, lubricantes, cuadrillas) pero sin equipos de mentira.
 
   await DB.put('settings', stamp({
     id: 'notifications', enabled: true,
@@ -230,7 +180,7 @@ async function seedIfEmpty() {
     complianceHour: 7, complianceMinute: 0
   }, 'sistema'));
 
-  await logAudit('SEED', 'Datos demo iniciales cargados', 'sistema');
+  await logAudit('SEED', 'Datos base iniciales cargados (sin equipos de ejemplo)', 'sistema');
 }
 
 // Para instalaciones ya existentes (antes de que existieran las cuadrillas): si el store
