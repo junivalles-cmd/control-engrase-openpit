@@ -171,12 +171,18 @@ const Sync = {
       if (!STORES.includes(row.store)) continue;
       const rec = row.payload;
       rec.active = !row.deleted;
+      const existing = await DB.get(row.store, rec.id).catch(() => null);
       // Si ya tenemos localmente la foto completa (base64, funciona sin internet) y lo que
       // llega del servidor es solo el link (porque este mismo dispositivo ya la subió antes),
       // NO la reemplazamos — conservamos la copia completa para seguir viéndola sin conexión.
-      const existing = await DB.get(row.store, rec.id).catch(() => null);
       if (existing && existing.photo && existing.photo.startsWith('data:image') && rec.photo && !rec.photo.startsWith('data:image')) {
         rec.photo = existing.photo;
+      }
+      // Si lo que llega es literalmente el eco de lo que este mismo dispositivo acaba de
+      // subir (mismo updatedAt), conserva la marca local de "ya confirmado" — si no, se
+      // volvería a subir en cada sincronización para siempre, sin necesidad.
+      if (existing && existing._pushedVersion === rec.updatedAt) {
+        rec._pushedVersion = existing._pushedVersion;
       }
       await DB.put(row.store, rec);
       if (row.store === 'anomalies' && !row.deleted) newAnomalies.push(rec);

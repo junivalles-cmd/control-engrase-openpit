@@ -26,7 +26,12 @@ async function pickPhotoNative(source) {
     });
     return photo?.dataUrl || null;
   } catch (e) {
-    return null; // el usuario canceló, no es un error
+    const msg = (e && e.message || '').toLowerCase();
+    const userCancelled = msg.includes('cancel');
+    if (!userCancelled) {
+      alert(`No se pudo abrir ${source === 'PHOTOS' ? 'la galería' : 'la cámara'}. Si el celular pidió permiso y lo rechazaste, ve a Ajustes del teléfono → Apps → Control de Engrase → Permisos, y actívalo ahí. (${e?.message || 'error desconocido'})`);
+    }
+    return null;
   }
 }
 
@@ -51,9 +56,12 @@ function photoFieldHTML() {
 }
 
 function wirePhotoField(container) {
-  const nat = isNative();
-  container.querySelector('.photo-field-native')?.classList.toggle('hidden', !nat);
-  container.querySelector('.photo-field-web')?.classList.toggle('hidden', nat);
+  // Antes decidíamos con isNative() (una bandera indirecta de "plataforma"). Es más
+  // confiable preguntar directamente si el plugin de cámara existe — si existe, se puede
+  // usar, sin importar cómo responda esa bandera en cada configuración de WebView.
+  const hasCameraPlugin = !!(window.Capacitor?.Plugins?.Camera);
+  container.querySelector('.photo-field-native')?.classList.toggle('hidden', !hasCameraPlugin);
+  container.querySelector('.photo-field-web')?.classList.toggle('hidden', hasCameraPlugin);
 
   const pickAndPreview = async (source) => {
     const dataUrl = await pickPhotoNative(source);
@@ -1497,17 +1505,40 @@ async function renderEquipos() {
       $('#bulk-form').addEventListener('submit', async (ev) => {
         ev.preventDefault();
         const fd = Object.fromEntries(new FormData(ev.target).entries());
-        for (const id of selected) {
-          const eq = await DB.get('equipment', id);
-          if (fd.locationId) eq.locationId = fd.locationId;
-          if (fd.shiftId) eq.shiftId = fd.shiftId;
-          if (fd.typeId) eq.typeId = fd.typeId;
-          if (fd.status) eq.status = fd.status;
-          await DB.put('equipment', stamp(eq, App.currentUser.name));
-        }
-        await logAudit('EQUIPOS_EDITADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
-        closeModal();
-        navigate('equipos');
+        const changes = [];
+        if (fd.locationId) changes.push(`Ubicación → ${locations.find(l => l.id === fd.locationId)?.name || fd.locationId}`);
+        if (fd.shiftId) changes.push(`Turno → ${fd.shiftId === 'shift_dia' ? 'Día' : 'Noche'}`);
+        if (fd.typeId) changes.push(`Categoría → ${types.find(t => t.id === fd.typeId)?.name || fd.typeId}`);
+        if (fd.status) changes.push(`Estado → ${fd.status}`);
+        if (!changes.length) { alert('No marcaste ningún cambio — elige al menos un campo.'); return; }
+
+        const affected = equipos.filter(e => selected.has(e.id));
+        openModal('Confirmar cambio en lote', `
+          <p><b>Se van a aplicar estos cambios:</b></p>
+          <ul>${changes.map(c => `<li>${c}</li>`).join('')}</ul>
+          <p><b>A estos ${affected.length} equipo(s):</b></p>
+          <div style="max-height:30vh; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:8px">
+            ${affected.map(e => `<div class="mono">${e.code} — ${e.brand} ${e.model}</div>`).join('')}
+          </div>
+          <div class="modal-actions">
+            <button class="btn" id="bulk-confirm-back">Volver</button>
+            <button class="btn btn-accent" id="bulk-confirm-apply">${ic("check")}Sí, aplicar</button>
+          </div>
+        `);
+        $('#bulk-confirm-back').addEventListener('click', () => $('#eq-bulk-apply').click());
+        $('#bulk-confirm-apply').addEventListener('click', async () => {
+          for (const id of selected) {
+            const eq = await DB.get('equipment', id);
+            if (fd.locationId) eq.locationId = fd.locationId;
+            if (fd.shiftId) eq.shiftId = fd.shiftId;
+            if (fd.typeId) eq.typeId = fd.typeId;
+            if (fd.status) eq.status = fd.status;
+            await DB.put('equipment', stamp(eq, App.currentUser.name));
+          }
+          await logAudit('EQUIPOS_EDITADOS_LOTE', `${selected.size} equipos: ${changes.join(', ')}`, App.currentUser.name);
+          closeModal();
+          navigate('equipos');
+        });
       });
     });
     $('#eq-bulk-delete').addEventListener('click', async () => {
@@ -1752,7 +1783,12 @@ async function openEquipmentForm(equipment, types, locations) {
     await DB.put('equipment', stamp(e, App.currentUser.name));
     await logAudit('EQUIPO_GUARDADO', `Equipo ${e.code}${e.shortCode ? ' (' + e.shortCode + ')' : ''}`, App.currentUser.name);
     closeModal();
-    navigate('equipos');
+    if (isNew && confirm(`Equipo "${e.code}" creado. ¿Quieres configurar su plan de engrase ahora?`)) {
+      const lubricants = await DB.allActive('lubricants');
+      openPlanForm(e.id, null, lubricants);
+    } else {
+      navigate('equipos');
+    }
   });
 }
 
@@ -1765,7 +1801,10 @@ async function renderPlan() {
   const plans = await DB.allActive('lubrication_plans');
   const lubricants = await DB.allActive('lubricants');
   const types = await DB.allActive('equipment_types');
-  const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+  // A diferencia de otras pantallas (Equipos, Usuarios), aquí también dejamos entrar al
+  // Planificador con las herramientas completas — configurar el plan de engrase es
+  // literalmente su trabajo principal, no tenía sentido limitarlo a solo uno por uno.
+  const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
   let bulkMode = false;
   const selected = new Set();
 
@@ -1856,7 +1895,7 @@ function openBulkPlanForm(equipmentIds) {
     <form id="bulk-plan-form" class="form-grid">
       <label class="span-2">Tipo de control
         <select name="controlType" id="bulk-plan-control-type">
-          ${['Horas de operación', 'Día y turno de la semana', 'Fecha/calendario', 'Turno', 'Combinación de horas y calendario'].map(o => `<option>${o}</option>`).join('')}
+          ${['Horas de operación', 'Día y turno de la semana'].map(o => `<option>${o}</option>`).join('')}
         </select>
       </label>
       <div id="bulk-hours-fields" class="span-2 form-grid" style="padding:0">
@@ -2024,7 +2063,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     <form id="plan-form" class="form-grid">
       <label class="span-2">Tipo de control
         <select name="controlType" id="plan-control-type">
-          ${['Horas de operación', 'Día y turno de la semana', 'Fecha/calendario', 'Turno', 'Combinación de horas y calendario'].map(o => `<option ${plan && plan.controlType === o ? 'selected' : ''}>${o}</option>`).join('')}
+          ${['Horas de operación', 'Día y turno de la semana'].map(o => `<option ${plan && plan.controlType === o ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
         <span class="field-hint">Usa "Día y turno de la semana" para equipos donde no se registra horómetro a diario — se controla por calendario en vez de por horas.</span>
       </label>
@@ -2578,14 +2617,15 @@ async function renderAnomalias() {
         <td><span class="dot" style="background:${CRIT_COLOR[a.criticality]}"></span> ${a.criticality}</td>
         <td class="mono">${eq ? eq.code : '—'}</td>
         <td>${a.component}</td>
-        <td>${a.description}</td>
+        <td>${a.description}${a.resolutionNote ? `<div class="dim" style="margin-top:4px">Resuelto: ${a.resolutionNote}</div>` : ''}</td>
         <td>${fmtDate(a.createdAt)}</td>
         <td>${a.createdBy}</td>
         <td>${a.status}</td>
         <td>${photoThumbHTML(a.photo, `${eq ? eq.code : ''} · ${a.component}`)}</td>
         <td class="row-actions">
           <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
-          ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
+          ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm anom-close" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `<button class="btn btn-sm btn-danger anom-delete" data-id="${a.id}">${ic("trash")}Eliminar</button>` : ''}
         </td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty-state">Sin anomalías registradas.</td></tr>';
@@ -2595,11 +2635,22 @@ async function renderAnomalias() {
     $$('.anom-edit', c).forEach(b => b.addEventListener('click', async () => {
       openAnomalyForm(null, null, await DB.get('anomalies', b.dataset.id));
     }));
-    $$('button[data-id]:not(.anom-edit)', c).forEach(b => b.addEventListener('click', async () => {
+    $$('.anom-close', c).forEach(b => b.addEventListener('click', async () => {
       const a = await DB.get('anomalies', b.dataset.id);
+      const note = prompt('¿Cómo se resolvió? (queda guardado en el historial de la anomalía)', '');
+      if (note === null) return; // canceló, no cierra nada
       a.status = 'Cerrada';
+      a.resolutionNote = note.trim() || null;
       await DB.put('anomalies', stamp(a, App.currentUser.name));
-      await logAudit('ANOMALIA_CERRADA', a.id, App.currentUser.name);
+      await logAudit('ANOMALIA_CERRADA', `${a.id}${note ? ' — ' + note : ''}`, App.currentUser.name);
+      renderAnomalias();
+    }));
+    $$('.anom-delete', c).forEach(b => b.addEventListener('click', async () => {
+      const a = await DB.get('anomalies', b.dataset.id);
+      if (!confirm(`¿Eliminar esta anomalía (${a.component})? No se puede deshacer desde la app.`)) return;
+      a.active = false;
+      await DB.put('anomalies', stamp(a, App.currentUser.name));
+      await logAudit('ANOMALIA_ELIMINADA', `${a.component} · ${a.description}`, App.currentUser.name);
       renderAnomalias();
     }));
   }
@@ -2731,6 +2782,7 @@ async function renderHistorial() {
   const equipos = await DB.allActive('equipment');
   const types = await DB.allActive('equipment_types');
   const today = new Date().toISOString().slice(0, 10);
+  let lastGeneralResults = [];
   c.innerHTML = `
     <div class="panel">
       <div class="panel-head"><h3>Buscar en todo el historial</h3></div>
@@ -2797,7 +2849,12 @@ async function renderHistorial() {
     }).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const lubricants = await DB.allActive('lubricants');
+    lastGeneralResults = results.map(r => ({ r, eq: equipos.find(e => e.id === r.equipmentId), lub: lubricants.find(l => l.id === r.greaseType) }));
     $('#gh-results').innerHTML = `
+      <div class="toolbar" style="padding:10px 0">
+        <button class="btn btn-sm" id="gh-export">${ic("download")}Descargar estos resultados (CSV)</button>
+        <span class="dim">${results.length} resultado(s)</span>
+      </div>
       <table class="data-table">
         <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Foto</th></tr></thead>
         <tbody>${results.map(r => {
@@ -2817,6 +2874,13 @@ async function renderHistorial() {
       </table>`;
     makeTablesResponsive($('#gh-results'));
     wirePhotoThumbs($('#gh-results'));
+    $('#gh-export')?.addEventListener('click', () => {
+      const rows = [['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro', 'Grasa', 'Condición']];
+      lastGeneralResults.forEach(({ r, eq, lub }) => {
+        rows.push([fmtDate(r.date), eq ? eq.code : '', eq ? eq.brand + ' ' + eq.model : '', r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.hourmeter, lub ? lub.name : '', r.condition]);
+      });
+      downloadCSV(rows, 'historial_filtrado.csv');
+    });
   }
 
   $('#gh-apply').addEventListener('click', runGeneralSearch);
