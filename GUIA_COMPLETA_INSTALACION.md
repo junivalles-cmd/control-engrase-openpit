@@ -88,7 +88,12 @@ Créalas ahora, te ahorra ir y venir después:
    npm run icons
    ```
    Esto lee el archivo `assets/icon.png` que ya viene en el proyecto y genera automáticamente todos los tamaños que Android necesita.
-6. Copia los archivos de la app al proyecto Android:
+6. Configura que el QR (y cualquier link a la web) abra la app instalada en vez del navegador:
+   ```
+   npm run applinks
+   ```
+   Solo hace falta correrlo una vez — si alguna vez borras la carpeta `android` y la vuelves a crear desde cero, corre este paso de nuevo.
+7. Copia los archivos de la app al proyecto Android:
    ```
    npx cap sync android
    ```

@@ -226,11 +226,7 @@ async function handleQrDeepLink() {
   history.replaceState(null, '', location.pathname + location.search); // limpia el hash para no repetirlo
   const equipment = await DB.get('equipment', id);
   if (!equipment || equipment.active === false) return;
-  if (App.currentUser.role === 'LUBRICADOR') {
-    await startLubricadorGreaseFlow(equipment.id);
-  } else {
-    openEquipmentDetail(equipment.id);
-  }
+  await showEquipmentQrInfo(equipment.id);
 }
 
 async function handleScannedQR(text) {
@@ -240,12 +236,59 @@ async function handleScannedQR(text) {
     alert('Este código QR no corresponde a ningún equipo activo del sistema.');
     return;
   }
-  if (App.currentUser.role === 'LUBRICADOR') {
-    if (App.route !== 'turno') { App.route = 'turno'; }
-    await startLubricadorGreaseFlow(equipment.id);
-  } else {
+  if (App.currentUser.role === 'LUBRICADOR' && App.route !== 'turno') { App.route = 'turno'; }
+  await showEquipmentQrInfo(equipment.id);
+}
+
+/* ---------- Pantalla que se muestra al escanear el QR de un equipo: resumen
+   rápido de su estado de engrase, y un botón directo al formulario si le toca. ---------- */
+async function showEquipmentQrInfo(equipmentId) {
+  const equipment = await DB.get('equipment', equipmentId);
+  const s = await statusFor(equipment);
+  const records = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId);
+  const lastRecord = records.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+  const daysSince = lastRecord
+    ? Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(lastRecord.date).setHours(0, 0, 0, 0)) / 86400000)
+    : null;
+  const location_ = (await DB.allActive('locations')).find(l => l.id === equipment.locationId);
+  const needsGrease = s.code === 'ROJO' || s.code === 'AMARILLO';
+  const canRegister = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+
+  openModal(`${equipment.code}${equipment.shortCode ? ' · ' + equipment.shortCode : ''}`, `
+    <div class="qr-info-card">
+      <div class="qr-info-status" style="color:${STATUS_COLOR[s.code]}">
+        <span class="dot" style="background:${STATUS_COLOR[s.code]}"></span> ${s.label}
+      </div>
+      <p class="dim" style="margin-top:-6px">${equipment.brand} ${equipment.model} · ${location_ ? location_.name : 'Sin ubicación'} · Turno ${equipment.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</p>
+
+      <div class="qr-info-grid">
+        <div><span class="dim">Horómetro actual</span><div class="mono" style="font-size:18px">${fmt(equipment.hourmeter)} h</div></div>
+        <div><span class="dim">Días sin engrase</span><div class="mono" style="font-size:18px">${daysSince === null ? 'Nunca' : daysSince + ' día(s)'}</div></div>
+      </div>
+
+      ${lastRecord ? `<p class="dim">Último engrase: ${fmtDate(lastRecord.date)} por ${lastRecord.userName}</p>` : '<p class="dim">Este equipo no tiene ningún engrase registrado todavía.</p>'}
+      ${s.scheduleDate ? `<p class="dim">Día asignado: ${WEEKDAY_NAMES[s.scheduleDate.getDay()]}</p>` : ''}
+
+      ${needsGrease
+        ? `<div class="qr-info-alert">${s.code === 'ROJO' ? '🔴 Este equipo tiene el engrase vencido.' : '🟡 Este equipo está próximo a vencer.'}</div>`
+        : `<div class="qr-info-ok">✓ Este equipo está al día, no necesita engrase ahora.</div>`}
+
+      <div class="modal-actions" style="flex-wrap:wrap">
+        ${canRegister ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
+        ${App.currentUser.role !== 'LUBRICADOR' ? `<button class="btn" id="qr-info-detail">Ver ficha completa</button>` : ''}
+      </div>
+    </div>
+  `);
+
+  $('#qr-info-register')?.addEventListener('click', async () => {
+    closeModal();
+    if (App.currentUser.role === 'LUBRICADOR') await startLubricadorGreaseFlow(equipment.id);
+    else await startGreaseFlow(equipment.id, App.route);
+  });
+  $('#qr-info-detail')?.addEventListener('click', () => {
+    closeModal();
     openEquipmentDetail(equipment.id);
-  }
+  });
 }
 
 async function openQrScanner() {
@@ -617,6 +660,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('online', updateConnBadge);
   window.addEventListener('offline', updateConnBadge);
   Sync.onChange(onSyncStateChange);
+
+  // Delegado en document (no en el botón directamente) porque el topbar se
+  // vuelve a dibujar entero cada vez que cambia de pantalla — así funciona
+  // siempre, sin tener que re-conectar el clic cada vez.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#conn-badge')) {
+      if (!navigator.onLine) { showInAppToast('Sin conexión a internet en este momento.'); return; }
+      Sync.fullSync();
+    }
+  });
   wirePushListeners();
   Sync.startAuto();
   updateConnBadge();
@@ -891,7 +944,7 @@ function boot() {
           <div class="topbar-title" id="topbar-title">Dashboard</div>
           <div class="topbar-right">
             ${themeButtonHTML()}
-            <span id="conn-badge" class="conn-badge"></span>
+            <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
             <span class="topbar-shift" id="topbar-shift"></span>
             <span class="topbar-user">${App.currentUser.name} · ${App.currentUser.role}</span>
           </div>
@@ -979,7 +1032,7 @@ function bootLubricador() {
         </div>
         <div class="lub-topbar-right">
           ${themeButtonHTML()}
-          <span id="conn-badge" class="conn-badge"></span>
+          <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           <button class="icon-btn" id="btn-logout" title="Cerrar sesión">⏻</button>
         </div>
       </header>
@@ -1193,6 +1246,7 @@ async function openEditGreaseRecordForm(record) {
       if (plan) { plan.lastGreaseHour = newHourmeter; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
     }
     await logAudit('ENGRASE_EDITADO', `${equipment.code} · registro del ${fmtDate(record.date)}`, App.currentUser.name);
+    showInAppToast('✓ Engrase actualizado');
     closeModal();
     renderLubricadorHistorial();
   });
@@ -1536,6 +1590,7 @@ async function renderEquipos() {
             await DB.put('equipment', stamp(eq, App.currentUser.name));
           }
           await logAudit('EQUIPOS_EDITADOS_LOTE', `${selected.size} equipos: ${changes.join(', ')}`, App.currentUser.name);
+          showInAppToast(`✓ ${selected.size} equipo(s) actualizados`);
           closeModal();
           navigate('equipos');
         });
@@ -1552,6 +1607,7 @@ async function renderEquipos() {
         for (const plan of eqPlans) { plan.active = false; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
       }
       await logAudit('EQUIPOS_ELIMINADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
+      showInAppToast(`✓ ${selected.size} equipo(s) eliminados`);
       navigate('equipos');
     });
   }
@@ -1655,6 +1711,7 @@ async function handleEquipmentExcelImport(file, types, locations) {
       p.existing ? updated++ : created++;
     }
     await logAudit('EQUIPOS_IMPORTADOS', `${created} creados, ${updated} actualizados`, App.currentUser.name);
+    showInAppToast(`✓ Equipos importados: ${created} creados, ${updated} actualizados`);
     closeModal();
     navigate('equipos');
   });
@@ -1696,6 +1753,7 @@ async function openEquipmentDetail(id) {
     const plans = (await DB.allActive('lubrication_plans')).filter(p => p.equipmentId === e.id);
     for (const plan of plans) { plan.active = false; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
     await logAudit('EQUIPO_ELIMINADO', `${e.code}${e.shortCode ? ' (' + e.shortCode + ')' : ''}`, App.currentUser.name);
+    showInAppToast(`✓ Equipo ${e.code} eliminado`);
     closeModal();
     navigate('equipos');
   });
@@ -1782,6 +1840,7 @@ async function openEquipmentForm(equipment, types, locations) {
     Object.assign(e, obj);
     await DB.put('equipment', stamp(e, App.currentUser.name));
     await logAudit('EQUIPO_GUARDADO', `Equipo ${e.code}${e.shortCode ? ' (' + e.shortCode + ')' : ''}`, App.currentUser.name);
+    showInAppToast(`✓ Equipo ${e.code} guardado`);
     closeModal();
     if (isNew && confirm(`Equipo "${e.code}" creado. ¿Quieres configurar su plan de engrase ahora?`)) {
       const lubricants = await DB.allActive('lubricants');
@@ -1967,6 +2026,7 @@ function openBulkPlanForm(equipmentIds) {
       await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
     }
     await logAudit('PLAN_LOTE_APLICADO', `${created} creados, ${updated} actualizados`, App.currentUser.name);
+    showInAppToast(`✓ Plan aplicado en lote: ${created} creados, ${updated} actualizados`);
     closeModal();
     navigate('plan');
   });
@@ -2047,6 +2107,7 @@ async function handlePointsExcelImport(file, equipos, types, lubricants) {
       }
     }
     await logAudit('PUNTOS_IMPORTADOS', `${pointsCreated} puntos creados, ${pointsSkipped} ya existían, ${plansCreated} planes nuevos`, App.currentUser.name);
+    showInAppToast(`✓ Puntos de engrase importados: ${pointsCreated} nuevos`);
     closeModal();
     navigate('plan');
   });
@@ -2136,6 +2197,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     else Object.assign(plan, obj);
     await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
     await logAudit('PLAN_GUARDADO', `Plan de ${equipment.code}`, App.currentUser.name);
+    showInAppToast(`✓ Plan de ${equipment.code} guardado`);
     closeModal();
     openPlanForm(equipmentId, plan.id, lubricants); // reabre en el mismo equipo, ya con el botón de agregar puntos habilitado
   });
@@ -2476,6 +2538,7 @@ async function startGreaseFlow(equipmentId, target) {
         await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
       }
       await logAudit('ENGRASE_REGISTRADO', `${equipment.code} en ${fmt(newHourmeter)} h`, App.currentUser.name);
+      showInAppToast(`✓ Engrase registrado — ${equipment.code}`);
       await discardDraft();
       await refreshLocalNotifications();
       await refreshAppBadge();
@@ -2523,6 +2586,7 @@ async function renderHorometros() {
       eq.hourmeter = newVal;
       await DB.put('equipment', stamp(eq, App.currentUser.name));
       await logAudit('HOROMETRO_ACTUALIZADO', `${eq.code} → ${fmt(newVal)} h`, App.currentUser.name);
+      showInAppToast(`✓ Horómetro de ${eq.code} actualizado`);
       renderHorometros();
     });
   });
@@ -2579,6 +2643,7 @@ async function handleHourmeterExcelImport(file, equipos) {
       applied++;
     }
     await logAudit('HOROMETROS_IMPORTADOS', `${applied} equipos actualizados desde Excel`, App.currentUser.name);
+    showInAppToast(`✓ Horómetros importados: ${applied} equipos`);
     closeModal();
     navigate('horometros');
   });
@@ -2643,6 +2708,7 @@ async function renderAnomalias() {
       a.resolutionNote = note.trim() || null;
       await DB.put('anomalies', stamp(a, App.currentUser.name));
       await logAudit('ANOMALIA_CERRADA', `${a.id}${note ? ' — ' + note : ''}`, App.currentUser.name);
+      showInAppToast('✓ Anomalía cerrada');
       renderAnomalias();
     }));
     $$('.anom-delete', c).forEach(b => b.addEventListener('click', async () => {
@@ -2651,6 +2717,7 @@ async function renderAnomalias() {
       a.active = false;
       await DB.put('anomalies', stamp(a, App.currentUser.name));
       await logAudit('ANOMALIA_ELIMINADA', `${a.component} · ${a.description}`, App.currentUser.name);
+      showInAppToast('✓ Anomalía eliminada');
       renderAnomalias();
     }));
   }
@@ -2700,6 +2767,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
     const anomaly = existing ? Object.assign(existing, fd) : stamp({ id: uid('anom'), status: 'Abierta', ...fd }, App.currentUser.name);
     await DB.put('anomalies', stamp(anomaly, App.currentUser.name));
     await logAudit(existing ? 'ANOMALIA_EDITADA' : 'ANOMALIA_CREADA', anomaly.component, App.currentUser.name);
+    showInAppToast(existing ? '✓ Anomalía actualizada' : '✓ Anomalía reportada');
     closeModal();
     if (App.route === 'anomalias') renderAnomalias();
   });
@@ -2755,6 +2823,7 @@ async function renderLubricantes() {
       const obj = existing ? Object.assign(existing, fd) : { id: uid('lub'), ...fd, active: true };
       await DB.put('lubricants', stamp(obj, App.currentUser.name));
       await logAudit(existing ? 'LUBRICANTE_EDITADO' : 'LUBRICANTE_CREADO', fd.name, App.currentUser.name);
+      showInAppToast(existing ? '✓ Lubricante actualizado' : '✓ Lubricante creado');
       closeModal();
       renderLubricantes();
     });
@@ -2770,6 +2839,7 @@ async function renderLubricantes() {
     l.active = false;
     await DB.put('lubricants', stamp(l, App.currentUser.name));
     await logAudit('LUBRICANTE_ELIMINADO', l.name, App.currentUser.name);
+    showInAppToast('✓ Lubricante eliminado');
     renderLubricantes();
   }));
 }
@@ -2951,6 +3021,7 @@ async function drawHistory(equipmentId) {
       rec.active = false;
       await DB.put('lubrication_records', stamp(rec, App.currentUser.name));
       await logAudit('ENGRASE_ELIMINADO', `${equipment.code} · ${fmtDate(rec.date)}`, App.currentUser.name);
+      showInAppToast('✓ Registro de engrase eliminado');
       drawHistory(equipmentId);
     }));
   }
@@ -3490,6 +3561,7 @@ async function renderUsuarios() {
       const obj = existing ? Object.assign(existing, fd) : { id: uid('u'), ...fd, active: true };
       await DB.put('users', stamp(obj, App.currentUser.name));
       await logAudit(existing ? 'USUARIO_EDITADO' : 'USUARIO_CREADO', fd.username, App.currentUser.name);
+      showInAppToast(existing ? '✓ Usuario actualizado' : '✓ Usuario creado');
       closeModal();
       renderUsuarios();
     });
@@ -3508,6 +3580,7 @@ async function renderUsuarios() {
     u.active = false;
     await DB.put('users', stamp(u, App.currentUser.name));
     await logAudit('USUARIO_DESACTIVADO', u.username, App.currentUser.name);
+    showInAppToast('✓ Usuario desactivado');
     renderUsuarios();
   }));
 }
@@ -3791,6 +3864,7 @@ function openFamilyEditForm(help, existing) {
     help.families = help.families.filter(f => f.id !== fam.id);
     await DB.put('settings', stamp(help, App.currentUser.name));
     await logAudit('AYUDA_ACTUALIZADA', `Familia eliminada: ${fam.name}`, App.currentUser.name);
+    showInAppToast('✓ Familia eliminada');
     closeModal();
     renderAyuda();
   });
@@ -3822,6 +3896,7 @@ function openFamilyEditForm(help, existing) {
     if (isNew) help.families.push(fam);
     await DB.put('settings', stamp(help, App.currentUser.name));
     await logAudit('AYUDA_ACTUALIZADA', `Familia guardada: ${fam.name}`, App.currentUser.name);
+    showInAppToast('✓ Familia guardada');
     closeModal();
     renderAyuda();
   });
@@ -3869,6 +3944,7 @@ function openFaqEditForm(help) {
       help.faq = help.faq.filter(f => f.question); // descarta preguntas vacías
       await DB.put('settings', stamp(help, App.currentUser.name));
       await logAudit('AYUDA_ACTUALIZADA', 'Preguntas frecuentes actualizadas', App.currentUser.name);
+      showInAppToast('✓ Preguntas frecuentes actualizadas');
       closeModal();
       renderAyuda();
     });
@@ -3909,6 +3985,7 @@ function wireSimpleListPanel(container, store, onChange) {
     if (!name) return;
     await DB.put(store, stamp({ id: uid(store.slice(0, 3)), name, active: true }, App.currentUser.name));
     await logAudit('LISTA_ACTUALIZADA', `${store}: agregado "${name}"`, App.currentUser.name);
+    showInAppToast(`✓ "${name}" agregado`);
     onChange();
   });
   panel.querySelectorAll('.sl-rename').forEach(btn => {
@@ -3922,6 +3999,7 @@ function wireSimpleListPanel(container, store, onChange) {
       item.name = newName.trim();
       await DB.put(store, stamp(item, App.currentUser.name));
       await logAudit('LISTA_ACTUALIZADA', `${store}: "${current}" → "${newName}"`, App.currentUser.name);
+      showInAppToast(`✓ Actualizado a "${newName}"`);
       onChange();
     });
   });
@@ -3935,6 +4013,7 @@ function wireSimpleListPanel(container, store, onChange) {
       item.active = false;
       await DB.put(store, stamp(item, App.currentUser.name));
       await logAudit('LISTA_ACTUALIZADA', `${store}: eliminado "${name}"`, App.currentUser.name);
+      showInAppToast(`✓ "${name}" eliminado`);
       onChange();
     });
   });
@@ -3954,6 +4033,7 @@ async function exportFullBackup() {
   a.click();
   URL.revokeObjectURL(url);
   await logAudit('RESPALDO_DESCARGADO', `${Object.values(backup.data).reduce((s, r) => s + r.length, 0)} registros`, App.currentUser.name);
+  showInAppToast('✓ Respaldo descargado');
 }
 
 async function previewAndImportBackup(file) {
@@ -3988,6 +4068,7 @@ async function previewAndImportBackup(file) {
     }
     await loadGeneralSettings();
     await logAudit('RESPALDO_RESTAURADO', `${applied} registros desde archivo de ${backup.exportedAt || '?'}`, App.currentUser.name);
+    showInAppToast(`✓ Respaldo restaurado: ${applied} registros`);
     closeModal();
     alert(`Listo, se restauraron ${applied} registros.`);
     renderConfig();
@@ -4124,6 +4205,7 @@ async function renderConfig() {
     };
     await DB.put('settings', stamp(updated, App.currentUser.name));
     await logAudit('CONFIG_GENERAL_ACTUALIZADA', `Día ${dayH}h · Noche ${nightH}h · Alerta ${updated.defaultAlertYellowHours}h · Meta ${updated.complianceTarget}%`, App.currentUser.name);
+    showInAppToast('✓ Configuración general guardada');
     await loadGeneralSettings();
     await refreshLocalNotifications();
     renderConfig();
@@ -4163,6 +4245,7 @@ async function renderConfig() {
       weekdayPlanEnabled: !!fd.weekdayPlanEnabled, weekdayPlanHour: wh, weekdayPlanMinute: wm
     }, App.currentUser.name));
     await logAudit('NOTIFICACIONES_CONFIGURADAS', fd.enabled ? 'Activadas' : 'Desactivadas', App.currentUser.name);
+    showInAppToast('✓ Notificaciones actualizadas');
     await refreshLocalNotifications();
     renderConfig();
   });
@@ -4175,6 +4258,7 @@ async function renderConfig() {
     try {
       await Sync.saveConfig(fd.url, fd.anonKey);
       await logAudit('SERVIDOR_CONFIGURADO', fd.url, App.currentUser.name);
+      showInAppToast('✓ Servidor configurado');
       statusEl.textContent = 'Conexión exitosa. Sincronizando…';
       await Sync.fullSync();
       renderConfig();
