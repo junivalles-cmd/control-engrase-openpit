@@ -860,3 +860,55 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: var(--red); color: #fff; border-radius: 4px; padding: 1px 6px;
   margin-left: 3px; vertical-align: middle;
 }
+
+/* ---------------- Registrar Engrase en escritorio ----------------
+   El formulario está pensado para móvil (una columna, botones grandes). En pantallas
+   anchas se veía muy angosto con mucho espacio desaprovechado a los lados: aquí se
+   ensancha y el checklist pasa a dos columnas cuando hay sitio. */
+@media (min-width: 900px) {
+  #reg-flow-area { max-width: 1100px; }
+  #reg-flow-area .form-grid { grid-template-columns: repeat(3, 1fr); }
+  #reg-flow-area .form-grid .span-2 { grid-column: span 3; }
+  #reg-flow-area #checklist {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start;
+  }
+  #reg-flow-area .checklist-item { break-inside: avoid; }
+  #reg-flow-area .big-input { font-size: 22px !important; }
+}
+@media (min-width: 1300px) {
+  #reg-flow-area #checklist { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Formulario de punto de engrase simplificado */
+.pt-main-label { display: block; margin-bottom: 6px; }
+.pt-more { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: var(--surface-2); }
+.pt-more summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-dim); }
+.pt-more[open] summary { margin-bottom: 4px; color: var(--text); }
+
+/* Copiar puntos desde otro equipo */
+.copy-points-list { max-height: 34vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.copy-point-row { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; cursor: pointer; }
+.copy-point-row input { width: 18px; height: 18px; flex: none; }
+
+/* ---------------- Vista de impresión dentro de la app instalada ----------------
+   En la app no existen las ventanas emergentes, así que el informe se muestra aquí
+   encima, con fondo blanco (listo para imprimir o guardar como PDF desde Android). */
+.print-overlay {
+  position: fixed; inset: 0; z-index: 300; background: #fff; color: #111;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.print-overlay-bar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+  justify-content: space-between; padding: 10px 12px; background: #14171A; color: #fff;
+  border-bottom: 2px solid #FFC000;
+}
+.print-overlay-title { font-size: 13px; font-weight: 700; flex: 1; text-align: center; }
+.print-overlay-content { padding: 14px; }
+.print-overlay-content table { width: 100%; }
+
+/* Al imprimir, se oculta la app y solo sale el informe */
+@media print {
+  body.printing-mode > *:not(.print-overlay) { display: none !important; }
+  .print-overlay { position: static; overflow: visible; }
+  .print-overlay-bar { display: none !important; }
+}

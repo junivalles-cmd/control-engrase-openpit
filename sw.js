@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v7';
+const CACHE = 'engrase-openpit-v8';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   './favicon.png', './apple-touch-icon.png',
@@ -12,7 +12,7 @@ const ASSETS = [
 // que si una falla (ej. sin internet en la instalación) no tumbe la instalación completa.
 const CDN_ASSETS = [
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js',
-  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
   'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
   'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js',
   'https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js',
