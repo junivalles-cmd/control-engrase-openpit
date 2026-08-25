@@ -593,11 +593,11 @@ async function refreshLocalNotifications() {
 }
 
 const PERMISSIONS = {
-  ADMINISTRADOR: ['dashboard','equipos','plan','turno','registrar','horometros','anomalias','lubricantes','historial','reportes','usuarios','config','ayuda'],
-  PLANIFICADOR: ['dashboard','equipos','plan','turno','historial','reportes','horometros','ayuda'],
-  SUPERVISOR: ['dashboard','equipos','turno','anomalias','historial','usuarios','ayuda'],
+  ADMINISTRADOR: ['dashboard','equipos','plan','matriz','turno','registrar','horometros','anomalias','lubricantes','historial','reportes','usuarios','config','ayuda'],
+  PLANIFICADOR: ['dashboard','equipos','plan','matriz','turno','historial','reportes','horometros','ayuda'],
+  SUPERVISOR: ['dashboard','equipos','matriz','turno','anomalias','historial','usuarios','ayuda'],
   LUBRICADOR: ['turno','anomalias','historial','ayuda'],
-  VISOR: ['dashboard','historial','reportes','ayuda']
+  VISOR: ['dashboard','matriz','historial','reportes','ayuda']
 };
 
 /* ---------- utilidades ---------- */
@@ -1169,6 +1169,7 @@ const MENU = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
   { id: 'equipos', label: 'Equipos', icon: 'truck' },
   { id: 'plan', label: 'Plan de Engrase', icon: 'list' },
+  { id: 'matriz', label: 'Matriz Semanal', icon: 'grid' },
   { id: 'turno', label: 'Engrase del Turno', icon: 'clock' },
   { id: 'registrar', label: 'Registrar Engrase', icon: 'check' },
   { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge' },
@@ -1273,6 +1274,7 @@ function navigate(route) {
   const renderers = {
     dashboard: renderDashboard, equipos: renderEquipos, plan: renderPlan,
     turno: renderTurno, registrar: renderRegistrar, horometros: renderHorometros,
+    matriz: renderMatrizSemanal,
     anomalias: renderAnomalias, lubricantes: renderLubricantes, historial: renderHistorial,
     reportes: renderReportes, usuarios: renderUsuarios, config: renderConfig, ayuda: renderAyuda
   };
@@ -2151,7 +2153,8 @@ async function renderPlan() {
 
   c.innerHTML = `
     <div class="toolbar">
-      <button class="btn btn-accent" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
+      <button class="btn btn-accent" id="plan-matrix">${ic("grid")}Ver matriz semanal</button>
+      <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
       <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
       ${canEdit ? `<button class="btn" id="pts-import">${ic("upload")}Importar puntos de engrase desde Excel</button>` : ''}
       ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
@@ -2199,6 +2202,7 @@ async function renderPlan() {
     });
   }
 
+  $('#plan-matrix').addEventListener('click', () => navigate('matriz'));
   $('#plan-print-week').addEventListener('click', () => printGreasePlan('semana', equipos, plans, types));
   $('#plan-print-month').addEventListener('click', () => printGreasePlan('mes', equipos, plans, types));
 
@@ -2876,6 +2880,195 @@ function openPointForm(planId, pointId, lubricants) {
         openPlanForm(equipmentId, planId, lubricants);
       }
     });
+  });
+}
+
+/* ============================================================
+   MATRIZ SEMANAL — vista tipo tabla: equipos en filas, días en columnas.
+   Replica el formato que se usa en papel: verde = REALIZADO, naranja =
+   programado pero pendiente, blanco = no le toca ese día.
+   ============================================================ */
+async function renderMatrizSemanal() {
+  const c = $('#app-content');
+  const equipos = await DB.allActive('equipment');
+  const plans = await DB.allActive('lubrication_plans');
+  const records = await DB.allActive('lubrication_records');
+  const types = await DB.allActive('equipment_types');
+  const locations = await DB.allActive('locations');
+
+  // Semana visible (se puede navegar hacia atrás/adelante)
+  if (!App.matrizOffset) App.matrizOffset = 0;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const lunes = new Date(hoy);
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + (App.matrizOffset * 7));
+  const dias = [];
+  for (let i = 0; i < 6; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  const finSemana = new Date(dias[5]); finSemana.setHours(23, 59, 59, 999);
+
+  const filtroTurno = App.matrizTurno || '';
+  const filtroTipo = App.matrizTipo || '';
+  const filtroUbic = App.matrizUbic || '';
+
+  let visibles = equipos.filter(e => {
+    if (filtroTurno && e.shiftId !== filtroTurno) return false;
+    if (filtroTipo && e.typeId !== filtroTipo) return false;
+    if (filtroUbic && e.locationId !== filtroUbic) return false;
+    return true;
+  });
+  // Solo equipos con plan por día/turno (los que tienen días asignados)
+  visibles = visibles.filter(e => {
+    const p = plans.find(pl => pl.equipmentId === e.id);
+    return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
+  }).sort((a, b) => (a.shiftId || '').localeCompare(b.shiftId || '') || a.code.localeCompare(b.code));
+
+  function estadoCelda(eq, fecha) {
+    const plan = plans.find(p => p.equipmentId === eq.id);
+    if (!plan) return { tipo: 'vacio' };
+    const nombreDia = WEEKDAY_NAMES[fecha.getDay()];
+    if (!(plan.assignedDays || []).includes(nombreDia)) return { tipo: 'vacio' };
+
+    const hecho = records.find(r => r.equipmentId === eq.id &&
+      new Date(r.date).toDateString() === fecha.toDateString());
+    if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
+    if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
+    return { tipo: 'pendiente' };
+  }
+
+  const tablaTurno = (titulo, lista) => {
+    if (!lista.length) return '';
+    return `
+      <div class="matriz-wrap">
+        <table class="matriz">
+          <thead>
+            <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}</th></tr>
+            <tr>
+              <th class="matriz-eq">Equipo / No.</th>
+              ${dias.map(d => `<th>${WEEKDAY_NAMES[d.getDay()]}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${lista.map(eq => `
+              <tr>
+                <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
+                ${dias.map(d => {
+                  const s = estadoCelda(eq, d);
+                  if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
+                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Programado, sin registrar"></td>`;
+                  if (s.tipo === 'futuro') return `<td class="celda-futuro" title="Programado para este día"></td>`;
+                  return '<td></td>';
+                }).join('')}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  };
+
+  const delDia = visibles.filter(e => e.shiftId === 'shift_dia');
+  const deNoche = visibles.filter(e => e.shiftId === 'shift_noche');
+
+  // Conteos de la semana visible
+  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo !== 'vacio').length, 0);
+  const hechas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === 'hecho').length, 0);
+  const pendientes = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === 'pendiente').length, 0);
+  const pct = totalCeldas ? Math.round((hechas / totalCeldas) * 100) : 0;
+
+  c.innerHTML = `
+    <div class="toolbar">
+      <button class="btn btn-sm" id="mtz-prev">← Semana anterior</button>
+      <span class="matriz-rango">${dias[0].getDate()}/${dias[0].getMonth() + 1} — ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}${App.matrizOffset === 0 ? ' (semana actual)' : ''}</span>
+      <button class="btn btn-sm" id="mtz-next">Semana siguiente →</button>
+      ${App.matrizOffset !== 0 ? `<button class="btn btn-sm" id="mtz-hoy">Ir a hoy</button>` : ''}
+      <button class="btn btn-sm btn-accent" id="mtz-print">${ic("print")}Imprimir</button>
+      <button class="btn btn-sm" id="mtz-csv">${ic("download")}Excel/CSV</button>
+    </div>
+
+    <div class="toolbar">
+      <label class="filter-label">Turno
+        <select id="mtz-turno" class="input input-sm">
+          <option value="">Ambos</option>
+          <option value="shift_dia" ${filtroTurno === 'shift_dia' ? 'selected' : ''}>Día</option>
+          <option value="shift_noche" ${filtroTurno === 'shift_noche' ? 'selected' : ''}>Noche</option>
+        </select>
+      </label>
+      <label class="filter-label">Categoría
+        <select id="mtz-tipo" class="input input-sm">
+          <option value="">Todas</option>
+          ${types.map(t => `<option value="${t.id}" ${filtroTipo === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="filter-label">Ubicación
+        <select id="mtz-ubic" class="input input-sm">
+          <option value="">Todas</option>
+          ${locations.map(l => `<option value="${l.id}" ${filtroUbic === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+
+    <div class="kpi-grid">
+      ${kpiCard('PROGRAMADOS', totalCeldas, 'neutral')}
+      ${kpiCard('REALIZADOS', hechas, 'green')}
+      ${kpiCard('PENDIENTES', pendientes, 'amber')}
+      ${kpiCard('CUMPLIMIENTO %', pct, pct >= App.generalSettings.complianceTarget ? 'green' : 'amber')}
+    </div>
+
+    ${visibles.length ? `
+      ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
+      ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
+      <div class="color-legend">
+        <span class="color-legend-item"><span class="dot" style="background:var(--green)"></span>Realizado</span>
+        <span class="color-legend-item"><span class="dot" style="background:#F2B78C"></span>Programado, sin registrar</span>
+        <span class="color-legend-item"><span class="dot" style="background:var(--border)"></span>No le toca ese día</span>
+      </div>`
+    : `<div class="panel"><div class="empty-state">No hay equipos con plan por "Día y turno de la semana" que coincidan con estos filtros.<br/>Esta vista solo muestra equipos con días asignados — configúralos en Plan de Engrase.</div></div>`}
+  `;
+
+  $('#mtz-prev').addEventListener('click', () => { App.matrizOffset--; renderMatrizSemanal(); });
+  $('#mtz-next').addEventListener('click', () => { App.matrizOffset++; renderMatrizSemanal(); });
+  $('#mtz-hoy')?.addEventListener('click', () => { App.matrizOffset = 0; renderMatrizSemanal(); });
+  $('#mtz-turno').addEventListener('change', e => { App.matrizTurno = e.target.value; renderMatrizSemanal(); });
+  $('#mtz-tipo').addEventListener('change', e => { App.matrizTipo = e.target.value; renderMatrizSemanal(); });
+  $('#mtz-ubic').addEventListener('change', e => { App.matrizUbic = e.target.value; renderMatrizSemanal(); });
+
+  $('#mtz-print').addEventListener('click', () => {
+    const win = window.open('', '_blank');
+    if (!win) { alert('El navegador bloqueó la ventana de impresión. Permite las ventanas emergentes e intenta de nuevo.'); return; }
+    const tablas = (delDia.length ? tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia) : '') +
+                   (deNoche.length ? tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche) : '');
+    win.document.write(`<!DOCTYPE html><html><head><title>Plan de engrase semanal</title><style>
+      body{font-family:Arial,sans-serif;margin:14px;color:#111;font-size:11px}
+      h1{font-size:15px;margin:0 0 2px}
+      .sub{color:#555;font-size:10px;margin-bottom:10px}
+      table.matriz{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
+      table.matriz th,table.matriz td{border:1px solid #333;padding:4px 5px;text-align:center;font-size:10px}
+      .matriz-titulo{background:#1F3864;color:#fff;font-size:12px;padding:6px}
+      table.matriz thead tr:nth-child(2) th{background:#fff;font-weight:bold}
+      .matriz-eq{text-align:left;font-weight:bold;white-space:nowrap}
+      .matriz-fecha{font-weight:normal;font-size:8.5px;color:#666}
+      .celda-hecho{background:#00B050;color:#fff;font-weight:bold;font-style:italic}
+      .celda-pendiente,.celda-futuro{background:#F4B183}
+      .matriz-wrap{overflow:visible}
+    </style></head><body>
+      <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</h1>
+      <div class="sub">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento: ${pct}% (${hechas} de ${totalCeldas})</div>
+      ${tablas}
+    </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 400);
+  });
+
+  $('#mtz-csv').addEventListener('click', () => {
+    const rows = [['Turno', 'Equipo', ...dias.map(d => `${WEEKDAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`)]];
+    visibles.forEach(eq => {
+      rows.push([
+        eq.shiftId === 'shift_dia' ? 'Día' : 'Noche',
+        `${eq.code}${eq.shortCode ? ' / ' + eq.shortCode : ''}`,
+        ...dias.map(d => {
+          const s = estadoCelda(eq, d);
+          return s.tipo === 'hecho' ? 'REALIZADO' : (s.tipo === 'vacio' ? '' : 'PENDIENTE');
+        })
+      ]);
+    });
+    downloadCSV(rows, `matriz_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}.csv`);
   });
 }
 
