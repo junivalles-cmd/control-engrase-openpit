@@ -4776,51 +4776,131 @@ const EQUIPMENT_FAMILIES = [
 ];
 
 function familySilhouetteSvg(kind) {
+  // Ilustraciones propias, dibujadas para este proyecto. No se usan fotos de
+  // fabricantes (Caterpillar, Komatsu…) ni imágenes de internet porque son
+  // propiedad de sus dueños. Si el Administrador sube una foto real del equipo
+  // desde Ayuda → Editar familia, esa foto reemplaza a este dibujo.
+  const T = 'var(--text-dim)';   // estructura
+  const A = 'var(--accent)';     // implemento / parte activa
+  const G = 'var(--green)';      // zona delantera
+  const R = 'var(--red)';        // zona trasera
+
+  // Oruga con rodillos (se reutiliza en excavadora y tractor)
+  const oruga = (x, y, w) => `
+    <rect x="${x}" y="${y}" width="${w}" height="17" rx="8.5" fill="none" stroke="${T}" stroke-width="3"/>
+    <circle cx="${x + 13}" cy="${y + 8.5}" r="6.5" fill="none" stroke="${T}" stroke-width="2.5"/>
+    <circle cx="${x + w - 13}" cy="${y + 8.5}" r="6.5" fill="none" stroke="${T}" stroke-width="2.5"/>
+    ${[0.3, 0.45, 0.6, 0.75].map(p => `<circle cx="${x + w * p}" cy="${y + 12}" r="3" fill="none" stroke="${T}" stroke-width="2"/>`).join('')}`;
+
+  // Rueda con llanta y rin
+  const rueda = (cx, cy, r) => `
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${T}" stroke-width="3.5"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 0.45}" fill="none" stroke="${T}" stroke-width="2"/>`;
+
   const svgs = {
-    articulado: `<svg viewBox="0 0 300 120" class="family-svg">
-      <rect x="10" y="55" width="70" height="35" rx="6" fill="none" stroke="var(--green)" stroke-width="3"/>
-      <circle cx="30" cy="95" r="12" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="70" cy="95" r="12" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="150" cy="70" r="10" fill="var(--accent)"/>
-      <rect x="160" y="45" width="130" height="45" rx="6" fill="none" stroke="var(--red)" stroke-width="3"/>
-      <circle cx="200" cy="95" r="12" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="250" cy="95" r="12" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <line x1="80" y1="70" x2="140" y2="70" stroke="var(--text-dim)" stroke-width="3"/>
+    articulado: `<svg viewBox="0 0 320 130" class="family-svg">
+      <!-- tractor delantero: cabina + capó -->
+      <path d="M28 78 L28 52 L52 52 L58 34 L92 34 L92 78 Z" fill="none" stroke="${G}" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M62 38 L88 38 L88 52 L62 52 Z" fill="none" stroke="${G}" stroke-width="2"/>
+      <rect x="14" y="58" width="16" height="16" rx="3" fill="none" stroke="${G}" stroke-width="2.5"/>
+      ${rueda(46, 92, 15)}
+      <!-- articulación central: el punto de engrase más importante -->
+      <line x1="92" y1="66" x2="128" y2="66" stroke="${T}" stroke-width="5"/>
+      <circle cx="110" cy="66" r="9" fill="${A}"/>
+      <circle cx="110" cy="66" r="14" fill="none" stroke="${A}" stroke-width="2" opacity=".5"/>
+      <!-- tolva basculante -->
+      <path d="M128 74 L136 40 L296 40 L302 74 Z" fill="none" stroke="${R}" stroke-width="3" stroke-linejoin="round"/>
+      <line x1="140" y1="52" x2="296" y2="52" stroke="${R}" stroke-width="1.5" opacity=".6"/>
+      <rect x="128" y="74" width="174" height="10" rx="3" fill="none" stroke="${T}" stroke-width="2.5"/>
+      ${rueda(172, 96, 15)}
+      ${rueda(215, 96, 15)}
+      ${rueda(272, 96, 15)}
+      <!-- pistón de volteo -->
+      <line x1="150" y1="74" x2="176" y2="58" stroke="${A}" stroke-width="3"/>
     </svg>`,
-    excavadora: `<svg viewBox="0 0 300 130" class="family-svg">
-      <rect x="20" y="80" width="180" height="20" rx="4" fill="none" stroke="var(--green)" stroke-width="3"/>
-      <circle cx="45" cy="100" r="10" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="175" cy="100" r="10" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <rect x="60" y="45" width="60" height="35" rx="6" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="120" cy="55" r="8" fill="var(--accent)"/>
-      <line x1="120" y1="55" x2="220" y2="35" stroke="var(--accent)" stroke-width="5"/>
-      <line x1="220" y1="35" x2="270" y2="70" stroke="var(--accent)" stroke-width="5"/>
-      <path d="M270 70 L290 65 L285 90 L265 88 Z" fill="none" stroke="var(--red)" stroke-width="4"/>
+
+    excavadora: `<svg viewBox="0 0 320 140" class="family-svg">
+      ${oruga(24, 104, 168)}
+      <!-- carro superior giratorio -->
+      <rect x="46" y="92" width="126" height="12" rx="4" fill="none" stroke="${T}" stroke-width="2.5"/>
+      <circle cx="108" cy="92" r="7" fill="none" stroke="${A}" stroke-width="2.5"/>
+      <!-- cabina y contrapeso -->
+      <path d="M52 92 L52 56 L74 56 L82 42 L108 42 L108 92 Z" fill="none" stroke="${G}" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M86 46 L104 46 L104 58 L86 58 Z" fill="none" stroke="${G}" stroke-width="2"/>
+      <path d="M108 92 L108 58 L166 58 L172 78 L172 92 Z" fill="none" stroke="${T}" stroke-width="2.5" stroke-linejoin="round"/>
+      <!-- pluma -->
+      <line x1="112" y1="66" x2="196" y2="26" stroke="${A}" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="112" cy="66" r="6" fill="${A}"/>
+      <!-- brazo -->
+      <line x1="196" y1="26" x2="252" y2="80" stroke="${A}" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="196" cy="26" r="5.5" fill="${A}"/>
+      <!-- cilindros hidráulicos -->
+      <line x1="128" y1="76" x2="168" y2="44" stroke="${T}" stroke-width="4"/>
+      <line x1="186" y1="36" x2="228" y2="44" stroke="${T}" stroke-width="4"/>
+      <!-- cucharón -->
+      <path d="M252 80 L246 104 L282 112 L292 88 L272 76 Z" fill="none" stroke="${R}" stroke-width="3.5" stroke-linejoin="round"/>
+      <circle cx="252" cy="80" r="5.5" fill="${A}"/>
+      ${[252, 262, 272, 282].map(x => `<line x1="${x - 4}" y1="106" x2="${x - 6}" y2="116" stroke="${R}" stroke-width="2.5"/>`).join('')}
     </svg>`,
-    tractor: `<svg viewBox="0 0 300 120" class="family-svg">
-      <rect x="60" y="65" width="170" height="18" rx="4" fill="none" stroke="var(--accent)" stroke-width="3"/>
-      <circle cx="85" cy="83" r="9" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="205" cy="83" r="9" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <rect x="110" y="35" width="55" height="30" rx="5" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <path d="M20 90 L20 55 L60 65 L60 90 Z" fill="none" stroke="var(--green)" stroke-width="4"/>
-      <line x1="230" y1="70" x2="270" y2="55" stroke="var(--red)" stroke-width="4"/>
-      <line x1="270" y1="55" x2="270" y2="85" stroke="var(--red)" stroke-width="4"/>
+
+    tractor: `<svg viewBox="0 0 320 130" class="family-svg">
+      ${oruga(66, 92, 190)}
+      <!-- cuerpo y cabina -->
+      <path d="M104 92 L104 54 L134 54 L142 34 L192 34 L200 54 L226 54 L226 92 Z" fill="none" stroke="${T}" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M146 38 L188 38 L192 52 L146 52 Z" fill="none" stroke="${T}" stroke-width="2"/>
+      <!-- brazos de empuje de la cuchilla -->
+      <line x1="104" y1="80" x2="58" y2="86" stroke="${A}" stroke-width="4"/>
+      <circle cx="104" cy="80" r="5.5" fill="${A}"/>
+      <!-- cilindros de inclinación -->
+      <line x1="112" y1="60" x2="66" y2="52" stroke="${A}" stroke-width="3.5"/>
+      <circle cx="66" cy="52" r="4.5" fill="${A}"/>
+      <!-- cuchilla frontal -->
+      <path d="M52 26 L52 100 L36 104 L34 30 Z" fill="none" stroke="${G}" stroke-width="3.5" stroke-linejoin="round"/>
+      <line x1="52" y1="60" x2="36" y2="62" stroke="${G}" stroke-width="2" opacity=".6"/>
+      <!-- ripper trasero -->
+      <line x1="226" y1="72" x2="268" y2="78" stroke="${R}" stroke-width="4"/>
+      <path d="M268 78 L276 78 L282 112 L272 112 Z" fill="none" stroke="${R}" stroke-width="3" stroke-linejoin="round"/>
+      <circle cx="226" cy="72" r="5" fill="${A}"/>
     </svg>`,
-    volquete: `<svg viewBox="0 0 300 120" class="family-svg">
-      <rect x="20" y="45" width="55" height="45" rx="6" fill="none" stroke="var(--green)" stroke-width="3"/>
-      <rect x="85" y="35" width="195" height="55" rx="6" fill="none" stroke="var(--red)" stroke-width="3"/>
-      <circle cx="45" cy="95" r="11" fill="none" stroke="var(--accent)" stroke-width="3"/>
-      <circle cx="110" cy="95" r="11" fill="none" stroke="var(--accent)" stroke-width="3"/>
-      <circle cx="150" cy="95" r="11" fill="none" stroke="var(--accent)" stroke-width="3"/>
-      <circle cx="230" cy="95" r="11" fill="none" stroke="var(--accent)" stroke-width="3"/>
+
+    volquete: `<svg viewBox="0 0 320 130" class="family-svg">
+      <!-- chasis -->
+      <rect x="30" y="76" width="266" height="11" rx="3" fill="none" stroke="${T}" stroke-width="2.5"/>
+      <!-- cabina -->
+      <path d="M30 76 L30 40 L58 40 L68 22 L96 22 L96 76 Z" fill="none" stroke="${G}" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M70 26 L92 26 L92 42 L70 42 Z" fill="none" stroke="${G}" stroke-width="2"/>
+      <!-- tolva con pines -->
+      <path d="M104 76 L112 30 L292 30 L296 76 Z" fill="none" stroke="${R}" stroke-width="3" stroke-linejoin="round"/>
+      <line x1="116" y1="46" x2="292" y2="46" stroke="${R}" stroke-width="1.5" opacity=".55"/>
+      <circle cx="292" cy="74" r="7" fill="${A}"/>
+      <circle cx="292" cy="74" r="11" fill="none" stroke="${A}" stroke-width="2" opacity=".5"/>
+      <!-- cilindro de volteo -->
+      <line x1="140" y1="76" x2="176" y2="52" stroke="${A}" stroke-width="4"/>
+      <circle cx="140" cy="76" r="5" fill="${A}"/>
+      ${rueda(70, 92, 16)}
+      ${rueda(214, 92, 16)}
+      ${rueda(258, 92, 16)}
     </svg>`,
-    generico: `<svg viewBox="0 0 300 120" class="family-svg">
-      <rect x="70" y="55" width="150" height="35" rx="6" fill="none" stroke="var(--accent)" stroke-width="3"/>
-      <circle cx="100" cy="95" r="11" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <circle cx="190" cy="95" r="11" fill="none" stroke="var(--text-dim)" stroke-width="3"/>
-      <path d="M20 90 L20 60 L70 70 L70 90 Z" fill="none" stroke="var(--green)" stroke-width="4"/>
-      <line x1="220" y1="60" x2="270" y2="45" stroke="var(--red)" stroke-width="4"/>
-      <line x1="270" y1="45" x2="270" y2="80" stroke="var(--red)" stroke-width="4"/>
+
+    generico: `<svg viewBox="0 0 320 130" class="family-svg">
+      <!-- motoniveladora: chasis largo articulado -->
+      <path d="M196 68 L196 40 L222 40 L230 24 L266 24 L266 68 Z" fill="none" stroke="${T}" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M234 28 L262 28 L262 40 L234 40 Z" fill="none" stroke="${T}" stroke-width="2"/>
+      <line x1="40" y1="62" x2="196" y2="62" stroke="${T}" stroke-width="5"/>
+      <!-- articulación central -->
+      <circle cx="150" cy="62" r="8" fill="${A}"/>
+      <circle cx="150" cy="62" r="12.5" fill="none" stroke="${A}" stroke-width="2" opacity=".5"/>
+      <!-- círculo y hoja vertedera -->
+      <ellipse cx="112" cy="74" rx="30" ry="9" fill="none" stroke="${A}" stroke-width="3"/>
+      <path d="M84 82 L142 96 L146 82 L88 68 Z" fill="none" stroke="${G}" stroke-width="3.5" stroke-linejoin="round"/>
+      <!-- cilindros de la hoja -->
+      <line x1="96" y1="62" x2="88" y2="76" stroke="${A}" stroke-width="3"/>
+      <line x1="132" y1="62" x2="140" y2="80" stroke="${A}" stroke-width="3"/>
+      <!-- escarificador delantero -->
+      <line x1="40" y1="62" x2="40" y2="88" stroke="${R}" stroke-width="3"/>
+      ${rueda(48, 92, 14)}
+      ${rueda(214, 92, 15)}
+      ${rueda(258, 92, 15)}
     </svg>`
   };
   return svgs[kind] || svgs.generico;
@@ -4858,7 +4938,9 @@ function familyCardHTML(fam, canEdit) {
         ${canEdit ? `<button class="btn btn-sm family-edit-btn" data-id="${fam.id}">${ic("edit")}Editar</button>` : ''}
       </div>
       <div class="family-body">
-        <div class="family-diagram">${familySilhouetteSvg(fam.svg)}</div>
+        <div class="family-diagram">${fam.photo
+          ? `<img src="${fam.photo}" class="family-photo photo-thumb" data-full="${fam.photo}" data-caption="${esc(fam.name)}" alt="${esc(fam.name)}"/>`
+          : familySilhouetteSvg(fam.svg)}</div>
         <div class="family-zones">
           ${fam.zones.map(z => `
             <div class="family-zone">
@@ -4911,6 +4993,25 @@ function openFamilyEditForm(help, existing) {
     return `
       <form id="family-form">
         <label>Nombre de la familia<input required id="fam-name" value="${esc(fam.name)}"/></label>
+
+        <div class="fam-img-box">
+          <label>Dibujo de referencia
+            <select id="fam-svg">
+              ${[['articulado','Camión articulado'],['excavadora','Excavadora de orugas'],['tractor','Tractor de orugas'],['volquete','Camión volquete'],['generico','Motoniveladora / Cargador']]
+                .map(([v,l]) => `<option value="${v}" ${fam.svg === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </label>
+          <div class="fam-img-preview" id="fam-preview">
+            ${fam.photo ? `<img src="${fam.photo}" alt="Foto del equipo"/>` : familySilhouetteSvg(fam.svg)}
+          </div>
+          <div class="dim" style="font-size:12px; margin-bottom:8px">
+            Puedes usar una <b>foto real de tu equipo</b> en vez del dibujo — se reconoce mejor en campo.
+            No uses fotos de catálogo de fabricantes (Caterpillar, Komatsu…): son propiedad de la marca.
+          </div>
+          ${photoFieldHTML()}
+          ${fam.photo ? `<button type="button" class="btn btn-sm btn-danger" id="fam-quitar-foto">${ic("trash")}Quitar la foto y volver al dibujo</button>` : ''}
+        </div>
+
         <div id="fam-zones-area" style="margin-top:14px"></div>
         <button type="button" class="btn btn-sm" id="fam-add-zone">${ic("plus")}Agregar zona</button>
         <div class="modal-actions">
@@ -4957,6 +5058,29 @@ function openFamilyEditForm(help, existing) {
   }
 
   openModal(isNew ? 'Nueva familia de equipo' : `Editar · ${esc(fam.name)}`, bodyHTML());
+
+  // ── Imagen de la familia: dibujo de referencia o foto propia ──
+  let fotoQuitada = false;
+  const cajaImagen = $('.fam-img-box');
+  wirePhotoField(cajaImagen);
+
+  function refrescarPreview() {
+    const prev = $('#fam-preview');
+    if (!prev) return;
+    const subidas = getPhotoFieldPhotos(cajaImagen);
+    if (subidas.length) prev.innerHTML = `<img src="${subidas[0]}" alt="Foto del equipo"/>`;
+    else if (fam.photo && !fotoQuitada) prev.innerHTML = `<img src="${fam.photo}" alt="Foto del equipo"/>`;
+    else prev.innerHTML = familySilhouetteSvg($('#fam-svg').value);
+  }
+
+  $('#fam-svg')?.addEventListener('change', refrescarPreview);
+  cajaImagen?.addEventListener('click', () => setTimeout(refrescarPreview, 400)); // tras elegir foto
+  $('#fam-quitar-foto')?.addEventListener('click', () => {
+    fotoQuitada = true;
+    fam.photo = null;
+    $('#fam-quitar-foto').remove();
+    refrescarPreview();
+  });
 
   function renderZones() {
     $('#fam-zones-area').innerHTML = zonesHTML();
@@ -5012,6 +5136,10 @@ function openFamilyEditForm(help, existing) {
   $('#family-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     fam.name = $('#fam-name').value.trim() || 'Sin nombre';
+    fam.svg = $('#fam-svg')?.value || fam.svg || 'generico';
+    const fotoSubida = getPhotoFieldPhotos(cajaImagen)[0];
+    if (fotoSubida) fam.photo = fotoSubida;
+    else if (fotoQuitada) fam.photo = null;
 
     const zoneEls = $$('.fam-zone-editor', $('#fam-zones-area'));
     for (let zi = 0; zi < zoneEls.length; zi++) {
