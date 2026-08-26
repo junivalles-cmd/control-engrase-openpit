@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v8';
+const CACHE = 'engrase-openpit-v10';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   './favicon.png', './apple-touch-icon.png',
@@ -64,6 +64,61 @@ self.addEventListener('fetch', (e) => {
         return networkResp;
       }).catch(() => cached);
       return cached || fetchPromise;
+    })
+  );
+});
+
+/* ============================================================
+   NOTIFICACIONES PUSH (navegador / PWA instalada)
+   El Service Worker sigue vivo aunque la pestaña esté cerrada, así que es él
+   quien recibe el aviso del servidor y muestra la notificación del sistema.
+   Sin este bloque, las push solo llegaban con la app abierta.
+   ============================================================ */
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    // Algunos servicios mandan texto plano en vez de JSON
+    data = { title: 'Control de Engrase', body: event.data ? event.data.text() : '' };
+  }
+
+  // OneSignal y otros servicios anidan el contenido de formas distintas
+  const titulo = data.title || data.headings?.en || data.notification?.title || 'Control de Engrase';
+  const cuerpo = data.body || data.contents?.en || data.notification?.body || 'Tienes un aviso nuevo';
+  const datos = data.data || data.custom?.a || {};
+
+  event.waitUntil(
+    self.registration.showNotification(titulo, {
+      body: cuerpo,
+      icon: './icon-192.png',
+      badge: './icon-96.png',
+      tag: datos.type || 'engrase',   // agrupa avisos del mismo tipo en vez de apilarlos
+      renotify: true,
+      requireInteraction: datos.type === 'anomaly', // las anomalías se quedan hasta que las vean
+      data: datos,
+      vibrate: [200, 100, 200]
+    })
+  );
+});
+
+// Al tocar la notificación: si la app ya está abierta la trae al frente,
+// y si no, la abre — en ambos casos llevando a la pantalla que corresponde.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const tipo = (event.notification.data && event.notification.data.type) || '';
+  const destino = tipo === 'anomaly' ? './#ruta=anomalias' : './';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((lista) => {
+      for (const cliente of lista) {
+        if ('focus' in cliente) {
+          cliente.postMessage({ tipo: 'notificacion-abierta', destino: tipo });
+          return cliente.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(destino);
     })
   );
 });

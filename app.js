@@ -387,9 +387,108 @@ async function openQrScanner() {
 }
 
 
-const NOTIF_ID_DAILY_TASKS = 1001;
-const NOTIF_ID_COMPLIANCE = 1002;
-const NOTIF_ID_WEEKDAY_PLAN = 1003;
+const NOTIF_ID_DAILY_TASKS = 1001;   // aviso al lubricador de lo que le toca hoy
+const NOTIF_ID_COMPLIANCE = 1002;    // resumen de cumplimiento para jefaturas
+const NOTIF_ID_WEEKDAY_PLAN = 1003;  // equipos con plan por día/turno
+const NOTIF_ID_VENCIDOS = 1004;      // equipos con el engrase VENCIDO
+const NOTIF_ID_POR_ENGRASAR = 1005;  // equipos que toca engrasar hoy
+const NOTIF_ID_VENCIDOS_REC = 1006;    // recordatorio de vencidos a media jornada
+const NOTIF_ID_POR_ENGRASAR_REC = 1007; // recordatorio de lo que falta por engrasar
+const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (lunes)
+const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
+
+/* Configuración por defecto de las notificaciones. El Administrador puede cambiar
+   cada una por separado desde Configuración: activarla o apagarla, a qué hora suena,
+   y qué roles la reciben. */
+const NOTIF_DEFAULTS = {
+  id: 'notifications',
+  enabled: true,
+  // Regla general: nadie recibe avisos fuera de su turno de trabajo. Es especialmente
+  // importante porque las cuadrillas COMPARTEN el teléfono — el aviso debe ser para
+  // quien está trabajando en ese momento, no para quien está descansando.
+  soloEnTurno: true,
+  minutosAntesDelTurno: 15,   // margen para avisar justo antes de entrar
+  minutosDespuesDelTurno: 30, // margen para cerrar pendientes al salir
+
+  // 1) Engrases VENCIDOS
+  vencidos: { enabled: true, hour: 7, minute: 0, roles: ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'], soloSiHay: true,
+              recordatorio: true, recordatorioHoras: 6, escalarDias: 3, escalarA: ['ADMINISTRADOR'] },
+  // 2) Equipos POR ENGRASAR hoy
+  porEngrasar: { enabled: true, hour: 6, minute: 0, roles: ['LUBRICADOR', 'SUPERVISOR'], soloSiHay: true,
+                 recordatorio: true, recordatorioHoras: 4 },
+  // 3) Aviso INMEDIATO cada vez que se registra un engrase
+  engraseRealizado: { enabled: false, roles: ['SUPERVISOR'], soloCriticos: false },
+  // 4) Resumen de cumplimiento
+  cumplimiento: { enabled: true, hour: 7, minute: 30, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
+  // 5) Anomalías nuevas (inmediata, se agrupan si llegan varias seguidas)
+  anomalias: { enabled: true, roles: ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'], agruparMinutos: 30 },
+  // 6) Resumen SEMANAL (lunes)
+  resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] }
+};
+
+/* ---------- ¿Está esta persona dentro de su turno de trabajo? ----------
+   Con teléfonos compartidos entre cuadrillas, esto es clave: el aviso debe ser para
+   quien tiene la sesión abierta Y está trabajando, no para quien ya se fue a casa. */
+function dentroDeSuTurno(settings, fecha) {
+  if (!settings.soloEnTurno) return true;
+  const u = App.currentUser;
+  if (!u) return false;
+  // Jefaturas y oficina no tienen turno rotativo: reciben en horario de oficina
+  if (u.role !== 'LUBRICADOR') return true;
+
+  const ahora = fecha || new Date();
+  const min = ahora.getHours() * 60 + ahora.getMinutes();
+  const { shiftDayStart, shiftNightStart } = App.generalSettings;
+  const antes = settings.minutosAntesDelTurno ?? 15;
+  const despues = settings.minutosDespuesDelTurno ?? 30;
+
+  // El turno del usuario se toma del que tenga asignado; si no, del horario actual
+  const turno = u.shiftId || currentShiftId();
+  if (turno === 'shift_dia') {
+    const ini = shiftDayStart * 60 - antes;
+    const fin = shiftNightStart * 60 + despues;
+    return min >= ini && min <= fin;
+  }
+  // Turno noche: cruza la medianoche
+  const ini = shiftNightStart * 60 - antes;
+  const fin = shiftDayStart * 60 + despues;
+  return min >= ini || min <= fin;
+}
+
+/* Devuelve la hora a la que conviene mandar un aviso a esta persona: si la hora
+   configurada cae fuera de su turno, lo corre al inicio de su turno. */
+function horaAjustadaAlTurno(settings, hour, minute) {
+  if (!settings.soloEnTurno || !App.currentUser || App.currentUser.role !== 'LUBRICADOR') {
+    return { hour, minute };
+  }
+  const turno = App.currentUser.shiftId || currentShiftId();
+  const { shiftDayStart, shiftNightStart } = App.generalSettings;
+  const inicioTurno = turno === 'shift_dia' ? shiftDayStart : shiftNightStart;
+
+  // Ojo: aquí se comprueba contra el turno ESTRICTO (sin los márgenes de entrada y
+  // salida). Esos márgenes existen para que alguien alcance a cerrar pendientes al
+  // salir, pero no tiene sentido PROGRAMAR un aviso nuevo dentro de ellos.
+  const min = hour * 60 + minute;
+  const { shiftDayStart: ini, shiftNightStart: fin } = App.generalSettings;
+  const enTurnoEstricto = turno === 'shift_dia'
+    ? (min >= ini * 60 && min < fin * 60)
+    : (min >= fin * 60 || min < ini * 60);
+
+  if (enTurnoEstricto) return { hour, minute };
+  return { hour: inicioTurno, minute: 0 }; // se corre al arranque de su turno
+}
+
+// Une lo guardado con los valores por defecto, para que si en el futuro agregamos un
+// tipo de aviso nuevo, las configuraciones viejas no se queden sin esa parte.
+function mergeNotifSettings(guardado) {
+  const base = JSON.parse(JSON.stringify(NOTIF_DEFAULTS));
+  if (!guardado) return base;
+  const out = { ...base, ...guardado };
+  ['vencidos', 'porEngrasar', 'engraseRealizado', 'cumplimiento', 'anomalias', 'resumenSemanal'].forEach(k => {
+    out[k] = { ...base[k], ...(guardado[k] || {}) };
+  });
+  return out;
+}
 
 /* ---------- Validación de horómetro (evita errores de digitación) ---------- */
 function validateHourmeterChange(oldValue, newValue) {
@@ -444,9 +543,11 @@ function wirePushListeners() {
       showInAppToast(`${n?.title || 'Aviso'}: ${n?.body || ''}`);
     });
 
-    // Si el usuario toca la notificación (app cerrada o en segundo plano), lo llevamos a Anomalías
-    OneSignal.Notifications.addEventListener('click', () => {
-      if (App.currentUser) navigate('anomalias');
+    // Al tocar la notificación se abre justo lo que anunciaba: si era de UN equipo,
+    // se abre ese equipo listo para registrar; si era de varios, la pantalla que toca.
+    OneSignal.Notifications.addEventListener('click', (e) => {
+      const datos = e?.notification?.additionalData || e?.result?.notification?.additionalData || {};
+      abrirDesdeNotificacion(datos);
     });
 
     // Cuando OneSignal asigna/actualiza el ID de este dispositivo, lo guardamos
@@ -457,23 +558,121 @@ function wirePushListeners() {
   } catch (e) { console.warn('No se pudo inicializar OneSignal', e); }
 }
 
-async function saveOneSignalId(subscriptionId) {
+/* ============================================================
+   IDENTIDAD DEL DISPOSITIVO (teléfonos compartidos por cuadrilla)
+   ------------------------------------------------------------
+   En el pit un mismo teléfono lo usan los 4 lubricadores de una cuadrilla, turnándose
+   con su propio PIN. Por eso las notificaciones NO se registran por persona sino por
+   TELÉFONO: si se registraran por usuario, el mismo aviso llegaría varias veces al
+   mismo aparato y al cambiar de turno el sistema no sabría a quién avisarle.
+
+   Cada teléfono tiene su propio identificador fijo y se le asigna una cuadrilla y un
+   turno desde Configuración. Los avisos se filtran por esa asignación, no por quién
+   tenga la sesión abierta en ese momento.
+   ============================================================ */
+function getDeviceId() {
+  let id = null;
+  try { id = localStorage.getItem('engrase_device_id'); } catch (e) {}
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    try { localStorage.setItem('engrase_device_id', id); } catch (e) {}
+  }
+  return id;
+}
+
+function getDeviceName() {
+  try { return localStorage.getItem('engrase_device_name') || ''; } catch (e) { return ''; }
+}
+function setDeviceName(nombre) {
+  try { localStorage.setItem('engrase_device_name', nombre); } catch (e) {}
+}
+
+// Cuadrilla y turno asignados a ESTE teléfono (no al usuario que tenga la sesión)
+async function getDeviceAssignment() {
+  const reg = await DB.get('push_tokens', getDeviceId()).catch(() => null);
+  return {
+    cuadrillaId: reg?.cuadrillaId || '',
+    shiftId: reg?.shiftId || '',
+    nombre: reg?.deviceName || getDeviceName(),
+    roles: reg?.roles || []
+  };
+}
+
+async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
+  const id = getDeviceId();
+  const actual = await DB.get('push_tokens', id).catch(() => null);
+  if (nombre !== undefined) setDeviceName(nombre);
+  await DB.put('push_tokens', stamp({
+    ...(actual || {}),
+    id,
+    deviceName: nombre !== undefined ? nombre : (actual?.deviceName || ''),
+    cuadrillaId: cuadrillaId !== undefined ? cuadrillaId : (actual?.cuadrillaId || ''),
+    shiftId: shiftId !== undefined ? shiftId : (actual?.shiftId || ''),
+    roles: roles !== undefined ? roles : (actual?.roles || []),
+    token: actual?.token || null,
+    platform: actual?.platform || (window.Capacitor ? 'android' : 'web'),
+    ultimoUsuario: App.currentUser ? App.currentUser.name : (actual?.ultimoUsuario || ''),
+    active: true
+  }, App.currentUser ? App.currentUser.name : 'sistema'));
+  Sync.fullSync();
+}
+
+async function saveOneSignalId(subscriptionId, plataforma) {
   try {
+    // El id incluye la plataforma: así una misma persona puede recibir avisos en la app
+    // del celular Y en el navegador de la computadora, sin que uno pise al otro.
+    const plat = plataforma || (window.Capacitor ? 'android' : 'web');
     await DB.put('push_tokens', stamp({
-      id: `tok_${App.currentUser.id}`, userId: App.currentUser.id, userName: App.currentUser.name,
-      role: App.currentUser.role, token: subscriptionId, platform: 'android', active: true
+      id: `tok_${App.currentUser.id}_${plat}`, userId: App.currentUser.id, userName: App.currentUser.name,
+      role: App.currentUser.role, token: subscriptionId, platform: plat, active: true
     }, App.currentUser.name));
     Sync.fullSync();
   } catch (e) { console.warn('No se pudo guardar el ID de notificaciones push', e); }
 }
 
+/* ---------- Push en NAVEGADOR (sin Capacitor) ----------
+   Usa el SDK web de OneSignal. Funciona en Chrome/Edge de Android y de escritorio,
+   incluso con la pestaña cerrada, porque quien recibe el aviso es el Service Worker.
+   En iPhone solo funciona si el usuario "instala" la web en su pantalla de inicio. */
+async function initWebPush() {
+  if (!ONESIGNAL_APP_ID || window.Capacitor) return; // en la app nativa se usa el plugin
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try {
+    // Carga el SDK web solo cuando hace falta
+    if (!window.OneSignalDeferred) {
+      window.OneSignalDeferred = [];
+      const s = document.createElement('script');
+      s.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+      s.defer = true;
+      document.head.appendChild(s);
+    }
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      await OneSignal.init({ appId: ONESIGNAL_APP_ID, allowLocalhostAsSecureOrigin: true });
+      await OneSignal.Notifications.requestPermission();
+      const id = OneSignal.User?.PushSubscription?.id;
+      if (id && App.currentUser) await saveOneSignalId(id, 'web');
+      OneSignal.User.PushSubscription.addEventListener('change', (e) => {
+        const nuevo = e?.current?.id;
+        if (nuevo && App.currentUser) saveOneSignalId(nuevo, 'web');
+      });
+    });
+  } catch (e) { console.warn('No se pudo activar el push en el navegador', e); }
+}
+
 async function initPushNotifications() {
+  if (!App.currentUser || !ONESIGNAL_APP_ID) return;
+
+  // En el navegador (web o PWA instalada) se usa el SDK web
+  if (!window.Capacitor) { await initWebPush(); return; }
+
+  // En la app instalada de Android se usa el plugin nativo
   const OneSignal = window.plugins?.OneSignal || window.OneSignal;
-  if (!OneSignal || !App.currentUser || !ONESIGNAL_APP_ID) return;
+  if (!OneSignal) return;
   try {
     await OneSignal.Notifications.requestPermission(true);
     const id = OneSignal.User?.pushSubscription?.id;
-    if (id) await saveOneSignalId(id);
+    if (id) await saveOneSignalId(id, 'android');
   } catch (e) { console.warn('Notificaciones push no disponibles en esta plataforma', e); }
 }
 
@@ -513,83 +712,270 @@ async function clearAppBadge() {
   try { await window.Capacitor?.Plugins?.Badge?.clear(); } catch (e) {}
 }
 
+/* ¿Este equipo tiene los avisos pausados? (equipo en taller, por ejemplo) */
+function avisosPausados(equipo) {
+  if (!equipo || !equipo.avisosPausadosHasta) return false;
+  return new Date(equipo.avisosPausadosHasta).getTime() > Date.now();
+}
+
+/* Guarda un registro de cada aviso enviado, para poder responder "¿me llegó o no?" */
+async function registrarAvisoEnviado(tipo, titulo, cuerpo, destinatarios) {
+  try {
+    await DB.put('audit_log', stamp({
+      id: uid('notif'),
+      action: 'AVISO_ENVIADO',
+      detail: `[${tipo}] ${titulo} — ${cuerpo}`.slice(0, 300),
+      user: destinatarios || App.currentUser?.name || 'sistema',
+      createdAt: nowISO(),
+      active: true
+    }, 'sistema'));
+  } catch (e) { /* si falla el registro, no se frena el aviso */ }
+}
+
+/* Abre la pantalla correcta al tocar una notificación. Si el aviso era de un solo
+   equipo, se abre ese equipo directo (listo para engrasar); si era de varios, la
+   pantalla general que corresponda. Antes todo llevaba a Anomalías. */
+async function abrirDesdeNotificacion(datos) {
+  if (!App.currentUser || !datos) return;
+  try {
+    if (datos.equipoId) {
+      const eq = await DB.get('equipment', datos.equipoId);
+      if (eq && eq.active !== false) {
+        if (App.currentUser.role === 'LUBRICADOR') await startLubricadorGreaseFlow(eq.id);
+        else await showEquipmentQrInfo(eq.id);
+        return;
+      }
+    }
+    const permitidas = PERMISSIONS[App.currentUser.role] || [];
+    const destino = datos.ruta && permitidas.includes(datos.ruta) ? datos.ruta : permitidas[0];
+    if (destino) navigate(destino);
+  } catch (e) { console.warn('No se pudo abrir desde la notificación', e); }
+}
+
+/* Conecta el toque de las notificaciones LOCALES (las programadas en el celular) */
+function wireLocalNotificationTaps() {
+  const LN = window.Capacitor?.Plugins?.LocalNotifications;
+  if (!LN || App._localTapsWired) return;
+  App._localTapsWired = true;
+  try {
+    LN.addListener('localNotificationActionPerformed', (ev) => {
+      abrirDesdeNotificacion(ev?.notification?.extra || {});
+    });
+  } catch (e) { /* no disponible en esta plataforma */ }
+}
+
 async function refreshLocalNotifications() {
   const LN = window.Capacitor?.Plugins?.LocalNotifications;
   if (!LN || !App.currentUser) return;
   try {
-    const settings = (await DB.get('settings', 'notifications')) || {
-      enabled: true, lubricadorDiaHour: 6, lubricadorDiaMinute: 0,
-      lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0,
-      weekdayPlanEnabled: false, weekdayPlanHour: 7, weekdayPlanMinute: 30
-    };
-    await LN.cancel({ notifications: [{ id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN }] });
+    const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
+
+    // Se cancelan todas primero: si el admin apaga un aviso, deja de sonar
+    await LN.cancel({ notifications: [
+      { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
+      { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
+      { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
+      { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO }
+    ]});
     if (!settings.enabled) return;
 
     const perm = await LN.checkPermissions();
-    if (perm.display === 'denied') return; // ya lo rechazó antes — no volver a preguntar cada vez que entra
+    if (perm.display === 'denied') return;
     if (perm.display !== 'granted') {
       const req = await LN.requestPermissions();
       if (req.display !== 'granted') return;
     }
 
+    const rol = App.currentUser.role;
     const equipos = await DB.allActive('equipment');
     const statuses = await computeAllStatuses(equipos);
-    const vencidos = statuses.filter(x => x.s.code === 'ROJO').length;
-    const proximos = statuses.filter(x => x.s.code === 'AMARILLO').length;
-    const compliance = equipos.length ? Math.round(((equipos.length - vencidos) / equipos.length) * 100) : 100;
-
-    // Puntos que quedaron sin engrasar en los últimos 7 días (graseras dañadas, etc.)
-    const hace7dias = Date.now() - 7 * 86400000;
-    const pendientesSemana = (await DB.allActive('lubrication_records'))
-      .filter(r => new Date(r.date).getTime() >= hace7dias)
-      .reduce((total, r) => total + (r.details || []).filter(d => !d.done).length, 0);
-
     const notifications = [];
 
-    if (App.currentUser.role === 'LUBRICADOR') {
-      const shift = currentShiftId();
-      const shiftStatuses = statuses.filter(x => x.e.shiftId === shift);
-      const pendientes = shiftStatuses.filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO').length;
-      const h = shift === 'shift_dia' ? settings.lubricadorDiaHour : settings.lubricadorNocheHour;
-      const m = shift === 'shift_dia' ? settings.lubricadorDiaMinute : settings.lubricadorNocheMinute;
+    // Filtro base: turno y cuadrilla del lubricador, y equipos con avisos pausados
+    const relevantes = statuses.filter(x => {
+      if (avisosPausados(x.e)) return false; // equipo en taller: no molesta
+      if (rol !== 'LUBRICADOR') return true;
+      if (x.e.shiftId !== (App.currentUser.shiftId || currentShiftId())) return false;
+      if (App.currentUser.cuadrillaId && x.e.cuadrillaId && x.e.cuadrillaId !== App.currentUser.cuadrillaId) return false;
+      return true;
+    });
+
+    const vencidos = relevantes.filter(x => x.s.code === 'ROJO');
+    const porEngrasar = relevantes.filter(x => x.s.code === 'AMARILLO');
+
+    // Al tocar un aviso, la app abre el equipo correcto en vez de una pantalla genérica
+    const extraDatos = (lista, tipo) => ({
+      tipo,
+      equipoId: lista.length === 1 ? lista[0].e.id : '',
+      ruta: lista.length === 1 ? 'equipo' : (tipo === 'anomalia' ? 'anomalias' : 'dashboard')
+    });
+
+    // ── 1) Engrases VENCIDOS ──────────────────────────────────────
+    const cfgV = settings.vencidos;
+    if (cfgV.enabled && cfgV.roles.includes(rol) && (!cfgV.soloSiHay || vencidos.length)) {
+      const h = horaAjustadaAlTurno(settings, cfgV.hour, cfgV.minute);
+      const lista = vencidos.slice(0, 5).map(x => x.e.code).join(', ');
+      const titulo = vencidos.length ? `🔴 ${vencidos.length} equipo(s) con engrase VENCIDO` : 'Sin engrases vencidos';
+      const cuerpo = vencidos.length
+        ? `${lista}${vencidos.length > 5 ? ` y ${vencidos.length - 5} más` : ''}. Requieren atención inmediata.`
+        : 'Ningún equipo tiene el engrase vencido. Buen trabajo.';
       notifications.push({
-        id: NOTIF_ID_DAILY_TASKS,
-        title: 'Engrase de hoy',
-        body: pendientes > 0
-          ? `Tienes ${pendientes} equipo(s) pendientes de engrase en tu turno.`
-          : 'Tu turno está al día con el engrase.',
-        schedule: { at: nextTimeAt(h, m), every: 'day', repeats: true }
+        id: NOTIF_ID_VENCIDOS, title: titulo, body: cuerpo,
+        extra: extraDatos(vencidos, 'vencidos'),
+        schedule: { at: nextTimeAt(h.hour, h.minute), every: 'day', repeats: true }
       });
+      if (vencidos.length) registrarAvisoEnviado('vencidos', titulo, cuerpo, rol);
+
+      // Recordatorio a media jornada, solo si SIGUE habiendo vencidos
+      if (cfgV.recordatorio && vencidos.length) {
+        const hr = (h.hour + (cfgV.recordatorioHoras || 6)) % 24;
+        const hAjust = horaAjustadaAlTurno(settings, hr, h.minute);
+        notifications.push({
+          id: NOTIF_ID_VENCIDOS_REC,
+          title: `🔴 Recordatorio: ${vencidos.length} equipo(s) siguen vencidos`,
+          body: `${lista}${vencidos.length > 5 ? ` y ${vencidos.length - 5} más` : ''}.`,
+          extra: extraDatos(vencidos, 'vencidos'),
+          schedule: { at: nextTimeAt(hAjust.hour, hAjust.minute), every: 'day', repeats: true }
+        });
+      }
+
+      // Escalamiento: lo que lleva demasiados días vencido sube a jefatura
+      const diasEscalar = cfgV.escalarDias || 3;
+      const graves = vencidos.filter(x => {
+        const plan = x.s.plan;
+        if (!plan) return false;
+        if (x.s.scheduleDate) {
+          const dias = Math.floor((Date.now() - x.s.scheduleDate.getTime()) / 86400000);
+          return dias >= diasEscalar;
+        }
+        // Por horas: se estima con las horas de atraso (jornada de ~10 h)
+        return (x.s.remaining ?? 0) < -(diasEscalar * 10);
+      });
+      if (graves.length && (cfgV.escalarA || []).includes(rol)) {
+        const t = `‼ ${graves.length} equipo(s) con más de ${diasEscalar} días vencidos`;
+        const cu = `${graves.slice(0, 5).map(x => x.e.code).join(', ')}. Atraso crítico.`;
+        notifications.push({
+          id: NOTIF_ID_ESCALADO, title: t, body: cu,
+          extra: extraDatos(graves, 'vencidos'),
+          schedule: { at: nextTimeAt(h.hour, h.minute + 5), every: 'day', repeats: true }
+        });
+        registrarAvisoEnviado('escalamiento', t, cu, rol);
+      }
     }
 
-    if (['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
+    // ── 2) Equipos POR ENGRASAR hoy ───────────────────────────────
+    const cfgP = settings.porEngrasar;
+    if (cfgP.enabled && cfgP.roles.includes(rol) && (!cfgP.soloSiHay || porEngrasar.length)) {
+      const h = horaAjustadaAlTurno(settings, cfgP.hour, cfgP.minute);
+      const lista = porEngrasar.slice(0, 5).map(x => x.e.code).join(', ');
+      const titulo = porEngrasar.length ? `🟡 ${porEngrasar.length} equipo(s) por engrasar hoy` : 'Sin engrases programados';
+      const cuerpo = porEngrasar.length
+        ? `${lista}${porEngrasar.length > 5 ? ` y ${porEngrasar.length - 5} más` : ''}.`
+        : 'No hay equipos programados para hoy.';
+      notifications.push({
+        id: NOTIF_ID_POR_ENGRASAR, title: titulo, body: cuerpo,
+        extra: extraDatos(porEngrasar, 'porEngrasar'),
+        schedule: { at: nextTimeAt(h.hour, h.minute), every: 'day', repeats: true }
+      });
+      if (porEngrasar.length) registrarAvisoEnviado('porEngrasar', titulo, cuerpo, rol);
+
+      if (cfgP.recordatorio && porEngrasar.length) {
+        const hr = (h.hour + (cfgP.recordatorioHoras || 4)) % 24;
+        const hAjust = horaAjustadaAlTurno(settings, hr, h.minute);
+        notifications.push({
+          id: NOTIF_ID_POR_ENGRASAR_REC,
+          title: `🟡 Recordatorio: faltan ${porEngrasar.length} equipo(s) por engrasar`,
+          body: lista,
+          extra: extraDatos(porEngrasar, 'porEngrasar'),
+          schedule: { at: nextTimeAt(hAjust.hour, hAjust.minute), every: 'day', repeats: true }
+        });
+      }
+    }
+
+    // ── 3) Resumen de CUMPLIMIENTO ────────────────────────────────
+    const cfgC = settings.cumplimiento;
+    if (cfgC.enabled && cfgC.roles.includes(rol)) {
+      const totalV = statuses.filter(x => x.s.code === 'ROJO').length;
+      const totalA = statuses.filter(x => x.s.code === 'AMARILLO').length;
+      const compliance = equipos.length ? Math.round(((equipos.length - totalV) / equipos.length) * 100) : 100;
+      const hace7 = Date.now() - 7 * 86400000;
+      const pendSemana = (await DB.allActive('lubrication_records'))
+        .filter(r => new Date(r.date).getTime() >= hace7)
+        .reduce((n, r) => n + (r.details || []).filter(d => !d.done).length, 0);
       notifications.push({
         id: NOTIF_ID_COMPLIANCE,
         title: 'Cumplimiento de engrase',
-        body: `Cumplimiento actual: ${compliance}%. ${vencidos} vencido(s), ${proximos} próximo(s) a vencer.${pendientesSemana ? ` ${pendientesSemana} punto(s) sin engrasar esta semana.` : ''}`,
-        schedule: { at: nextTimeAt(settings.complianceHour, settings.complianceMinute), every: 'day', repeats: true }
+        body: `Cumplimiento: ${compliance}%. ${totalV} vencido(s), ${totalA} próximo(s).${pendSemana ? ` ${pendSemana} punto(s) sin engrasar esta semana.` : ''}`,
+        extra: { tipo: 'cumplimiento', ruta: 'dashboard' },
+        schedule: { at: nextTimeAt(cfgC.hour, cfgC.minute), every: 'day', repeats: true }
       });
     }
 
-    // Aviso específico de equipos con plan "Día y turno de la semana" — hora aparte,
-    // configurable por Administrador o Planificador en Configuración → Notificaciones.
-    if (settings.weekdayPlanEnabled && ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role)) {
-      const weekdayStatuses = statuses.filter(x => x.s.plan && x.s.plan.controlType === 'Día y turno de la semana');
-      const dueToday = weekdayStatuses.filter(x => x.s.code === 'AMARILLO' || x.s.code === 'ROJO');
-      if (dueToday.length) {
-        notifications.push({
-          id: NOTIF_ID_WEEKDAY_PLAN,
-          title: 'Equipos con plan por día/turno',
-          body: `${dueToday.length} equipo(s) con plan por día y turno están pendientes o vencidos hoy.`,
-          schedule: { at: nextTimeAt(settings.weekdayPlanHour, settings.weekdayPlanMinute), every: 'day', repeats: true }
-        });
-      }
+    // ── 4) Resumen SEMANAL (lunes) ────────────────────────────────
+    const cfgS = settings.resumenSemanal;
+    if (cfgS && cfgS.enabled && cfgS.roles.includes(rol)) {
+      const hace7 = Date.now() - 7 * 86400000;
+      const recs = (await DB.allActive('lubrication_records')).filter(r => new Date(r.date).getTime() >= hace7);
+      const puntosFallidos = {};
+      recs.forEach(r => (r.details || []).filter(d => !d.done).forEach(d => {
+        const k = d.reason || 'Sin motivo';
+        puntosFallidos[k] = (puntosFallidos[k] || 0) + 1;
+      }));
+      const topMotivo = Object.entries(puntosFallidos).sort((a, b) => b[1] - a[1])[0];
+      const totalV = statuses.filter(x => x.s.code === 'ROJO').length;
+      const compliance = equipos.length ? Math.round(((equipos.length - totalV) / equipos.length) * 100) : 100;
+      notifications.push({
+        id: NOTIF_ID_SEMANAL,
+        title: '📊 Resumen de la semana',
+        body: `${recs.length} engrase(s) realizados · Cumplimiento ${compliance}%${topMotivo ? ` · Lo que más falló: ${topMotivo[0]} (${topMotivo[1]})` : ''}`,
+        extra: { tipo: 'semanal', ruta: 'reportes' },
+        schedule: { at: proximoDiaSemana(cfgS.diaSemana ?? 1, cfgS.hour, cfgS.minute), every: 'week', repeats: true }
+      });
     }
 
     if (notifications.length) await LN.schedule({ notifications });
   } catch (e) {
     console.warn('No se pudieron programar notificaciones locales', e);
   }
+}
+
+/* Próxima fecha en que cae determinado día de la semana (0=domingo, 1=lunes...) */
+function proximoDiaSemana(dia, hora, minuto) {
+  const d = new Date();
+  d.setHours(hora, minuto, 0, 0);
+  const diff = (dia - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + (diff === 0 && d.getTime() <= Date.now() ? 7 : diff));
+  return d;
+}
+
+/* ---------- Aviso INMEDIATO al registrar un engrase ----------
+   Se dispara en el momento en que un lubricador termina un engrase, si el
+   Administrador activó ese aviso. A quien lo registró NO se le avisa (ya lo sabe). */
+async function notificarEngraseRealizado(record, equipment) {
+  try {
+    const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
+    const cfg = settings.engraseRealizado;
+    if (!settings.enabled || !cfg.enabled) return;
+
+    // Si está marcado "solo críticos", avisa únicamente cuando el equipo venía VENCIDO
+    // o quedaron puntos sin engrasar — así no se satura a nadie con avisos de rutina.
+    if (cfg.soloCriticos) {
+      const huboPendientes = (record.details || []).some(d => !d.done);
+      const veniaVencido = record._veniaVencido === true;
+      if (!huboPendientes && !veniaVencido) return;
+    }
+
+    const pendientes = (record.details || []).filter(d => !d.done).length;
+    const titulo = pendientes ? '⚠ Engrase con puntos pendientes' : '✓ Engrase realizado';
+    const cuerpo = `${equipment.code} · ${record.userName}${pendientes ? ` · ${pendientes} punto(s) sin engrasar` : ''}`;
+
+    // En este dispositivo se muestra como aviso en pantalla; a los demás les llega por push
+    if (cfg.roles.includes(App.currentUser.role) && record.userId !== App.currentUser.id) {
+      showInAppToast(`${titulo}: ${cuerpo}`);
+    }
+    // El envío a los demás dispositivos lo hace la función del servidor al detectar el
+    // registro nuevo (ver supabase/functions/notify-push).
+  } catch (e) { console.warn('No se pudo avisar del engrase', e); }
 }
 
 const PERMISSIONS = {
@@ -906,6 +1292,15 @@ window.addEventListener('DOMContentLoaded', async () => {
   captureQrDeepLink(); // guarda el equipo del QR antes de mostrar el login
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // Cuando el usuario toca una notificación del sistema, el Service Worker nos avisa
+    // para llevarlo a la pantalla correspondiente.
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      if (ev.data?.tipo === 'notificacion-abierta' && App.currentUser) {
+        const destino = ev.data.destino === 'anomaly' ? 'anomalias' : 'dashboard';
+        const permitidas = PERMISSIONS[App.currentUser.role] || [];
+        if (permitidas.includes(destino)) navigate(destino);
+      }
+    });
   }
   window.addEventListener('online', updateConnBadge);
   window.addEventListener('offline', updateConnBadge);
@@ -921,6 +1316,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   });
   wirePushListeners();
+  wireLocalNotificationTaps();
   Sync.startAuto();
   updateConnBadge();
 
@@ -1144,6 +1540,34 @@ function logout() {
    se cierra sola tras un rato sin uso, en vez de quedar abierta indefinidamente. */
 const INACTIVITY_MINUTES = 30;
 let inactivityTimer = null;
+let finTurnoTimer = null;
+
+/* ---------- Cierre de sesión al terminar el turno ----------
+   Pensado para los teléfonos COMPARTIDOS entre cuadrillas: si la cuadrilla saliente
+   deja la sesión abierta, la entrante registraría engrases con el nombre equivocado.
+   Al terminar el turno la sesión se cierra sola, obligando a que cada quien entre
+   con su propio PIN — así el historial siempre dice quién hizo qué. */
+function programarCierrePorFinDeTurno() {
+  clearTimeout(finTurnoTimer);
+  if (!App.currentUser || App.currentUser.role !== 'LUBRICADOR') return;
+
+  const { shiftDayStart, shiftNightStart } = App.generalSettings;
+  const turno = App.currentUser.shiftId || currentShiftId();
+  const horaFin = turno === 'shift_dia' ? shiftNightStart : shiftDayStart;
+
+  const fin = new Date();
+  fin.setHours(horaFin, 30, 0, 0); // media hora de margen para cerrar pendientes
+  if (fin.getTime() <= Date.now()) fin.setDate(fin.getDate() + 1);
+
+  const faltan = fin.getTime() - Date.now();
+  if (faltan > 0 && faltan < 24 * 3600 * 1000) {
+    finTurnoTimer = setTimeout(() => {
+      if (!App.currentUser) return;
+      alert('Terminó tu turno. La sesión se cierra para que la siguiente cuadrilla entre con su propio usuario.');
+      logout();
+    }, faltan);
+  }
+}
 
 function resetInactivityTimer() {
   if (!App.currentUser) return;
@@ -1155,7 +1579,7 @@ function resetInactivityTimer() {
   }, INACTIVITY_MINUTES * 60 * 1000);
 }
 
-function stopInactivityTimer() { clearTimeout(inactivityTimer); inactivityTimer = null; }
+function stopInactivityTimer() { clearTimeout(inactivityTimer); inactivityTimer = null; clearTimeout(finTurnoTimer); finTurnoTimer = null; }
 
 function startInactivityTracking() {
   ['click', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
@@ -1187,6 +1611,7 @@ function boot() {
   refreshLocalNotifications();
   refreshAppBadge();
   startInactivityTracking();
+  programarCierrePorFinDeTurno();
   // Nota: las notificaciones push (initPushNotifications) YA NO se activan solas aquí.
   // Necesitan un proyecto de Firebase configurado (google-services.json en el proyecto
   // Android) — si se llaman sin eso, la app se cierra de golpe. Ahora solo se activan
@@ -1877,10 +2302,7 @@ async function renderEquipos() {
       if (!confirm(`¿Eliminar ${selected.size} equipo(s)? Es un borrado lógico — el historial de cada uno se conserva en auditoría, pero dejan de aparecer en la app. Esta acción no se puede deshacer desde la interfaz.`)) return;
       for (const id of selected) {
         const eq = await DB.get('equipment', id);
-        eq.active = false;
-        await DB.put('equipment', stamp(eq, App.currentUser.name));
-        const eqPlans = (await DB.allActive('lubrication_plans')).filter(p => p.equipmentId === id);
-        for (const plan of eqPlans) { plan.active = false; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
+        if (eq) await deleteEquipmentCascade(eq);
       }
       await logAudit('EQUIPOS_ELIMINADOS_LOTE', `${selected.size} equipos`, App.currentUser.name);
       showInAppToast(`✓ ${selected.size} equipo(s) eliminados`);
@@ -2014,6 +2436,8 @@ async function openEquipmentDetail(id) {
       ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
       ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
       <button class="btn" id="btn-view-qr">${ic("qr")}Código QR</button>
+      ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) ? `
+        <button class="btn" id="btn-pausar-avisos">${ic("clock")}${avisosPausados(e) ? 'Reanudar avisos' : 'Pausar avisos'}</button>` : ''}
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -2024,16 +2448,53 @@ async function openEquipmentDetail(id) {
   });
   $('#btn-delete-eq')?.addEventListener('click', async () => {
     if (!confirm(`¿Eliminar el equipo ${esc(e.code)}${e.shortCode ? ' (' + e.shortCode + ')' : ''}? Esta acción es un borrado lógico: el equipo deja de aparecer en la app pero su historial de engrases y anomalías se conserva en la auditoría. No se puede deshacer desde la interfaz.`)) return;
-    e.active = false;
-    await DB.put('equipment', stamp(e, App.currentUser.name));
-    const plans = (await DB.allActive('lubrication_plans')).filter(p => p.equipmentId === e.id);
-    for (const plan of plans) { plan.active = false; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
+    await deleteEquipmentCascade(e);
     await logAudit('EQUIPO_ELIMINADO', `${esc(e.code)}${e.shortCode ? ' (' + e.shortCode + ')' : ''}`, App.currentUser.name);
     showInAppToast(`✓ Equipo ${esc(e.code)} eliminado`);
     closeModal();
     navigate('equipos');
   });
   $('#btn-view-qr')?.addEventListener('click', () => openEquipmentQR(e));
+
+  // Pausar avisos: útil cuando un equipo entra a taller y seguiría generando avisos
+  // de vencido todos los días sin que nadie pueda hacer nada.
+  $('#btn-pausar-avisos')?.addEventListener('click', async () => {
+    if (avisosPausados(e)) {
+      e.avisosPausadosHasta = null;
+      await DB.put('equipment', stamp(e, App.currentUser.name));
+      await logAudit('AVISOS_REANUDADOS', e.code, App.currentUser.name);
+      showInAppToast(`✓ Avisos reanudados para ${e.code}`);
+      closeModal();
+      return;
+    }
+    openModal(`Pausar avisos de ${e.code}`, `
+      <p class="dim">Mientras el equipo esté pausado no generará avisos de engrase vencido ni aparecerá en las notificaciones. Sigue visible en las pantallas y en los reportes.</p>
+      <label>Pausar hasta
+        <input type="date" id="pausa-hasta" class="input" value="${new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)}"/>
+      </label>
+      <label>Motivo (queda en el historial)
+        <select id="pausa-motivo" class="input">
+          <option>En taller / mantenimiento mayor</option>
+          <option>Equipo fuera de operación</option>
+          <option>En traslado a otra mina</option>
+          <option>Esperando repuestos</option>
+          <option>Otro</option>
+        </select>
+      </label>
+      <div class="modal-actions"><button class="btn btn-accent" id="btn-confirmar-pausa">${ic("check")}Pausar avisos</button></div>
+    `);
+    $('#btn-confirmar-pausa').addEventListener('click', async () => {
+      const hasta = $('#pausa-hasta').value;
+      const motivo = $('#pausa-motivo').value;
+      if (!hasta) { alert('Elige hasta qué fecha.'); return; }
+      e.avisosPausadosHasta = new Date(hasta + 'T23:59:59').toISOString();
+      e.avisosPausaMotivo = motivo;
+      await DB.put('equipment', stamp(e, App.currentUser.name));
+      await logAudit('AVISOS_PAUSADOS', `${e.code} hasta ${hasta} · ${motivo}`, App.currentUser.name);
+      showInAppToast(`✓ Avisos de ${e.code} pausados hasta ${hasta}`);
+      closeModal();
+    });
+  });
   $('#btn-view-hist')?.addEventListener('click', () => {
     closeModal(); navigate('historial');
     setTimeout(() => {
@@ -2051,6 +2512,45 @@ async function generateNextEquipmentCode() {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   });
   return 'EQ-' + String(max + 1).padStart(5, '0');
+}
+
+/* ---------- Eliminar un equipo en cascada ----------
+   Al dar de baja un equipo hay que ocultar TAMBIÉN lo que cuelga de él: su plan, sus
+   puntos de engrase, sus registros y sus anomalías. Antes solo se ocultaban el equipo
+   y el plan, así que los puntos/engrases/anomalías seguían activos y aparecían en
+   reportes y conteos aunque el equipo ya no existiera en la lista. */
+async function deleteEquipmentCascade(equipment, opts = {}) {
+  const quien = App.currentUser.name;
+  const conservarHistorial = opts.conservarHistorial !== false; // por defecto sí se conserva
+
+  equipment.active = false;
+  await DB.put('equipment', stamp(equipment, quien));
+
+  const planes = (await DB.allActive('lubrication_plans')).filter(p => p.equipmentId === equipment.id);
+  const puntos = await DB.allActive('lubrication_points');
+  for (const plan of planes) {
+    plan.active = false;
+    await DB.put('lubrication_plans', stamp(plan, quien));
+    for (const pt of puntos.filter(p => p.planId === plan.id)) {
+      pt.active = false;
+      await DB.put('lubrication_points', stamp(pt, quien));
+    }
+  }
+
+  // Las anomalías abiertas de un equipo dado de baja ya no tienen sentido: se ocultan
+  for (const a of (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipment.id)) {
+    a.active = false;
+    await DB.put('anomalies', stamp(a, quien));
+  }
+
+  // El historial de engrases se conserva por defecto (sirve para auditoría), pero
+  // se marca para que no cuente en los reportes de equipos activos.
+  if (!conservarHistorial) {
+    for (const r of (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipment.id)) {
+      r.active = false;
+      await DB.put('lubrication_records', stamp(r, quien));
+    }
+  }
 }
 
 async function openEquipmentForm(equipment, types, locations) {
@@ -2707,7 +3207,15 @@ async function openPlanForm(equipmentId, planId, lubricants) {
 
   $$('.point-edit', document).forEach(b => b.addEventListener('click', () => openPointForm(plan.id, b.dataset.id, lubricants)));
   $$('.point-del', document).forEach(b => b.addEventListener('click', async () => {
-    await DB.delete('lubrication_points', b.dataset.id);
+    // Borrado LÓGICO (active=false), no DB.delete: si se borra solo del dispositivo, el
+    // servidor no se entera y en la siguiente sincronización el punto vuelve a aparecer.
+    const pt = await DB.get('lubrication_points', b.dataset.id);
+    if (!pt) return;
+    if (!confirm(`¿Eliminar el punto "${pt.point}"?`)) return;
+    pt.active = false;
+    await DB.put('lubrication_points', stamp(pt, App.currentUser.name));
+    await logAudit('PUNTO_ELIMINADO', `${pt.point} (plan de ${equipment.code})`, App.currentUser.name);
+    showInAppToast('✓ Punto eliminado');
     closeModal();
     openPlanForm(equipmentId, plan.id, lubricants);
   }));
@@ -2979,7 +3487,7 @@ async function renderMatrizSemanal() {
       <button class="btn btn-sm" id="mtz-next">Semana siguiente →</button>
       ${App.matrizOffset !== 0 ? `<button class="btn btn-sm" id="mtz-hoy">Ir a hoy</button>` : ''}
       <button class="btn btn-sm btn-accent" id="mtz-print">${ic("print")}Imprimir</button>
-      <button class="btn btn-sm" id="mtz-csv">${ic("download")}Excel/CSV</button>
+      <button class="btn btn-sm" id="mtz-excel">${ic("download")}Descargar Excel</button>
     </div>
 
     <div class="toolbar">
@@ -3035,40 +3543,98 @@ async function renderMatrizSemanal() {
     const tablas = (delDia.length ? tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia) : '') +
                    (deNoche.length ? tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche) : '');
     win.document.write(`<!DOCTYPE html><html><head><title>Plan de engrase semanal</title><style>
-      body{font-family:Arial,sans-serif;margin:14px;color:#111;font-size:11px}
+      /* Los navegadores QUITAN los colores de fondo al imprimir para ahorrar tinta.
+         Estas dos reglas los fuerzan — sin ellas la hoja sale en blanco y negro. */
+      *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
+      @page{size:landscape;margin:10mm}
+      body{font-family:Arial,sans-serif;margin:14px;color:#111;font-size:11px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       h1{font-size:15px;margin:0 0 2px}
       .sub{color:#555;font-size:10px;margin-bottom:10px}
       table.matriz{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
-      table.matriz th,table.matriz td{border:1px solid #333;padding:4px 5px;text-align:center;font-size:10px}
-      .matriz-titulo{background:#1F3864;color:#fff;font-size:12px;padding:6px}
-      table.matriz thead tr:nth-child(2) th{background:#fff;font-weight:bold}
-      .matriz-eq{text-align:left;font-weight:bold;white-space:nowrap}
+      table.matriz th,table.matriz td{border:1px solid #333;padding:5px 6px;text-align:center;font-size:10px}
+      .matriz-titulo{background:#1F3864 !important;color:#fff !important;font-size:12px;padding:7px;letter-spacing:.5px}
+      table.matriz thead tr:nth-child(2) th{background:#F2F2F2 !important;font-weight:bold}
+      .matriz-eq{text-align:left !important;font-weight:bold;white-space:nowrap;background:#F2F2F2 !important}
       .matriz-fecha{font-weight:normal;font-size:8.5px;color:#666}
-      .celda-hecho{background:#00B050;color:#fff;font-weight:bold;font-style:italic}
-      .celda-pendiente,.celda-futuro{background:#F4B183}
+      /* Doble seguro: además del color de fondo, cada celda lleva un símbolo y un borde
+         distinto, para que la hoja se entienda aunque el navegador imprima sin colores
+         (pasa cuando "Gráficos de fondo" está desactivado en el diálogo de impresión). */
+      .celda-hecho{background:#00B050 !important;color:#fff !important;font-weight:bold;font-style:italic;border:2px solid #00703C !important}
+      .celda-pendiente,.celda-futuro{background:#F4B183 !important;border:2px dashed #C55A11 !important}
+      .celda-pendiente:after,.celda-futuro:after{content:"PENDIENTE";font-size:8px;font-weight:bold;color:#7A3B0A}
+      .aviso-color{font-size:9px;color:#888;border:1px dashed #bbb;padding:4px 8px;margin-bottom:10px;border-radius:4px}
+      @media print{.aviso-color{display:none}}
+      .leyenda{margin-top:10px;font-size:9.5px;display:flex;gap:16px;align-items:center}
+      .leyenda span{display:inline-flex;align-items:center;gap:5px}
+      .lg{width:14px;height:11px;border:1px solid #333;display:inline-block}
       .matriz-wrap{overflow:visible}
     </style></head><body>
       <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</h1>
       <div class="sub">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento: ${pct}% (${hechas} de ${totalCeldas})</div>
+      <div class="aviso-color">Si esta hoja sale sin colores: en el diálogo de impresión abre "Más ajustes" y activa <b>"Gráficos de fondo"</b>.</div>
       ${tablas}
+      <div class="leyenda">
+        <span><i class="lg" style="background:#00B050"></i> Realizado</span>
+        <span><i class="lg" style="background:#F4B183"></i> Programado, sin registrar</span>
+        <span><i class="lg" style="background:#fff"></i> No le corresponde ese día</span>
+      </div>
     </body></html>`);
     win.document.close();
     setTimeout(() => win.print(), 400);
   });
 
-  $('#mtz-csv').addEventListener('click', () => {
-    const rows = [['Turno', 'Equipo', ...dias.map(d => `${WEEKDAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`)]];
-    visibles.forEach(eq => {
-      rows.push([
-        eq.shiftId === 'shift_dia' ? 'Día' : 'Noche',
-        `${eq.code}${eq.shortCode ? ' / ' + eq.shortCode : ''}`,
-        ...dias.map(d => {
-          const s = estadoCelda(eq, d);
-          return s.tipo === 'hecho' ? 'REALIZADO' : (s.tipo === 'vacio' ? '' : 'PENDIENTE');
-        })
-      ]);
-    });
-    downloadCSV(rows, `matriz_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}.csv`);
+  $('#mtz-excel').addEventListener('click', () => {
+    // Nota técnica: la librería gratuita de Excel (SheetJS) NO exporta colores ni bordes —
+    // generaría una hoja en blanco y negro. Por eso se genera un archivo .xls en formato
+    // HTML: Excel lo abre nativamente y SÍ respeta colores, bordes y celdas combinadas,
+    // que es justo lo que hace falta para que la matriz se vea como la planilla.
+    const encabezadoDias = dias.map(d =>
+      `<th style="background-color:#F2F2F2;border:1px solid #333333;font-weight:bold;text-align:center;font-size:11px">${WEEKDAY_NAMES[d.getDay()]}<br/>${d.getDate()}/${d.getMonth() + 1}</th>`
+    ).join('');
+
+    const bloque = (titulo, lista) => {
+      if (!lista.length) return '';
+      return `
+        <tr><td colspan="${dias.length + 1}" style="background-color:#1F3864;color:#FFFFFF;font-weight:bold;text-align:center;border:1px solid #333333;height:26px;font-size:13px">${esc(titulo)}</td></tr>
+        <tr><th style="background-color:#F2F2F2;border:1px solid #333333;font-weight:bold;font-size:11px">Equipo / No.</th>${encabezadoDias}</tr>
+        ${lista.map(eq => `
+          <tr>
+            <td style="border:1px solid #333333;font-weight:bold;background-color:#F2F2F2;font-size:11px">${esc(eq.code)}${eq.shortCode ? ' / ' + esc(eq.shortCode) : ''}</td>
+            ${dias.map(d => {
+              const s = estadoCelda(eq, d);
+              if (s.tipo === 'hecho') return `<td style="background-color:#00B050;color:#FFFFFF;font-weight:bold;font-style:italic;text-align:center;border:1px solid #333333;font-size:10px">REALIZADO</td>`;
+              if (s.tipo === 'vacio') return `<td style="border:1px solid #333333">&nbsp;</td>`;
+              return `<td style="background-color:#F4B183;text-align:center;border:1px solid #333333">&nbsp;</td>`;
+            }).join('')}
+          </tr>`).join('')}
+        <tr><td colspan="${dias.length + 1}" style="height:10px"></td></tr>`;
+    };
+
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"/>
+      <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+        <x:Name>Plan semanal</x:Name>
+        <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+      </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+      <style>td,th{padding:5px 7px;font-family:Arial,sans-serif} col{width:110px}</style>
+      </head><body>
+      <table border="0" cellspacing="0" cellpadding="0">
+        <colgroup><col style="width:150px"/>${dias.map(() => '<col/>').join('')}</colgroup>
+        <tr><td colspan="${dias.length + 1}" style="font-size:16px;font-weight:bold">Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</td></tr>
+        <tr><td colspan="${dias.length + 1}" style="font-size:10px;color:#555555">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento ${pct}% (${hechas} de ${totalCeldas})</td></tr>
+        <tr><td colspan="${dias.length + 1}" style="height:8px"></td></tr>
+        ${bloque('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
+        ${bloque('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
+        <tr><td colspan="${dias.length + 1}" style="font-size:10px">Leyenda: verde = realizado · naranja = programado sin registrar · vacío = no le corresponde ese día</td></tr>
+      </table></body></html>`;
+
+    const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[5].getFullYear()}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showInAppToast('✓ Excel descargado con colores');
   });
 }
 
@@ -3136,6 +3702,9 @@ async function renderRegistrar() {
 async function startGreaseFlow(equipmentId, target) {
   trackRecentEquipment(equipmentId);
   const equipment = await DB.get('equipment', equipmentId);
+  // Estado ANTES de engrasar: sirve para saber si el equipo venía vencido, dato que usa
+  // el aviso de "solo avisar de engrases críticos".
+  const estadoPrevio = (await statusFor(equipment)).code;
   const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId);
   const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
   const lubricants = await DB.allActive('lubricants');
@@ -3435,6 +4004,9 @@ async function startGreaseFlow(equipmentId, target) {
       // Cada punto que no se pudo engrasar genera una anomalía automática, para que
       // mantenimiento le dé seguimiento (ver createAutoAnomalies: evita duplicados).
       const anomaliasCreadas = await createAutoAnomalies(record, equipment);
+      // Guarda si el equipo venía vencido, para el aviso de "solo críticos"
+      record._veniaVencido = estadoPrevio === 'ROJO';
+      await notificarEngraseRealizado(record, equipment);
 
       // Un engrase ATRASADO no debe pisar el estado actual del equipo si ya hubo
       // engrases posteriores — solo actualiza si de verdad es el más reciente.
@@ -5547,6 +6119,179 @@ const TRASH_STORES = [
   { store: 'cuadrillas', label: 'Cuadrillas', name: r => r.name || '?' },
 ];
 
+/* ---------- Liberar espacio: borrado DEFINITIVO (no se puede deshacer) ----------
+   A diferencia del borrado normal (que solo oculta el registro y lo conserva para
+   auditoría y para la papelera), esto lo elimina de verdad, tanto del dispositivo
+   como del servidor. Es la salida cuando la base de datos se llena. */
+
+// Calcula cuánto espacio ocupa cada tipo de dato, para saber qué conviene limpiar
+async function calcularEspacio() {
+  const stats = { total: 0, fotos: 0, porStore: {}, borrados: 0, registrosViejos: 0 };
+  const haceUnAnio = Date.now() - 365 * 86400000;
+
+  for (const store of STORES) {
+    const rows = await DB.all(store);
+    let bytes = 0;
+    rows.forEach(r => {
+      const size = JSON.stringify(r).length;
+      bytes += size;
+      if (r.active === false) stats.borrados++;
+      const fotos = photosOf(r).filter(p => typeof p === 'string' && p.startsWith('data:image'));
+      fotos.forEach(f => { stats.fotos += f.length; });
+      if (r.date && new Date(r.date).getTime() < haceUnAnio) stats.registrosViejos++;
+    });
+    stats.porStore[store] = { bytes, count: rows.length };
+    stats.total += bytes;
+  }
+  return stats;
+}
+
+function formatoMB(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// Borra de verdad un registro: del dispositivo Y del servidor
+async function borrarDefinitivo(store, id) {
+  const cfg = await DB.getConfig();
+  if (cfg && cfg.url && cfg.anonKey && navigator.onLine) {
+    try {
+      await fetch(`${cfg.url}/rest/v1/engrase_sync?store=eq.${store}&id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` }
+      });
+    } catch (e) { console.warn('No se pudo borrar del servidor', store, id, e); }
+  }
+  await DB.delete(store, id);
+}
+
+async function renderStorageStats() {
+  const el = $('#storage-stats');
+  if (!el) return;
+  const s = await calcularEspacio();
+  const top = Object.entries(s.porStore)
+    .sort((a, b) => b[1].bytes - a[1].bytes)
+    .slice(0, 4)
+    .map(([store, d]) => `${store}: ${formatoMB(d.bytes)} (${d.count})`)
+    .join(' · ');
+  el.innerHTML = `
+    <b>Espacio usado: ${formatoMB(s.total)}</b> — de eso, ${formatoMB(s.fotos)} son fotos guardadas en el dispositivo.<br/>
+    ${top}<br/>
+    <span style="color:var(--amber)">${s.borrados} registro(s) en la papelera · ${s.registrosViejos} registro(s) con más de un año</span>`;
+}
+
+async function purgarPapelera() {
+  const aBorrar = [];
+  for (const store of STORES) {
+    const rows = await DB.all(store);
+    rows.filter(r => r.active === false).forEach(r => aBorrar.push({ store, id: r.id }));
+  }
+  if (!aBorrar.length) { alert('La papelera ya está vacía.'); return; }
+  if (!confirm(`Se van a eliminar DEFINITIVAMENTE ${aBorrar.length} registro(s) de la papelera.\n\nEsto NO se puede deshacer y también los borra del servidor.\n\n¿Continuar?`)) return;
+  if (!confirm('Confirmación final: ¿ya descargaste una copia de respaldo?')) return;
+
+  let n = 0;
+  for (const { store, id } of aBorrar) { await borrarDefinitivo(store, id); n++; }
+  await logAudit('PURGA_PAPELERA', `${n} registros eliminados definitivamente`, App.currentUser.name);
+  showInAppToast(`✓ ${n} registro(s) eliminados definitivamente`);
+  renderConfig();
+}
+
+async function purgarRegistrosAntiguos() {
+  openModal('Borrar registros antiguos', `
+    <p class="dim">Elimina de forma permanente los engrases y anomalías <b>cerradas</b> anteriores a la fecha que elijas. Los equipos, planes y usuarios NO se tocan.</p>
+    <label>Borrar todo lo anterior a
+      <input type="date" id="purge-date" class="input" value="${new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)}"/>
+    </label>
+    <div id="purge-preview" class="dim" style="margin-top:12px">Elige una fecha para ver cuántos se borrarían.</div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-do-purge-old">${ic("trash")}Borrar definitivamente</button>
+    </div>
+  `);
+
+  async function contar() {
+    const limite = new Date($('#purge-date').value).getTime();
+    if (isNaN(limite)) return { records: [], anomalies: [] };
+    const records = (await DB.all('lubrication_records')).filter(r => new Date(r.date).getTime() < limite);
+    const anomalies = (await DB.all('anomalies')).filter(a => a.status === 'Cerrada' && new Date(a.createdAt).getTime() < limite);
+    $('#purge-preview').innerHTML = `Se borrarían <b>${records.length}</b> registro(s) de engrase y <b>${anomalies.length}</b> anomalía(s) cerrada(s).`;
+    return { records, anomalies };
+  }
+  await contar();
+  $('#purge-date').addEventListener('change', contar);
+
+  $('#btn-do-purge-old').addEventListener('click', async () => {
+    const { records, anomalies } = await contar();
+    const total = records.length + anomalies.length;
+    if (!total) { alert('No hay registros anteriores a esa fecha.'); return; }
+    if (!confirm(`Se eliminarán DEFINITIVAMENTE ${total} registro(s), también del servidor.\n\nEsto NO se puede deshacer. ¿Continuar?`)) return;
+    if (!confirm('Confirmación final: ¿ya descargaste una copia de respaldo?')) return;
+
+    for (const r of records) await borrarDefinitivo('lubrication_records', r.id);
+    for (const a of anomalies) await borrarDefinitivo('anomalies', a.id);
+    await logAudit('PURGA_ANTIGUOS', `${total} registros anteriores a ${$('#purge-date').value}`, App.currentUser.name);
+    showInAppToast(`✓ ${total} registro(s) eliminados definitivamente`);
+    closeModal();
+    renderConfig();
+  });
+}
+
+async function purgarFotosAntiguas() {
+  openModal('Quitar fotos antiguas', `
+    <p class="dim">Quita solo las <b>fotos</b> de los engrases y anomalías anteriores a la fecha elegida. Los registros se conservan completos (fecha, horómetro, quién lo hizo, observaciones) — solo se libera el espacio de las imágenes.</p>
+    <label>Quitar fotos anteriores a
+      <input type="date" id="photo-purge-date" class="input" value="${new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)}"/>
+    </label>
+    <div id="photo-purge-preview" class="dim" style="margin-top:12px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-do-purge-photos">${ic("trash")}Quitar esas fotos</button>
+    </div>
+  `);
+
+  async function contarFotos() {
+    const limite = new Date($('#photo-purge-date').value).getTime();
+    if (isNaN(limite)) return [];
+    const afectados = [];
+    let bytes = 0;
+    for (const store of ['lubrication_records', 'anomalies']) {
+      const rows = await DB.all(store);
+      rows.forEach(r => {
+        const fecha = new Date(r.date || r.createdAt).getTime();
+        if (fecha >= limite) return;
+        const locales = photosOf(r).filter(p => typeof p === 'string' && p.startsWith('data:image'));
+        if (locales.length) {
+          locales.forEach(p => { bytes += p.length; });
+          afectados.push({ store, r, cantidad: locales.length });
+        }
+      });
+    }
+    $('#photo-purge-preview').innerHTML = `Se quitarían <b>${afectados.reduce((n, a) => n + a.cantidad, 0)}</b> foto(s) de ${afectados.length} registro(s) — liberaría aprox. <b>${formatoMB(bytes)}</b>.`;
+    return afectados;
+  }
+  await contarFotos();
+  $('#photo-purge-date').addEventListener('change', contarFotos);
+
+  $('#btn-do-purge-photos').addEventListener('click', async () => {
+    const afectados = await contarFotos();
+    if (!afectados.length) { alert('No hay fotos anteriores a esa fecha guardadas en este dispositivo.'); return; }
+    if (!confirm(`Se quitarán las fotos de ${afectados.length} registro(s). Los datos del engrase se conservan.\n\n¿Continuar?`)) return;
+
+    for (const { store, r } of afectados) {
+      // Si las fotos ya se subieron al servidor, conserva los enlaces; solo quita las
+      // copias pesadas en base64 que ocupan espacio en el dispositivo.
+      const enlaces = photosOf(r).filter(p => typeof p === 'string' && !p.startsWith('data:image'));
+      r.photos = enlaces;
+      r.photo = enlaces[0] || null;
+      await DB.put(store, r); // sin stamp: no queremos que esto cuente como "editado" ni re-sincronice
+    }
+    await logAudit('PURGA_FOTOS', `Fotos quitadas de ${afectados.length} registros`, App.currentUser.name);
+    showInAppToast(`✓ Fotos liberadas de ${afectados.length} registro(s)`);
+    closeModal();
+    renderConfig();
+  });
+}
+
 async function renderTrash() {
   const area = $('#trash-area');
   if (!area) return;
@@ -5581,16 +6326,73 @@ async function renderTrash() {
   });
 }
 
+/* Arma la tarjeta de configuración de UN tipo de notificación:
+   interruptor + hora (si aplica) + roles que la reciben + opciones extra. */
+const NOTIF_ROLES_DISPONIBLES = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'LUBRICADOR'];
+
+function notifCardHTML(clave, titulo, descripcion, cfg, conHora, conSoloSiHay, conSoloCriticos, conRecordatorio, conEscalamiento) {
+  const pad = n => String(n).padStart(2, '0');
+  return `
+    <div class="notif-card ${cfg.enabled ? '' : 'notif-off'}">
+      <label class="notif-card-head">
+        <input type="checkbox" name="${clave}_enabled" ${cfg.enabled ? 'checked' : ''} data-notif-toggle="${clave}"/>
+        <span><b>${titulo}</b><br/><span class="dim">${descripcion}</span></span>
+      </label>
+      <div class="notif-card-body">
+        ${conHora ? `
+          <label class="notif-hora">Hora del aviso
+            <input type="time" name="${clave}_hora" value="${pad(cfg.hour)}:${pad(cfg.minute)}"/>
+          </label>` : `<div class="notif-hora dim">Se envía en el momento en que ocurre</div>`}
+        <div class="notif-roles">
+          <span class="dim">Lo reciben:</span>
+          <div class="notif-roles-list">
+            ${NOTIF_ROLES_DISPONIBLES.map(r => `
+              <label class="notif-rol">
+                <input type="checkbox" name="${clave}_rol_${r}" ${(cfg.roles || []).includes(r) ? 'checked' : ''}/>
+                <span>${r.charAt(0) + r.slice(1).toLowerCase()}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+        ${conSoloSiHay ? `
+          <label class="notif-extra">
+            <input type="checkbox" name="${clave}_soloSiHay" ${cfg.soloSiHay ? 'checked' : ''}/>
+            <span>Avisar solo si hay equipos (si no, también avisa "todo al día")</span>
+          </label>` : ''}
+        ${conSoloCriticos ? `
+          <label class="notif-extra">
+            <input type="checkbox" name="${clave}_soloCriticos" ${cfg.soloCriticos ? 'checked' : ''}/>
+            <span>Avisar solo casos importantes (equipo vencido o con puntos sin engrasar)</span>
+          </label>` : ''}
+        ${conRecordatorio ? `
+          <label class="notif-extra">
+            <input type="checkbox" name="${clave}_recordatorio" ${cfg.recordatorio ? 'checked' : ''}/>
+            <span>Recordar a media jornada si sigue pendiente, pasadas
+              <input type="number" name="${clave}_recordatorioHoras" value="${cfg.recordatorioHoras || 4}" min="1" max="12" class="notif-num"/> horas
+            </span>
+          </label>` : ''}
+        ${conEscalamiento ? `
+          <label class="notif-extra">
+            <span>Si lleva más de
+              <input type="number" name="${clave}_escalarDias" value="${cfg.escalarDias || 3}" min="1" max="30" class="notif-num"/> día(s) vencido, avisar también a:
+            </span>
+            <span class="notif-roles-list" style="margin-left:6px">
+              ${NOTIF_ROLES_DISPONIBLES.map(r => `
+                <label class="notif-rol">
+                  <input type="checkbox" name="${clave}_esc_${r}" ${(cfg.escalarA || []).includes(r) ? 'checked' : ''}/>
+                  <span>${r.charAt(0) + r.slice(1).toLowerCase()}</span>
+                </label>`).join('')}
+            </span>
+          </label>` : ''}
+      </div>
+    </div>`;
+}
+
 async function renderConfig() {
   const c = $('#app-content');
   const cfg = (await DB.getConfig()) || {};
   const log = (await DB.all('audit_log')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 50);
   const pending = await Sync.pendingCount();
-  const notif = (await DB.get('settings', 'notifications')) || {
-    id: 'notifications', enabled: true, lubricadorDiaHour: 6, lubricadorDiaMinute: 0,
-    lubricadorNocheHour: 18, lubricadorNocheMinute: 0, complianceHour: 7, complianceMinute: 0,
-    weekdayPlanEnabled: false, weekdayPlanHour: 7, weekdayPlanMinute: 30
-  };
+  const notif = mergeNotifSettings(await DB.get('settings', 'notifications'));
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
   const timeVal = (h, m) => `${pad(h)}:${pad(m)}`;
@@ -5616,26 +6418,29 @@ async function renderConfig() {
     ${await simpleListPanelHTML('equipment_types', 'Categorías de equipo', 'Aparecen como opción de "Categoría" al crear o editar un equipo.')}
 
     <div class="panel">
-      <div class="panel-head"><h3>Notificaciones de la app instalada (Android)</h3></div>
+      <div class="panel-head"><h3>Notificaciones — control por tipo</h3></div>
       <div style="padding:14px">
-        <p class="dim">Estas notificaciones solo funcionan en la app instalada en el celular (no en la versión web del navegador). Los horarios aplican para todos los usuarios de ese rol.</p>
-        <form id="notif-form" class="form-grid">
-          <label class="span-2">
-            <span style="display:flex; align-items:center; gap:8px; flex-direction:row">
-              <input type="checkbox" name="enabled" ${notif.enabled ? 'checked' : ''} style="width:20px;height:20px"/> Activar notificaciones
-            </span>
+        <p class="dim">Cada aviso se controla por separado: puedes activarlo o apagarlo, elegir a qué hora suena y qué roles lo reciben. Los cambios aplican a todos los dispositivos al sincronizar.</p>
+        <form id="notif-form">
+          <label class="notif-master">
+            <input type="checkbox" name="enabled" ${notif.enabled ? 'checked' : ''}/>
+            <span><b>Notificaciones activadas</b><br/><span class="dim">Si apagas esto, no suena ninguna, sin importar lo de abajo.</span></span>
           </label>
-          <label>Aviso al Lubricador · Turno Día<input type="time" name="lubricadorDia" value="${timeVal(notif.lubricadorDiaHour, notif.lubricadorDiaMinute)}"/></label>
-          <label>Aviso al Lubricador · Turno Noche<input type="time" name="lubricadorNoche" value="${timeVal(notif.lubricadorNocheHour, notif.lubricadorNocheMinute)}"/></label>
-          <label>Aviso de cumplimiento (Admin/Planificador/Supervisor)<input type="time" name="compliance" value="${timeVal(notif.complianceHour, notif.complianceMinute)}"/></label>
-          <label class="span-2">
-            <span style="display:flex; align-items:center; gap:8px; flex-direction:row">
-              <input type="checkbox" name="weekdayPlanEnabled" ${notif.weekdayPlanEnabled ? 'checked' : ''} style="width:20px;height:20px"/> Activar aviso aparte para equipos con plan "Día y turno de la semana"
-            </span>
+
+          <label class="notif-master" style="border-color:var(--border); background:var(--surface-2)">
+            <input type="checkbox" name="soloEnTurno" ${notif.soloEnTurno ? 'checked' : ''}/>
+            <span><b>Avisar solo dentro del turno de trabajo</b><br/><span class="dim">Recomendado. Un lubricador del turno noche no recibe avisos mientras descansa. Si un aviso cae fuera de su turno, se corre al inicio del mismo. Importante cuando las cuadrillas comparten el teléfono.</span></span>
           </label>
-          <label>Hora del aviso de plan por día/turno (Admin/Planificador)<input type="time" name="weekdayPlan" value="${timeVal(notif.weekdayPlanHour ?? 7, notif.weekdayPlanMinute ?? 30)}"/></label>
-          <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
-            <button type="submit" class="btn btn-accent">Guardar horarios</button>
+
+          ${notifCardHTML('vencidos', '🔴 Engrases VENCIDOS', 'Avisa de los equipos que ya pasaron su fecha o su horómetro de engrase.', notif.vencidos, true, true, false, true, true)}
+          ${notifCardHTML('porEngrasar', '🟡 Equipos POR ENGRASAR hoy', 'Avisa de los equipos que toca engrasar en el día.', notif.porEngrasar, true, true, false, true)}
+          ${notifCardHTML('engraseRealizado', '✓ Cuando se REGISTRA un engrase', 'Aviso inmediato cada vez que un lubricador termina un engrase.', notif.engraseRealizado, false, false, true)}
+          ${notifCardHTML('cumplimiento', '📊 Resumen de cumplimiento', 'Resumen diario con el porcentaje de cumplimiento de la flota.', notif.cumplimiento, true, false)}
+          ${notifCardHTML('anomalias', '⚠ Anomalías nuevas', 'Aviso inmediato cuando alguien reporta una anomalía. Si llegan varias seguidas se agrupan en una sola.', notif.anomalias, false, false)}
+          ${notifCardHTML('resumenSemanal', '📅 Resumen semanal (lunes)', 'Cada lunes: engrases de la semana, cumplimiento y qué fue lo que más falló.', notif.resumenSemanal, true, false)}
+
+          <div class="modal-actions" style="justify-content:flex-start; margin-top:16px">
+            <button type="submit" class="btn btn-accent">${ic("save")}Guardar notificaciones</button>
           </div>
         </form>
       </div>
@@ -5646,9 +6451,12 @@ async function renderConfig() {
       <div style="padding:14px">
         <p class="dim">Usan OneSignal (más simple que conectar Firebase a mano — ver GUIA_NOTIFICACIONES_PUSH.md). Necesitas pegar tu "App ID" de OneSignal en el código antes de que esto funcione.</p>
         <div id="push-status" class="dim" style="margin-bottom:10px">
-          ${(window.plugins?.OneSignal || window.OneSignal) ? 'Este dispositivo soporta notificaciones push.' : 'Este dispositivo (navegador web) no recibe notificaciones push — solo la app instalada en Android las recibe.'}
+          ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
+            ? 'Este dispositivo puede recibir notificaciones aunque la app esté cerrada.'
+            : 'Este navegador no soporta notificaciones push. En iPhone, primero agrega la web a la pantalla de inicio.'}
         </div>
-        ${(window.plugins?.OneSignal || window.OneSignal) ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
+        ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
+          ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
         <div id="push-tokens-list" style="margin-top:14px"></div>
       </div>
     </div>
@@ -5677,6 +6485,20 @@ async function renderConfig() {
         <div id="trash-area"></div>
       </div>
     </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Liberar espacio — borrado definitivo</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Cuando la base de datos se llene, aquí puedes borrar de forma <b>permanente</b> lo que ya no necesitas: registros antiguos, fotos viejas y lo que está en la papelera. A diferencia de eliminar desde las pantallas, esto <b>no se puede deshacer</b>.</p>
+        <div id="storage-stats" class="dim" style="margin:10px 0">Calculando espacio usado…</div>
+        <div class="toolbar">
+          <button class="btn" id="btn-purge-trash">${ic("trash")}Vaciar papelera</button>
+          <button class="btn" id="btn-purge-old">${ic("trash")}Borrar registros antiguos…</button>
+          <button class="btn" id="btn-purge-photos">${ic("gallery")}Quitar fotos antiguas…</button>
+        </div>
+        <p class="dim" style="margin-top:8px; color:var(--amber)">⚠ Antes de borrar, descarga una copia completa (panel de abajo). Es tu única forma de recuperar lo que se elimine aquí.</p>
+      </div>
+    </div>
     <div class="panel">
       <div class="panel-head"><h3>Respaldo completo de datos</h3></div>
       <div style="padding:14px">
@@ -5698,6 +6520,10 @@ async function renderConfig() {
     </div>`;
 
   await renderTrash();
+  renderStorageStats();
+  $('#btn-purge-trash')?.addEventListener('click', purgarPapelera);
+  $('#btn-purge-old')?.addEventListener('click', purgarRegistrosAntiguos);
+  $('#btn-purge-photos')?.addEventListener('click', purgarFotosAntiguas);
   $('#btn-export-backup').addEventListener('click', () => exportFullBackup());
   $('#btn-import-backup').addEventListener('click', () => $('#backup-file-input').click());
   $('#backup-file-input').addEventListener('change', async (ev) => {
@@ -5730,7 +6556,8 @@ async function renderConfig() {
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
   $('#btn-enable-push')?.addEventListener('click', async () => {
-    if (!confirm('Esto solo debe activarse si ya seguiste la guía de OneSignal (App ID pegado en el código y app recompilada). ¿Ya lo hiciste?')) return;
+    if (!ONESIGNAL_APP_ID) { alert('Falta pegar el App ID de OneSignal en el código (ver GUIA_NOTIFICACIONES_PUSH.md). Sin eso las notificaciones no pueden activarse.'); return; }
+    if (!confirm('Se te va a pedir permiso para mostrar notificaciones. ¿Continuar?')) return;
     await initPushNotifications();
     alert('Listo. Si OneSignal está bien configurado, este dispositivo debería aparecer en la lista de abajo en unos segundos (puede que tengas que volver a entrar a esta pantalla).');
     renderConfig();
@@ -5744,21 +6571,68 @@ async function renderConfig() {
     </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
   makeTablesResponsive($('#push-tokens-list'));
 
+  // Al apagar un tipo de aviso, su tarjeta se atenúa enseguida (sin esperar a guardar)
+  $$('[data-notif-toggle]', c).forEach(chk => {
+    chk.addEventListener('change', () => {
+      chk.closest('.notif-card').classList.toggle('notif-off', !chk.checked);
+    });
+  });
+
   $('#notif-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    const [dh, dm] = fd.lubricadorDia.split(':').map(Number);
-    const [nh, nm] = fd.lubricadorNoche.split(':').map(Number);
-    const [ch, cm] = fd.compliance.split(':').map(Number);
-    const [wh, wm] = fd.weekdayPlan.split(':').map(Number);
-    await DB.put('settings', stamp({
-      id: 'notifications', enabled: !!fd.enabled,
-      lubricadorDiaHour: dh, lubricadorDiaMinute: dm,
-      lubricadorNocheHour: nh, lubricadorNocheMinute: nm,
-      complianceHour: ch, complianceMinute: cm,
-      weekdayPlanEnabled: !!fd.weekdayPlanEnabled, weekdayPlanHour: wh, weekdayPlanMinute: wm
-    }, App.currentUser.name));
-    await logAudit('NOTIFICACIONES_CONFIGURADAS', fd.enabled ? 'Activadas' : 'Desactivadas', App.currentUser.name);
+    const fd = new FormData(ev.target);
+    const val = k => fd.get(k);
+    const marcado = k => fd.get(k) !== null;
+
+    // Arma la configuración de un tipo leyendo sus campos del formulario
+    const leerTipo = (clave, conHora) => {
+      const roles = NOTIF_ROLES_DISPONIBLES.filter(r => marcado(`${clave}_rol_${r}`));
+      const out = { enabled: marcado(`${clave}_enabled`), roles };
+      if (conHora) {
+        const [h, m] = String(val(`${clave}_hora`) || '07:00').split(':').map(Number);
+        out.hour = h; out.minute = m;
+      }
+      if (fd.has(`${clave}_soloSiHay`) || ev.target.querySelector(`[name="${clave}_soloSiHay"]`)) {
+        out.soloSiHay = marcado(`${clave}_soloSiHay`);
+      }
+      if (ev.target.querySelector(`[name="${clave}_soloCriticos"]`)) {
+        out.soloCriticos = marcado(`${clave}_soloCriticos`);
+      }
+      if (ev.target.querySelector(`[name="${clave}_recordatorio"]`)) {
+        out.recordatorio = marcado(`${clave}_recordatorio`);
+        out.recordatorioHoras = parseInt(val(`${clave}_recordatorioHoras`), 10) || 4;
+      }
+      if (ev.target.querySelector(`[name="${clave}_escalarDias"]`)) {
+        out.escalarDias = parseInt(val(`${clave}_escalarDias`), 10) || 3;
+        out.escalarA = NOTIF_ROLES_DISPONIBLES.filter(r => marcado(`${clave}_esc_${r}`));
+      }
+      if (clave === 'resumenSemanal') out.diaSemana = 1; // lunes
+      return out;
+    };
+
+    const nuevo = {
+      id: 'notifications',
+      enabled: marcado('enabled'),
+      soloEnTurno: marcado('soloEnTurno'),
+      minutosAntesDelTurno: 15,
+      minutosDespuesDelTurno: 30,
+      vencidos: leerTipo('vencidos', true),
+      porEngrasar: leerTipo('porEngrasar', true),
+      engraseRealizado: leerTipo('engraseRealizado', false),
+      cumplimiento: leerTipo('cumplimiento', true),
+      anomalias: leerTipo('anomalias', false),
+      resumenSemanal: leerTipo('resumenSemanal', true)
+    };
+
+    // Aviso útil: si un tipo queda activo pero sin ningún rol, nunca le llegaría a nadie
+    const sinDestinatario = ['vencidos', 'porEngrasar', 'engraseRealizado', 'cumplimiento', 'anomalias', 'resumenSemanal']
+      .filter(k => nuevo[k].enabled && !nuevo[k].roles.length);
+    if (sinDestinatario.length && !confirm(`Hay ${sinDestinatario.length} aviso(s) activado(s) pero sin ningún rol marcado — no le llegarían a nadie.\n\n¿Guardar de todas formas?`)) return;
+
+    await DB.put('settings', stamp(nuevo, App.currentUser.name));
+    await logAudit('NOTIFICACIONES_CONFIGURADAS',
+      nuevo.enabled ? `Activas: ${['vencidos','porEngrasar','engraseRealizado','cumplimiento','anomalias','resumenSemanal'].filter(k => nuevo[k].enabled).join(', ') || 'ninguna'}` : 'Desactivadas',
+      App.currentUser.name);
     showInAppToast('✓ Notificaciones actualizadas');
     await refreshLocalNotifications();
     renderConfig();

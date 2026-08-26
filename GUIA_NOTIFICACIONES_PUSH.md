@@ -87,3 +87,31 @@ en tu app dentro de OneSignal → **Settings → Keys & IDs** → copia la
 Si algo no llega: Supabase → Edge Functions → notify-push → Logs, ahí se ve
 el error exacto. También puedes revisar en OneSignal → tu app → "Delivery"
 para ver si el envío llegó a intentarse.
+
+## Parte 6 — Notificaciones en el NAVEGADOR (computadora o celular sin la app)
+
+Además de la app instalada, ahora las notificaciones también llegan al navegador
+(Chrome, Edge) aunque la pestaña esté cerrada. No hace falta configuración extra
+en OneSignal: usa el mismo App ID.
+
+Lo único que debes hacer en OneSignal es habilitar la plataforma web:
+
+1. En tu app de OneSignal: **Settings → Platforms → Web Push** → "Activate"
+2. Elige **Typical Site**
+3. En "Site URL" pon la dirección de tu web: `https://junivalles-cmd.github.io`
+4. Deja el resto por defecto y guarda.
+
+Después, cada persona que quiera recibir avisos en su navegador entra a
+**Configuración → Notificaciones push → "Activar en este dispositivo"** y acepta
+el permiso que le pide el navegador.
+
+### Nota sobre iPhone
+Safari en iPhone solo permite notificaciones si la web está **agregada a la
+pantalla de inicio** (botón Compartir → "Agregar a inicio"). Una vez agregada,
+funciona igual que una app.
+
+### Cómo comprobar que funciona con la app cerrada
+1. Activa las notificaciones en un dispositivo.
+2. Cierra completamente la app o la pestaña del navegador.
+3. Desde otro dispositivo, reporta una anomalía.
+4. Debería aparecer la notificación del sistema en el primer dispositivo.
