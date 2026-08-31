@@ -426,6 +426,27 @@ const NOTIF_DEFAULTS = {
   resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] }
 };
 
+/* ---------- ¿Qué equipos le corresponden a esta persona? ----------
+   Regla de campo: cada zona (Mojón, Volcán…) tiene su propio celular, que comparten
+   la cuadrilla de día y la de noche de esa zona. Por eso el filtro es, en orden:
+     1. TURNO   — el de quien tiene la sesión abierta (día o noche)
+     2. ZONA    — si el usuario tiene una asignada, solo ve equipos de ahí
+     3. CUADRILLA — filtro fino dentro de la zona, si ambos la tienen definida
+   Un filtro vacío significa "sin restricción", para no dejar equipos huérfanos. */
+function equiposDeEstaPersona(equipos, usuario) {
+  const u = usuario || App.currentUser;
+  if (!u) return [];
+  if (u.role !== 'LUBRICADOR') return equipos; // jefaturas ven toda la flota
+
+  const turno = u.shiftId || currentShiftId();
+  return equipos.filter(e => {
+    if (e.shiftId !== turno) return false;
+    if (u.locationId && e.locationId && e.locationId !== u.locationId) return false;
+    if (u.cuadrillaId && e.cuadrillaId && e.cuadrillaId !== u.cuadrillaId) return false;
+    return true;
+  });
+}
+
 /* ---------- ¿Está esta persona dentro de su turno de trabajo? ----------
    Con teléfonos compartidos entre cuadrillas, esto es clave: el aviso debe ser para
    quien tiene la sesión abierta Y está trabajando, no para quien ya se fue a casa. */
@@ -695,7 +716,7 @@ async function refreshAppBadge() {
       const equipos = await DB.allActive('equipment');
       const shift = currentShiftId();
       const myCuadrilla = App.currentUser.cuadrillaId;
-      const mine = equipos.filter(e => e.shiftId === shift && (!e.cuadrillaId || e.cuadrillaId === myCuadrilla));
+      const mine = equiposDeEstaPersona(equipos, App.currentUser);
       const statuses = await computeAllStatuses(mine);
       count = statuses.filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO').length;
     } else if (['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
@@ -795,9 +816,8 @@ async function refreshLocalNotifications() {
     const relevantes = statuses.filter(x => {
       if (avisosPausados(x.e)) return false; // equipo en taller: no molesta
       if (rol !== 'LUBRICADOR') return true;
-      if (x.e.shiftId !== (App.currentUser.shiftId || currentShiftId())) return false;
-      if (App.currentUser.cuadrillaId && x.e.cuadrillaId && x.e.cuadrillaId !== App.currentUser.cuadrillaId) return false;
-      return true;
+      const mios = equiposDeEstaPersona([x.e], App.currentUser);
+      return mios.length > 0;
     });
 
     const vencidos = relevantes.filter(x => x.s.code === 'ROJO');
@@ -1784,7 +1804,7 @@ async function renderLubricadorHome() {
   // Si el equipo tiene cuadrilla asignada, solo se lo mostramos a lubricadores de esa
   // misma cuadrilla (para que dos cuadrillas no engrasen el mismo equipo). Los equipos
   // sin cuadrilla asignada se muestran a todos, para no dejar nada fuera de la vista.
-  const equiposTurno = equipos.filter(e => e.shiftId === shift && (!e.cuadrillaId || e.cuadrillaId === myCuadrilla));
+  const equiposTurno = equiposDeEstaPersona(equipos, App.currentUser);
   const statuses = await computeAllStatuses(equiposTurno);
   const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
   statuses.sort((a, b) => order[a.s.code] - order[b.s.code]);
@@ -4920,16 +4940,46 @@ async function renderReportes() {
       }))
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // Las fotos se cargan de a tandas. Antes se insertaban TODAS de golpe: con 300 fotos
+    // de 40 KB cada una eso son ~12 MB de texto que el navegador tiene que procesar de
+    // una sola vez, y la pantalla tardaba más de 7 segundos en abrir.
     const grid = $('#photo-report-grid');
-    grid.innerHTML = photoItems.length ? photoItems.map(p => `
-      <div class="photo-report-item">
-        <img src="${p.photo}" class="photo-thumb-lg" data-full="${p.photo}" data-caption="${p.eq} · ${p.type} · ${fmtDate(p.date)}"/>
-        <div class="photo-report-caption"><b>${p.eq}</b> · ${p.type}<br/>${fmtDate(p.date)} · ${p.by}</div>
-      </div>`).join('') : `<div class="empty-state">No hay fotos para el rango y filtros seleccionados.</div>`;
+    const POR_TANDA = 24;
+    let mostradas = 0;
 
-    $$('.photo-thumb-lg', grid).forEach(img => {
-      img.addEventListener('click', () => openPhotoLightbox(img.dataset.full, img.dataset.caption));
-    });
+    function pintarTanda() {
+      const tanda = photoItems.slice(mostradas, mostradas + POR_TANDA);
+      const html = tanda.map(p => `
+        <div class="photo-report-item">
+          <img src="${p.photo}" class="photo-thumb-lg" loading="lazy" data-full="${p.photo}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"/>
+          <div class="photo-report-caption"><b>${esc(p.eq)}</b> · ${esc(p.type)}<br/>${fmtDate(p.date)} · ${esc(p.by)}</div>
+        </div>`).join('');
+
+      const btnViejo = $('#photo-load-more');
+      if (btnViejo) btnViejo.remove();
+      grid.insertAdjacentHTML('beforeend', html);
+      mostradas += tanda.length;
+
+      $$('.photo-thumb-lg', grid).forEach(img => {
+        if (img.dataset.wired) return;
+        img.dataset.wired = '1';
+        img.addEventListener('click', () => openPhotoLightbox(img.dataset.full, img.dataset.caption));
+      });
+
+      if (mostradas < photoItems.length) {
+        grid.insertAdjacentHTML('afterend',
+          `<button class="btn" id="photo-load-more" style="margin-top:12px">Ver más fotos (${photoItems.length - mostradas} restantes)</button>`);
+        $('#photo-load-more').addEventListener('click', pintarTanda);
+      }
+    }
+
+    grid.innerHTML = '';
+    $('#photo-load-more')?.remove();
+    if (!photoItems.length) {
+      grid.innerHTML = `<div class="empty-state">No hay fotos para el rango y filtros seleccionados.</div>`;
+    } else {
+      pintarTanda();
+    }
   }
 
   drawCharts();
@@ -5418,6 +5468,7 @@ async function renderUsuarios() {
   const users = isSupervisor ? allUsers.filter(u => u.role === 'LUBRICADOR') : allUsers;
   const rolesDisponibles = isSupervisor ? ['LUBRICADOR'] : Object.keys(PERMISSIONS);
   const cuadrillas = await DB.allActive('cuadrillas');
+  const locationsLista = await DB.allActive('locations');
 
   c.innerHTML = `
     <div class="toolbar">
@@ -5451,12 +5502,27 @@ async function renderUsuarios() {
             ? `<input type="text" disabled value="LUBRICADOR"/><input type="hidden" name="role" value="LUBRICADOR"/>`
             : `<select name="role">${rolesDisponibles.map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select>`}
         </label>
+        <label>Turno habitual
+          <select name="shiftId">
+            <option value="">— Según la hora —</option>
+            <option value="shift_dia" ${u.shiftId === 'shift_dia' ? 'selected' : ''}>Turno Día</option>
+            <option value="shift_noche" ${u.shiftId === 'shift_noche' ? 'selected' : ''}>Turno Noche</option>
+          </select>
+          <span class="field-hint">Se usa para no mandarle avisos fuera de su horario de trabajo.</span>
+        </label>
+        <label>Zona / Ubicación asignada
+          <select name="locationId">
+            <option value="">— Todas las zonas —</option>
+            ${locationsLista.map(l => `<option value="${l.id}" ${l.id === u.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+          </select>
+          <span class="field-hint">Si trabaja solo en una zona (Mojón, Volcán…), aquí se limita para que en "Mi Turno" vea únicamente los equipos de ahí. Útil cuando cada zona tiene su propio celular compartido.</span>
+        </label>
         <label>Cuadrilla de lubricación
           <select name="cuadrillaId">
             <option value="">— Sin asignar —</option>
             ${cuadrillas.map(cq => `<option value="${cq.id}" ${cq.id === u.cuadrillaId ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
           </select>
-          <span class="field-hint">Determina qué equipos ve en "Mi Turno" cuando el equipo también tiene cuadrilla asignada, para que dos cuadrillas no engrasen el mismo equipo.</span>
+          <span class="field-hint">Filtro adicional dentro de la zona, para que dos cuadrillas del mismo turno no engrasen el mismo equipo.</span>
         </label>
         <div class="modal-actions"><button type="submit" class="btn btn-accent">${existing ? 'Guardar cambios' : 'Crear usuario'}</button></div>
       </form>`);
