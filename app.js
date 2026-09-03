@@ -548,7 +548,7 @@ function nextTimeAt(hour, minute) {
    que hace falta es pegar el "App ID" de OneSignal aquí abajo (ver GUIA_NOTIFICACIONES_PUSH.md).
    Si el plugin no está disponible (app web, o todavía no se configuró el App ID), estas
    funciones simplemente no hacen nada — el resto de la app funciona igual. */
-const ONESIGNAL_APP_ID = ''; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
+const ONESIGNAL_APP_ID = 'ecc2c6bc-e7ed-41a5-9014-b03fdd8a19bf'; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
 
 function wirePushListeners() {
   const OneSignal = window.plugins?.OneSignal || window.OneSignal;
