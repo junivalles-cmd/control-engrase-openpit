@@ -1154,3 +1154,17 @@ input[type="checkbox"], input[type="radio"] {
   outline: 4px solid #000;
   outline-offset: 3px;
 }
+
+/* Celda de la matriz: le tocaba engrase ese día y no se registró (día ya pasado) */
+.celda-no-realizado {
+  background: #C00000; color: #fff; font-weight: 700;
+  font-size: 9.5px; letter-spacing: 0.02em;
+}
+.celda-pendiente {
+  font-size: 9px; font-weight: 700; color: #7A3B0A; letter-spacing: 0.02em;
+}
+table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
+@media (max-width: 640px) {
+  .celda-no-realizado { font-size: 8px; }
+  .celda-pendiente { font-size: 7.5px; }
+}

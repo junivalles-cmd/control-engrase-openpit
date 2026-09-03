@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v14';
+const CACHE = 'engrase-openpit-v17';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   './favicon.png', './apple-touch-icon.png',

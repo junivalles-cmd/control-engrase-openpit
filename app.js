@@ -1066,7 +1066,12 @@ async function weekdayStatusFor(equipment, plan, recordsList) {
   const lastDue = mostRecentAssignedDate(plan.assignedDays || []);
   if (!lastDue) return { code: 'GRIS', label: 'SIN DÍAS ASIGNADOS', remaining: null, plan };
   const records = recordsList || await DB.allActive('lubrication_records');
-  const done = records.some(r => r.equipmentId === equipment.id && new Date(r.date) >= lastDue);
+  // Se ignoran los engrases con fecha FUTURA: pueden llegar de un dispositivo con el
+  // reloj mal puesto, y darían por cumplido algo que todavía no ocurrió. La validación
+  // del formulario no basta, porque estos registros también entran por sincronización.
+  const ahora = Date.now() + 5 * 60 * 1000; // 5 min de tolerancia por desfases de reloj
+  const done = records.some(r => r.equipmentId === equipment.id &&
+    new Date(r.date) >= lastDue && new Date(r.date).getTime() <= ahora);
   const isToday = lastDue.toDateString() === new Date().toDateString();
   if (done) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: lastDue };
   if (isToday) return { code: 'AMARILLO', label: 'PROGRAMADO HOY', remaining: null, plan, scheduleDate: lastDue };
@@ -1085,6 +1090,21 @@ async function statusFor(equipment, plansList, recordsList) {
 
   if (plan.controlType === 'Día y turno de la semana') {
     return await weekdayStatusFor(equipment, plan, recordsList);
+  }
+
+  // ── Detección de planes con datos imposibles ─────────────────────────
+  // Antes estos casos pasaban desapercibidos y daban un resultado tranquilizador
+  // pero falso, que es peor que no mostrar nada.
+  if (!plan.frequency || plan.frequency <= 0) {
+    // Frecuencia 0 o negativa: el equipo quedaría vencido para siempre sin remedio.
+    return { code: 'GRIS', label: 'PLAN MAL CONFIGURADO', remaining: null, plan,
+             alerta: 'La frecuencia del plan es 0. Corrígela en Plan de Engrase.' };
+  }
+  if (plan.lastGreaseHour > equipment.hourmeter) {
+    // La referencia del último engrase es mayor que el horómetro actual: da un margen
+    // falso. Pasa al corregir un horómetro hacia abajo o al importar datos mal.
+    return { code: 'GRIS', label: 'DATOS INCONSISTENTES', remaining: null, plan,
+             alerta: `El plan dice que se engrasó a ${fmt(plan.lastGreaseHour)} h, pero el equipo marca ${fmt(equipment.hourmeter)} h. Revisa el horómetro o la referencia del plan.` };
   }
 
   const nextHour = plan.lastGreaseHour + plan.frequency;
@@ -1997,6 +2017,10 @@ async function renderDashboard() {
     .filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
     .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
 
+  // Equipos cuyo plan tiene datos imposibles: no salen como vencidos ni como al día,
+  // así que sin este aviso quedarían invisibles y nadie los corregiría nunca.
+  const conProblemas = statuses.filter(x => x.s.alerta);
+
   // Días desde el último engrase registrado de cada equipo (sea cual sea su tipo de control)
   const lastRecordByEquipo = {};
   records.forEach(r => {
@@ -2029,6 +2053,21 @@ async function renderDashboard() {
       <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
     </div>
 
+    ${conProblemas.length ? `
+    <div class="panel panel-alerta">
+      <div class="panel-head"><h3>⚠ ${conProblemas.length} equipo(s) con el plan mal configurado</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Estos equipos NO se están controlando: sus datos son imposibles, así que el sistema no puede saber si les toca engrase.</div>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Equipo</th><th>Problema</th><th></th></tr></thead>
+        <tbody>${conProblemas.map(x => `<tr>
+          <td class="mono">${esc(x.e.code)}</td>
+          <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
+          <td>${esc(x.s.alerta)}</td>
+          <td>${allowedRoutes.includes('plan') ? `<button class="btn btn-sm arreglar-plan" data-id="${x.e.id}">Corregir</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : ''}
+
     <div class="panel" id="dash-attention-panel">
       <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
       ${attention.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
@@ -2054,6 +2093,14 @@ async function renderDashboard() {
     </div>
     ${colorLegendHTML()}
   `;
+
+  $$('.arreglar-plan', c).forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const lubricants = await DB.allActive('lubricants');
+      const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === btn.dataset.id);
+      openPlanForm(btn.dataset.id, plan ? plan.id : null, lubricants);
+    });
+  });
 
   $$('.kpi-clickable', c).forEach(card => {
     card.addEventListener('click', () => {
@@ -2947,11 +2994,11 @@ async function printGreasePlan(rango, equipos, plans, types) {
     <h1>Plan de Engrase — ${rango === 'semana' ? `Semana del ${inicio.getDate()}/${inicio.getMonth() + 1} al ${fin.getDate()}/${fin.getMonth() + 1}` : `Mes de ${hoy.toLocaleDateString('es', { month: 'long', year: 'numeric' })}`}</h1>
     <div class="sub">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)}</div>
     <div class="leyenda">
-      <span class="lg-ok">REALIZADO</span>
-      <span class="lg-no">NO REALIZADO</span>
-      <span class="lg-prog">PROGRAMADO (aún no llega el día)</span>
-      <span class="lg-vacio">En blanco = no programado</span>
-    </div>
+        <span><b style="background:#00B050;color:#fff;padding:2px 6px">REALIZADO</b> = se hizo</span>
+        <span><b style="background:#C00000;color:#fff;padding:2px 6px">NO REALIZADO</b> = le tocaba y no se hizo</span>
+        <span><b style="background:#F4B183;padding:2px 6px">naranja</b> = pendiente / programado</span>
+        <span>vacío = no le corresponde ese día</span>
+      </div>
     ${bloques}`;
 
   printHTMLDocument(`Plan de engrase — ${rango === 'semana' ? 'Semana' : 'Mes'}`, cuerpo, estilos);
@@ -2968,7 +3015,7 @@ function openBulkPlanForm(equipmentIds) {
         </select>
       </label>
       <div id="bulk-hours-fields" class="span-2 form-grid" style="padding:0">
-        <label>Frecuencia (horas)<input type="number" name="frequency" value="50"/></label>
+        <label>Frecuencia (horas)<input required type="number" min="1" max="5000" name="frequency" value="50"/></label>
         <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${App.generalSettings.defaultAlertYellowHours}"/></label>
       </div>
       <div id="bulk-weekday-fields" class="span-2 hidden">
@@ -3008,6 +3055,17 @@ function openBulkPlanForm(equipmentIds) {
     const shiftId = fd.get('shiftId');
     const frequency = parseFloat(fd.get('frequency')) || 0;
     const alertYellowHours = parseFloat(fd.get('alertYellowHours')) || App.generalSettings.defaultAlertYellowHours;
+
+    // Misma validación que en el plan individual: frecuencia 0 dejaría a TODOS los
+    // equipos seleccionados marcados como vencidos de forma permanente.
+    if (!weekday && (!frequency || frequency <= 0)) {
+      alert('La frecuencia debe ser mayor que 0 horas. Si estos equipos no se controlan por horas, usa el tipo "Día y turno de la semana".');
+      return;
+    }
+    if (!weekday && frequency > 5000) {
+      alert('Esa frecuencia parece un error de digitación (más de 5000 horas). Verifícala antes de aplicar.');
+      return;
+    }
 
     const allPlans = await DB.allActive('lubrication_plans');
     let created = 0, updated = 0;
@@ -3140,7 +3198,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       </label>
 
       <div id="hours-fields" class="span-2 form-grid ${isWeekday ? 'hidden' : ''}" style="padding:0">
-        <label>Frecuencia (horas)<input type="number" name="frequency" value="${plan ? plan.frequency : 50}"/></label>
+        <label>Frecuencia (horas)<input required type="number" min="1" max="5000" name="frequency" value="${plan ? plan.frequency : 50}"/></label>
         <label>Horómetro del último engrase<input type="number" step="0.1" name="lastGreaseHour" value="${plan ? plan.lastGreaseHour : equipment.hourmeter}"/></label>
         <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours}"/></label>
       </div>
@@ -3204,6 +3262,27 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       obj.frequency = parseFloat(fd.get('frequency'));
       obj.lastGreaseHour = parseFloat(fd.get('lastGreaseHour'));
       obj.alertYellowHours = parseFloat(fd.get('alertYellowHours'));
+
+      // Una frecuencia de 0 (o vacía) dejaría el equipo marcado como vencido para
+      // siempre, sin forma de cumplirlo. Se valida aquí y no solo en el campo HTML,
+      // porque los datos también pueden entrar por importación o sincronización.
+      if (!obj.frequency || obj.frequency <= 0) {
+        alert('La frecuencia debe ser mayor que 0 horas. Si el equipo no se controla por horas, usa el tipo "Día y turno de la semana".');
+        return;
+      }
+      if (obj.frequency > 5000) {
+        alert('Esa frecuencia parece un error de digitación (más de 5000 horas). Verifícala antes de guardar.');
+        return;
+      }
+      if (isNaN(obj.lastGreaseHour) || obj.lastGreaseHour < 0) {
+        alert('El horómetro del último engrase debe ser un número válido y positivo.');
+        return;
+      }
+      // El horómetro de referencia no puede ser MAYOR al horómetro actual del equipo:
+      // eso daría un margen falso y ocultaría un vencimiento real.
+      if (obj.lastGreaseHour > equipment.hourmeter) {
+        if (!confirm(`El horómetro del último engrase (${fmt(obj.lastGreaseHour)} h) es MAYOR que el horómetro actual del equipo (${fmt(equipment.hourmeter)} h).\n\nEso haría que el equipo parezca al día cuando quizá no lo está. ¿Seguro que los datos son correctos?`)) return;
+      }
       obj.assignedDays = plan ? plan.assignedDays : [];
     }
     if (!plan) plan = stamp({ id: uid('plan'), equipmentId, ...obj }, App.currentUser.name);
@@ -3458,7 +3537,16 @@ async function renderMatrizSemanal() {
     const hecho = records.find(r => r.equipmentId === eq.id &&
       new Date(r.date).toDateString() === fecha.toDateString());
     if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
+
+    // Se distinguen tres situaciones distintas, que antes se veían todas iguales:
+    //   futuro     -> le toca más adelante en la semana (aún no es su día)
+    //   pendiente  -> le toca HOY y todavía no se ha hecho (se puede cumplir)
+    //   no_realizado -> el día ya pasó sin registrarse: es un incumplimiento real
     if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
+    if (fecha.getTime() < hoy.getTime()) {
+      const dias = Math.round((hoy.getTime() - fecha.getTime()) / 86400000);
+      return { tipo: 'no_realizado', diasAtras: dias };
+    }
     return { tipo: 'pendiente' };
   }
 
@@ -3481,7 +3569,8 @@ async function renderMatrizSemanal() {
                 ${dias.map(d => {
                   const s = estadoCelda(eq, d);
                   if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
-                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Programado, sin registrar"></td>`;
+                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
+                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
                   if (s.tipo === 'futuro') return `<td class="celda-futuro" title="Programado para este día"></td>`;
                   return '<td></td>';
                 }).join('')}
@@ -3495,10 +3584,17 @@ async function renderMatrizSemanal() {
   const deNoche = visibles.filter(e => e.shiftId === 'shift_noche');
 
   // Conteos de la semana visible
+  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === tipo).length, 0);
   const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo !== 'vacio').length, 0);
-  const hechas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === 'hecho').length, 0);
-  const pendientes = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === 'pendiente').length, 0);
-  const pct = totalCeldas ? Math.round((hechas / totalCeldas) * 100) : 0;
+  const hechas = contar('hecho');
+  const noRealizadas = contar('no_realizado');
+  const pendientes = contar('pendiente');
+  const futuras = contar('futuro');
+  // El cumplimiento se mide solo sobre lo que YA debió hacerse (lo de más adelante en
+  // la semana todavía no cuenta en contra). Antes lo futuro bajaba el porcentaje
+  // injustamente: un lunes marcaba 17% aunque no se hubiera incumplido nada.
+  const yaVencidas = hechas + noRealizadas + pendientes;
+  const pct = yaVencidas ? Math.round((hechas / yaVencidas) * 100) : 100;
 
   c.innerHTML = `
     <div class="toolbar">
@@ -3535,16 +3631,19 @@ async function renderMatrizSemanal() {
     <div class="kpi-grid">
       ${kpiCard('PROGRAMADOS', totalCeldas, 'neutral')}
       ${kpiCard('REALIZADOS', hechas, 'green')}
-      ${kpiCard('PENDIENTES', pendientes, 'amber')}
-      ${kpiCard('CUMPLIMIENTO %', pct, pct >= App.generalSettings.complianceTarget ? 'green' : 'amber')}
+      ${kpiCard('NO REALIZADOS', noRealizadas, noRealizadas ? 'red' : 'neutral')}
+      ${kpiCard('PENDIENTES HOY', pendientes, pendientes ? 'amber' : 'neutral')}
+      ${kpiCard('CUMPLIMIENTO %', pct, pct >= App.generalSettings.complianceTarget ? 'green' : 'red')}
     </div>
 
     ${visibles.length ? `
       ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
       ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
       <div class="color-legend">
-        <span class="color-legend-item"><span class="dot" style="background:var(--green)"></span>Realizado</span>
-        <span class="color-legend-item"><span class="dot" style="background:#F2B78C"></span>Programado, sin registrar</span>
+        <span class="color-legend-item"><span class="dot" style="background:#00B050"></span>Realizado</span>
+        <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado (día ya pasado)</span>
+        <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente hoy</span>
+        <span class="color-legend-item"><span class="dot" style="background:#F4B183; opacity:0.5"></span>Programado más adelante</span>
         <span class="color-legend-item"><span class="dot" style="background:var(--border)"></span>No le toca ese día</span>
       </div>`
     : `<div class="panel"><div class="empty-state">No hay equipos con plan por "Día y turno de la semana" que coincidan con estos filtros.<br/>Esta vista solo muestra equipos con días asignados — configúralos en Plan de Engrase.</div></div>`}
@@ -3580,8 +3679,9 @@ async function renderMatrizSemanal() {
          distinto, para que la hoja se entienda aunque el navegador imprima sin colores
          (pasa cuando "Gráficos de fondo" está desactivado en el diálogo de impresión). */
       .celda-hecho{background:#00B050 !important;color:#fff !important;font-weight:bold;font-style:italic;border:2px solid #00703C !important}
-      .celda-pendiente,.celda-futuro{background:#F4B183 !important;border:2px dashed #C55A11 !important}
-      .celda-pendiente:after,.celda-futuro:after{content:"PENDIENTE";font-size:8px;font-weight:bold;color:#7A3B0A}
+      .celda-no-realizado{background:#C00000 !important;color:#fff !important;font-weight:bold;border:2px solid #7F0000 !important}
+      .celda-pendiente{background:#F4B183 !important;border:2px dashed #C55A11 !important;font-size:8px;font-weight:bold;color:#7A3B0A}
+      .celda-futuro{background:#F4B183 !important;border:2px dashed #C55A11 !important}
       .aviso-color{font-size:9px;color:#888;border:1px dashed #bbb;padding:4px 8px;margin-bottom:10px;border-radius:4px}
       @media print{.aviso-color{display:none}}
       .leyenda{margin-top:10px;font-size:9.5px;display:flex;gap:16px;align-items:center}
@@ -3604,56 +3704,113 @@ async function renderMatrizSemanal() {
   });
 
   $('#mtz-excel').addEventListener('click', () => {
-    // Nota técnica: la librería gratuita de Excel (SheetJS) NO exporta colores ni bordes —
-    // generaría una hoja en blanco y negro. Por eso se genera un archivo .xls en formato
-    // HTML: Excel lo abre nativamente y SÍ respeta colores, bordes y celdas combinadas,
-    // que es justo lo que hace falta para que la matriz se vea como la planilla.
-    const encabezadoDias = dias.map(d =>
-      `<th style="background-color:#F2F2F2;border:1px solid #333333;font-weight:bold;text-align:center;font-size:11px">${WEEKDAY_NAMES[d.getDay()]}<br/>${d.getDate()}/${d.getMonth() + 1}</th>`
-    ).join('');
+    if (!window.XLSX) { alert('No se pudo cargar el generador de Excel. Revisa tu conexión la primera vez que uses esta función.'); return; }
+
+    // Genera un .xlsx REAL con colores. Antes se producía un archivo HTML renombrado a
+    // .xls: Excel lo abría con una advertencia de seguridad y no siempre respetaba el
+    // formato. La librería xlsx-js-style sí escribe estilos dentro del archivo.
+    const borde = { style: 'thin', color: { rgb: '333333' } };
+    const bordes = { top: borde, bottom: borde, left: borde, right: borde };
+    const filas = [];
+    const merges = [];
+    const nCols = dias.length + 1;
+
+    const celda = (v, estilo) => ({ v, t: 's', s: estilo });
+    const vacia = () => celda('', { border: bordes });
+
+    // Encabezado del documento
+    filas.push([celda(`Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}`,
+      { font: { bold: true, sz: 15 } })]);
+    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: nCols - 1 } });
+    filas.push([celda(`Generado el ${fmtDate(nowISO())} por ${App.currentUser.name} · Cumplimiento ${pct}% (${hechas} de ${totalCeldas})`,
+      { font: { sz: 9, color: { rgb: '666666' } } })]);
+    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: nCols - 1 } });
+    filas.push([]);
 
     const bloque = (titulo, lista) => {
-      if (!lista.length) return '';
-      return `
-        <tr><td colspan="${dias.length + 1}" style="background-color:#1F3864;color:#FFFFFF;font-weight:bold;text-align:center;border:1px solid #333333;height:26px;font-size:13px">${esc(titulo)}</td></tr>
-        <tr><th style="background-color:#F2F2F2;border:1px solid #333333;font-weight:bold;font-size:11px">Equipo / No.</th>${encabezadoDias}</tr>
-        ${lista.map(eq => `
-          <tr>
-            <td style="border:1px solid #333333;font-weight:bold;background-color:#F2F2F2;font-size:11px">${esc(eq.code)}${eq.shortCode ? ' / ' + esc(eq.shortCode) : ''}</td>
-            ${dias.map(d => {
-              const s = estadoCelda(eq, d);
-              if (s.tipo === 'hecho') return `<td style="background-color:#00B050;color:#FFFFFF;font-weight:bold;font-style:italic;text-align:center;border:1px solid #333333;font-size:10px">REALIZADO</td>`;
-              if (s.tipo === 'vacio') return `<td style="border:1px solid #333333">&nbsp;</td>`;
-              return `<td style="background-color:#F4B183;text-align:center;border:1px solid #333333">&nbsp;</td>`;
-            }).join('')}
-          </tr>`).join('')}
-        <tr><td colspan="${dias.length + 1}" style="height:10px"></td></tr>`;
+      if (!lista.length) return;
+      const filaTitulo = filas.length;
+      const fila = [celda(titulo, {
+        font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: '1F3864' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: bordes
+      })];
+      for (let i = 1; i < nCols; i++) fila.push(celda('', { fill: { fgColor: { rgb: '1F3864' } }, border: bordes }));
+      filas.push(fila);
+      merges.push({ s: { r: filaTitulo, c: 0 }, e: { r: filaTitulo, c: nCols - 1 } });
+
+      const estiloCab = {
+        font: { bold: true, sz: 10 },
+        fill: { fgColor: { rgb: 'F2F2F2' } },
+        alignment: { horizontal: 'center', wrapText: true },
+        border: bordes
+      };
+      filas.push([
+        celda('Equipo / No.', estiloCab),
+        ...dias.map(d => celda(`${WEEKDAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`, estiloCab))
+      ]);
+
+      lista.forEach(eq => {
+        const fila = [celda(`${eq.code}${eq.shortCode ? ' / ' + eq.shortCode : ''}`, {
+          font: { bold: true, sz: 10 },
+          fill: { fgColor: { rgb: 'F2F2F2' } },
+          border: bordes
+        })];
+        dias.forEach(d => {
+          const s = estadoCelda(eq, d);
+          if (s.tipo === 'hecho') {
+            fila.push(celda('REALIZADO', {
+              font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: '00B050' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'no_realizado') {
+            fila.push(celda('NO REALIZADO', {
+              font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: 'C00000' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'pendiente') {
+            fila.push(celda('PENDIENTE HOY', {
+              font: { bold: true, sz: 8, color: { rgb: '7A3B0A' } },
+              fill: { fgColor: { rgb: 'F4B183' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'vacio') {
+            fila.push(vacia());
+          } else {
+            fila.push(celda('', { fill: { fgColor: { rgb: 'F4B183' } }, border: bordes }));
+          }
+        });
+        filas.push(fila);
+      });
+      filas.push([]);
     };
 
-    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"/>
-      <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
-        <x:Name>Plan semanal</x:Name>
-        <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
-      </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-      <style>td,th{padding:5px 7px;font-family:Arial,sans-serif} col{width:110px}</style>
-      </head><body>
-      <table border="0" cellspacing="0" cellpadding="0">
-        <colgroup><col style="width:150px"/>${dias.map(() => '<col/>').join('')}</colgroup>
-        <tr><td colspan="${dias.length + 1}" style="font-size:16px;font-weight:bold">Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</td></tr>
-        <tr><td colspan="${dias.length + 1}" style="font-size:10px;color:#555555">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento ${pct}% (${hechas} de ${totalCeldas})</td></tr>
-        <tr><td colspan="${dias.length + 1}" style="height:8px"></td></tr>
-        ${bloque('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
-        ${bloque('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
-        <tr><td colspan="${dias.length + 1}" style="font-size:10px">Leyenda: verde = realizado · naranja = programado sin registrar · vacío = no le corresponde ese día</td></tr>
-      </table></body></html>`;
+    bloque('PLAN DE ENGRASE (TURNO DÍA)', delDia);
+    bloque('PLAN DE ENGRASE (TURNO NOCHE)', deNoche);
+    filas.push([celda('Leyenda: verde = realizado · rojo = NO realizado (le tocaba y no se hizo) · naranja = pendiente o programado · vacío = no le corresponde ese día',
+      { font: { sz: 9, color: { rgb: '666666' } } })]);
 
-    const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[5].getFullYear()}.xls`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const ws = XLSX.utils.aoa_to_sheet(filas.map(f => f.map(c => (c ? c.v : ''))));
+    // Se vuelven a aplicar los estilos celda por celda (aoa_to_sheet solo guarda valores)
+    filas.forEach((fila, r) => fila.forEach((cel, col) => {
+      if (!cel) return;
+      const ref = XLSX.utils.encode_cell({ r, c: col });
+      if (!ws[ref]) ws[ref] = { v: cel.v, t: 's' };
+      ws[ref].s = cel.s;
+    }));
+    ws['!merges'] = merges;
+    ws['!cols'] = [{ wch: 20 }, ...dias.map(() => ({ wch: 13 }))];
+    ws['!rows'] = filas.map(() => ({ hpt: 20 }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Plan semanal');
+    XLSX.writeFile(wb, `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[5].getFullYear()}.xlsx`);
     showInAppToast('✓ Excel descargado con colores');
   });
 }
@@ -4000,6 +4157,23 @@ async function startGreaseFlow(equipmentId, target) {
 
       // ¿Es un engrase atrasado (capturado después, con fecha anterior)?
       const esRetro = !!$('#retro-check')?.checked && fd.retroDate;
+
+      // Un engrase no puede tener fecha futura: pasa si el reloj del celular está mal
+      // o hay un error de tipeo al capturar uno atrasado. Sin esta validación el equipo
+      // aparecería "al día" por algo que todavía no ocurrió.
+      if (esRetro) {
+        const fechaElegida = new Date(fd.retroDate);
+        if (isNaN(fechaElegida.getTime())) { alert('La fecha indicada no es válida.'); return; }
+        const margen = 5 * 60 * 1000; // 5 minutos de tolerancia por desfases de reloj
+        if (fechaElegida.getTime() > Date.now() + margen) {
+          alert('La fecha del engrase no puede ser futura. Revisa la fecha que indicaste (y la hora del celular si acabas de cambiarla).');
+          return;
+        }
+        const haceUnAnio = Date.now() - 365 * 86400000;
+        if (fechaElegida.getTime() < haceUnAnio &&
+            !confirm(`Estás registrando un engrase de hace más de un año (${fmtDate(fechaElegida.toISOString())}). ¿Es correcto?`)) return;
+      }
+
       const fechaRegistro = esRetro ? new Date(fd.retroDate).toISOString() : nowISO();
       const turnoRegistro = esRetro ? (fd.retroShift || currentShiftId()) : currentShiftId();
       const autor = esRetro && fd.retroUser
@@ -4019,42 +4193,72 @@ async function startGreaseFlow(equipmentId, target) {
         capturadoPor: esRetro ? App.currentUser.name : undefined,
         synced: navigator.onLine
       }, App.currentUser.name);
-      await DB.put('lubrication_records', record);
+      // ── Guardado protegido ────────────────────────────────────────────
+      // Antes se guardaba pieza por pieza sin red: si el disco se llenaba o la app se
+      // cerraba a mitad, quedaba el engrase registrado pero el equipo sin actualizar
+      // (o al revés), y nadie se enteraba. Ahora se guarda todo el conjunto y, si algo
+      // falla, se revierte lo ya escrito y se avisa a la persona.
+      const respaldoEquipo = JSON.parse(JSON.stringify(equipment));
+      const respaldoPlan = plan ? JSON.parse(JSON.stringify(plan)) : null;
+      let registroGuardado = false;
+      let anomaliasCreadas = [];
 
-      // Cada punto que no se pudo engrasar genera una anomalía automática, para que
-      // mantenimiento le dé seguimiento (ver createAutoAnomalies: evita duplicados).
-      const anomaliasCreadas = await createAutoAnomalies(record, equipment);
-      // Guarda si el equipo venía vencido, para el aviso de "solo críticos"
-      record._veniaVencido = estadoPrevio === 'ROJO';
-      await notificarEngraseRealizado(record, equipment);
+      try {
+        await DB.put('lubrication_records', record);
+        registroGuardado = true;
 
-      // Un engrase ATRASADO no debe pisar el estado actual del equipo si ya hubo
-      // engrases posteriores — solo actualiza si de verdad es el más reciente.
-      const todosDelEquipo = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipment.id);
-      const esElMasReciente = !todosDelEquipo.some(r => r.id !== record.id && new Date(r.date) > new Date(fechaRegistro));
+        // Cada punto que no se pudo engrasar genera una anomalía automática, para que
+        // mantenimiento le dé seguimiento (ver createAutoAnomalies: evita duplicados).
+        anomaliasCreadas = await createAutoAnomalies(record, equipment);
+        // Guarda si el equipo venía vencido, para el aviso de "solo críticos"
+        record._veniaVencido = estadoPrevio === 'ROJO';
+        await notificarEngraseRealizado(record, equipment);
 
-      if (esElMasReciente && !sinHorometro) {
-        // Ojo: aunque sea el registro más reciente, un engrase atrasado NUNCA debe bajar
-        // el horómetro actual del equipo — desde aquella fecha el equipo siguió trabajando
-        // y ese dato de hoy es más fiable que el que se anotó para el pasado.
-        if (!esRetro || newHourmeter > equipment.hourmeter) {
-          equipment.hourmeter = newHourmeter;
-          await DB.put('equipment', stamp(equipment, App.currentUser.name));
-        }
-        if (plan) {
-          plan.lastGreaseHour = newHourmeter;
+        // Un engrase ATRASADO no debe pisar el estado actual del equipo si ya hubo
+        // engrases posteriores — solo actualiza si de verdad es el más reciente.
+        const todosDelEquipo = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipment.id);
+        const esElMasReciente = !todosDelEquipo.some(r => r.id !== record.id && new Date(r.date) > new Date(fechaRegistro));
+
+        if (esElMasReciente && !sinHorometro) {
+          // Ojo: aunque sea el registro más reciente, un engrase atrasado NUNCA debe bajar
+          // el horómetro actual del equipo — desde aquella fecha el equipo siguió trabajando
+          // y ese dato de hoy es más fiable que el que se anotó para el pasado.
+          if (!esRetro || newHourmeter > equipment.hourmeter) {
+            equipment.hourmeter = newHourmeter;
+            await DB.put('equipment', stamp(equipment, App.currentUser.name));
+          }
+          if (plan) {
+            plan.lastGreaseHour = newHourmeter;
+            await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+          }
+        } else if (sinHorometro && plan && plan.controlType === 'Horas de operación') {
+          // Sin lectura de horómetro no podemos recalcular por horas, pero el engrase SÍ se
+          // hizo: dejamos anotada la fecha para que el equipo no se muestre como abandonado.
+          plan.lastGreaseDateNoHm = fechaRegistro;
           await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
         }
-      } else if (sinHorometro && plan && plan.controlType === 'Horas de operación') {
-        // Sin lectura de horómetro no podemos recalcular por horas, pero el engrase SÍ se
-        // hizo: dejamos anotada la fecha para que el equipo no se muestre como abandonado.
-        plan.lastGreaseDateNoHm = fechaRegistro;
-        await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+
+        await logAudit(esRetro ? 'ENGRASE_RETROACTIVO_REGISTRADO' : 'ENGRASE_REGISTRADO',
+          `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
+          App.currentUser.name);
+
+      } catch (err) {
+        // Algo falló a mitad del guardado (disco lleno, base bloqueada, app cerrándose).
+        // Se revierte lo que alcanzó a escribirse para no dejar el equipo con datos
+        // contradictorios, y se conserva el borrador para que nada se pierda.
+        console.error('Fallo al guardar el engrase', err);
+        try {
+          if (registroGuardado) await DB.delete('lubrication_records', record.id);
+          await DB.put('equipment', respaldoEquipo);
+          if (respaldoPlan) await DB.put('lubrication_plans', respaldoPlan);
+        } catch (e2) { console.error('Además falló la reversión', e2); }
+
+        alert('No se pudo guardar el engrase: ' + (err.message || 'error desconocido') +
+              '\n\nNo se perdió nada de lo que llenaste: quedó como borrador y puedes reintentar. ' +
+              'Si el problema persiste, revisa el espacio disponible en el teléfono.');
+        return; // el borrador NO se descarta
       }
 
-      await logAudit(esRetro ? 'ENGRASE_RETROACTIVO_REGISTRADO' : 'ENGRASE_REGISTRADO',
-        `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
-        App.currentUser.name);
       showInAppToast(esRetro ? `✓ Engrase atrasado registrado — ${equipment.code}` : `✓ Engrase registrado — ${equipment.code}`);
       if (anomaliasCreadas.length) {
         showInAppToast(`⚠ Se abrió ${anomaliasCreadas.length} anomalía(s) automática(s): ${anomaliasCreadas.join(', ')}`);
