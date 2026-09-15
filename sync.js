@@ -231,8 +231,21 @@ const Sync = {
     this.syncing = true;
     this.notify({ status: 'syncing' });
     try {
-      const pushRes = await this.pushAll();
-      const pullRes = await this.pullAll();
+      // En la PRIMERA sincronización de un dispositivo se baja antes de subir. Si no,
+      // el catálogo base que la app crea al instalarse (turnos, lubricantes, cuadrillas)
+      // se sube como "nuevo" y revive lo que el administrador ya había borrado en el
+      // servidor. Bajando primero, este dispositivo se entera de qué está eliminado
+      // antes de proponer nada.
+      const cfg = await DB.getConfig();
+      const esPrimeraVez = !cfg.lastPull;
+      let pushRes, pullRes;
+      if (esPrimeraVez) {
+        pullRes = await this.pullAll();
+        pushRes = await this.pushAll();
+      } else {
+        pushRes = await this.pushAll();
+        pullRes = await this.pullAll();
+      }
       const hasErrors = pushRes.errors && pushRes.errors.length;
       this.notify({
         status: hasErrors ? 'partial' : 'ok',
@@ -249,7 +262,19 @@ const Sync = {
 
   startAuto() {
     window.addEventListener('online', () => this.fullSync());
-    setInterval(() => { if (navigator.onLine) this.fullSync(); }, 45000);
+
+    // Cada 20 segundos (antes 45): así un cambio hecho por el administrador —cerrar o
+    // borrar una anomalía, por ejemplo— llega al resto del equipo en segundos y no en
+    // casi un minuto. Cada ciclo mueve solo lo que cambió, así que el costo es mínimo.
+    setInterval(() => { if (navigator.onLine) this.fullSync(); }, 20000);
+
+    // Al volver a la app después de tenerla en segundo plano, sincroniza enseguida en
+    // vez de esperar el siguiente ciclo. Es el momento en que la persona mira la
+    // pantalla, y es cuando peor sienta ver datos viejos.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && navigator.onLine) this.fullSync();
+    });
+
     if (navigator.onLine) this.fullSync();
   }
 };

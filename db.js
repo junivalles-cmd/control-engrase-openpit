@@ -46,7 +46,19 @@ function tx(storeName, mode = 'readonly') {
 }
 
 const DB = {
-  async init() { await openDB(); await seedIfEmpty(); await seedCuadrillasIfMissing(); await ensureDefaultSyncConfig(); },
+  async init() {
+    await openDB();
+    await ensureDefaultSyncConfig();
+    // El catálogo base (turnos, ubicaciones, lubricantes, cuadrillas) solo se crea si
+    // este dispositivo es el PRIMERO del sistema. Si el servidor ya tiene datos, se
+    // baja lo que hay en vez de inventar copias nuevas.
+    //
+    // Antes no se consultaba al servidor: cada celular nuevo creaba su propio catálogo
+    // de ejemplo y lo subía, así que lo que el administrador había borrado revivía en
+    // cuanto alguien instalaba la app en otro teléfono.
+    await seedSoloSiElSistemaEstaVacio();
+    await ensureDefaultSyncConfig();
+  },
 
   put(store, obj) {
     return new Promise((res, rej) => {
@@ -121,6 +133,70 @@ async function logAudit(action, detail, user) {
 }
 
 /* ---------------- SEED DATA ---------------- */
+
+/* Pregunta al servidor si el sistema ya está en uso. Solo siembra el catálogo base
+   cuando NO hay nada allá y tampoco aquí: es decir, en la primerísima instalación.
+   Si no hay internet, siembra igual para que la app sirva desde el primer momento,
+   pero marca los registros para que no pisen lo que ya exista al sincronizar. */
+async function seedSoloSiElSistemaEstaVacio() {
+  const usuariosLocales = await DB.all('users');
+  if (usuariosLocales.length) {
+    // Ya hay datos en este dispositivo: nada que sembrar
+    await seedCuadrillasSoloSiNuncaSeSembraron();
+    return;
+  }
+
+  let servidorTieneDatos = false;
+  try {
+    const cfg = await DB.getConfig();
+    if (cfg && cfg.url && cfg.anonKey && navigator.onLine) {
+      const r = await fetch(
+        `${cfg.url}/rest/v1/engrase_sync?select=id&limit=1`,
+        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+      );
+      if (r.ok) {
+        const filas = await r.json();
+        servidorTieneDatos = Array.isArray(filas) && filas.length > 0;
+      }
+    }
+  } catch (e) {
+    // Sin internet o servidor inalcanzable: se siembra local para poder trabajar
+  }
+
+  if (servidorTieneDatos) {
+    // El sistema ya existe: este dispositivo solo necesita el usuario administrador
+    // para poder entrar mientras baja el resto. Lo demás llega por sincronización.
+    await seedSoloUsuarioInicial();
+    localStorage.setItem('engrase_seed_hecho', '1');
+    return;
+  }
+
+  await seedIfEmpty();
+  await seedCuadrillasIfMissing();
+  localStorage.setItem('engrase_seed_hecho', '1');
+}
+
+/* Las cuadrillas solo se siembran una vez por dispositivo. Antes se recreaban cada vez
+   que la lista quedaba vacía — así que borrar todas las cuadrillas era imposible:
+   volvían al siguiente arranque. */
+async function seedCuadrillasSoloSiNuncaSeSembraron() {
+  if (localStorage.getItem('engrase_seed_hecho')) return;
+  const existing = await DB.all('cuadrillas');
+  if (existing.length) { localStorage.setItem('engrase_seed_hecho', '1'); return; }
+  await seedCuadrillasIfMissing();
+  localStorage.setItem('engrase_seed_hecho', '1');
+}
+
+/* Usuario mínimo para poder entrar en un dispositivo que se suma a un sistema ya
+   existente. Se marca como temporal: al sincronizar llegan los usuarios de verdad. */
+async function seedSoloUsuarioInicial() {
+  const users = await DB.all('users');
+  if (users.length) return;
+  await DB.put('users', stamp({
+    id: 'u_admin', name: 'Administrador General', username: 'admin',
+    pin: '1111', role: 'ADMINISTRADOR', active: true
+  }, 'sistema'));
+}
 
 async function seedIfEmpty() {
   const users = await DB.all('users');

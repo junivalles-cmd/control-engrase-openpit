@@ -238,13 +238,54 @@ function openEquipmentQR(equipment) {
       <canvas id="qr-canvas"></canvas>
       <p class="dim" style="margin-top:10px">Imprime esta etiqueta y pégala en el equipo. Cualquier cámara del celular lo reconoce — no hace falta abrir la app primero.</p>
       ${nativeWarning}
-      <button class="btn btn-accent" id="btn-print-qr">${ic("print")}Imprimir etiqueta</button>
+      <div class="modal-actions" style="justify-content:center">
+        <button class="btn btn-accent" id="btn-print-qr">${ic("print")}Imprimir etiqueta</button>
+        <button class="btn" id="btn-check-applink">${ic("help")}¿Por qué abre el navegador?</button>
+      </div>
+      <div id="applink-diag" style="margin-top:12px"></div>
     </div>
   `);
   try {
     // eslint-disable-next-line no-new
     new QRious({ element: $('#qr-canvas'), value: qrValueForEquipment(equipment), size: 220, background: '#ffffff', foreground: '#14171A' });
   } catch (e) { $('#qr-canvas').replaceWith('No se pudo generar el código QR (sin conexión la primera vez que se usa esta función).'); }
+  // Comprueba en vivo si el sitio publica el archivo que Android necesita para
+  // abrir la app en vez del navegador. Es el fallo más común y difícil de diagnosticar.
+  $('#btn-check-applink')?.addEventListener('click', async () => {
+    const caja = $('#applink-diag');
+    caja.innerHTML = '<div class="dim">Comprobando…</div>';
+    const url = `${location.origin}/.well-known/assetlinks.json`;
+    let html = '';
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error('código ' + r.status);
+      const txt = await r.text();
+      const json = JSON.parse(txt);
+      const paquete = json?.[0]?.target?.package_name;
+      html = `<div class="qr-info-ok">✓ El sitio SÍ publica el archivo de verificación.<br/>
+        Aplicación declarada: <span class="mono">${esc(paquete || '?')}</span></div>
+        <p class="dim" style="margin-top:8px">Si aun así se abre el navegador:</p>
+        <ul class="dim" style="margin:4px 0 0 18px; font-size:12px; line-height:1.7">
+          <li>Desinstala la app y vuelve a instalarla (la verificación se hace al instalar).</li>
+          <li>Necesita internet la primera vez que se instala, para verificar.</li>
+          <li>Revisa que el APK se haya firmado con el keystore de siempre.</li>
+          <li>En Ajustes del teléfono → Apps → Control de Engrase → "Abrir por defecto",
+              debe aparecer el enlace como verificado.</li>
+        </ul>`;
+    } catch (e) {
+      html = `<div class="qr-info-alert">✗ El sitio NO está publicando el archivo de verificación.<br/>
+        <span class="mono" style="font-size:11px">${esc(url)}</span></div>
+        <p class="dim" style="margin-top:8px"><b>Por eso el QR abre el navegador.</b> Para corregirlo:</p>
+        <ul class="dim" style="margin:4px 0 0 18px; font-size:12px; line-height:1.7">
+          <li>Sube a GitHub el archivo <span class="mono">.nojekyll</span> (vacío) junto a index.html.
+              Sin él, GitHub ignora la carpeta <span class="mono">.well-known</span>.</li>
+          <li>Sube también la carpeta <span class="mono">.well-known</span> con su archivo dentro.</li>
+          <li>Espera 1-2 minutos y vuelve a comprobar aquí.</li>
+        </ul>`;
+    }
+    caja.innerHTML = html;
+  });
+
   $('#btn-print-qr').addEventListener('click', () => {
     printHTMLDocument(`Etiqueta QR — ${equipment.code}`, `
       <div style="text-align:center; padding:20px">
@@ -548,7 +589,7 @@ function nextTimeAt(hour, minute) {
    que hace falta es pegar el "App ID" de OneSignal aquí abajo (ver GUIA_NOTIFICACIONES_PUSH.md).
    Si el plugin no está disponible (app web, o todavía no se configuró el App ID), estas
    funciones simplemente no hacen nada — el resto de la app funciona igual. */
-const ONESIGNAL_APP_ID = 'ecc2c6bc-e7ed-41a5-9014-b03fdd8a19bf'; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
+const ONESIGNAL_APP_ID = ''; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
 
 function wirePushListeners() {
   const OneSignal = window.plugins?.OneSignal || window.OneSignal;
@@ -1063,6 +1104,25 @@ function mostRecentAssignedDate(assignedDays) {
 }
 
 async function weekdayStatusFor(equipment, plan, recordsList) {
+  // Reprogramación puntual: si a este equipo se le movió el engrase de esta semana a
+  // otro día (porque estaba en uso, sin acceso, etc.), ese día manda sobre el plan.
+  // No se toca el plan permanente: la semana siguiente vuelve a su día habitual.
+  if (plan.reprogramadoHasta && new Date(plan.reprogramadoHasta) >= new Date(new Date().toDateString())) {
+    const nuevoDia = new Date(plan.reprogramadoHasta);
+    nuevoDia.setHours(0, 0, 0, 0);
+    const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
+    const records0 = recordsList || await DB.allActive('lubrication_records');
+    const hecho = records0.some(r => r.equipmentId === equipment.id &&
+      new Date(r.date) >= hoy0 && new Date(r.date).getTime() <= Date.now() + 5 * 60 * 1000);
+    if (hecho) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: nuevoDia };
+    if (nuevoDia.getTime() === hoy0.getTime()) {
+      return { code: 'AMARILLO', label: 'REPROGRAMADO PARA HOY', remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
+    }
+    if (nuevoDia > hoy0) {
+      return { code: 'VERDE', label: `REPROGRAMADO AL ${WEEKDAY_NAMES[nuevoDia.getDay()].toUpperCase()}`, remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
+    }
+  }
+
   const lastDue = mostRecentAssignedDate(plan.assignedDays || []);
   if (!lastDue) return { code: 'GRIS', label: 'SIN DÍAS ASIGNADOS', remaining: null, plan };
   const records = recordsList || await DB.allActive('lubrication_records');
@@ -1125,6 +1185,10 @@ async function computeAllStatuses(equipos) {
   ]);
   return Promise.all(equipos.map(async e => ({ e, s: await statusFor(e, plans, records) })));
 }
+
+/* Color por criticidad de anomalía. Está aquí arriba (no dentro de una función) porque
+   lo usan tanto la pantalla de Anomalías como la ficha del equipo. */
+const CRIT_COLOR = { Baja: 'var(--gray-status)', Media: 'var(--amber)', Alta: 'var(--red)', 'Crítica': '#ff2d2d' };
 
 const STATUS_COLOR = { VERDE: 'var(--green)', AMARILLO: 'var(--amber)', ROJO: 'var(--red)', GRIS: 'var(--gray-status)' };
 const STATUS_ICON = { VERDE: '●', AMARILLO: '●', ROJO: '●', GRIS: '●' };
@@ -1370,12 +1434,112 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 let lastSyncState = { status: 'idle' };
+/* Redibuja la pantalla actual sin importar si es la interfaz de escritorio o la del
+   lubricador. Antes se llamaba a navigate(), que da por hecho el menú lateral y la
+   barra superior — en la pantalla del lubricador esos elementos no existen y fallaba
+   antes de redibujar, así que sus datos se quedaban viejos. */
+function redibujarPantallaActual() {
+  try {
+    const esLubricador = !!document.querySelector('.lub-shell');
+    if (esLubricador) {
+      const pintar = { anomalias: renderAnomalias, historial: renderHistorial, turno: renderTurno };
+      const fn = pintar[App.route] || renderLubricadorHome;
+      fn();
+    } else {
+      navigate(App.route);
+    }
+  } catch (e) { console.warn('No se pudo redibujar tras sincronizar', e); }
+}
+
+/* ---------- Buscador rápido de la barra superior ----------
+   Escribes un código (completo o parte) desde cualquier pantalla y saltas directo a
+   ese equipo, sin tener que ir a Equipos y filtrar. Busca por código, código corto,
+   marca y modelo. */
+function wireQuickFind() {
+  const input = $('#quick-find');
+  const caja = $('#quick-find-results');
+  if (!input || !caja || input.dataset.wired) return;
+  input.dataset.wired = '1';
+
+  let resultados = [];
+  let seleccion = -1;
+
+  async function buscar() {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 2) { caja.classList.add('hidden'); caja.innerHTML = ''; return; }
+    const equipos = await DB.allActive('equipment');
+    resultados = equipos.filter(e =>
+      (e.code || '').toLowerCase().includes(q) ||
+      (e.shortCode || '').toLowerCase().includes(q) ||
+      `${e.brand} ${e.model}`.toLowerCase().includes(q)
+    ).slice(0, 8);
+    seleccion = -1;
+
+    if (!resultados.length) {
+      caja.innerHTML = '<div class="qf-vacio">Ningún equipo coincide</div>';
+      caja.classList.remove('hidden');
+      return;
+    }
+    const statuses = await computeAllStatuses(resultados);
+    caja.innerHTML = resultados.map((e, i) => {
+      const st = statuses.find(x => x.e.id === e.id);
+      return `<button type="button" class="qf-item" data-i="${i}">
+        <span class="dot" style="background:${st ? STATUS_COLOR[st.s.code] : 'var(--border)'}"></span>
+        <span class="mono"><b>${esc(e.code)}</b>${e.shortCode ? ' · ' + esc(e.shortCode) : ''}</span>
+        <span class="dim">${esc(e.brand)} ${esc(e.model)}</span>
+      </button>`;
+    }).join('');
+    caja.classList.remove('hidden');
+    $$('.qf-item', caja).forEach(b => b.addEventListener('click', () => abrir(resultados[+b.dataset.i])));
+  }
+
+  function abrir(eq) {
+    if (!eq) return;
+    input.value = '';
+    caja.classList.add('hidden');
+    caja.innerHTML = '';
+    openEquipmentDetail(eq.id);
+  }
+
+  let temporizador;
+  input.addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(buscar, 180); });
+
+  // Flechas y Enter, para no tener que soltar el teclado
+  input.addEventListener('keydown', (ev) => {
+    const items = $$('.qf-item', caja);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (!items.length) return;
+      seleccion = ev.key === 'ArrowDown'
+        ? (seleccion + 1) % items.length
+        : (seleccion - 1 + items.length) % items.length;
+      items.forEach((b, i) => b.classList.toggle('qf-activo', i === seleccion));
+      items[seleccion].scrollIntoView({ block: 'nearest' });
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      abrir(resultados[seleccion >= 0 ? seleccion : 0]);
+    } else if (ev.key === 'Escape') {
+      input.value = ''; caja.classList.add('hidden');
+    }
+  });
+
+  // Al tocar fuera, se cierra la lista
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('.quick-find')) caja.classList.add('hidden');
+  });
+}
+
 function onSyncStateChange(state) {
   lastSyncState = state;
   updateConnBadge();
-  // Si el usuario está viendo el turno/dashboard, refresca datos que pudieron llegar del servidor
-  if (state.status === 'ok' && (state.pulled > 0) && ['turno', 'dashboard', 'equipos'].includes(App.route)) {
-    navigate(App.route);
+  // Si llegaron datos nuevos del servidor, se redibuja la pantalla actual para que la
+  // persona vea el cambio sin tener que salir y volver a entrar. Antes solo se refrescaban
+  // tres pantallas, así que una anomalía borrada por el admin seguía visible en la lista
+  // del lubricador hasta que él cambiaba de pantalla a mano.
+  const pantallasQueSeRefrescan = ['turno', 'dashboard', 'equipos', 'anomalias', 'historial', 'matriz', 'plan', 'horometros'];
+  if (state.status === 'ok' && state.pulled > 0 && pantallasQueSeRefrescan.includes(App.route)) {
+    // No se redibuja si hay una ventana abierta: le borraría lo que está escribiendo
+    if (!document.querySelector('#modal-overlay.open')) redibujarPantallaActual();
   }
   if (state.status === 'ok' && state.newAnomalies && state.newAnomalies.length) {
     notifyNewAnomalies(state.newAnomalies);
@@ -1687,6 +1851,10 @@ function boot() {
           <div class="brand-mark small only-mobile"></div>
           <div class="topbar-title" id="topbar-title">Dashboard</div>
           <div class="topbar-right">
+            <div class="quick-find">
+              <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
+              <div id="quick-find-results" class="quick-find-results hidden"></div>
+            </div>
             ${themeButtonHTML()}
             <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
             <span class="topbar-shift" id="topbar-shift"></span>
@@ -1717,8 +1885,10 @@ function boot() {
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
+  wireQuickFind();
   navigate(allowed.includes('dashboard') ? 'dashboard' : allowed[0]);
   handleQrDeepLink();
+  setTimeout(() => revisarRecordatorioRespaldo(), 4000); // tras dejar cargar la pantalla
 }
 
 function updateShiftBadge() {
@@ -1734,7 +1904,12 @@ function navigate(route) {
     b.classList.toggle('active', b.dataset.route === route);
   });
   const item = MENU.find(m => m.id === route);
-  $('#topbar-title').textContent = item ? item.label : '';
+  // Estos dos elementos SOLO existen en la interfaz de escritorio. La del lubricador no
+  // tiene barra superior ni menú lateral, así que se accede con protección: sin esto,
+  // llamar a navigate() desde su pantalla rompía la función a la mitad y la vista se
+  // quedaba con datos viejos (fue la causa de que una anomalía borrada siguiera visible).
+  const titulo = $('#topbar-title');
+  if (titulo) titulo.textContent = item ? item.label : '';
   $('#sidebar')?.classList.remove('open');
   const renderers = {
     dashboard: renderDashboard, equipos: renderEquipos, plan: renderPlan,
@@ -1815,6 +1990,7 @@ function bootLubricador() {
 
 async function renderLubricadorHome() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   c.innerHTML = `<div class="loading">Cargando tu turno…</div>`;
   const equipos = await DB.allActive('equipment');
   const locations = await DB.allActive('locations');
@@ -1867,6 +2043,7 @@ async function renderLubricadorHome() {
 
 async function startLubricadorGreaseFlow(equipmentId) {
   const c = $('#app-content');
+  if (!c) return;
   c.innerHTML = `<button class="btn lub-back" id="lub-back">← Volver a mi turno</button><div id="lub-flow"></div>`;
   $('#lub-back').addEventListener('click', renderLubricadorHome);
   await startGreaseFlow(equipmentId, $('#lub-flow'));
@@ -1874,6 +2051,7 @@ async function startLubricadorGreaseFlow(equipmentId) {
 
 async function renderLubricadorHistorial() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const records = (await DB.allActive('lubrication_records'))
     .filter(r => r.userId === App.currentUser.id)
     .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -1998,6 +2176,7 @@ async function openEditGreaseRecordForm(record) {
    ============================================================ */
 async function renderDashboard() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   c.innerHTML = `<div class="loading">Calculando indicadores…</div>`;
   const equipos = await DB.allActive('equipment');
   const records = await DB.allActive('lubrication_records');
@@ -2210,6 +2389,7 @@ function equipmentCard(e, s, equipmentAnomalies) {
    ============================================================ */
 async function renderEquipos() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
@@ -2488,6 +2668,16 @@ async function openEquipmentDetail(id) {
   const s = await statusFor(e);
   const types = await DB.allActive('equipment_types');
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+
+  // Últimos engrases y anomalías abiertas, para no tener que ir a Historial y filtrar
+  const lubricantes = await DB.allActive('lubricants');
+  const ultimos = (await DB.allActive('lubrication_records'))
+    .filter(r => r.equipmentId === id)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 3);
+  const anomaliasAbiertas = (await DB.allActive('anomalies'))
+    .filter(a => a.equipmentId === id && a.status !== 'Cerrada')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   openModal(`${esc(e.code)}${e.shortCode ? ' · ' + e.shortCode : ''} · ${esc(e.brand)} ${esc(e.model)}`, `
     <div class="detail-grid">
       <div><b>Código</b><div class="mono">${esc(e.code)}</div></div>
@@ -2499,12 +2689,42 @@ async function openEquipmentDetail(id) {
       <div><b>Estado de engrase</b><div><span class="dot" style="background:${STATUS_COLOR[s.code]}"></span> ${s.label}</div></div>
       ${s.nextHour !== undefined ? `<div><b>Próximo engrase</b><div class="mono">${fmt(s.nextHour)} h</div></div>` : ''}
     </div>
+
+    ${anomaliasAbiertas.length ? `
+      <div class="ficha-bloque ficha-alerta">
+        <h4>${ic("alert")}${anomaliasAbiertas.length} anomalía(s) abierta(s)</h4>
+        ${anomaliasAbiertas.slice(0, 3).map(a => `
+          <div class="ficha-fila">
+            <span class="dot" style="background:${CRIT_COLOR[a.criticality]}"></span>
+            <span><b>${esc(a.component)}</b> — ${esc((a.description || '').slice(0, 60))}</span>
+            <span class="dim">${fmtDate(a.createdAt)}</span>
+          </div>`).join('')}
+        ${anomaliasAbiertas.length > 3 ? `<div class="dim" style="padding:4px 0">y ${anomaliasAbiertas.length - 3} más…</div>` : ''}
+      </div>` : ''}
+
+    <div class="ficha-bloque">
+      <h4>${ic("history")}Últimos engrases</h4>
+      ${ultimos.length ? ultimos.map(r => {
+        const lub = lubricantes.find(l => l.id === r.greaseType);
+        const pend = (r.details || []).filter(d => !d.done).length;
+        return `<div class="ficha-fila">
+          <span class="mono">${fmtDate(r.date)}</span>
+          <span>${esc(r.userName)}${r.retroactivo ? ' <span class="retro-tag">atrasado</span>' : ''}</span>
+          <span class="mono dim">${fmt(r.hourmeter)} h</span>
+          <span class="dim">${lub ? esc(lub.name) : '—'}</span>
+          ${pend ? `<span class="motivo-tag">${pend} punto(s) sin engrasar</span>` : ''}
+        </div>`;
+      }).join('') : '<div class="dim" style="padding:6px 0">Este equipo todavía no tiene engrases registrados.</div>'}
+    </div>
+
     <div class="modal-actions">
       ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
       ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
       <button class="btn" id="btn-view-qr">${ic("qr")}Código QR</button>
       ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) ? `
         <button class="btn" id="btn-pausar-avisos">${ic("clock")}${avisosPausados(e) ? 'Reanudar avisos' : 'Pausar avisos'}</button>` : ''}
+      ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) && s.plan && s.plan.controlType === 'Día y turno de la semana' ? `
+        <button class="btn" id="btn-reprogramar">${ic("clock")}Reprogramar esta semana</button>` : ''}
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -2522,6 +2742,62 @@ async function openEquipmentDetail(id) {
     navigate('equipos');
   });
   $('#btn-view-qr')?.addEventListener('click', () => openEquipmentQR(e));
+
+  // Reprogramar: mueve el engrase de ESTA semana a otro día, sin alterar el plan
+  // permanente. Evita que un equipo que no se pudo atender el lunes quede marcado
+  // como vencido toda la semana cuando en realidad se acordó hacerlo el martes.
+  $('#btn-reprogramar')?.addEventListener('click', async () => {
+    const plan = s.plan;
+    if (!plan) return;
+    const yaReprogramado = plan.reprogramadoHasta && new Date(plan.reprogramadoHasta) >= new Date(new Date().toDateString());
+    const hoy = new Date();
+    const maxFecha = new Date(hoy); maxFecha.setDate(maxFecha.getDate() + 7);
+    openModal(`Reprogramar ${e.code}`, `
+      <p class="dim">El plan permanente de este equipo (${(plan.assignedDays || []).join(', ') || 'sin días'}) <b>no se modifica</b>. Solo se mueve el engrase de esta semana.</p>
+      ${yaReprogramado ? `<div class="qr-info-alert">Ya está reprogramado para el ${fmtDate(plan.reprogramadoHasta)}.</div>` : ''}
+      <label>Nueva fecha
+        <input type="date" id="repro-fecha" class="input"
+               value="${new Date(hoy.getTime() - hoy.getTimezoneOffset() * 60000).toISOString().slice(0, 10)}"
+               min="${new Date(hoy.getTime() - hoy.getTimezoneOffset() * 60000).toISOString().slice(0, 10)}"
+               max="${new Date(maxFecha.getTime() - maxFecha.getTimezoneOffset() * 60000).toISOString().slice(0, 10)}"/>
+      </label>
+      <label>Motivo (queda en el historial)
+        <select id="repro-motivo" class="input">
+          <option>Equipo en operación, sin acceso</option>
+          <option>Equipo fuera del área</option>
+          <option>Falta de lubricante</option>
+          <option>Personal insuficiente en el turno</option>
+          <option>Condiciones del terreno / clima</option>
+          <option>Otro</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        ${yaReprogramado ? `<button class="btn" id="repro-cancelar">Quitar reprogramación</button>` : ''}
+        <button class="btn btn-accent" id="repro-ok">${ic("check")}Reprogramar</button>
+      </div>
+    `);
+    $('#repro-ok').addEventListener('click', async () => {
+      const f = $('#repro-fecha').value;
+      const motivo = $('#repro-motivo').value;
+      if (!f) { alert('Elige una fecha.'); return; }
+      plan.reprogramadoHasta = new Date(f + 'T12:00:00').toISOString();
+      plan.reprogramadoMotivo = motivo;
+      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+      await logAudit('ENGRASE_REPROGRAMADO', `${e.code} al ${f} · ${motivo}`, App.currentUser.name);
+      showInAppToast(`✓ ${e.code} reprogramado al ${fmtDate(plan.reprogramadoHasta)}`);
+      Sync.fullSync();
+      closeModal();
+    });
+    $('#repro-cancelar')?.addEventListener('click', async () => {
+      plan.reprogramadoHasta = null;
+      plan.reprogramadoMotivo = null;
+      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+      await logAudit('REPROGRAMACION_CANCELADA', e.code, App.currentUser.name);
+      showInAppToast('✓ Vuelve a su día habitual');
+      Sync.fullSync();
+      closeModal();
+    });
+  });
 
   // Pausar avisos: útil cuando un equipo entra a taller y seguiría generando avisos
   // de vencido todos los días sin que nadie pueda hacer nada.
@@ -2702,6 +2978,7 @@ async function openEquipmentForm(equipment, types, locations) {
    ============================================================ */
 async function renderPlan() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const plans = await DB.allActive('lubrication_plans');
   const lubricants = await DB.allActive('lubricants');
@@ -3388,7 +3665,21 @@ async function openCopyPointsForm(plan, equipment, lubricants) {
   function pintarPreview() {
     const planId = $('#copy-source').value;
     const pts = allPoints.filter(pt => pt.planId === planId);
+    const planOrigen = plans.find(p => p.id === planId);
+    const resumenPlan = planOrigen
+      ? (planOrigen.controlType === 'Día y turno de la semana'
+          ? `Por día y turno · ${(planOrigen.assignedDays || []).join(', ') || 'sin días'}`
+          : `Por horas · cada ${fmt(planOrigen.frequency)} h · avisa ${fmt(planOrigen.alertYellowHours)} h antes`)
+      : '';
     $('#copy-preview').innerHTML = `
+      ${planOrigen ? `
+        <label class="copy-plan-opcion">
+          <input type="checkbox" id="copy-tambien-plan" checked/>
+          <span><b>Copiar también la configuración del plan</b><br/>
+            <span class="dim">${esc(resumenPlan)}</span><br/>
+            <span class="dim" style="font-size:11px">Si lo desmarcas, solo se copian los puntos y este equipo conserva su frecuencia actual.</span>
+          </span>
+        </label>` : ''}
       <div class="dim" style="margin-bottom:6px">Se copiarán estos ${pts.length} punto(s) — desmarca los que no quieras:</div>
       <div class="copy-points-list">
         ${pts.map(pt => `
@@ -3404,6 +3695,25 @@ async function openCopyPointsForm(plan, equipment, lubricants) {
   $('#btn-do-copy').addEventListener('click', async () => {
     const ids = $$('.copy-pt').filter(chk => chk.checked).map(chk => chk.value);
     if (!ids.length) { alert('No seleccionaste ningún punto.'); return; }
+
+    // Si se pidió, el plan destino adopta la frecuencia/días del plan de origen
+    let planCopiado = false;
+    if ($('#copy-tambien-plan')?.checked) {
+      const origen = plans.find(p => p.id === $('#copy-source').value);
+      if (origen) {
+        plan.controlType = origen.controlType;
+        if (origen.controlType === 'Día y turno de la semana') {
+          plan.assignedDays = [...(origen.assignedDays || [])];
+          plan.frequency = 0;
+        } else {
+          plan.frequency = origen.frequency;
+          plan.alertYellowHours = origen.alertYellowHours;
+          // lastGreaseHour NO se copia: es el horómetro real de ESTE equipo, no del otro
+        }
+        await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+        planCopiado = true;
+      }
+    }
 
     const yaExisten = allPoints.filter(pt => pt.planId === plan.id).map(pt => (pt.point || '').toLowerCase());
     let copiados = 0, repetidos = 0;
@@ -3422,7 +3732,7 @@ async function openCopyPointsForm(plan, equipment, lubricants) {
       copiados++;
     }
     await logAudit('PUNTOS_COPIADOS', `${copiados} puntos copiados a ${equipment.code}`, App.currentUser.name);
-    showInAppToast(`✓ ${copiados} punto(s) copiados${repetidos ? ` · ${repetidos} ya existían y se omitieron` : ''}`);
+    showInAppToast(`✓ ${copiados} punto(s) copiados${planCopiado ? ' + configuración del plan' : ''}${repetidos ? ` · ${repetidos} ya existían y se omitieron` : ''}`);
     closeModal();
     openPlanForm(equipment.id, plan.id, lubricants);
   });
@@ -3497,6 +3807,7 @@ function openPointForm(planId, pointId, lubricants) {
    ============================================================ */
 async function renderMatrizSemanal() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const plans = await DB.allActive('lubrication_plans');
   const records = await DB.allActive('lubrication_records');
@@ -3820,6 +4131,7 @@ async function renderMatrizSemanal() {
    ============================================================ */
 async function renderTurno() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const locations = await DB.allActive('locations');
   const shift = currentShiftId();
@@ -3860,6 +4172,7 @@ async function renderTurno() {
    ============================================================ */
 async function renderRegistrar() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   c.innerHTML = `
     <div class="panel">
@@ -3993,7 +4306,19 @@ async function startGreaseFlow(equipmentId, target) {
     </div>`;
 
   const area = target || (() => { navigate('registrar'); return $('#reg-flow-area'); })();
-  if (target) target.innerHTML = html; else setTimeout(() => { $('#reg-flow-area').innerHTML = html; wireGreaseForm(); }, 30);
+  if (target) {
+    target.innerHTML = html;
+  } else {
+    // Se espera un instante a que la pantalla termine de dibujarse. Si para entonces el
+    // usuario ya cambió de vista, el contenedor no existe: hay que comprobarlo antes de
+    // escribir, o la app se rompe justo al tocar algo mientras carga.
+    setTimeout(() => {
+      const area = $('#reg-flow-area');
+      if (!area) return; // el usuario se fue a otra pantalla; no hay nada que hacer
+      area.innerHTML = html;
+      wireGreaseForm();
+    }, 30);
+  }
   if (target) wireGreaseForm();
 
   function collectDraftState() {
@@ -4278,6 +4603,7 @@ async function startGreaseFlow(equipmentId, target) {
    ============================================================ */
 async function renderHorometros() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   c.innerHTML = `
     <div class="toolbar">
@@ -4378,6 +4704,7 @@ async function handleHourmeterExcelImport(file, equipos) {
    ============================================================ */
 async function renderAnomalias() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const anomalies = (await DB.allActive('anomalies')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const equipos = await DB.allActive('equipment');
 
@@ -4396,7 +4723,6 @@ async function renderAnomalias() {
       </table>
     </div>`;
 
-  const CRIT_COLOR = { Baja: 'var(--gray-status)', Media: 'var(--amber)', Alta: 'var(--red)', Crítica: '#ff2d2d' };
 
   function draw(filter = '') {
     const rows = anomalies.filter(a => !filter || a.status === filter);
@@ -4433,6 +4759,7 @@ async function renderAnomalias() {
       await DB.put('anomalies', stamp(a, App.currentUser.name));
       await logAudit('ANOMALIA_CERRADA', `${a.id}${note ? ' — ' + note : ''}`, App.currentUser.name);
       showInAppToast('✓ Anomalía cerrada');
+      Sync.fullSync();
       renderAnomalias();
     }));
     $$('.anom-delete', c).forEach(b => b.addEventListener('click', async () => {
@@ -4442,6 +4769,7 @@ async function renderAnomalias() {
       await DB.put('anomalies', stamp(a, App.currentUser.name));
       await logAudit('ANOMALIA_ELIMINADA', `${esc(a.component)} · ${esc(a.description)}`, App.currentUser.name);
       showInAppToast('✓ Anomalía eliminada');
+      Sync.fullSync(); // sube el cambio ya, para que los demás lo vean en segundos
       renderAnomalias();
     }));
   }
@@ -4587,6 +4915,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
    ============================================================ */
 async function renderLubricantes() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const lubricants = await DB.allActive('lubricants');
   const records = await DB.allActive('lubrication_records');
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
@@ -4658,6 +4987,7 @@ async function renderLubricantes() {
    ============================================================ */
 async function renderHistorial() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const types = await DB.allActive('equipment_types');
   const today = new Date().toISOString().slice(0, 10);
@@ -4861,6 +5191,7 @@ async function drawHistory(equipmentId) {
    ============================================================ */
 async function renderReportes() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const allRecords = await DB.allActive('lubrication_records');
   const anomalies = await DB.allActive('anomalies');
@@ -5666,6 +5997,7 @@ function downloadCSV(rows, filename) {
    ============================================================ */
 async function renderUsuarios() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const isSupervisor = App.currentUser.role === 'SUPERVISOR';
   // Un supervisor solo administra cuentas de lubricadores; el administrador ve y crea todos los roles.
   const allUsers = await DB.allActive('users');
@@ -5990,6 +6322,7 @@ function familyCardHTML(fam, canEdit) {
 
 async function renderAyuda() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
   const help = await getHelpContent();
 
@@ -6323,6 +6656,54 @@ function wireSimpleListPanel(container, store, onChange) {
 }
 
 /* ---------- Respaldo completo: exportar / restaurar todos los datos ---------- */
+/* ---------- Recordatorio de respaldo ----------
+   El respaldo depende de que alguien se acuerde de bajarlo. Esto avisa al Administrador
+   cuando pasó una semana sin hacerlo, y le ofrece descargarlo en el momento. No se
+   descarga solo: el navegador no permite bajar archivos sin que la persona lo pida. */
+const DIAS_ENTRE_RESPALDOS = 7;
+
+function ultimoRespaldo() {
+  try { return localStorage.getItem('engrase_ultimo_respaldo'); } catch (e) { return null; }
+}
+function marcarRespaldoHecho() {
+  try { localStorage.setItem('engrase_ultimo_respaldo', nowISO()); } catch (e) {}
+}
+
+async function revisarRecordatorioRespaldo() {
+  if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') return;
+  const ultimo = ultimoRespaldo();
+  const dias = ultimo ? Math.floor((Date.now() - new Date(ultimo).getTime()) / 86400000) : null;
+
+  // La primera vez no molesta enseguida: espera a que haya datos que valga la pena guardar
+  if (!ultimo) {
+    const registros = await DB.all('lubrication_records');
+    if (registros.length < 20) return;
+  } else if (dias < DIAS_ENTRE_RESPALDOS) return;
+
+  // Se pospone si ya se avisó hoy, para no repetir en cada entrada
+  const avisadoHoy = localStorage.getItem('engrase_aviso_respaldo') === new Date().toDateString();
+  if (avisadoHoy) return;
+  try { localStorage.setItem('engrase_aviso_respaldo', new Date().toDateString()); } catch (e) {}
+
+  openModal('Respaldo de seguridad', `
+    <p>${ultimo
+      ? `El último respaldo fue hace <b>${dias} día(s)</b>.`
+      : 'Todavía no se ha descargado ningún respaldo de este sistema.'}</p>
+    <p class="dim">Un respaldo es un archivo con todo: equipos, planes, engrases, anomalías y usuarios.
+    Sirve si el servidor falla o si alguien borra algo por error. Guárdalo fuera de la nube
+    (en la computadora o en una memoria USB).</p>
+    <div class="modal-actions">
+      <button class="btn" id="resp-luego">Recordármelo mañana</button>
+      <button class="btn btn-accent" id="resp-ahora">${ic("download")}Descargar ahora</button>
+    </div>
+  `);
+  $('#resp-ahora').addEventListener('click', async () => {
+    closeModal();
+    await exportFullBackup();
+  });
+  $('#resp-luego').addEventListener('click', () => closeModal());
+}
+
 async function exportFullBackup() {
   const backup = { exportedAt: nowISO(), exportedBy: App.currentUser.name, appVersion: DB_VERSION, data: {} };
   for (const store of STORES) {
@@ -6335,6 +6716,7 @@ async function exportFullBackup() {
   a.download = `respaldo_engrase_${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  marcarRespaldoHecho();
   await logAudit('RESPALDO_DESCARGADO', `${Object.values(backup.data).reduce((s, r) => s + r.length, 0)} registros`, App.currentUser.name);
   showInAppToast('✓ Respaldo descargado');
 }
@@ -6634,31 +7016,39 @@ function notifCardHTML(clave, titulo, descripcion, cfg, conHora, conSoloSiHay, c
             <span>Avisar solo casos importantes (equipo vencido o con puntos sin engrasar)</span>
           </label>` : ''}
         ${conRecordatorio ? `
-          <label class="notif-extra">
-            <input type="checkbox" name="${clave}_recordatorio" ${cfg.recordatorio ? 'checked' : ''}/>
-            <span>Recordar a media jornada si sigue pendiente, pasadas
-              <input type="number" name="${clave}_recordatorioHoras" value="${cfg.recordatorioHoras || 4}" min="1" max="12" class="notif-num"/> horas
+          <div class="notif-extra">
+            <label class="notif-extra-check">
+              <input type="checkbox" name="${clave}_recordatorio" ${cfg.recordatorio ? 'checked' : ''}/>
+              <span>Recordar a media jornada si sigue pendiente</span>
+            </label>
+            <span class="notif-inline">
+              pasadas
+              <input type="number" name="${clave}_recordatorioHoras" value="${cfg.recordatorioHoras || 4}" min="1" max="12" step="1" class="notif-num" aria-label="Horas hasta el recordatorio"/>
+              horas
             </span>
-          </label>` : ''}
+          </div>` : ''}
         ${conEscalamiento ? `
-          <label class="notif-extra">
-            <span>Si lleva más de
-              <input type="number" name="${clave}_escalarDias" value="${cfg.escalarDias || 3}" min="1" max="30" class="notif-num"/> día(s) vencido, avisar también a:
+          <div class="notif-extra notif-escalamiento">
+            <span class="notif-inline">
+              Si lleva más de
+              <input type="number" name="${clave}_escalarDias" value="${cfg.escalarDias || 3}" min="1" max="30" step="1" class="notif-num" aria-label="Días vencido antes de escalar"/>
+              día(s) vencido, avisar también a:
             </span>
-            <span class="notif-roles-list" style="margin-left:6px">
+            <div class="notif-roles-list">
               ${NOTIF_ROLES_DISPONIBLES.map(r => `
                 <label class="notif-rol">
                   <input type="checkbox" name="${clave}_esc_${r}" ${(cfg.escalarA || []).includes(r) ? 'checked' : ''}/>
                   <span>${r.charAt(0) + r.slice(1).toLowerCase()}</span>
                 </label>`).join('')}
-            </span>
-          </label>` : ''}
+            </div>
+          </div>` : ''}
       </div>
     </div>`;
 }
 
 async function renderConfig() {
   const c = $('#app-content');
+  if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const cfg = (await DB.getConfig()) || {};
   const log = (await DB.all('audit_log')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 50);
   const pending = await Sync.pendingCount();

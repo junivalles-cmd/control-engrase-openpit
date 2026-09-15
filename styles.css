@@ -1044,20 +1044,45 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 .notif-rol:has(input:checked) { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .notif-extra {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
-  font-size: 12px; color: var(--text-dim); flex-basis: 100%; cursor: pointer;
+  flex-wrap: wrap; /* si no cabe en una línea, baja en vez de aplastar los campos */
+  font-size: 13px; color: var(--text-dim); flex-basis: 100%; cursor: pointer;
+  line-height: 1.9; /* deja aire vertical para que el campo no toque el texto */
 }
-.notif-extra input { width: 17px; height: 17px; flex: none; }
+.notif-extra > span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.notif-extra input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
 @media (max-width: 600px) {
   .notif-card-body { gap: 12px; }
   .notif-roles-list { gap: 5px; }
 }
 
 /* Campo numérico pequeño dentro de las opciones de notificación */
+/* Campo numérico dentro de las opciones de notificación.
+   Lleva !important porque las reglas generales de accesibilidad (min-height: 44px) y
+   la de casillas de arriba lo deformaban hasta dejarlo inutilizable. */
 .notif-num {
-  width: 52px; padding: 3px 6px; margin: 0 3px; text-align: center;
+  width: 74px !important;
+  min-width: 74px;
+  height: 38px !important;
+  min-height: 38px !important;
+  padding: 4px 8px !important;
+  margin: 0 4px;
+  text-align: center;
+  flex: none;
   background: var(--surface); border: 1px solid var(--border); color: var(--text);
-  border-radius: 5px; font-size: 12px;
+  border-radius: 6px;
+  font-size: 15px !important;
+  font-weight: 600;
+  -moz-appearance: textfield; /* Firefox: se ocultan las flechas nativas */
 }
+/* En Chrome/Edge las flechas son diminutas: se agrandan para poder tocarlas */
+.notif-num::-webkit-outer-spin-button,
+.notif-num::-webkit-inner-spin-button {
+  -webkit-appearance: inner-spin-button;
+  opacity: 1;
+  height: 34px;
+  cursor: pointer;
+}
+.notif-num:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ═══════════════════════════════════════════════════════════════
    MEJORAS DE DISEÑO Y ACCESIBILIDAD
@@ -1168,3 +1193,74 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   .celda-no-realizado { font-size: 8px; }
   .celda-pendiente { font-size: 7.5px; }
 }
+
+/* ---- Opciones extra de notificación: recordatorio y escalamiento ----
+   Antes el número y los cuatro roles iban en un solo renglón, y el campo quedaba
+   aplastado hasta no poder escribir. Ahora cada parte tiene su propia línea. */
+.notif-extra-check {
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  cursor: pointer; flex-basis: 100%;
+}
+.notif-extra-check input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+.notif-inline {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  font-size: 13px; color: var(--text-dim); line-height: 2;
+}
+.notif-escalamiento { flex-direction: column; align-items: flex-start; gap: 8px; }
+.notif-escalamiento .notif-roles-list { margin-left: 0; }
+/* En el checklist del engrase la casilla es más grande, aquí no debe crecer tanto */
+.notif-extra .notif-rol input[type="checkbox"] { width: 16px; height: 16px; }
+
+/* ---------------- Historial rápido en la ficha del equipo ---------------- */
+.ficha-bloque {
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.ficha-bloque h4 {
+  margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
+}
+.ficha-alerta { border-color: var(--amber); background: rgba(230,126,34,0.07); }
+.ficha-alerta h4 { color: var(--amber); }
+.ficha-fila {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 6px 0; font-size: 12.5px; border-bottom: 1px solid var(--border);
+}
+.ficha-fila:last-child { border-bottom: none; }
+
+/* ---------------- Buscador rápido de la barra superior ---------------- */
+.quick-find { position: relative; }
+.quick-find input {
+  width: 190px; padding: 7px 12px; border-radius: 20px; font-size: 13px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  transition: width 0.15s ease, border-color 0.15s ease;
+}
+.quick-find input:focus { width: 250px; border-color: var(--accent); outline: none; }
+.quick-find input::placeholder { color: var(--text-dim); }
+.quick-find-results {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  min-width: 320px; max-height: 60vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4); padding: 5px;
+}
+.qf-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 11px; border: none; background: none; color: var(--text);
+  text-align: left; cursor: pointer; border-radius: 7px; font-size: 13px;
+}
+.qf-item:hover, .qf-activo { background: var(--surface-2); }
+.qf-vacio { padding: 12px; color: var(--text-dim); font-size: 13px; text-align: center; }
+@media (max-width: 860px) {
+  .quick-find input { width: 130px; }
+  .quick-find input:focus { width: 170px; }
+  .quick-find-results { min-width: 260px; right: -40px; }
+}
+
+/* ---------------- Copiar plan completo ---------------- */
+.copy-plan-opcion {
+  display: flex; flex-direction: row; align-items: flex-start; gap: 9px;
+  padding: 11px 13px; margin-bottom: 12px; cursor: pointer;
+  background: rgba(242,169,0,0.07); border: 1px solid var(--accent); border-radius: 9px;
+  font-size: 13px; line-height: 1.5;
+}
+.copy-plan-opcion input { width: 20px; height: 20px; flex: none; margin-top: 2px; }
