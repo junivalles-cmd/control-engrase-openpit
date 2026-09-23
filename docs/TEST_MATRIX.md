@@ -189,3 +189,27 @@ de los módulos modularizados en sí.
 | `npm test` (post) | PASS (125/125, sin cambios) |
 | GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR |
 | Rollback a `www` | Documentado (3 pasos), no ejecutado (no hizo falta) |
+
+## FASE VITE 3 — Validar `dist` para GitHub Pages (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| `npm test` / `npm run build` (precheck) | PASS (125/125, build OK) |
+| Configuración remota de GitHub Pages | Reconstruida de documentación local (no duplicada); **CONFIGURACIÓN REMOTA: NO VERIFICADA** (sin `git remote` hacia `junivalles-cmd.github.io`) |
+| Inventario de `dist/` (28 archivos, mínimos pedidos + `src/core/*`) | PASS — todos presentes |
+| `.nojekyll` presente, vacío, idéntico a la fuente | PASS |
+| `.well-known/assetlinks.json` JSON válido, `package_name` correcto, fingerprint sin tocar, idéntico a la fuente | PASS |
+| Rutas absolutas de raíz (`/algo`) en index.html/manifest/styles/sw.js | NINGUNA (todas relativas o `https://`) |
+| Decisión `base: './'` confirmada correcta (dominio de usuario, sin subpath) | PASS, documentada |
+| `sw.js`: las 24 rutas de `ASSETS` resuelven en `dist/`, scope raíz correcto | PASS |
+| `dist/index.html` no carga el SDK Web de OneSignal de forma incondicional | PASS (`NOTIF-ANDROID-001` no reapareció) |
+| `OneSignalSDKWorker.js` presente | PASS |
+| `npm run preview`: 20 recursos comprobados por HTTP | PASS, 0 errores 404, Content-Type correctos |
+| WEB-VITE-01 a 13 (carga, login, 8 pantallas, Service Worker, manifest/íconos, sin errores de consola) | PASS — validado por el usuario en navegador real |
+| Offline Web desde `dist` (obligatoria) | PASS — validado por el usuario (SW activo → offline DevTools → recarga → shell y módulos disponibles) |
+| Comparación fuente vs. `dist` (27 archivos + índex) | 27/28 idénticos byte a byte; `index.html` con diferencias cosméticas ya documentadas, sin impacto funcional |
+| `npm run verify:dist` (nuevo) | PASS — y confirmado que detecta fallos reales (prueba con `.nojekyll` removido temporalmente → falla correctamente, restaurado) |
+| `npm run build:web` (test+build+verify encadenados) | PASS |
+| `npm test` (post) | PASS (125/125, sin cambios) |
+| Android sigue usando `dist` (`capacitor.config.json` sin tocar en esta fase) | CONFIRMADO |
+| GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR — nada publicado |

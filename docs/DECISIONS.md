@@ -275,3 +275,50 @@ mismo contenido runtime (`www`, actualizada por
 regenerada por `npm run build`) — redundancia temporal y deliberada,
 hasta que una fase futura decida si `www`/el script de sincronización
 dejan de ser necesarios.
+
+## 14. Vite Fase 3: `base: './'` confirmado (no cambiado) para GitHub Pages de usuario
+**Decisión:** se mantiene `base: './'` en `vite.config.js` (configurado
+desde la Fase 1) en vez de cambiarlo a `base: '/'`, pese a haber
+confirmado en esta fase que el sitio se sirve en la **raíz** de un
+dominio de usuario (`junivalles-cmd.github.io/`, sin subpath, sin
+`CNAME`) — un caso donde, en teoría, `'/'` también funcionaría.
+
+**Razón:** el pedido explícito era "no configurar base de Vite
+arbitrariamente. Primero determina si `base: '/'` es lo correcto... y
+documenta la decisión" — no necesariamente cambiarla. Con el sitio en la
+raíz, `'./'` y `'/'` producen el mismo resultado funcional; `'./'` sigue
+siendo estrictamente más portable (sin costo) porque seguiría funcionando
+si el sitio alguna vez se sirviera bajo un subpath (por ejemplo, para
+probarlo en otro entorno o repositorio de proyecto en vez de usuario).
+Cambiarla habría sido una modificación sin beneficio real, contraria a
+"no cambies configuración de despliegue sin necesidad" que rige toda
+esta fase.
+
+**Verificación, no asunción:** la determinación de "raíz de dominio de
+usuario, sin subpath" no se asumió — se confirmó releyendo documentación
+local ya existente (`README_SUBIR_A_GITHUB.txt`,
+`GUIA_COMPLETA_INSTALACION.md`, `docs/PLAN_UNIFICACION_WEB_ANDROID.md`),
+sin volver a intentar acceder al panel remoto de GitHub (que ya estaba
+marcado como NO VERIFICABLE desde este entorno en una fase anterior).
+
+## 15. `npm run verify:dist`: reutilizar `computeRuntimeFileSet()` en vez de una lista propia
+**Decisión:** el verificador de build Web (`tools/verify-dist.mjs`) no
+mantiene su propia lista de "archivos obligatorios" — importa
+`computeRuntimeFileSet()` de `tools/runtime-file-set.mjs` (la misma
+función que ya usan `tools/sync-web-to-android.mjs` y
+`vite.config.js`) y valida que cada archivo de esa allowlist exista en
+`dist/`, además de un puñado de comprobaciones de contenido (JSON
+válido, íconos del manifest existen, rutas de `sw.js` resuelven, no
+reaparece la carga incondicional del SDK Web de OneSignal).
+
+**Razón:** "PARTE F — NO DUPLICAR LÓGICA" ya establecida como principio
+en fases anteriores de este proyecto — una tercera copia de la misma
+lista de archivos críticos (además de la que ya usan el script de
+sincronización y el plugin de Vite) sería exactamente el tipo de
+duplicación que se pidió evitar, y divergiría con el tiempo si alguien
+actualiza una sin la otra.
+
+**Verificado que el script realmente detecta fallos** (no es un "siempre
+PASS"): se quitó `.nojekyll` de `dist/` temporalmente, se confirmó que
+`verify:dist` falla con código de salida 1 y el mensaje correcto, y se
+restauró el archivo.

@@ -283,3 +283,47 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   IndexedDB, `sync.js`: sin modificar. No se publicó nada.
 - Ver `docs/VITE_MIGRATION.md` (sección Fase 2) para el detalle completo.
 - Commit: `build: use vite dist for capacitor android`.
+
+## 2026-09-23 — Fase Vite 3: validar `dist` para GitHub Pages (sin publicar)
+- Configuración remota de GitHub Pages reconstruida de documentación
+  local ya existente (`README_SUBIR_A_GITHUB.txt`,
+  `docs/PLAN_UNIFICACION_WEB_ANDROID.md`, etc.), sin duplicar el
+  análisis: repo de usuario `junivalles-cmd.github.io`, raíz del
+  dominio, publicación manual, sin Actions. Marcado explícitamente
+  **CONFIGURACIÓN REMOTA: NO VERIFICADA** (sin `git remote` conectado,
+  sin consultar GitHub).
+- Inventario completo de `dist/` (28 archivos) clasificado y verificado:
+  `.nojekyll` (vacío), `.well-known/assetlinks.json` (válido,
+  `package_name` correcto), `manifest.json` (íconos existentes), `sw.js`
+  (24 rutas de `ASSETS` resuelven todas), `OneSignalSDKWorker.js`, los 6
+  `src/core/*.js`.
+- Confirmado (grep, no a simple vista): ninguna ruta absoluta de raíz en
+  `index.html`/`manifest.json`/`styles.css`/`sw.js`. Decisión `base:
+  './'` (ya configurada en Fase 1) confirmada correcta para un dominio
+  de usuario servido en la raíz, documentada en vez de cambiada.
+- Confirmado que `dist/index.html` no volvió a cargar el SDK Web de
+  OneSignal de forma incondicional (`NOTIF-ANDROID-001` no reapareció).
+- `npm run preview`: 20 recursos, 200 en todos, 0 errores 404.
+- Prueba Web real en navegador (WEB-VITE-01 a 13) y prueba offline
+  obligatoria (Service Worker activo → offline de DevTools → recarga →
+  shell y `src/core/` siguen disponibles): preparadas para el usuario
+  (sin herramienta de automatización de navegador en esta sesión) y
+  ejecutadas por él — **todo PASS**, confirmado, no inventado.
+- Comparación fuente vs. `dist`: 27/28 archivos idénticos byte a byte,
+  solo `index.html` con diferencias cosméticas ya documentadas.
+- Nuevo `tools/verify-dist.mjs` (`npm run verify:dist`) — reutiliza
+  `computeRuntimeFileSet()`, sin duplicar lógica; probado contra un
+  fallo real (se quitó `.nojekyll` temporalmente, detectó el problema,
+  código de salida 1, luego se restauró). Nuevo `npm run build:web`
+  (`test && build && verify:dist`).
+- Nuevo `docs/WEB_DEPLOYMENT.md`: procedimiento paso a paso de
+  publicación (manual, sin Actions) y rollback.
+- `npm test`: 125/125 PASS. Android sigue usando `dist`
+  (`capacitor.config.json` sin tocar en esta fase). **No se publicó
+  nada**: sin `git push`, sin subir archivos a
+  `junivalles-cmd.github.io`, sin tocar GitHub Pages. `www`,
+  `tools/sync-web-to-android.mjs`, Supabase, IndexedDB, `sync.js`: sin
+  modificar.
+- Ver `docs/VITE_MIGRATION.md` (sección Fase 3) y `docs/WEB_DEPLOYMENT.md`
+  para el detalle completo.
+- Commit: `build: prepare vite dist for github pages deployment`.

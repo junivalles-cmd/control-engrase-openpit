@@ -9,7 +9,9 @@
     "test:watch": "vitest",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:dist": "node tools/verify-dist.mjs",
+    "build:web": "npm test && npm run build && npm run verify:dist"
   },
   "devDependencies": {
     "vite": "^5.4.21",

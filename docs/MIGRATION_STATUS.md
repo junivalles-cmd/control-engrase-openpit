@@ -366,3 +366,54 @@ bien sirviendo contenido de `dist/` que de `www/`.
 pasos: restaurar `webDir`, `cap sync`, rebuild) pero no ejecutado — no
 hizo falta. Ver `docs/VITE_MIGRATION.md` (sección Fase 2) para el detalle
 completo.
+
+## FASE VITE 3 — Validar `dist` para GitHub Pages
+**Estado:** COMPLETADA — LISTA PARA PUBLICAR, NO PUBLICADA (2026-09-23)
+
+Configuración remota reconstruida de documentación local existente (sin
+duplicar análisis): repo de usuario
+`github.com/junivalles-cmd/junivalles-cmd.github.io`, servido en la raíz
+de `https://junivalles-cmd.github.io/`, publicación manual (drag-and-drop
+a la raíz del repo), sin GitHub Actions. **CONFIGURACIÓN REMOTA: NO
+VERIFICADA** — este repositorio local no tiene ningún `remote` conectado
+con ese repo; no se intentó ninguna conexión.
+
+Inventario completo de `dist/` (28 archivos) confirmado: `.nojekyll`
+(vacío, crítico para que GitHub Pages no oculte `.well-known/`),
+`.well-known/assetlinks.json` (JSON válido, `package_name` correcto, sin
+tocar el fingerprint), `manifest.json` (íconos existentes), `sw.js` (sus
+24 rutas de `ASSETS` resuelven en `dist/`, scope raíz correcto para un
+dominio de usuario), `OneSignalSDKWorker.js`, los 6 `src/core/*.js`, y
+confirmado que `index.html` no vuelve a cargar el SDK Web de OneSignal de
+forma incondicional (no reapareció `NOTIF-ANDROID-001`). Ninguna ruta
+absoluta de raíz (`/algo`) en ningún archivo — `base: './'` (ya
+configurado desde la Fase 1) confirmado correcto para este dominio de
+usuario, decisión documentada en vez de cambiada sin necesidad.
+
+`npm run preview` sobre `dist/`: 20 recursos, 200 en todos, 0 errores
+404. Pruebas manuales en navegador real (WEB-VITE-01 a 13: carga, login,
+las 8 pantallas principales, Service Worker, manifest/íconos, sin
+errores de consola) y la prueba offline obligatoria (Service Worker
+activo → modo offline del navegador → recarga → shell y módulos
+`src/core/` siguen disponibles) — **ambas validadas por el usuario, todo
+PASS**, no automatizadas por falta de herramienta de navegador en esta
+sesión pero tampoco inventadas.
+
+Comparación fuente vs. `dist`: 27/28 archivos idénticos byte a byte, solo
+`index.html` difiere de forma cosmética (ya documentado desde la Fase
+1) — sin diferencias de comportamiento en Service Worker, manifest,
+OneSignal, App Links ni módulos.
+
+Nuevo: `npm run verify:dist` (`tools/verify-dist.mjs`, reutiliza
+`computeRuntimeFileSet()`, sin duplicar lógica) y `npm run build:web`
+(`test && build && verify:dist` encadenados) — proceso de despliegue
+reproducible sin GitHub Actions, documentado paso a paso en el nuevo
+`docs/WEB_DEPLOYMENT.md` (incluye rollback). El verificador se probó
+contra un fallo real (se quitó `.nojekyll` temporalmente): detectó el
+problema y falló con código de salida 1, como se esperaba.
+
+`npm test`: 125/125 PASS. **No se publicó nada** — ni `git push`, ni
+subida a `junivalles-cmd.github.io`, ni cambios en GitHub Pages. Android
+sigue usando `dist` sin cambios (`capacitor.config.json` no se tocó en
+esta fase). `www`, `tools/sync-web-to-android.mjs`, Supabase, IndexedDB,
+`sync.js`: sin modificar.

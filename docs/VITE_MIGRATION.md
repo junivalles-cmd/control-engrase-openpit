@@ -511,9 +511,210 @@ reorganizar el proyecto a `src/`+`public/`; tocar Supabase/IndexedDB/
 `sync.js`/Auth/RLS; corregir `UI-ANDROID-005` o `ANDROID-DOZE-001`;
 agregar funcionalidades nuevas.
 
-## Siguiente fase natural
+## Siguiente fase natural (histórico — ver FASE 3 abajo)
 
 Fase Vite 3: validar `dist` como fuente también para GitHub Pages, y
 evaluar convertir `dist` en la única salida Web + Android (momento en el
 que `www` y `tools/sync-web-to-android.mjs` dejarían de ser necesarios) —
 **no iniciada todavía**, pendiente de aprobación explícita.
+
+# FASE 3 — VALIDAR `dist` PARA GITHUB PAGES
+
+Fecha: 2026-09-23
+Commit Fase 2: `c1edcd8`.
+
+## Objetivo de esta fase
+
+Dejar `dist/` **listo para publicarse** como sitio Web en GitHub Pages —
+validado, verificado y documentado — **sin publicar nada todavía**. Ver
+`docs/WEB_DEPLOYMENT.md` para el procedimiento paso a paso de cuando se
+decida publicar.
+
+## Configuración remota de GitHub Pages actual
+
+Reconstruida a partir de documentación local ya existente
+(`README_SUBIR_A_GITHUB.txt`, `GUIA_COMPLETA_INSTALACION.md`,
+`ESTADO_DEL_PROYECTO.md`, `docs/PLAN_UNIFICACION_WEB_ANDROID.md`) — no se
+duplicó el análisis, se reutilizó:
+
+- **Repositorio:** `github.com/junivalles-cmd/junivalles-cmd.github.io`
+  (repo de GitHub Pages de **usuario**, no de proyecto).
+- **Dominio:** `https://junivalles-cmd.github.io/` — sin dominio propio
+  (no hay `CNAME`), se sirve en la **raíz** del subdominio por defecto.
+- **Publicación:** manual, arrastrando TODO el contenido de la carpeta
+  fuente a la raíz del repositorio remoto (rama `main`, carpeta `/ (root)`
+  en Settings → Pages). No existe ningún workflow de GitHub Actions.
+- **CONFIGURACIÓN REMOTA: NO VERIFICADA.** El repositorio Git local
+  (`CONTROL_ENGRASE`) no tiene ningún `remote` conectado con
+  `junivalles-cmd.github.io` — son dos repositorios completamente
+  desacoplados hoy. No se hizo ningún `git remote`, `fetch` ni consulta a
+  GitHub en esta fase ni en ninguna anterior.
+- El host `junivalles-cmd.github.io` también está hardcodeado como
+  `WEB_HOST` en `CONTROL_ENGRASE_APP_ANDROID/configure-applinks.js` y como
+  `android:host` en `AndroidManifest.xml` — usado para Android App Links,
+  coincide con lo anterior.
+
+## Inventario de `dist/` (28 archivos)
+
+| Categoría | Archivos |
+|---|---|
+| **Entrada Web** | `index.html` |
+| **Crítico PWA** | `manifest.json`, `sw.js` |
+| **Crítico App Links** | `.nojekyll`, `.well-known/assetlinks.json` |
+| **JS (scripts clásicos)** | `app.js`, `db.js`, `sync.js`, `src/core/{shifts,hourmeter,lubrication-status,anomalies,anomaly-actions,weekly-matrix}.js` |
+| **CSS** | `styles.css` |
+| **OneSignal Web** | `OneSignalSDKWorker.js` |
+| **Íconos/recursos** | `favicon.png`, `apple-touch-icon.png`, `icon-{72,96,128,144,152,192,384,512}.png`, `icon-maskable-{192,512}.png` |
+
+Los 10 archivos "como mínimo" pedidos (`index.html`, `app.js`, `db.js`,
+`sync.js`, `styles.css`, `sw.js`, `manifest.json`,
+`OneSignalSDKWorker.js`, `.nojekyll`, `.well-known/assetlinks.json`) más
+`src/core/*` (6): **todos presentes**, confirmado con
+`npm run verify:dist` (ver más abajo).
+
+## `.nojekyll`
+
+Presente en `dist/.nojekyll`, 0 bytes (igual que la fuente), byte a byte
+idéntico a `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\.nojekyll`. Crítico:
+sin él, GitHub Pages procesa el sitio con Jekyll, que **ignora** carpetas
+que empiezan con punto — `.well-known/` desaparecería del sitio
+publicado y rompería la verificación de Android App Links (ya
+documentado en `docs/PLAN_UNIFICACION_WEB_ANDROID.md`, sección 4).
+
+## `.well-known/assetlinks.json`
+
+- JSON válido (`JSON.parse` sin errores).
+- `package_name: "com.conequisa.engraseopenpit"` — coincide con `appId`
+  en `capacitor.config.json`.
+- `sha256_cert_fingerprints` presente, **no se modificó**.
+- Byte a byte idéntico a la fuente.
+- Ruta exacta al desplegarse en la raíz del dominio:
+  `https://junivalles-cmd.github.io/.well-known/assetlinks.json` (misma
+  URL que ya documentaba `README_SUBIR_A_GITHUB.txt` para verificar
+  manualmente tras publicar).
+
+## Rutas y `base` de Vite
+
+Se revisaron todas las referencias locales en `index.html`,
+`manifest.json`, `styles.css` y `sw.js`: **ninguna usa una ruta absoluta
+de raíz** (`/algo`) — todas son relativas (`./`, nombre de archivo plano)
+o URLs completas `https://` (CDN, Google Fonts). Confirmado con grep
+específico buscando `src="/` / `href="/"` — cero resultados.
+
+**Decisión sobre `base`:** se mantiene `base: './'` (ya configurado desde
+la Fase 1) — **no se cambió a `base: '/'`**, y esta vez con la
+confirmación explícita (no solo por precaución) de que el sitio se sirve
+en la **raíz** de un dominio de usuario (`junivalles-cmd.github.io/`, sin
+subpath). En ese caso concreto, `base: './'` y `base: '/'` producen el
+mismo resultado funcional al desplegarse — pero `'./'` sigue siendo la
+opción más portable (también funcionaría si el sitio se sirviera algún
+día bajo un subpath, por ejemplo para probarlo en otro entorno), sin
+ningún costo adicional. Se documenta la decisión en vez de cambiarla sin
+necesidad.
+
+## Service Worker para GitHub Pages
+
+- `sw.js` se registra con `navigator.serviceWorker.register('./sw.js')`
+  (sin `scope` explícito en el registro) — el *scope* por defecto es el
+  directorio donde vive `sw.js`, que al desplegar `dist/` en la raíz del
+  dominio es la raíz completa (`/`) — coincide con que `ASSETS` liste
+  todo con rutas `./` relativas a esa misma raíz.
+- Las 24 rutas de `ASSETS` (23 archivos propios + `'./'` como raíz)
+  **todas existen** en `dist/`, verificado programáticamente (no a
+  simple vista).
+- No depende de `www` ni de ninguna ruta específica de Android — mismo
+  `sw.js`, sin modificar, ya validado funcionando tanto desde `www` como
+  desde `dist` (Fase 2, prueba offline en Android real) y ahora también
+  desde `dist` servido por HTTP (`npm run preview`, ver más abajo).
+- **No se reescribió el Service Worker** en esta fase, como se pidió.
+
+## OneSignal Web
+
+Confirmado en `dist/index.html`: **no** contiene ningún `<script
+src="...onesignal.com...">` incondicional (0 coincidencias) — solo el
+comentario explicativo de `NOTIF-ANDROID-001`. `initWebPush()` (que
+inyecta el SDK dinámicamente, solo fuera de Capacitor) está presente y
+sin cambios en `dist/app.js`. `OneSignalSDKWorker.js` presente. No se
+probó ningún envío de push real (fuera de alcance, como en fases
+anteriores).
+
+## `npm run preview` — servidor tipo producción sobre `dist/`
+
+20 recursos comprobados por HTTP: **200 en todos**, tipos de contenido
+correctos (`text/javascript`, `application/json`, `text/css`,
+`image/png`). **0 errores 404.**
+
+## Prueba Web real en navegador (WEB-VITE-01 a WEB-VITE-13)
+
+Sin herramienta de automatización de navegador disponible en esta
+sesión — se preparó la prueba manual (URL del `npm run preview` local) y
+el usuario la ejecutó directamente: carga inicial, login, Dashboard,
+Equipos, Turno, estados de engrase, Matriz Semanal, Anomalías, Historial,
+Reportes, Service Worker (registrado/activado en DevTools), manifest/
+íconos (sin errores en DevTools → Application → Manifest), sin errores de
+consola JavaScript — **todos PASS**, confirmado por el usuario, no
+inventado.
+
+## Prueba offline Web desde `dist` (obligatoria)
+
+Con el mismo servidor `npm run preview`: Service Worker activado
+confirmado en DevTools, luego modo offline de DevTools activado, recarga
+de la página — shell y módulos `src/core/` siguieron disponibles, sin
+registrar datos ficticios. **PASS**, confirmado por el usuario en la
+misma sesión de prueba manual.
+
+## Comparación funcional: fuente Web actual vs. `dist`
+
+27 de los 28 archivos runtime son **idénticos byte a byte** (`app.js`,
+`db.js`, `sync.js`, `styles.css`, `sw.js`, `manifest.json`,
+`OneSignalSDKWorker.js`, `.nojekyll`, `.well-known/assetlinks.json`, los
+10 íconos, los 6 `src/core/*.js`). La única diferencia es `index.html`,
+ya documentada desde la Fase 1: normalización cosmética de 3 `href`
+(`manifest.json` → `./manifest.json`, etc.), atributo `crossorigin`
+agregado al `<link rel="stylesheet">`, y ese mismo `<link>` reordenado
+dentro de `<head>` — sin efecto funcional. **Ninguna diferencia de
+comportamiento** en Service Worker, manifest, OneSignal, App Links,
+íconos ni módulos.
+
+## Proceso de despliegue (preparado, no ejecutado)
+
+Nuevo script `npm run build:web` = `npm test && npm run build && npm run
+verify:dist` — encadena las tres validaciones que hoy se hacían a mano en
+un solo comando, y falla rápido (antes de generar o publicar nada) si
+algo se rompe. El flujo objetivo completo, sin GitHub Actions (a
+propósito, "prefiero primero un proceso claro y controlado"), queda
+documentado paso a paso en **`docs/WEB_DEPLOYMENT.md`** (nuevo).
+
+## `npm run verify:dist` (nuevo)
+
+Script `tools/verify-dist.mjs`, reutiliza `computeRuntimeFileSet()` (la
+misma allowlist que ya usa `tools/sync-web-to-android.mjs` y
+`vite.config.js` — sin duplicar lógica). Verifica: `index.html` y el set
+runtime completo existen en `dist/`; `.nojekyll` existe y está vacío;
+`.well-known/assetlinks.json` es JSON válido con `package_name`;
+`manifest.json` es JSON válido y sus íconos existen; cada ruta de
+`ASSETS` en `sw.js` existe; `OneSignalSDKWorker.js` existe; `src/core/`
+tiene sus módulos; `index.html` no carga el SDK Web de OneSignal de forma
+incondicional.
+
+**Probado que realmente detecta fallos** (no es un "siempre PASS"): se
+quitó temporalmente `.nojekyll` de `dist/`, se confirmó que el script
+falla con código de salida 1 y el mensaje correcto, y se restauró el
+archivo — vuelve a pasar limpio.
+
+## Qué NO se hizo en esta fase (a propósito)
+
+Publicar nada (`git push`, subir archivos a GitHub, tocar el repositorio
+`junivalles-cmd.github.io`, usar credenciales de GitHub, cambiar
+configuración de Pages); instalar TypeScript; tocar
+Supabase/IndexedDB/`sync.js`; agregar funcionalidades; corregir
+`UI-ANDROID-005` o `ANDROID-DOZE-001`; borrar `www` ni
+`tools/sync-web-to-android.mjs`; agregar GitHub Actions; reescribir el
+Service Worker; probar push real de OneSignal.
+
+## Siguiente fase natural
+
+Si se aprueba esta validación: primer despliegue controlado de `dist/` a
+GitHub Pages (siguiendo `docs/WEB_DEPLOYMENT.md`), y después evaluar
+retirar gradualmente `www`/`tools/sync-web-to-android.mjs` — **no
+iniciado todavía**, pendiente de aprobación explícita.
