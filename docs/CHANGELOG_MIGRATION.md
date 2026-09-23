@@ -174,3 +174,46 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
 - Ver `docs/BUG_REGISTER.md` (`NOTIF-ANDROID-001`) para el detalle completo
   y `docs/DECISIONS.md` para la arquitectura Web vs. Android de OneSignal.
 - Commit: `fix: separate web and native OneSignal initialization`.
+
+## 2026-09-23 — Modularización JavaScript Fase 2: Matriz Semanal y Anomalías
+- Revalidación offline corta previa (Service Worker v24, tras el cambio de
+  `NOTIF-ANDROID-001`): login offline, Dashboard y Matriz con datos reales,
+  sin errores — PASS.
+- `dbadee9` `refactor: extract weekly lubrication matrix logic` —
+  `estadoCelda()` pasó de función anidada dentro de `renderMatrizSemanal()`
+  (cerraba sobre `plans`/`records`/`hoy`) a función pura top-level en
+  `src/core/weekly-matrix.js`, recibiendo esos datos como parámetros
+  explícitos. Se confirmó leyendo el código que la reprogramación puntual
+  (`reprogramadoHasta`) no afecta la Matriz (solo el Dashboard) — se
+  preservó tal cual, sin inventar comportamiento. 15 pruebas nuevas
+  (`matriz-estado-celda.test.js`). 88 → 103 PASS. `sw.js`: `CACHE`
+  v24 → v25 (nuevo archivo a precachear).
+- `488c474` `refactor: extract lubrication anomaly decision logic` — se
+  separó la decisión de negocio de `createAutoAnomalies()` (¿crear,
+  actualizar o nada?) de la persistencia. `evaluateAnomalyActions()` y
+  `hayPuntosOAnomaliaHorometro()` (`src/core/anomaly-actions.js`) son
+  puras; `createAutoAnomalies()` en `app.js` sigue siendo la única que
+  llama `DB.allActive`/`DB.put`/`logAudit`. Se confirmó que el duplicado
+  se detecta solo por `autoPointId` (no por equipo — responsabilidad de
+  quien arma la lista de anomalías abiertas) y que
+  `'El equipo no tiene horómetro'` no genera anomalía. 22 pruebas nuevas
+  (`anomaly-actions.test.js`). 103 → 125 PASS. `sw.js`: `CACHE` v25 → v26.
+- `app.js`: 7243 → 7187 líneas tras ambas extracciones. Sin duplicación de
+  lógica — cada regla vive en un único archivo.
+- `tools/sync-web-to-android.mjs --apply` (2 rondas), `npx cap sync
+  android` (sin cambios en archivos versionados de Android fuera de
+  `www`/`assets/public`), `./gradlew assembleDebug` PASS.
+- Validado en Samsung SM-S938B real: `adb install -r` con datos
+  preservados (`firstInstallTime` sin cambios); smoke test — Dashboard,
+  Matriz y Anomalías abren con datos reales, sin `FATAL EXCEPTION` ni
+  errores nuevos en `Capacitor/Console`.
+- Hallazgo nuevo durante esta fase, **no relacionado** con la
+  modularización ni con `NOTIF-ANDROID-001`: `ANDROID-DOZE-001` (P3) —
+  lanzar la app con la pantalla del dispositivo apagada/dozing puede
+  producir un ciclo abrupto `App resumed→paused→stopped` y, a veces, el
+  mismo error `triggerEvent` pero con una firma distinta (sin
+  `onesignal.com`, sin "Incompatible browser."). No se reprodujo ni una
+  vez con la pantalla despierta y desbloqueada. No corregido, registrado
+  para una fase futura — ver `docs/BUG_REGISTER.md`.
+- No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
+  TypeScript. Ninguna funcionalidad nueva.

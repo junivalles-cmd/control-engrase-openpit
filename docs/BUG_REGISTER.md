@@ -379,3 +379,51 @@
 - **Evidencia:** `docs/evidence/UI-ANDROID-005_dashboard-table.png`.
 - **Acción actual:** NO corregir todavía. Queda para una fase de UI
   dedicada (fuera de esta fase, que es de validación, no de diseño).
+
+## ANDROID-DOZE-001 — Lanzar la app con la pantalla apagada/dozing puede producir un `App resumed→paused→stopped` abrupto y, a veces, el mismo error JS de `triggerEvent`
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P3 (no afecta el uso normal — solo ocurre al lanzar la app
+  mientras el dispositivo está en reposo/con la pantalla apagada, algo que
+  el usuario real no hace: siempre desbloquea el teléfono primero)
+- **Estado:** REPRODUCIDO, NO CORREGIDO
+- **Origen:** PREEXISTENTE, no relacionado con la Modularización JS Fase 2
+  ni con `NOTIF-ANDROID-001`
+- **Descubierto durante:** la revalidación offline (PARTE A) y el smoke
+  test Android (PARTE J) de la Modularización JS Fase 2, al lanzar la app
+  vía `adb shell am start` mientras el Samsung SM-S938B mostraba su
+  pantalla de carga (`mWakefulness=Dozing`, overlay "71% · 1 h 6 min para
+  completar la carga").
+- **Descripción:** cuando la app se lanza con la pantalla del dispositivo
+  apagada/en reposo (dozing) o mientras la pantalla de carga de Samsung
+  tiene el foco, logcat muestra un ciclo `App resumed` → `App paused` →
+  `App stopped` en menos de 100 ms, y en algunos casos (no siempre — no es
+  100% reproducible) inmediatamente después aparece
+  `Uncaught TypeError: Cannot read properties of undefined (reading
+  'triggerEvent')` con `File:` vacío y `Line 1` — un origen y una firma
+  DISTINTOS al de `NOTIF-ANDROID-001` (que citaba
+  `onesignal.com/sdks/.../OneSignalSDK.page.js` y el mensaje
+  `Incompatible browser.`, ninguno de los cuales aparece aquí).
+- **Evidencia de que es un problema distinto y de plataforma, no del SDK
+  Web de OneSignal:**
+  - Con la pantalla despierta y desbloqueada confirmada por
+    `adb shell dumpsys power`/`dumpsys trust` antes de cada lanzamiento:
+    varios lanzamientos limpios seguidos, cero reproducciones.
+  - Con la pantalla dormida/dozing: el ciclo `App resumed→paused→stopped`
+    aparece consistentemente; el error JS apareció en 2 de esos intentos y
+    NO apareció en otro (mismo patrón de pausa/stop, sin el error) — sugiere
+    una condición de carrera dependiente de en qué punto exacto de la carga
+    de `index.html` ocurre la interrupción, no algo determinista.
+  - No se encontró la cadena `onesignal.com` ni `Incompatible browser.` en
+    ninguna de las reproducciones — descarta que sea una recurrencia de
+    `NOTIF-ANDROID-001`.
+- **Hipótesis (no confirmada):** algún listener de ciclo de vida del bridge
+  nativo (Capacitor y/o `onesignal-cordova-plugin`) intenta disparar un
+  evento sobre un objeto que todavía no terminó de inicializarse cuando la
+  actividad se pausa/detiene anormalmente rápido, antes de que `app.js`
+  termine de cargar.
+- **Acción actual:** NO corregir en esta fase — fuera de alcance de la
+  Modularización JS Fase 2 (que es sobre Matriz Semanal y Anomalías, no
+  sobre notificaciones ni ciclo de vida de Android). No bloquea la
+  aprobación de esta fase: en uso normal (pantalla desbloqueada, que es
+  como arranca la app real) no se reprodujo ni una vez.

@@ -78,8 +78,9 @@ globales definidos en los archivos nuevos.
 | `fmt` | app.js | ~1031 | ninguna (pura) | usada en estado-engrase.test.js | BAJO | Sí (junto con estado de engrase, por dependencia directa) |
 | `computeAllStatuses` | app.js | ~1147 | `DB.allActive` (siempre) | ninguno directo | ALTO | No — siempre toca IndexedDB, no es pura |
 | `CRITICIDAD_POR_MOTIVO` | app.js | ~4666 | ninguna (constante) | anomalias.test.js | BAJO | Sí |
-| `createAutoAnomalies` | app.js | ~4678 | `DB.allActive/put`, `App.currentUser`, `uid`, `stamp`, `logAudit` | ninguno directo | ALTO | No — fuertemente acoplada a IndexedDB |
-| `estadoCelda` (Matriz Semanal) | app.js (anidada en `renderMatrizSemanal`) | ~3849 | variables locales cerradas (`plans`, `records`, `hoy`) | ninguno directo | ALTO | No — función anidada, no top-level, requiere refactor |
+| `createAutoAnomalies` (persistencia) | app.js | ~4651 | `DB.allActive/put`, `App.currentUser`, `uid`, `stamp`, `logAudit`, `evaluateAnomalyActions` | ninguno directo | ALTO | No — sigue en app.js, fuertemente acoplada a IndexedDB (Fase 2 solo extrajo la decisión, ver abajo) |
+| `evaluateAnomalyActions`/`hayPuntosOAnomaliaHorometro` (decisión de anomalías) | app.js (dentro de `createAutoAnomalies`) | ~4651 | `CRITICIDAD_POR_MOTIVO`, `fmtDate` | anomaly-actions.test.js (Fase 2, 22 casos) | BAJO | Sí — Fase 2 |
+| `estadoCelda` (Matriz Semanal) | app.js (antes anidada en `renderMatrizSemanal`) | ~3722 | `plans`, `records`, `hoy` (ahora recibidos como parámetros, no cerrados) | matriz-estado-celda.test.js (Fase 2, 15 casos) | BAJO | Sí — Fase 2 (se cambió la firma para recibir los datos explícitamente, ver sección Fase 2) |
 
 ## Cómo se prueba después de la modularización
 
@@ -134,18 +135,164 @@ cambió DE DÓNDE se lee el código real.
   `NOTIF-ANDROID-001` (SDK Web de OneSignal) y `UI-ANDROID-005` (diseño de
   tabla del Dashboard, preexistente).
 
-## Qué NO se tocó en esta fase
+## Qué NO se tocó en esta fase (Fase 1)
 
-`renderMatrizSemanal()`/`estadoCelda()`, `createAutoAnomalies()`,
-`computeAllStatuses()`, IndexedDB, `DB.allActive/put/get`,
-`Sync.pushAll/pullAll/fullSync`, fetch a Supabase, fotografías, el resto de
-`sw.js` (lifecycle/estrategia de cacheo), notificaciones, y toda la UI
-(`render*`). `app.js` sigue teniendo toda esa lógica exactamente igual que
-antes.
+`renderMatrizSemanal()`/`estadoCelda()` (extraída en la Fase 2, ver abajo),
+`createAutoAnomalies()` (su decisión se extrajo en la Fase 2; la
+persistencia sigue en `app.js`), `computeAllStatuses()`, IndexedDB,
+`DB.allActive/put/get`, `Sync.pushAll/pullAll/fullSync`, fetch a Supabase,
+fotografías, el resto de `sw.js` (lifecycle/estrategia de cacheo),
+notificaciones, y toda la UI (`render*`). `app.js` sigue teniendo toda esa
+lógica exactamente igual que antes.
 
-## Siguiente fase natural
+## Siguiente fase natural (histórico — ya resuelto en Fase 2, ver abajo)
 
 Continuar con `estadoCelda()` (requiere primero volverla una función
 top-level, no anidada, antes de poder probarla y extraerla) y con
 `createAutoAnomalies()` (requiere decidir cómo mockear IndexedDB — por
 ejemplo `fake-indexeddb` — antes de poder probarla de punta a punta).
+
+---
+
+# MODULARIZACIÓN JAVASCRIPT — FASE 2
+
+Fecha: 2026-09-23
+Rama: `migration-typescript`
+Objetivo: extraer y probar la lógica de la **Matriz Semanal** (`estadoCelda`)
+y de la **decisión de anomalías automáticas** (`createAutoAnomalies`) — las
+dos piezas que la Fase 1 había dejado pendientes por estar anidadas o
+acopladas a IndexedDB. Mismas reglas que la Fase 1: sin Vite, sin ES
+modules, sin tocar Supabase/IndexedDB/`sync.js`/`db.js`.
+
+## Matriz Semanal: `estadoCelda()` → `src/core/weekly-matrix.js`
+
+**El problema de la Fase 1:** `estadoCelda()` vivía como función **anidada**
+dentro de `renderMatrizSemanal()`, cerrando sobre `plans`/`records`/`hoy`
+(variables locales cargadas de IndexedDB dentro de esa misma función). Una
+función anidada así no es una declaración top-level — no se puede extraer
+ni probar de forma aislada sin antes desacoplarla de ese cierre.
+
+**La solución:** se cambió la firma para que reciba esos datos
+explícitamente — `estadoCelda(eq, fecha, plans, records, hoy)` — en vez de
+cerrarlos del scope externo. Con eso ya es una función pura top-level,
+movible tal cual a `src/core/weekly-matrix.js`. Los 4 sitios de llamada
+dentro de `renderMatrizSemanal()` (la grilla HTML, los contadores de KPIs,
+la exportación a Excel) se actualizaron para pasarle esos tres datos ya
+cargados — el comportamiento es idéntico, solo cambió de dónde saca los
+datos la función.
+
+**Reglas conservadas exactamente** (documentadas primero, luego extraídas —
+no se adivinó nada):
+- 5 estados de celda: `vacio` (no le toca ese día o no hay plan), `hecho`
+  (hay registro para esa fecha exacta), `futuro` (fecha posterior a hoy),
+  `pendiente` (es hoy, sin registro), `no_realizado` (fecha pasada, sin
+  registro, con `diasAtras`).
+- **Hallazgo importante confirmado leyendo el código, no asumido:**
+  `estadoCelda()` **no considera** `plan.reprogramadoHasta`/
+  `reprogramadoMotivo` — a diferencia del Dashboard (`statusFor()`, que sí
+  la usa). La reprogramación puntual solo afecta las tarjetas de estado del
+  Dashboard, nunca la grilla de la Matriz Semanal. Este comportamiento ya
+  existía antes de la extracción; no se cambió ni se "arregló".
+- `active:false`: `estadoCelda()` no filtra por `active` — asume que
+  `plans`/`records` ya vienen filtrados por `DB.allActive()`, igual que
+  antes. Es responsabilidad de quien la llama, no de la función pura.
+
+`WEEKDAY_NAMES` (definida en `lubrication-status.js`) se referencia como
+global compartido, igual que hace el resto de `src/core/*.js`.
+
+**Pruebas:** `tests/unit/matriz-estado-celda.test.js`, 15 casos — los 5
+estados, límites de semana (domingo→lunes), cambio de mes, cambio de año,
+reprogramación ignorada (documentando el comportamiento real), `active`
+ignorado, registros duplicados/atrasados, y guardas de fecha
+(`toMatchObject` sobre resultados reales, sin inventar expectativas).
+
+## Anomalías automáticas: decisión vs. persistencia
+
+**El problema:** `createAutoAnomalies()` mezclaba en una sola función la
+**decisión de negocio** (¿crear una anomalía nueva? ¿actualizar una
+existente para no duplicar? ¿no hacer nada?) con la **persistencia**
+(`DB.allActive`, `DB.put`, `logAudit`). Eso la hacía imposible de probar
+sin simular IndexedDB.
+
+**La solución:** se extrajo la decisión a
+`src/core/anomaly-actions.js`:
+- `evaluateAnomalyActions(record, equipment, openAnomalies)` — pura, recibe
+  el registro de engrase, el equipo y la lista de anomalías abiertas ya
+  cargada, y devuelve `{ acciones, avisos }`. Cada acción es
+  `{ tipo: 'crear', anomalia: {...} }` o
+  `{ tipo: 'actualizar', anomaliaId, cambios: {...} }`. No ejecuta
+  `DB.put`, `DB.allActive`, `fetch`, Supabase ni toca el DOM.
+- `hayPuntosOAnomaliaHorometro(record)` — guarda de entrada que evita la
+  llamada a `DB.allActive()` cuando el registro no tiene nada que evaluar
+  (mismo comportamiento que el `if` temprano que ya existía).
+
+`createAutoAnomalies()` en `app.js` sigue siendo la única que toca
+IndexedDB: llama a `evaluateAnomalyActions()`, y luego aplica cada acción
+con `DB.put(stamp(...))` — el mismo patrón de autoría que ya existía se
+preservó tal cual (las anomalías **nuevas** se firman con
+`record.userName`, las **actualizaciones** de contador se firman con
+`App.currentUser.name` — así estaba antes, no es un cambio).
+
+**Reglas conservadas exactamente (confirmadas leyendo el código real):**
+- El duplicado se detecta **solo por `autoPointId`**, sin comparar
+  `equipmentId` dentro de la función pura — el filtrado por equipo ocurre
+  ANTES, en `app.js` (`abiertas = ... .filter(a => a.equipmentId ===
+  equipment.id ...)`). Es responsabilidad de quien arma `openAnomalies`,
+  documentado explícitamente con una prueba.
+- Motivo → criticidad usa `CRITICIDAD_POR_MOTIVO` (Fase 1,
+  `anomalies.js`), con `'Media'` como *fallback* para motivos desconocidos.
+- El horómetro dañado/ilegible genera su propia anomalía con
+  `autoPointId: '__horometro__'`, salvo cuando el motivo es exactamente
+  `'El equipo no tiene horómetro'` (no es una falla, no genera anomalía).
+- Contador `repeticiones`: arranca en 1 al crear, sube de a 1 en cada
+  actualización (con *fallback* a 1 si el dato viejo no tiene el campo).
+
+**Pruebas:** `tests/unit/anomaly-actions.test.js`, 22 casos — crear/
+actualizar/no-duplicar por punto y por horómetro, los 3 niveles de
+criticidad pedidos (`Falla mecánica`→Crítica, `Grasera dañada`→Alta,
+`Punto inaccesible`→Media) más el *fallback* de motivo desconocido,
+contador de repetición (con y sin valor previo), datos incompletos
+(`reason`/`photos` nulos), y la guarda `hayPuntosOAnomaliaHorometro()`.
+
+## Service Worker (Fase 2)
+
+Se agregaron `src/core/weekly-matrix.js` y `src/core/anomaly-actions.js` a
+`ASSETS` en `sw.js`, subiendo `CACHE` dos veces (`v24` → `v25` al agregar
+la Matriz, `v25` → `v26` al agregar Anomalías) — cada archivo nuevo
+necesita su propio bump para que los dispositivos ya instalados lo
+precacheen; sin esto, la Matriz o las Anomalías podrían fallar en modo
+offline en una instalación existente hasta el próximo cambio de versión.
+No se tocó ninguna otra parte de `sw.js` (estrategia de cacheo/fetch/
+activate sigue igual que en la Fase 1 y en `NOTIF-ANDROID-001`).
+
+## Qué queda pendiente (fuera de alcance de esta fase)
+
+- `createAutoAnomalies()` sigue en `app.js`, aplicando las acciones
+  decididas — no se migró a `src/core/` porque sigue fuertemente acoplada
+  a IndexedDB (`DB.allActive`/`DB.put`) y a `logAudit()`, y esta fase
+  explícitamente no tocaba persistencia.
+- `renderMatrizSemanal()` (el render/DOM/toolbar/exportación a Excel/
+  impresión) sigue en `app.js` — solo se extrajo `estadoCelda()`, la
+  decisión pura de cada celda.
+- `computeAllStatuses()` (Dashboard, siempre toca IndexedDB) — pendiente,
+  como ya decía la Fase 1.
+- `horaAjustadaAlTurno()`/`confirmHourmeterChange()` — igual que en Fase 1,
+  sin prueba directa todavía.
+
+## Compatibilidad verificada (Fase 2)
+
+- `node --check` en `app.js`, `weekly-matrix.js`, `anomaly-actions.js`,
+  `sw.js`: OK.
+- `npm test`: 88 → 103 (Matriz) → 125 (Anomalías), 100% PASS en cada paso.
+- `tools/sync-web-to-android.mjs`: no se modificó, detectó los 2 archivos
+  nuevos automáticamente.
+- `npx cap sync android`: sin cambios en archivos versionados de Android
+  fuera de `www`/`assets/public`.
+- `./gradlew assembleDebug`: PASS.
+- Validado en Samsung SM-S938B real: instalación con `adb install -r`
+  preservando datos (`firstInstallTime` sin cambios), app arranca sin
+  `FATAL EXCEPTION` ni errores nuevos en `Capacitor/Console`, Dashboard/
+  Matriz/Anomalías abren con datos reales sin errores.
+- No duplicación: `estadoCelda`/`evaluateAnomalyActions`/
+  `hayPuntosOAnomaliaHorometro` existen en un único archivo cada una
+  (`src/core/`), `app.js` ya no tiene una copia de ninguna de las tres.

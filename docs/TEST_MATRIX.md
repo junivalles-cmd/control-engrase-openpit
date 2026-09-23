@@ -77,6 +77,23 @@ Ver `docs/BUG_REGISTER.md` para el detalle completo de causa raíz y corrección
 | Push real (Web o Android) | NO PROBADO — `ONESIGNAL_APP_ID` está vacío en el código de producción actual, el envío de push está deshabilitado por configuración, no por este fix |
 | Mecanismo Web de OneSignal (`initWebPush`) sigue intacto | PASS por revisión de código — no hay herramienta de automatización de navegador disponible en esta sesión, no se pudo probar en un navegador real |
 
+## FASE A5 — Modularización JS Fase 2: Matriz Semanal y Anomalías (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| Service Worker v24 offline (antes de tocar código, revalidación corta) | PASS — login offline, Dashboard con datos reales (badge "SIN INTERNET"), Matriz abrió sin errores, sin `FATAL EXCEPTION` en logcat |
+| Suite automatizada tras extraer `estadoCelda()` | PASS (88 → 103, 15 pruebas nuevas: `matriz-estado-celda.test.js`) |
+| Suite automatizada tras extraer `evaluateAnomalyActions()` | PASS (103 → 125, 22 pruebas nuevas: `anomaly-actions.test.js`) |
+| `node --check` en `app.js`, `weekly-matrix.js`, `anomaly-actions.js`, `sw.js` | PASS |
+| Sin duplicación de lógica (`estadoCelda`/`evaluateAnomalyActions`/`hayPuntosOAnomaliaHorometro` en un único archivo cada una) | PASS |
+| `tools/sync-web-to-android.mjs --dry-run` / `--apply` (2 rondas: Matriz, luego Anomalías) | PASS — detectó los 2 archivos nuevos automáticamente, sin cambios al script |
+| `npx cap sync android` | PASS — sin cambios en archivos versionados de Android fuera de `www`/`assets/public` |
+| `./gradlew assembleDebug` | PASS |
+| Instalación en Samsung SM-S938B (`adb install -r`) | PASS (datos preservados, `firstInstallTime` sin cambios) |
+| Smoke test Android: app abre, Dashboard/Matriz/Anomalías abren con datos reales | PASS — sin `FATAL EXCEPTION` ni errores nuevos en `Capacitor/Console` |
+| IndexedDB / `sync.js` / Supabase modificados | NO (ninguno de los tres se tocó) |
+| Hallazgo nuevo, no relacionado con esta fase: lanzamientos con la pantalla apagada/dozing (charging lock screen de Samsung) producen brevemente `App resumed→paused→stopped` y, en algunos casos, el mismo error `Cannot read properties of undefined (reading 'triggerEvent')` — registrado como bug aparte, ver `docs/BUG_REGISTER.md` (`ANDROID-DOZE-001`) | Documentado, no bloquea esta fase (con la pantalla despierta y desbloqueada, 100% de los lanzamientos probados fueron limpios) |
+
 ## Pruebas automatizadas de lógica (2026-09-23)
 
 Ver `docs/AUTOMATED_TESTS.md` para el detalle completo (framework, estructura,

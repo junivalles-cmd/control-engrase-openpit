@@ -165,3 +165,48 @@ archivo cuyo contenido cambió si `sw.js` mismo no cambió de bytes —
 sin este paso, dispositivos ya instalados habrían seguido viendo el
 `index.html` viejo (con el bug) indefinidamente pese al fix en el código
 fuente.
+
+## 11. Matriz Semanal y Anomalías: separar decisión pura de DOM/persistencia (Modularización JS Fase 2)
+**Decisión:** para las dos piezas de lógica que la Fase 1 había dejado
+pendientes, se aplicó el mismo patrón conceptual:
+
+```
+datos ya cargados → función PURA (decide) → acción/estado → quien llama aplica DOM/DB
+```
+
+- **`estadoCelda(eq, fecha, plans, records, hoy)`** (`src/core/weekly-matrix.js`):
+  antes era una función anidada dentro de `renderMatrizSemanal()` que
+  cerraba sobre `plans`/`records`/`hoy`. Se cambió su firma para recibir
+  esos tres datos como parámetros explícitos — eso, por sí solo, ya la
+  vuelve una función pura top-level, extraíble y testeable, sin cambiar ni
+  una sola regla de negocio. `renderMatrizSemanal()` (DOM, toolbar,
+  impresión, exportación a Excel) se quedó en `app.js`.
+- **`evaluateAnomalyActions(record, equipment, openAnomalies)`**
+  (`src/core/anomaly-actions.js`): separa la DECISIÓN (¿crear una anomalía
+  nueva, actualizar una existente para no duplicar, o no hacer nada?) de
+  la PERSISTENCIA (`DB.allActive`, `DB.put`, `logAudit`), que sigue en
+  `createAutoAnomalies()` (`app.js`). La función pura devuelve una lista de
+  acciones (`{ tipo: 'crear'|'actualizar', ... }`) como datos — no ejecuta
+  ningún efecto secundario.
+
+**Razón:** el pedido explícito de esta fase era exactamente esta
+separación ("no quiero que la función pura manipule DOM", "quiero separar
+DECISIÓN DE NEGOCIO de PERSISTENCIA"), aplicada con el menor cambio
+posible — sin reescribir reglas, solo cambiando de dónde vienen los datos.
+
+**Límites de responsabilidad documentados explícitamente (con pruebas),
+no asumidos:**
+- `estadoCelda()` no filtra por `active` ni considera
+  `plan.reprogramadoHasta` — ninguno de los dos es un cambio de esta
+  extracción, ambos comportamientos ya existían así en el código original
+  (confirmado leyendo `app.js` antes de tocar nada, no adivinado).
+- `evaluateAnomalyActions()` detecta duplicados **solo por `autoPointId`**,
+  sin comparar `equipmentId` — el filtrado por equipo sigue siendo
+  responsabilidad de `createAutoAnomalies()` en `app.js`, exactamente igual
+  que en el código original.
+
+**Consecuencia aceptada:** `sw.js` se tocó dos veces en esta fase (una por
+cada archivo nuevo agregado a `ASSETS`), subiendo `CACHE` de `v24` a `v25`
+y luego a `v26` — mismo patrón ya establecido en `NOTIF-ANDROID-001` y en
+la Fase 1, no una novedad. No se tocó ninguna otra parte de `sw.js`
+(estrategia de cacheo/fetch/activate).

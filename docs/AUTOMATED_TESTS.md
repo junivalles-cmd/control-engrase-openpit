@@ -73,11 +73,14 @@ CONTROL_ENGRASE/
         ├── turnos.test.js
         ├── estado-engrase.test.js
         ├── matriz-semanal.test.js
+        ├── matriz-estado-celda.test.js
         ├── anomalias.test.js
+        ├── anomaly-actions.test.js
         ├── horometro-validacion.test.js
         ├── active-flag.test.js
         ├── sync-dirty-check.test.js
-        └── seguridad-basica.test.js
+        ├── seguridad-basica.test.js
+        └── notificaciones-plataforma.test.js
 ```
 
 **Actualización 2026-09-23 (modularización):** parte de la lógica que antes
@@ -119,7 +122,9 @@ lista de prueba y falla la extracción, probablemente sea por esto.
 | Turno Día / Turno Noche / cruce de medianoche | `turnos.test.js` | `currentShiftId()`, `dentroDeSuTurno()` | 17:59, 18:00, 23:59, 00:00, 00:01, 05:59, 06:00; ventana de avisos con margen antes/después del turno |
 | Engrase pendiente/realizado/vencido; plan por frecuencia de horómetro | `estado-engrase.test.js` | `statusFor()` | DETENIDO, SIN PLAN, frecuencia 0/negativa, `lastGreaseHour` inconsistente, horómetro exacto/mayor/menor a la frecuencia, horómetro null, horómetro inválido (bug documentado, ver abajo) |
 | Matriz semanal (plan por día/turno) | `matriz-semanal.test.js` | `weekdayStatusFor()` | sin días asignados, programado hoy, al día (realizado), vencido (no realizado), reprogramación puntual |
+| Matriz semanal — celda exacta de la grilla | `matriz-estado-celda.test.js` | `estadoCelda()` (real, Fase 2) | 5 estados (vacio/hecho/futuro/pendiente/no_realizado), domingo→lunes, cambio de mes/año, reprogramación ignorada (comportamiento real), `active` ignorado, registros duplicados/atrasados |
 | Criticidad de anomalía automática; no duplicar | `anomalias.test.js` | `CRITICIDAD_POR_MOTIVO` (real) + regla de no-duplicado (documentada) | motivo → criticidad; anomalía cerrada no cuenta como "ya existe" |
+| Decisión de anomalías automáticas (crear/actualizar) | `anomaly-actions.test.js` | `evaluateAnomalyActions()` (real, Fase 2) | crear/actualizar por punto y por horómetro, 3 niveles de criticidad + fallback, contador de repetición, datos incompletos, límite por autoPointId sin equipmentId |
 | Validación de horómetro | `horometro-validacion.test.js` | `validateHourmeterChange()` | negativo, NaN, menor al anterior, salto grande (advertencia), límite exacto de 500h |
 | Borrado lógico `active:true/false` | `active-flag.test.js` | `stamp()` (real) + filtro `active!==false` (documentado) | default `active:true`, no se sobrescribe `active:false` existente, registros sin el campo siguen visibles |
 | Sincronización: qué sube, orden de un dispositivo nuevo | `sync-dirty-check.test.js` | reglas documentadas (`_pushedVersion`, orden pull/push) | nuevo/editado/sincronizado; primera sincronización baja antes de subir |
@@ -133,16 +138,18 @@ misma línea de código.
 
 ## Qué todavía NO se puede probar (requiere extracción durante la modularización)
 
-- **`estadoCelda()`** (dentro de `renderMatrizSemanal()`, `app.js`): calcula
-  REALIZADO / NO REALIZADO / PENDIENTE HOY / futuro para cada celda de la
-  grilla. Es una función **anidada** que cierra sobre variables locales
-  (`plans`, `records`, `hoy`) cargadas de IndexedDB — no es una declaración
-  top-level, no se puede extraer de forma aislada sin refactor.
-- **`createAutoAnomalies()`** (`app.js`): genera anomalías automáticas desde
-  puntos no atendidos. Llama `DB.allActive`/`DB.put` y lee `App.currentUser`
-  directamente — necesita una base de datos real o un mock completo de
-  IndexedDB para probarse de punta a punta. Se probó por separado la tabla
-  `CRITICIDAD_POR_MOTIVO` (real) y la regla de no-duplicado (documentada).
+- **`estadoCelda()`** — **RESUELTO en la Modularización JS Fase 2**: se
+  cambió su firma para recibir `plans`/`records`/`hoy` como parámetros en
+  vez de cerrarlos del scope de `renderMatrizSemanal()`, y se extrajo a
+  `src/core/weekly-matrix.js`. Ver `matriz-estado-celda.test.js` y
+  `docs/MODULARIZATION.md` (sección Fase 2).
+- **`createAutoAnomalies()`** (`app.js`): **la decisión de negocio se
+  extrajo en la Fase 2** (`evaluateAnomalyActions()`,
+  `src/core/anomaly-actions.js`, ver `anomaly-actions.test.js`). La función
+  `createAutoAnomalies()` en sí SIGUE en `app.js` y sigue sin poder
+  probarse de punta a punta: llama `DB.allActive`/`DB.put` y lee
+  `App.currentUser` directamente — necesita una base de datos real o un
+  mock completo de IndexedDB.
 - **`Sync.pushAll()` / `Sync.pullAll()` / `Sync.fullSync()`** (`sync.js`):
   hacen `fetch()` real contra Supabase y leen/escriben IndexedDB. Se
   documentaron por separado, con mocks locales, las reglas de negocio que
@@ -178,6 +185,9 @@ corrige).
 - No se instaló ningún polyfill de IndexedDB ni se mockeó `fetch` — por
   diseño, para no introducir más infraestructura de la necesaria en esta
   fase ("no gran refactor").
-- 77 pruebas en 8 archivos — deliberadamente acotado a lo que protege
-  ENGRASE / TURNOS / HORÓMETROS / ANOMALÍAS / CUMPLIMIENTO / MATRIZ / SYNC,
-  no cobertura artificial.
+- 125 pruebas en 11 archivos (77 al crear esta suite → 82 tras
+  `ENGRASE-001` → 88 tras `NOTIF-ANDROID-001` → 103 tras extraer la Matriz
+  Semanal → 125 tras extraer la decisión de Anomalías, Fase 2) —
+  deliberadamente acotado a lo que protege ENGRASE / TURNOS / HORÓMETROS /
+  ANOMALÍAS / CUMPLIMIENTO / MATRIZ / SYNC / NOTIFICACIONES, no cobertura
+  artificial.

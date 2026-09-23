@@ -251,3 +251,49 @@ lanzamientos consecutivos en el Samsung SM-S938B sin el error
 producción). Ver `docs/BUG_REGISTER.md` y `docs/DECISIONS.md` (§10) para el
 detalle completo. `UI-ANDROID-005` permanece sin corregir, deferido a
 propósito.
+
+## MODULARIZACIÓN JS FASE 2 — Matriz Semanal y Anomalías
+**Estado:** COMPLETADA Y VALIDADA EN ANDROID REAL (2026-09-23)
+
+Antes de tocar código: revalidación offline corta con Service Worker v24
+(login offline, Dashboard y Matriz con datos reales, sin errores) —
+**PASS**.
+
+Se extrajeron las dos piezas de lógica que la Fase 1 había dejado
+pendientes por estar anidada (`estadoCelda`) o acoplada a IndexedDB
+(`createAutoAnomalies`):
+- **Matriz Semanal:** `estadoCelda()` cambió de función anidada (cerraba
+  sobre `plans`/`records`/`hoy`) a función pura top-level en
+  `src/core/weekly-matrix.js`, recibiendo esos datos como parámetros. Se
+  confirmó leyendo el código (no se asumió) que la reprogramación puntual
+  (`reprogramadoHasta`) NO afecta la Matriz, solo el Dashboard — se
+  preservó ese comportamiento tal cual. 15 pruebas nuevas.
+- **Anomalías automáticas:** se separó la decisión de negocio (¿crear,
+  actualizar o nada?) de la persistencia. `evaluateAnomalyActions()` y
+  `hayPuntosOAnomaliaHorometro()` (`src/core/anomaly-actions.js`) son
+  puras — `createAutoAnomalies()` en `app.js` sigue siendo la única que
+  toca `DB.allActive/put`. Se confirmó que el duplicado se detecta solo
+  por `autoPointId` (no por equipo — responsabilidad del caller) y que
+  `'El equipo no tiene horómetro'` no genera anomalía. 22 pruebas nuevas.
+
+`app.js`: 7243 → 7187 líneas. `sw.js`: `CACHE` subido dos veces (v24 → v25
+al agregar la Matriz, v25 → v26 al agregar Anomalías). Suite completa:
+88 → 103 → 125 pruebas, 100% PASS en cada paso. Sin duplicación de lógica.
+
+Validado en Samsung SM-S938B real: `./gradlew assembleDebug` PASS,
+`adb install -r` con datos preservados, smoke test (Dashboard/Matriz/
+Anomalías abren con datos reales, sin `FATAL EXCEPTION` ni errores nuevos)
+PASS.
+
+Durante esta fase se descubrió y registró un hallazgo nuevo, **no
+relacionado** con la modularización ni con `NOTIF-ANDROID-001`:
+`ANDROID-DOZE-001` (P3) — lanzar la app con la pantalla del dispositivo
+apagada/dozing puede producir un ciclo abrupto `App resumed→paused→stopped`
+y, en algunos casos, el mismo error `triggerEvent` pero con una firma
+distinta (sin `onesignal.com`, sin "Incompatible browser."). Con la
+pantalla despierta y desbloqueada (uso normal), no se reprodujo ni una vez.
+No corregido, fuera de alcance de esta fase. Ver `docs/BUG_REGISTER.md`.
+
+No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
+TypeScript. Ninguna funcionalidad nueva. `UI-ANDROID-005` sigue sin
+corregir, deferido a propósito.
