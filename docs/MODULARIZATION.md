@@ -113,6 +113,27 @@ cambió DE DÓNDE se lee el código real.
   anidadas).
 - `./gradlew assembleDebug`: build exitoso.
 
+## Validación en dispositivo real (2026-09-23, Samsung SM-S938B)
+
+**MODULARIZACIÓN JS FASE 1: PROBADA EN ANDROID REAL.**
+
+- `adb install -r` sobre la instalación existente, preservando datos.
+- App arranca sin `FATAL EXCEPTION`; logcat confirma que los 4 archivos se
+  solicitan y cargan sin error: `Capacitor: Handling local request:
+  https://localhost/src/core/{shifts,hourmeter,lubrication-status,anomalies}.js`.
+- Pruebas manuales M1-M6 (login, turno, estados de engrase con datos
+  reales, horómetro, anomalías, cierre y reapertura completa): **PASS**.
+- **SERVICE WORKER: PROBADO OFFLINE CON NUEVOS MÓDULOS** — con el
+  dispositivo en modo avión, la app cargó con normalidad, el turno y los
+  estados de engrase se siguieron mostrando correctamente con los datos ya
+  guardados localmente. Confirma que `sw.js` precachea correctamente los 4
+  archivos nuevos.
+- Durante la validación se encontraron dos hallazgos, ambos confirmados por
+  investigación (timing de logcat / presencia en el commit baseline) como
+  **NO relacionados con esta modularización** — ver `docs/BUG_REGISTER.md`:
+  `NOTIF-ANDROID-001` (SDK Web de OneSignal) y `UI-ANDROID-005` (diseño de
+  tabla del Dashboard, preexistente).
+
 ## Qué NO se tocó en esta fase
 
 `renderMatrizSemanal()`/`estadoCelda()`, `createAutoAnomalies()`,

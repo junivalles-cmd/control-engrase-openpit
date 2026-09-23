@@ -237,3 +237,73 @@
   reproducción confirmada antes de corregir).
 - **Sincronización:** `node tools/sync-web-to-android.mjs --apply` → `npx cap
   sync android` → `./gradlew assembleDebug` — todo PASS.
+
+## NOTIF-ANDROID-001 — SDK Web de OneSignal lanza error dentro del WebView de Capacitor
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P2 (elevar a P1 si se confirma que impide recibir
+  notificaciones push en Android)
+- **Estado:** REPRODUCIDO
+- **Origen:** PREEXISTENTE
+- **Relacionado con modularización:** NO
+- **Descripción:** el SDK Web de OneSignal
+  (`https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js`, cargado
+  sin condición en `index.html`) genera:
+  `Uncaught TypeError: Cannot read properties of undefined (reading 'triggerEvent')`
+  al ejecutarse dentro del WebView de Capacitor/Android.
+- **Evidencia de que es preexistente y no relacionado con la
+  modularización JS (validado en el dispositivo real, Samsung SM-S938B, con
+  logcat, probado dos veces con reinicio completo de la app):**
+  - El error ocurre **17 ms antes** de que se solicite siquiera
+    `src/core/shifts.js` (el primero de los módulos nuevos en cargarse) —
+    ocurre antes de que exista la posibilidad de que esos archivos influyan.
+  - Inmediatamente después aparece en el mismo log:
+    `File: https://cdn.onesignal.com/...OneSignalSDK.page.js — Msg: Incompatible browser.`
+    — el propio SDK detecta que el WebView de Android "no es compatible" y,
+    aparentemente, intenta disparar un evento interno sobre un objeto que
+    nunca terminó de inicializarse por esa misma incompatibilidad.
+  - No existe la cadena `triggerEvent` en ningún archivo propio del
+    proyecto (`app.js`, `db.js`, `sync.js`, ni `src/core/*.js`) ni en el
+    plugin nativo `onesignal-cordova-plugin` instalado — viene de código
+    minificado del SDK **web** de terceros, cargado igual en Android que en
+    el navegador.
+  - No aparece ningún `FATAL EXCEPTION`, la app no se cierra, el proceso
+    sigue vivo, y los 4 módulos nuevos se cargan sin ningún error 404.
+  - El código propio (`app.js`) ya se protege correctamente de esto: la
+    función que inicializa OneSignal para navegador comprueba
+    `if (!ONESIGNAL_APP_ID || window.Capacitor) return;` antes de llamar a
+    nada — el problema es que el `<script>` del SDK web se carga
+    igual (sin esa misma condición a nivel de `index.html`) y él solo, por
+    su cuenta, ya lanza este error interno al detectar el WebView.
+- **Acción actual:** NO corregir todavía. Se continúa con la validación
+  manual (M1-M6 y prueba offline) de la modularización JS Fase 1.
+
+## UI-ANDROID-005 — Panel "Equipos que requieren atención" del Dashboard usa tabla genérica sin adaptar a tarjeta móvil
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P3 UX (los datos y estados mostrados son correctos — no es
+  un problema de lógica ni de datos, solo de presentación)
+- **Estado:** REPRODUCIDO, NO CORREGIDO
+- **Origen:** PREEXISTENTE — confirmado presente ya en el commit baseline
+  `c6d6f78` (el primer commit de todo este repositorio), mucho antes de la
+  modularización JS. **No relacionado con la modularización.**
+- **Reportado por:** usuario, durante la prueba manual M3 (validación de
+  estados de engrase tras la modularización), en el Dashboard del Samsung
+  SM-S938B real.
+- **Descripción:** el panel "Equipos que requieren atención" del Dashboard
+  (`renderDashboard()`, `app.js` línea ~2057) usa una `<table class="data-table">`
+  genérica con columnas (Estado, Código, Equipo, Turno, Control, Horómetro,
+  Próximo/Día asignado, Restante/Atraso, Días sin engrase), convertida en
+  móvil a filas apiladas "ETIQUETA: valor" mediante el mecanismo genérico de
+  tabla responsive (`data-label`, ver `app.js` línea ~1807) — el mismo
+  patrón de fondo que causó `BUG-004` en la pantalla del Lubricador. El
+  resultado es una tarjeta muy alta y densa de leer, en vez de un resumen
+  compacto.
+- **Verificado que los DATOS son correctos:** los equipos mostrados
+  ("05-0870" Caterpillar D8, "20-5530" Komatsu PC500LC-10M0) muestran
+  "VENCIDO" con el detalle de atraso correspondiente — la lógica de
+  `statusFor()`/`weekdayStatusFor()` (ya modularizada en
+  `src/core/lubrication-status.js`) está calculando correctamente.
+- **Evidencia:** `docs/evidence/UI-ANDROID-005_dashboard-table.png`.
+- **Acción actual:** NO corregir todavía. Queda para una fase de UI
+  dedicada (fuera de esta fase, que es de validación, no de diseño).

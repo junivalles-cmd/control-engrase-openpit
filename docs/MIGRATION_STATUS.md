@@ -218,8 +218,24 @@ de cada una en `docs/PLAN_UNIFICACION_WEB_ANDROID.md`, sección 9:
   su lista de precaché, para no romper el modo offline.
 - `tools/sync-web-to-android.mjs` **no se modificó** — detectó los archivos
   nuevos automáticamente. Sincronizado a `www`/Android, `npx cap sync
-  android` y build debug, todo PASS. Prueba en dispositivo real: **NO
-  PROBADO** (sin dispositivo conectado en el momento de esta fase).
+  android` y build debug, todo PASS.
 - Supabase, IndexedDB y `sync.js` sin cambios. Ninguna funcionalidad nueva.
 - Commit: `refactor: extract tested lubrication core logic` (ver hash en
   `docs/CHANGELOG_MIGRATION.md`).
+
+**MODULARIZACIÓN JS FASE 1: PROBADA EN ANDROID REAL** (2026-09-23,
+Samsung SM-S938B). `adb install -r` preservando datos, app arranca sin
+`FATAL EXCEPTION`, los 4 módulos nuevos (`src/core/*.js`) se cargan sin
+error 404 (confirmado en logcat: `Capacitor: Handling local request:
+https://localhost/src/core/*.js`, todos exitosos). Pruebas manuales
+M1-M6 (login, turno, estados de engrase, horómetro, anomalías, reapertura
+completa): **PASS**. **SERVICE WORKER: PROBADO OFFLINE CON NUEVOS
+MÓDULOS** — con el dispositivo en modo avión, la interfaz, el turno y los
+estados de engrase siguieron cargando con normalidad (PASS).
+
+Durante esta validación se encontraron y registraron dos hallazgos, ambos
+confirmados **NO relacionados con la modularización** (ver
+`docs/BUG_REGISTER.md`): `NOTIF-ANDROID-001` (error del SDK Web de
+OneSignal dentro del WebView, preexistente — ocurre antes de que carguen
+los módulos nuevos) y `UI-ANDROID-005` (tabla genérica sin adaptar a
+tarjeta móvil en el Dashboard, presente desde el commit baseline).

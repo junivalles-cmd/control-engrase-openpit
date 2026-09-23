@@ -75,3 +75,37 @@ qué se prueba, qué requiere extracción). Resumen:
 | Sincronización (reglas documentadas, sin tocar Supabase) | PASS — 8 pruebas |
 | Seguridad básica (`esc`, objetos incompletos) | PASS — 11 pruebas |
 | `estadoCelda()` de la Matriz Semanal, `createAutoAnomalies()`, `Sync.pushAll/pullAll/fullSync`, `DB.allActive` reales | NO PROBABLE TODAVÍA — requiere extracción durante la modularización (ver `docs/AUTOMATED_TESTS.md`) |
+| Suite tras ENGRASE-001 + Modularización JS Fase 1 | PASS — 82/82 pruebas, 8 archivos |
+
+## Validación manual en Android real — Modularización JS Fase 1 (2026-09-23)
+
+**MODULARIZACIÓN JS FASE 1: PROBADA EN ANDROID REAL**
+**SERVICE WORKER: PROBADO OFFLINE CON NUEVOS MÓDULOS**
+
+Dispositivo: Samsung SM-S938B. APK debug recompilado tras la modularización,
+instalado con `adb install -r` preservando datos (`firstInstallTime` del
+perfil principal sin cambios).
+
+| Prueba | Objetivo | Resultado |
+|---|---|---|
+| M1 — Login y pantalla inicial | Arranque general con los módulos nuevos cargados | PASS |
+| M2 — Turno mostrado | `src/core/shifts.js` (`currentShiftId`/`dentroDeSuTurno`) | PASS |
+| M3 — Estados de engrase con datos reales | `src/core/lubrication-status.js` (`statusFor`/`weekdayStatusFor`) | PASS — lógica/datos correctos (VENCIDO mostrado correctamente para equipos realmente vencidos); se encontró por separado un problema de **diseño** preexistente, no de lógica (`UI-ANDROID-005`) |
+| M4 — Horómetro de un equipo | `src/core/hourmeter.js` | PASS |
+| M5 — Anomalías carga normalmente | `src/core/anomalies.js` (`CRITICIDAD_POR_MOTIVO`) | PASS |
+| M6 — Cierre completo y reapertura | Arranque limpio desde cero | PASS |
+| OFFLINE-01 — Interfaz, turno y estados sin conexión | Precaché de `sw.js` con los 4 módulos nuevos | PASS |
+| Logcat (en cada paso anterior) | Sin `FATAL EXCEPTION`, sin 404 en `src/core/*.js`, sin errores del Service Worker | PASS |
+
+**Hallazgos durante esta validación (ambos confirmados NO relacionados con
+la modularización, ver `docs/BUG_REGISTER.md`):**
+- `NOTIF-ANDROID-001` (P2) — error del SDK Web de OneSignal dentro del
+  WebView, preexistente, ocurre antes de que carguen los módulos nuevos.
+- `UI-ANDROID-005` (P3 UX) — tabla genérica sin adaptar a tarjeta móvil en
+  el Dashboard, confirmado presente desde el commit baseline `c6d6f78`.
+
+**Nota sobre conectividad:** durante parte de esta validación, el
+dispositivo no tenía internet real funcionando (confirmado por el monitor
+de red del sistema) — `sync.js` reportó `Failed to fetch` de forma
+esperada (comportamiento correcto offline-first), sin afectar la validación
+de los módulos modularizados en sí.

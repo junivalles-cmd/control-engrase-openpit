@@ -133,3 +133,17 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   decisión de arquitectura.
 - No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
   TypeScript. Ninguna funcionalidad nueva.
+
+## 2026-09-23 — Validación en Android real de la Modularización JS Fase 1
+**MODULARIZACIÓN JS FASE 1: PROBADA EN ANDROID REAL.**
+**SERVICE WORKER: PROBADO OFFLINE CON NUEVOS MÓDULOS.**
+- Samsung SM-S938B, `adb install -r` preservando datos. App arranca sin
+  `FATAL EXCEPTION`; los 4 módulos (`src/core/*.js`) cargan sin error 404.
+- Pruebas manuales M1-M6 (login/turno/estados de engrase/horómetro/
+  anomalías/reapertura completa): PASS. Prueba offline (interfaz, turno y
+  estados de engrase con el dispositivo en modo avión): PASS.
+- Se registraron dos hallazgos NO relacionados con la modularización (ver
+  `docs/BUG_REGISTER.md`): `NOTIF-ANDROID-001` (SDK Web de OneSignal lanza
+  un error dentro del WebView, preexistente) y `UI-ANDROID-005` (tabla del
+  Dashboard sin adaptar a tarjeta móvil, presente desde el commit
+  baseline).
