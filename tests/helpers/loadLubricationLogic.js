@@ -1,46 +1,75 @@
 // tests/helpers/loadLubricationLogic.js
 //
-// Carga, DIRECTAMENTE desde CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js y
-// db.js (la fuente canónica), las funciones puras/casi-puras que gobiernan
-// turnos, estado de engrase y validación de horómetro — sin modificar esos
-// archivos ni reescribir su lógica a mano. Si el código fuente cambia, estas
-// pruebas se ejecutan contra el código nuevo automáticamente.
+// Carga, DIRECTAMENTE desde la fuente canónica
+// (CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB), las funciones puras/casi-puras
+// que gobiernan turnos, estado de engrase, horómetro y anomalías — sin
+// modificar esos archivos ni reescribir su lógica a mano. Si el código
+// fuente cambia, estas pruebas se ejecutan contra el código nuevo
+// automáticamente.
+//
+// Desde la modularización (ver docs/MODULARIZATION.md), parte de esta
+// lógica vive en src/core/*.js en vez de app.js/db.js — este loader lee de
+// varios archivos y los combina en un solo scope, tal como el navegador
+// los comparte al cargarlos con <script> por separado.
 //
 // Las funciones que SÍ dependen de la base de datos real (IndexedDB) o de la
 // red (fetch a Supabase) no se cargan aquí — ver docs/AUTOMATED_TESTS.md para
-// la lista de lo que queda pendiente de extracción durante la modularización.
+// la lista de lo que queda pendiente de extracción.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSource, buildModuleBody } from './extractFromSource.js';
+import { readSource, extractDeclaration } from './extractFromSource.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const APP_JS_PATH = path.resolve(__dirname, '../../CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js');
-export const DB_JS_PATH = path.resolve(__dirname, '../../CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/db.js');
+const SRC_ROOT = path.resolve(__dirname, '../../CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB');
 
-const APP_JS_NAMES = [
-  'WEEKDAY_NAMES',
-  'mostRecentAssignedDate',
-  'weekdayStatusFor',
-  'statusFor',
-  'currentShiftId',
-  'dentroDeSuTurno',
-  'horaAjustadaAlTurno',
-  'validateHourmeterChange',
-  'esc',
-  'fmt',
-  'colorPorCumplimiento',
-  'CRITICIDAD_POR_MOTIVO',
+export const APP_JS_PATH = path.join(SRC_ROOT, 'app.js');
+export const DB_JS_PATH = path.join(SRC_ROOT, 'db.js');
+export const SHIFTS_JS_PATH = path.join(SRC_ROOT, 'src/core/shifts.js');
+export const HOURMETER_JS_PATH = path.join(SRC_ROOT, 'src/core/hourmeter.js');
+export const LUBRICATION_STATUS_JS_PATH = path.join(SRC_ROOT, 'src/core/lubrication-status.js');
+export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
+
+// Cada entrada: [archivo, [nombres a extraer de ese archivo]]
+const APP_LOGIC_SOURCES = [
+  [SHIFTS_JS_PATH, ['currentShiftId', 'dentroDeSuTurno']],
+  [HOURMETER_JS_PATH, ['validateHourmeterChange']],
+  [LUBRICATION_STATUS_JS_PATH, [
+    'fmt',
+    'WEEKDAY_NAMES',
+    'mostRecentAssignedDate',
+    'weekdayStatusFor',
+    'statusFor',
+  ]],
+  [ANOMALIES_JS_PATH, ['CRITICIDAD_POR_MOTIVO']],
+  [APP_JS_PATH, [
+    'horaAjustadaAlTurno',
+    'esc',
+    'colorPorCumplimiento',
+  ]],
 ];
 
+function buildBodyFromSources(sources) {
+  const chunks = [];
+  const allNames = [];
+  for (const [filePath, names] of sources) {
+    const fileSource = readSource(filePath);
+    for (const name of names) {
+      chunks.push(extractDeclaration(fileSource, name));
+      allNames.push(name);
+    }
+  }
+  return `${chunks.join('\n\n')}\n\nreturn { ${allNames.join(', ')} };`;
+}
+
 /**
- * Devuelve las funciones/constantes reales de app.js, ligadas a un objeto
- * `App` de prueba (las funciones originales leen `App.currentUser` /
- * `App.generalSettings` como estado global — aquí se pasa como parámetro).
+ * Devuelve las funciones/constantes reales de la fuente canónica, ligadas a
+ * un objeto `App` de prueba (las funciones originales leen
+ * `App.currentUser` / `App.generalSettings` como estado global — aquí se
+ * pasa como parámetro, igual que antes de la modularización).
  */
 export function loadAppLogic(fakeApp) {
-  const source = readSource(APP_JS_PATH);
-  const body = buildModuleBody(source, APP_JS_NAMES);
+  const body = buildBodyFromSources(APP_LOGIC_SOURCES);
   const factory = new Function('App', body);
   return factory(fakeApp);
 }
@@ -49,8 +78,7 @@ const DB_JS_NAMES = ['uid', 'nowISO', 'stamp'];
 
 /** Devuelve uid/nowISO/stamp reales de db.js (no requieren IndexedDB). */
 export function loadDbLogic() {
-  const source = readSource(DB_JS_PATH);
-  const body = buildModuleBody(source, DB_JS_NAMES);
+  const body = buildBodyFromSources([[DB_JS_PATH, DB_JS_NAMES]]);
   const factory = new Function(body);
   return factory();
 }

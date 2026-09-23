@@ -114,3 +114,22 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   documentado, sin corregir en esta fase.
 - Ver `docs/AUTOMATED_TESTS.md` para el detalle completo, incluida la lista
   de lo que todavía requiere extracción durante la modularización.
+
+## 2026-09-23 — Corrección de ENGRASE-001 y Modularización JavaScript 1
+- `98f3d08` `fix: validate invalid hourmeter values in lubrication status`
+  — pruebas de regresión primero (reprodujeron el bug, 4/4 fallaban), luego
+  el fix mínimo en `statusFor()`: `Number.isFinite(equipment.hourmeter)`
+  sin coerción. 82/82 PASS. Sincronizado y compilado en Android, todo PASS.
+- Modularización: se extrajeron a `src/core/` (dentro de la fuente
+  canónica, scripts clásicos, sin Vite/ES modules) las 4 áreas de menor
+  riesgo, ya cubiertas por pruebas: `shifts.js` (turnos), `hourmeter.js`
+  (validación de horómetro), `lubrication-status.js` (estado de engrase),
+  `anomalies.js` (criticidad de anomalías). `app.js` pasó de 7388 a 7243
+  líneas, sin duplicar ninguna función. `index.html` y `sw.js` se
+  actualizaron para cargar/precachear los archivos nuevos;
+  `tools/sync-web-to-android.mjs` los detectó automáticamente, sin
+  necesitar cambios. 82/82 PASS después de cada una de las 4 extracciones.
+  Ver `docs/MODULARIZATION.md` para la tabla de riesgo completa y la
+  decisión de arquitectura.
+- No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
+  TypeScript. Ninguna funcionalidad nueva.

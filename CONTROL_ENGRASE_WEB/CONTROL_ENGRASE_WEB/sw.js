@@ -1,6 +1,11 @@
 const CACHE = 'engrase-openpit-v23';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
+  // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
+  // precachearse igual que app.js/db.js/sync.js para que el modo offline
+  // siga funcionando.
+  './src/core/shifts.js', './src/core/hourmeter.js',
+  './src/core/lubrication-status.js', './src/core/anomalies.js',
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',

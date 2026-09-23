@@ -95,3 +95,40 @@ que es más seguro separar en una fase posterior y validada aparte.
 **Esta es una decisión de análisis, no ejecutada:** no se creó ningún script,
 no se movió ningún archivo. Ver plan detallado en
 `docs/PLAN_UNIFICACION_WEB_ANDROID.md`.
+
+## 8. Modularización JS: scripts clásicos, no ES modules (sin Vite todavía)
+**Decisión:** los archivos nuevos de `src/core/` (turnos, horómetro, estado
+de engrase, criticidad de anomalías) se escribieron como scripts clásicos
+comunes (sin `export`/`import`), cargados con `<script src="...">` en
+`index.html` antes de `app.js` — exactamente el mismo patrón que ya usan
+`db.js`/`sync.js`/`app.js`. Sus funciones quedan disponibles como globales
+compartidos entre todos los scripts de la página, así que `app.js` no
+cambió ni un solo punto de llamada.
+**Razón:** se evaluó usar ES modules nativos (`<script type="module">`,
+soportados sin bundler por navegadores modernos y por el WebView de
+Capacitor), pero habría obligado a convertir `app.js` también a módulo o a
+mantener un puente global igual de manual que la alternativa elegida, con
+más riesgo de romper el orden de carga de los `<script>` de terceros
+(Chart.js, xlsx, jsPDF, QRious, jsQR, OneSignal) — más cambio del que esta
+fase pedía explícitamente ("no gran refactor", "no introduzcas una
+estructura de imports que rompa index.html/GitHub Pages/Capacitor").
+**Consecuencia aceptada:** `sw.js` tuvo que actualizarse (se agregaron las
+4 rutas nuevas a la lista de precaché `ASSETS`) para que el modo offline
+siga sirviendo estos archivos — es el único punto donde esta fase tocó el
+Service Worker, y solo se agregaron entradas a una lista de datos, sin
+tocar su lógica de cacheo/fetch/activate. Ver `docs/MODULARIZATION.md`
+para el detalle completo, incluida la tabla de riesgo por función.
+
+## 9. Corrección de ENGRASE-001 sin coerción de tipos
+**Decisión:** `statusFor()` ahora exige `Number.isFinite(equipment.hourmeter)`
+— un `number` real y finito — antes de calcular el estado de engrase. Un
+horómetro `undefined`, cadena de texto (incluida una numérica como
+`"1200"`), `NaN`, u otro tipo se trata como dato inconsistente, sin excepción.
+**Razón:** el pedido explícito fue evitar "coerción peligrosa" que pudiera
+repetir el patrón que causó el bug original (donde comparaciones implícitas
+trataban `null`/`""` como `0`, ocultando el problema en vez de señalarlo).
+`Number.isFinite()` no convierte nada — es la opción más simple, explícita
+y sin excepciones, aunque signifique que un horómetro que llegue como
+string numérico también se marque como inconsistente (el formulario real
+siempre entrega un `number`, así que ese caso no debería ocurrir en uso
+normal; si llega como string, es en sí mismo una señal de dato corrupto).

@@ -23,6 +23,13 @@
 <div class="loading">Cargando Control de Engrase…</div>
 <script src="db.js"></script>
 <script src="sync.js"></script>
+<!-- Núcleo de lógica extraído de app.js (turnos, horómetro, estado de
+     engrase, criticidad de anomalías) — ver docs/MODULARIZATION.md.
+     Scripts clásicos igual que los de arriba: sin build, sin Vite. -->
+<script src="src/core/shifts.js"></script>
+<script src="src/core/hourmeter.js"></script>
+<script src="src/core/lubrication-status.js"></script>
+<script src="src/core/anomalies.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

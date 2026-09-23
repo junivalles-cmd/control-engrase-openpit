@@ -184,5 +184,42 @@ de cada una en `docs/PLAN_UNIFICACION_WEB_ANDROID.md`, sección 9:
   raíces de `CONTROL_ENGRASE_WEB` y `CONTROL_ENGRASE_APP_ANDROID`.
 - **FASE C1/C2 (mucho más adelante):** introducir Vite, reorganizar en
   `src/`+`public/`, y migrar a TypeScript, archivo por archivo.
-- **Ninguna de estas fases ha sido iniciada.** La rama `migration-typescript`
-  existe pero no contiene cambios de código todavía.
+
+## FASE — Corrección de ENGRASE-001
+**Estado:** COMPLETADA (2026-09-23)
+
+- `statusFor()` (`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js`, luego
+  movida a `src/core/lubrication-status.js`) ahora valida
+  `Number.isFinite(equipment.hourmeter)` antes de calcular el estado —
+  sin coerción de tipos. Un horómetro `undefined`, `""`, `"abc"`, `NaN` o
+  cualquier valor no numérico se marca como **DATOS INCONSISTENTES** en vez
+  de "AL DÍA".
+- Pruebas de regresión agregadas ANTES de corregir (confirmaron la
+  reproducción: 4/4 fallaban contra el código viejo); 82/82 PASS después.
+- Sincronizado a `www`/Android, `npx cap sync android` y build debug, todo
+  PASS.
+- Commit: `98f3d08` — `fix: validate invalid hourmeter values in
+  lubrication status`.
+
+## FASE — Modularización JavaScript 1
+**Estado:** COMPLETADA (2026-09-23)
+
+- Se extrajeron de `app.js` a `src/core/` (scripts clásicos, sin
+  ES modules/Vite) 4 áreas de riesgo BAJO, ya cubiertas por pruebas:
+  turnos (`shifts.js`), validación de horómetro (`hourmeter.js`), estado de
+  engrase (`lubrication-status.js`), criticidad de anomalías
+  (`anomalies.js`). Detalle completo, tabla de riesgo, y la decisión de
+  arquitectura (por qué scripts clásicos y no ES modules) en
+  `docs/MODULARIZATION.md`.
+- `app.js`: 7388 → 7243 líneas (-145). Sin duplicación de lógica — cada
+  función se movió, no se copió.
+- `index.html` recibió 4 `<script src="src/core/...">` nuevos (mismo patrón
+  ya usado para db.js/sync.js/app.js). `sw.js` recibió las mismas 4 rutas en
+  su lista de precaché, para no romper el modo offline.
+- `tools/sync-web-to-android.mjs` **no se modificó** — detectó los archivos
+  nuevos automáticamente. Sincronizado a `www`/Android, `npx cap sync
+  android` y build debug, todo PASS. Prueba en dispositivo real: **NO
+  PROBADO** (sin dispositivo conectado en el momento de esta fase).
+- Supabase, IndexedDB y `sync.js` sin cambios. Ninguna funcionalidad nueva.
+- Commit: `refactor: extract tested lubrication core logic` (ver hash en
+  `docs/CHANGELOG_MIGRATION.md`).

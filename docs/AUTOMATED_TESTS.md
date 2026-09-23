@@ -68,7 +68,7 @@ CONTROL_ENGRASE/
 └── tests/
     ├── helpers/
     │   ├── extractFromSource.js     ← extrae texto de funciones/const reales de un archivo fuente
-    │   └── loadLubricationLogic.js  ← carga funciones reales de app.js/db.js para probarlas
+    │   └── loadLubricationLogic.js  ← carga funciones reales de app.js/db.js/src/core/*.js para probarlas
     └── unit/
         ├── turnos.test.js
         ├── estado-engrase.test.js
@@ -79,6 +79,14 @@ CONTROL_ENGRASE/
         ├── sync-dirty-check.test.js
         └── seguridad-basica.test.js
 ```
+
+**Actualización 2026-09-23 (modularización):** parte de la lógica que antes
+vivía solo en `app.js` ahora está en
+`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\src\core\*.js` (turnos, horómetro,
+estado de engrase, criticidad de anomalías — ver `docs/MODULARIZATION.md`).
+`loadLubricationLogic.js` se actualizó para leer cada función del archivo
+real donde vive ahora; los tests en sí no cambiaron su forma de afirmar
+comportamiento.
 
 ## Cómo se prueba código que no es un módulo (sin `export`)
 

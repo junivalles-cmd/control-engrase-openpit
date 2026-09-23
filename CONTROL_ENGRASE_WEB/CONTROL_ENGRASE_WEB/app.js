@@ -488,34 +488,8 @@ function equiposDeEstaPersona(equipos, usuario) {
   });
 }
 
-/* ---------- ¿Está esta persona dentro de su turno de trabajo? ----------
-   Con teléfonos compartidos entre cuadrillas, esto es clave: el aviso debe ser para
-   quien tiene la sesión abierta Y está trabajando, no para quien ya se fue a casa. */
-function dentroDeSuTurno(settings, fecha) {
-  if (!settings.soloEnTurno) return true;
-  const u = App.currentUser;
-  if (!u) return false;
-  // Jefaturas y oficina no tienen turno rotativo: reciben en horario de oficina
-  if (u.role !== 'LUBRICADOR') return true;
-
-  const ahora = fecha || new Date();
-  const min = ahora.getHours() * 60 + ahora.getMinutes();
-  const { shiftDayStart, shiftNightStart } = App.generalSettings;
-  const antes = settings.minutosAntesDelTurno ?? 15;
-  const despues = settings.minutosDespuesDelTurno ?? 30;
-
-  // El turno del usuario se toma del que tenga asignado; si no, del horario actual
-  const turno = u.shiftId || currentShiftId();
-  if (turno === 'shift_dia') {
-    const ini = shiftDayStart * 60 - antes;
-    const fin = shiftNightStart * 60 + despues;
-    return min >= ini && min <= fin;
-  }
-  // Turno noche: cruza la medianoche
-  const ini = shiftNightStart * 60 - antes;
-  const fin = shiftDayStart * 60 + despues;
-  return min >= ini || min <= fin;
-}
+/* dentroDeSuTurno() se movió a src/core/shifts.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 
 /* Devuelve la hora a la que conviene mandar un aviso a esta persona: si la hora
    configurada cae fuera de su turno, lo corre al inicio de su turno. */
@@ -552,20 +526,8 @@ function mergeNotifSettings(guardado) {
   return out;
 }
 
-/* ---------- Validación de horómetro (evita errores de digitación) ---------- */
-function validateHourmeterChange(oldValue, newValue) {
-  if (isNaN(newValue) || newValue < 0) {
-    return { ok: false, message: 'El horómetro debe ser un número válido y positivo.' };
-  }
-  if (newValue < oldValue) {
-    return { ok: false, message: `El horómetro nuevo (${fmt(newValue)} h) es menor al actual (${fmt(oldValue)} h). El horómetro nunca debería bajar — revisa que no haya un error de digitación.` };
-  }
-  const diff = newValue - oldValue;
-  if (diff > 500) {
-    return { ok: 'warn', message: `El horómetro subió ${fmt(diff)} h de una sola vez (de ${fmt(oldValue)} a ${fmt(newValue)}). Es un salto grande. ¿Confirmas que el dato es correcto?` };
-  }
-  return { ok: true };
-}
+/* validateHourmeterChange() se movió a src/core/hourmeter.js (sigue
+   disponible como global, ver docs/MODULARIZATION.md). */
 // Devuelve true si se puede continuar (ya sea porque es válido, o porque el usuario
 // confirmó un salto grande); muestra alert/confirm según el caso.
 function confirmHourmeterChange(oldValue, newValue) {
@@ -1066,7 +1028,8 @@ function esc(value) {
     .replace(/'/g, '&#39;');
 }
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
-const fmt = (n, d = 0) => Number(n).toLocaleString('es-NI', { minimumFractionDigits: d, maximumFractionDigits: d });
+/* fmt() se movió a src/core/lubrication-status.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 // Configuración general editable por el Administrador (horarios de turno, umbrales, etc.)
@@ -1078,112 +1041,13 @@ async function loadGeneralSettings() {
   if (s) Object.assign(App.generalSettings, s);
 }
 
-function currentShiftId() {
-  const h = new Date().getHours();
-  const { shiftDayStart, shiftNightStart } = App.generalSettings;
-  return (h >= shiftDayStart && h < shiftNightStart) ? 'shift_dia' : 'shift_noche';
-}
+/* currentShiftId() se movió a src/core/shifts.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 
-const WEEKDAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+/* WEEKDAY_NAMES, mostRecentAssignedDate(), weekdayStatusFor() y statusFor()
+   se movieron a src/core/lubrication-status.js (siguen disponibles como
+   globales, ver docs/MODULARIZATION.md). */
 const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']; // Domingo se deja libre/rotativo, igual que en el plan en papel
-
-function mostRecentAssignedDate(assignedDays) {
-  if (!assignedDays || !assignedDays.length) return null;
-  const todayIdx = new Date().getDay();
-  const assignedIdx = assignedDays.map(d => WEEKDAY_NAMES.indexOf(d));
-  for (let back = 0; back < 7; back++) {
-    const idx = (todayIdx - back + 7) % 7;
-    if (assignedIdx.includes(idx)) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - back);
-      return d;
-    }
-  }
-  return null;
-}
-
-async function weekdayStatusFor(equipment, plan, recordsList) {
-  // Reprogramación puntual: si a este equipo se le movió el engrase de esta semana a
-  // otro día (porque estaba en uso, sin acceso, etc.), ese día manda sobre el plan.
-  // No se toca el plan permanente: la semana siguiente vuelve a su día habitual.
-  if (plan.reprogramadoHasta && new Date(plan.reprogramadoHasta) >= new Date(new Date().toDateString())) {
-    const nuevoDia = new Date(plan.reprogramadoHasta);
-    nuevoDia.setHours(0, 0, 0, 0);
-    const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
-    const records0 = recordsList || await DB.allActive('lubrication_records');
-    const hecho = records0.some(r => r.equipmentId === equipment.id &&
-      new Date(r.date) >= hoy0 && new Date(r.date).getTime() <= Date.now() + 5 * 60 * 1000);
-    if (hecho) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: nuevoDia };
-    if (nuevoDia.getTime() === hoy0.getTime()) {
-      return { code: 'AMARILLO', label: 'REPROGRAMADO PARA HOY', remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
-    }
-    if (nuevoDia > hoy0) {
-      return { code: 'VERDE', label: `REPROGRAMADO AL ${WEEKDAY_NAMES[nuevoDia.getDay()].toUpperCase()}`, remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
-    }
-  }
-
-  const lastDue = mostRecentAssignedDate(plan.assignedDays || []);
-  if (!lastDue) return { code: 'GRIS', label: 'SIN DÍAS ASIGNADOS', remaining: null, plan };
-  const records = recordsList || await DB.allActive('lubrication_records');
-  // Se ignoran los engrases con fecha FUTURA: pueden llegar de un dispositivo con el
-  // reloj mal puesto, y darían por cumplido algo que todavía no ocurrió. La validación
-  // del formulario no basta, porque estos registros también entran por sincronización.
-  const ahora = Date.now() + 5 * 60 * 1000; // 5 min de tolerancia por desfases de reloj
-  const done = records.some(r => r.equipmentId === equipment.id &&
-    new Date(r.date) >= lastDue && new Date(r.date).getTime() <= ahora);
-  const isToday = lastDue.toDateString() === new Date().toDateString();
-  if (done) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: lastDue };
-  if (isToday) return { code: 'AMARILLO', label: 'PROGRAMADO HOY', remaining: null, plan, scheduleDate: lastDue };
-  return { code: 'ROJO', label: 'VENCIDO', remaining: null, plan, scheduleDate: lastDue };
-}
-
-// plansList / recordsList son opcionales: si se pasan (precargados una sola vez para
-// varios equipos a la vez), evitamos volver a leer toda la tabla en cada llamada.
-async function statusFor(equipment, plansList, recordsList) {
-  if (equipment.status !== 'Operativo') {
-    return { code: 'GRIS', label: 'DETENIDO', remaining: null };
-  }
-  const plans = plansList || await DB.allActive('lubrication_plans');
-  const plan = plans.find(p => p.equipmentId === equipment.id);
-  if (!plan) return { code: 'GRIS', label: 'SIN PLAN', remaining: null };
-
-  if (plan.controlType === 'Día y turno de la semana') {
-    return await weekdayStatusFor(equipment, plan, recordsList);
-  }
-
-  // ── Detección de planes con datos imposibles ─────────────────────────
-  // Antes estos casos pasaban desapercibidos y daban un resultado tranquilizador
-  // pero falso, que es peor que no mostrar nada.
-  if (!plan.frequency || plan.frequency <= 0) {
-    // Frecuencia 0 o negativa: el equipo quedaría vencido para siempre sin remedio.
-    return { code: 'GRIS', label: 'PLAN MAL CONFIGURADO', remaining: null, plan,
-             alerta: 'La frecuencia del plan es 0. Corrígela en Plan de Engrase.' };
-  }
-  // ENGRASE-001: el horómetro del equipo debe ser un número real. Antes, un
-  // valor ausente/no numérico (undefined, texto, NaN) no se detectaba aquí y
-  // terminaba mostrando "AL DÍA" (remaining daba NaN, que no es < 0 ni <=
-  // alertYellowHours). Se valida explícitamente ANTES de comparar, sin
-  // convertir el valor: Number.isFinite() no hace coerción.
-  if (!Number.isFinite(equipment.hourmeter)) {
-    return { code: 'GRIS', label: 'DATOS INCONSISTENTES', remaining: null, plan,
-             alerta: `El horómetro del equipo no es un número válido (valor actual: ${JSON.stringify(equipment.hourmeter)}). Corrígelo en la ficha del equipo.` };
-  }
-  if (plan.lastGreaseHour > equipment.hourmeter) {
-    // La referencia del último engrase es mayor que el horómetro actual: da un margen
-    // falso. Pasa al corregir un horómetro hacia abajo o al importar datos mal.
-    return { code: 'GRIS', label: 'DATOS INCONSISTENTES', remaining: null, plan,
-             alerta: `El plan dice que se engrasó a ${fmt(plan.lastGreaseHour)} h, pero el equipo marca ${fmt(equipment.hourmeter)} h. Revisa el horómetro o la referencia del plan.` };
-  }
-
-  const nextHour = plan.lastGreaseHour + plan.frequency;
-  const remaining = nextHour - equipment.hourmeter;
-  let code, label;
-  if (remaining < 0) { code = 'ROJO'; label = 'VENCIDO'; }
-  else if (remaining <= (plan.alertYellowHours || 10)) { code = 'AMARILLO'; label = 'PRÓXIMO'; }
-  else { code = 'VERDE'; label = 'AL DÍA'; }
-  return { code, label, remaining, nextHour, plan };
-}
 
 // Calcula el estado de una lista de equipos leyendo planes/registros UNA sola vez,
 // en vez de una vez por cada equipo (antes: N equipos = N consultas completas a la BD).
@@ -4799,17 +4663,8 @@ async function renderAnomalias() {
    mantenimiento le dé seguimiento. Control de duplicados: si ya existe una
    anomalía ABIERTA por ese mismo punto del mismo equipo, no se crea otra —
    solo se actualiza para dejar constancia de que volvió a ocurrir. */
-const CRITICIDAD_POR_MOTIVO = {
-  'Grasera dañada': 'Alta',
-  'Línea de engrase obstruida': 'Alta',
-  'Falla mecánica': 'Crítica',
-  'Sello dañado': 'Alta',
-  'Punto inaccesible': 'Media',
-  'Falta de lubricante': 'Media',
-  'Equipo trabajando': 'Baja',
-  'Equipo detenido': 'Baja',
-  'Otro': 'Media'
-};
+/* CRITICIDAD_POR_MOTIVO se movió a src/core/anomalies.js (sigue disponible
+   como global, ver docs/MODULARIZATION.md). */
 
 async function createAutoAnomalies(record, equipment) {
   const pendientes = (record.details || []).filter(d => !d.done);
