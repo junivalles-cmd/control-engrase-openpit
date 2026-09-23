@@ -208,11 +208,11 @@ Esta estructura **no se crea en esta fase**. Es el punto de llegada documentado 
 → PRUEBA: ejecutar el script contra una copia de prueba (no la real) y comparar por hash contra `CONTROL_ENGRASE_WEB`; confirmar que el resultado es 100% idéntico, incluidos los 3 íconos que hoy faltan en `www` y el `manifest.json` correcto.
 → COMMIT: `feat: add automated sync script from WEB to www`.
 
-**FASE A3 — Ejecutar el script una vez sobre `www` real y validar**
-→ Ejecutar el script real (esto SÍ modifica `www`, por eso se hace en su propia fase, con confirmación explícita antes).
-→ PRUEBA: `npx cap sync android` (ya permitido en esa fase, no en esta), abrir en Android Studio, compilar un APK de depuración, instalar y probar login, registro de engrase, sincronización con Supabase, notificaciones, cámara/QR, modo offline.
-→ PRUEBA WEB: servir `CONTROL_ENGRASE_WEB` localmente (o revisar visualmente) para confirmar que nada cambió ahí.
-→ COMMIT: `chore: resync www from WEB via automated script (icons + manifest fixed)`.
+**FASE A3 — Ejecutar el script una vez sobre `www` real y validar** ✅ EJECUTADA (2026-09-23)
+→ Se ejecutó `node tools/sync-web-to-android.mjs --apply`: 13 archivos escritos (10 actualizados, 3 nuevos), 0 errores. Sobrantes (`schema.sql`, `icon-180.png`) conservados sin tocar.
+→ PRUEBA: dry-run posterior en 0/0 (22/22 idénticos por hash). `npx cap sync android` ejecutado sin errores, `assets/public` regenerado y verificado por hash contra `www`. Build debug de Android (`./gradlew assembleDebug`) exitoso. Instalación/uso en dispositivo real: **NO PROBADO** (sin dispositivo/emulador conectado).
+→ PRUEBA WEB: se sirvió `CONTROL_ENGRASE_WEB` localmente vía HTTP; se confirmó (por `git diff`) que el script no modificó la fuente. Prueba interactiva en navegador real: **NO PROBADO** (sin herramienta de automatización de navegador disponible en esta sesión). Detalle completo en `docs/TEST_MATRIX.md`.
+→ COMMIT: `build: synchronize android web assets from canonical web source`.
 
 **FASE A4 — Eliminar la duplicación de documentación/backend**
 → Decidir una única ubicación para guías, manuales, scripts SQL y Edge Functions (hoy duplicados entre las raíces de `CONTROL_ENGRASE_WEB` y `CONTROL_ENGRASE_APP_ANDROID`).
@@ -268,12 +268,13 @@ CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB      (fuente canónica temporal)
         ▼
 CONTROL_ENGRASE_APP_ANDROID\www              (generado/actualizado por el script,
         │                                      deja de editarse a mano)
-        │  npx cap sync android               (sin ejecutar todavía)
+        │  npx cap sync android               (ejecutado en FASE A3)
         ▼
 CONTROL_ENGRASE_APP_ANDROID\android\app\src\main\assets\public
         │
+        │  ./gradlew assembleDebug            (ejecutado en FASE A3, build exitoso)
         ▼
-Android Studio
+Android Studio / APK de depuración
 ```
 
 El script sincroniza **solo** el set runtime del frontend PWA (calculado a
@@ -281,3 +282,9 @@ partir de lo que `index.html`, `manifest.json` y `sw.js` de la fuente
 realmente referencian), nunca documentación, SQL ni Edge Functions. Nunca
 escribe directamente en `android\app\src\main\assets\public` — esa carpeta
 sigue siendo generada exclusivamente por `npx cap sync android`.
+
+**Estado (2026-09-23):** este flujo completo ya se ejecutó una vez de punta a
+punta (FASE A3): `--apply` real → `www` actualizado → `cap sync android` →
+`assets/public` regenerado → build debug exitoso. Ver `docs/MIGRATION_STATUS.md`
+y `docs/TEST_MATRIX.md` para el detalle de qué se verificó y qué quedó
+pendiente de prueba en dispositivo/navegador real.

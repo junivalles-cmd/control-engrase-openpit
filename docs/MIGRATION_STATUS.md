@@ -69,6 +69,33 @@ NO ejecutado.
   real.
 - Commit: `5d42f66` — `build: add safe web to android sync tool`.
 
+## FASE A3 — Primera sincronización real WEB → www → Android
+**Estado:** COMPLETADA (2026-09-23)
+
+- FUENTE CANÓNICA TEMPORAL: `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`.
+- APPLY: **EJECUTADO** por primera vez. 13 archivos escritos (10 actualizados,
+  3 nuevos), 0 errores. Sobrantes (`schema.sql`, `icon-180.png`) conservados
+  sin tocar, como se decidió explícitamente para esta fase.
+- Verificación posterior: dry-run en 0/0 (22/22 archivos runtime idénticos
+  por hash SHA-256 entre `CONTROL_ENGRASE_WEB` y `www`).
+- `manifest.json` de `www`: ahora idéntico a la fuente, JSON válido,
+  `background_color` corregido, los 10 íconos existen.
+- FUENTE WEB: **NO MODIFICADA** (confirmado con `git diff`).
+- `npx cap sync android`: ejecutado sin errores. `android\app\src\main\assets\public`
+  regenerado desde `www`; coincide por hash con los archivos runtime de `www`.
+  Ningún archivo versionado de Android fue modificado.
+- ANDROID BUILD: `./gradlew assembleDebug` **exitoso** (APK de depuración
+  generado, ~8.9 MB), tras limpiar artefactos de build obsoletos que
+  causaban un error de Windows no relacionado con el código.
+- ANDROID EN DISPOSITIVO: **NO PROBADO** (sin dispositivo/emulador conectado).
+- WEB EN NAVEGADOR: **NO PROBADO** (sin herramienta de automatización de
+  navegador disponible en esta sesión); sí se verificó que todos los
+  archivos runtime se sirven correctamente vía HTTP y que el JS no tiene
+  errores de sintaxis. Ver `docs/TEST_MATRIX.md` para el detalle completo.
+- GITHUB PAGES: **NO MODIFICADO**. No se hizo push ni publicación.
+- Commits: `build: synchronize android web assets from canonical web source`
+  (sincronización real de `www` + documentación).
+
 ## Próximas fases (NO iniciadas)
 
 Estas fases se planificarán y ejecutarán en conversaciones futuras, una por
