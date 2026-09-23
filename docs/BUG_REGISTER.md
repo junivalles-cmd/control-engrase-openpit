@@ -78,3 +78,49 @@
   el dispositivo real (Samsung SM-S938B) preservando datos. **Aún no
   confirmado visualmente por el usuario** — pendiente de que inicie sesión
   con un usuario de rol Lubricador y revise el ícono.
+
+## UI-ANDROID-003 — Topbar de Administrador excesivamente alto en móvil
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P3 UX (no tapa contenido ni impide operar — reduce el área
+  útil de trabajo en pantalla, pero todo sigue siendo usable)
+- **Estado:** CORREGIDO EN CÓDIGO — PENDIENTE DE VALIDACIÓN VISUAL DEL USUARIO
+- **Reportado por:** usuario, durante la prueba manual LOGIN-01+DASH-01
+  ("todavía se ve demasiado grande... ocupa demasiado espacio vertical")
+- **Dispositivo:** Samsung SM-S938B
+- **Causa raíz:** dos factores combinados en `styles.css`:
+  1. `.icon-btn` tiene `min-height: var(--tap)` (44px, regla de
+     accesibilidad "para usar con guantes", intencional y **no se toca**).
+     Con dos botones de ícono (buscador colapsado, tema) más el padding del
+     `.topbar` (`10px 12px` en móvil), la barra ya mide ~64px de alto —
+     dentro de lo esperado, pero...
+  2. `.topbar-right` (desde el commit `5751a21`) tiene `flex-wrap: wrap` sin
+     que sus hijos (`#conn-badge`, `.topbar-shift`) tuvieran ningún límite de
+     ancho en móvil. `#conn-badge` puede mostrar textos largos ("SOLO LOCAL
+     · SIN SERVIDOR CONFIGURADO", "SINCRONIZADO PARCIAL (N con error)"), así
+     que en un viewport de ~360-412px el contenido de `.topbar-right` no
+     cabía en una sola línea ni siquiera en reposo (sin buscador expandido),
+     y `flex-wrap` lo mandaba a una segunda fila **todo el tiempo** — no
+     solo en los casos límite para los que se pensó. Esa segunda fila
+     constante es lo que hacía ver la barra "demasiado alta".
+- **Corrección:** en la fuente canónica
+  (`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\styles.css`, dentro del
+  `@media (max-width: 900px)` ya existente), sin tocar HTML ni JS:
+  - `.topbar`: padding `10px 12px` → `7px 10px`; `gap` 12px → 8px.
+  - `.topbar-title`: `20px→15px` en móvil, `max-width:40vw` +
+    elipsis (para que un título largo no empuje al resto).
+  - `.topbar-right`: `gap` 14px → 8px.
+  - `.topbar-shift` y `.conn-badge`: padding y `font-size` reducidos;
+    `#conn-badge` además con `max-width:120px` + elipsis, para que sus
+    textos largos ya no rompan el ancho disponible (el texto completo
+    sigue existiendo en el DOM — no se oculta información, solo se
+    trunca visualmente el badge; tocarlo sigue sincronizando igual).
+  - Los botones de ícono (buscador, tema) **no cambiaron de tamaño** —
+    siguen en el mínimo táctil de 44px, tal como se pidió.
+  - Resultado esperado: ~58-60px de alto total en móvil (padding 7+7=14px +
+    44px del ícono más alto), dentro del rango 56-64px pedido, con todo en
+    una sola fila en la mayoría de los casos.
+- **Evidencia:** `docs/evidence/UI-ANDROID-003_after.png`.
+- **Validación:** sincronizado a `www`/Android, recompilado e instalado en
+  el dispositivo real preservando datos. **Pendiente de validación visual
+  del usuario.**
