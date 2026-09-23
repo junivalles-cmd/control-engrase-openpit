@@ -252,3 +252,32 @@ Esta estructura **no se crea en esta fase**. Es el punto de llegada documentado 
 - Cada fase de la sección 9 es un commit independiente sobre `migration-typescript` — revertir cualquier fase es `git revert <hash>` o volver al commit anterior, sin afectar `master` ni el commit baseline `c6d6f786fe53e657dd76c6edfa32ba1df8d816cc`.
 - Ninguna fase de este plan modifica el repositorio remoto de GitHub Pages ni el proyecto Android compilado — todo el rollback ocurre dentro de este repositorio local hasta que se decida explícitamente publicar/desplegar.
 - Como esta fase (Fase 1 del proyecto de migración) es puramente de análisis y documentación, su "rollback" es simplemente no continuar con la Fase A2 en adelante.
+
+---
+
+## 11. Flujo temporal de sincronización (FASE A2 — herramienta creada, sin aplicar)
+
+Se diseñó y creó `tools/sync-web-to-android.mjs` (ver `docs/SYNC_WEB_ANDROID.md`
+para el detalle completo). El flujo temporal aprobado, con la herramienta ya
+en su lugar pero **todavía no ejecutada en modo `--apply`**, es:
+
+```
+CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB      (fuente canónica temporal)
+        │
+        │  node tools/sync-web-to-android.mjs [--dry-run | --apply]
+        ▼
+CONTROL_ENGRASE_APP_ANDROID\www              (generado/actualizado por el script,
+        │                                      deja de editarse a mano)
+        │  npx cap sync android               (sin ejecutar todavía)
+        ▼
+CONTROL_ENGRASE_APP_ANDROID\android\app\src\main\assets\public
+        │
+        ▼
+Android Studio
+```
+
+El script sincroniza **solo** el set runtime del frontend PWA (calculado a
+partir de lo que `index.html`, `manifest.json` y `sw.js` de la fuente
+realmente referencian), nunca documentación, SQL ni Edge Functions. Nunca
+escribe directamente en `android\app\src\main\assets\public` — esa carpeta
+sigue siendo generada exclusivamente por `npx cap sync android`.
