@@ -286,7 +286,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5;
 }
 .topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-dim); }
+.topbar-right {
+  margin-left: auto; display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; row-gap: 8px; gap: 14px; font-size: 12px; color: var(--text-dim);
+}
 .topbar-shift { padding: 4px 10px; background: var(--surface-2); border-radius: 20px; }
 .topbar-user { white-space: nowrap; }
 .conn-badge {
@@ -318,8 +321,26 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .bottom-item.active { color: var(--accent); }
   .topbar-user { display: none; }
   .app-content { padding: 14px 12px 96px; }
-  .topbar { padding: 10px 12px; }
-  .topbar-title { font-size: 17px; }
+  /* Topbar compacto: en escritorio hay espacio de sobra para el padding y
+     los gaps generosos, pero en un teléfono ese mismo espaciado sumado a
+     cuatro controles de ~44px de alto (mínimo táctil, no se toca) hacía que
+     la barra se viera excesivamente alta. Aquí solo se reduce el "aire"
+     alrededor (padding, gaps, texto), nunca el tamaño de toque. */
+  .topbar { padding: 7px 10px; gap: 8px; }
+  .topbar-title {
+    font-size: 15px; max-width: 40vw; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .topbar-right { gap: 8px; }
+  /* Solo el ícono de turno en móvil (☀/☾) — el texto completo queda en el
+     title del badge (se puede tocar/mantener presionado para verlo) y se
+     recupera en escritorio. Ahorra ancho para que todo quepa en una línea. */
+  .topbar-shift { padding: 3px 8px; font-size: 13px; }
+  .topbar-shift-label { display: none; }
+  .conn-badge {
+    padding: 3px 8px; font-size: 10px; max-width: 120px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .kpi-grid { gap: 8px; }
   .kpi-card { padding: 11px; }
   .kpi-value { font-size: 22px; }
@@ -598,6 +619,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
 .lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
+.lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
 .lub-user-strip { padding: 8px 16px; font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .lub-content { flex: 1; padding: 16px 14px 100px; }
 .lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; }
@@ -1229,11 +1251,12 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .ficha-fila:last-child { border-bottom: none; }
 
 /* ---------------- Buscador rápido de la barra superior ---------------- */
-.quick-find { position: relative; }
+.quick-find { position: relative; display: flex; align-items: center; }
+.quick-find-toggle { display: none; }
 .quick-find input {
   width: 190px; padding: 7px 12px; border-radius: 20px; font-size: 13px;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-  transition: width 0.15s ease, border-color 0.15s ease;
+  transition: width 0.15s ease, opacity 0.15s ease, border-color 0.15s ease, padding 0.15s ease, margin 0.15s ease;
 }
 .quick-find input:focus { width: 250px; border-color: var(--accent); outline: none; }
 .quick-find input::placeholder { color: var(--text-dim); }
@@ -1251,8 +1274,25 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .qf-item:hover, .qf-activo { background: var(--surface-2); }
 .qf-vacio { padding: 12px; color: var(--text-dim); font-size: 13px; text-align: center; }
 @media (max-width: 860px) {
-  .quick-find input { width: 130px; }
-  .quick-find input:focus { width: 170px; }
+  /* Colapsado: solo el ícono de lupa es visible y táctil. Al enfocar el
+     input (tocando el ícono, que solo le hace foco) se expande a barra
+     completa vía :focus-within; al perder el foco, vuelve a colapsar. */
+  .quick-find-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 50%; flex: none;
+  }
+  .quick-find-toggle .btn-icon { width: 18px; height: 18px; margin-right: 0; }
+  .quick-find input {
+    width: 0; min-width: 0; padding: 7px 0; margin-left: 0;
+    border-color: transparent; opacity: 0;
+  }
+  .quick-find:focus-within input {
+    width: 200px; padding: 7px 12px; margin-left: 6px; opacity: 1; border-color: var(--border);
+  }
+  /* Mientras el buscador está activo, se ocultan sus hermanos (tema, sync,
+     turno) para que el campo expandido quede en la misma línea sin
+     empujarlos a otra fila ni superponerse con ellos. */
+  .quick-find:focus-within ~ * { display: none; }
   .quick-find-results { min-width: 260px; right: -40px; }
 }
 

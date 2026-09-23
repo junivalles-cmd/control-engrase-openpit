@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.conequisa.engraseopenpit",
+      "sha256_cert_fingerprints": ["BA:66:FD:8B:F6:5E:B9:9C:21:12:A9:61:F3:91:F6:16:40:A6:0B:F0:66:49:31:F8:F3:CD:B1:DE:54:47:69:57"]
+    }
+  }
+]

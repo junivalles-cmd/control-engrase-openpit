@@ -488,34 +488,8 @@ function equiposDeEstaPersona(equipos, usuario) {
   });
 }
 
-/* ---------- ¿Está esta persona dentro de su turno de trabajo? ----------
-   Con teléfonos compartidos entre cuadrillas, esto es clave: el aviso debe ser para
-   quien tiene la sesión abierta Y está trabajando, no para quien ya se fue a casa. */
-function dentroDeSuTurno(settings, fecha) {
-  if (!settings.soloEnTurno) return true;
-  const u = App.currentUser;
-  if (!u) return false;
-  // Jefaturas y oficina no tienen turno rotativo: reciben en horario de oficina
-  if (u.role !== 'LUBRICADOR') return true;
-
-  const ahora = fecha || new Date();
-  const min = ahora.getHours() * 60 + ahora.getMinutes();
-  const { shiftDayStart, shiftNightStart } = App.generalSettings;
-  const antes = settings.minutosAntesDelTurno ?? 15;
-  const despues = settings.minutosDespuesDelTurno ?? 30;
-
-  // El turno del usuario se toma del que tenga asignado; si no, del horario actual
-  const turno = u.shiftId || currentShiftId();
-  if (turno === 'shift_dia') {
-    const ini = shiftDayStart * 60 - antes;
-    const fin = shiftNightStart * 60 + despues;
-    return min >= ini && min <= fin;
-  }
-  // Turno noche: cruza la medianoche
-  const ini = shiftNightStart * 60 - antes;
-  const fin = shiftDayStart * 60 + despues;
-  return min >= ini || min <= fin;
-}
+/* dentroDeSuTurno() se movió a src/core/shifts.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 
 /* Devuelve la hora a la que conviene mandar un aviso a esta persona: si la hora
    configurada cae fuera de su turno, lo corre al inicio de su turno. */
@@ -552,20 +526,8 @@ function mergeNotifSettings(guardado) {
   return out;
 }
 
-/* ---------- Validación de horómetro (evita errores de digitación) ---------- */
-function validateHourmeterChange(oldValue, newValue) {
-  if (isNaN(newValue) || newValue < 0) {
-    return { ok: false, message: 'El horómetro debe ser un número válido y positivo.' };
-  }
-  if (newValue < oldValue) {
-    return { ok: false, message: `El horómetro nuevo (${fmt(newValue)} h) es menor al actual (${fmt(oldValue)} h). El horómetro nunca debería bajar — revisa que no haya un error de digitación.` };
-  }
-  const diff = newValue - oldValue;
-  if (diff > 500) {
-    return { ok: 'warn', message: `El horómetro subió ${fmt(diff)} h de una sola vez (de ${fmt(oldValue)} a ${fmt(newValue)}). Es un salto grande. ¿Confirmas que el dato es correcto?` };
-  }
-  return { ok: true };
-}
+/* validateHourmeterChange() se movió a src/core/hourmeter.js (sigue
+   disponible como global, ver docs/MODULARIZATION.md). */
 // Devuelve true si se puede continuar (ya sea porque es válido, o porque el usuario
 // confirmó un salto grande); muestra alert/confirm según el caso.
 function confirmHourmeterChange(oldValue, newValue) {
@@ -1066,7 +1028,8 @@ function esc(value) {
     .replace(/'/g, '&#39;');
 }
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
-const fmt = (n, d = 0) => Number(n).toLocaleString('es-NI', { minimumFractionDigits: d, maximumFractionDigits: d });
+/* fmt() se movió a src/core/lubrication-status.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 // Configuración general editable por el Administrador (horarios de turno, umbrales, etc.)
@@ -1078,103 +1041,13 @@ async function loadGeneralSettings() {
   if (s) Object.assign(App.generalSettings, s);
 }
 
-function currentShiftId() {
-  const h = new Date().getHours();
-  const { shiftDayStart, shiftNightStart } = App.generalSettings;
-  return (h >= shiftDayStart && h < shiftNightStart) ? 'shift_dia' : 'shift_noche';
-}
+/* currentShiftId() se movió a src/core/shifts.js (sigue disponible como
+   global, ver docs/MODULARIZATION.md). */
 
-const WEEKDAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+/* WEEKDAY_NAMES, mostRecentAssignedDate(), weekdayStatusFor() y statusFor()
+   se movieron a src/core/lubrication-status.js (siguen disponibles como
+   globales, ver docs/MODULARIZATION.md). */
 const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']; // Domingo se deja libre/rotativo, igual que en el plan en papel
-
-function mostRecentAssignedDate(assignedDays) {
-  if (!assignedDays || !assignedDays.length) return null;
-  const todayIdx = new Date().getDay();
-  const assignedIdx = assignedDays.map(d => WEEKDAY_NAMES.indexOf(d));
-  for (let back = 0; back < 7; back++) {
-    const idx = (todayIdx - back + 7) % 7;
-    if (assignedIdx.includes(idx)) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - back);
-      return d;
-    }
-  }
-  return null;
-}
-
-async function weekdayStatusFor(equipment, plan, recordsList) {
-  // Reprogramación puntual: si a este equipo se le movió el engrase de esta semana a
-  // otro día (porque estaba en uso, sin acceso, etc.), ese día manda sobre el plan.
-  // No se toca el plan permanente: la semana siguiente vuelve a su día habitual.
-  if (plan.reprogramadoHasta && new Date(plan.reprogramadoHasta) >= new Date(new Date().toDateString())) {
-    const nuevoDia = new Date(plan.reprogramadoHasta);
-    nuevoDia.setHours(0, 0, 0, 0);
-    const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
-    const records0 = recordsList || await DB.allActive('lubrication_records');
-    const hecho = records0.some(r => r.equipmentId === equipment.id &&
-      new Date(r.date) >= hoy0 && new Date(r.date).getTime() <= Date.now() + 5 * 60 * 1000);
-    if (hecho) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: nuevoDia };
-    if (nuevoDia.getTime() === hoy0.getTime()) {
-      return { code: 'AMARILLO', label: 'REPROGRAMADO PARA HOY', remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
-    }
-    if (nuevoDia > hoy0) {
-      return { code: 'VERDE', label: `REPROGRAMADO AL ${WEEKDAY_NAMES[nuevoDia.getDay()].toUpperCase()}`, remaining: null, plan, scheduleDate: nuevoDia, reprogramado: true };
-    }
-  }
-
-  const lastDue = mostRecentAssignedDate(plan.assignedDays || []);
-  if (!lastDue) return { code: 'GRIS', label: 'SIN DÍAS ASIGNADOS', remaining: null, plan };
-  const records = recordsList || await DB.allActive('lubrication_records');
-  // Se ignoran los engrases con fecha FUTURA: pueden llegar de un dispositivo con el
-  // reloj mal puesto, y darían por cumplido algo que todavía no ocurrió. La validación
-  // del formulario no basta, porque estos registros también entran por sincronización.
-  const ahora = Date.now() + 5 * 60 * 1000; // 5 min de tolerancia por desfases de reloj
-  const done = records.some(r => r.equipmentId === equipment.id &&
-    new Date(r.date) >= lastDue && new Date(r.date).getTime() <= ahora);
-  const isToday = lastDue.toDateString() === new Date().toDateString();
-  if (done) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: lastDue };
-  if (isToday) return { code: 'AMARILLO', label: 'PROGRAMADO HOY', remaining: null, plan, scheduleDate: lastDue };
-  return { code: 'ROJO', label: 'VENCIDO', remaining: null, plan, scheduleDate: lastDue };
-}
-
-// plansList / recordsList son opcionales: si se pasan (precargados una sola vez para
-// varios equipos a la vez), evitamos volver a leer toda la tabla en cada llamada.
-async function statusFor(equipment, plansList, recordsList) {
-  if (equipment.status !== 'Operativo') {
-    return { code: 'GRIS', label: 'DETENIDO', remaining: null };
-  }
-  const plans = plansList || await DB.allActive('lubrication_plans');
-  const plan = plans.find(p => p.equipmentId === equipment.id);
-  if (!plan) return { code: 'GRIS', label: 'SIN PLAN', remaining: null };
-
-  if (plan.controlType === 'Día y turno de la semana') {
-    return await weekdayStatusFor(equipment, plan, recordsList);
-  }
-
-  // ── Detección de planes con datos imposibles ─────────────────────────
-  // Antes estos casos pasaban desapercibidos y daban un resultado tranquilizador
-  // pero falso, que es peor que no mostrar nada.
-  if (!plan.frequency || plan.frequency <= 0) {
-    // Frecuencia 0 o negativa: el equipo quedaría vencido para siempre sin remedio.
-    return { code: 'GRIS', label: 'PLAN MAL CONFIGURADO', remaining: null, plan,
-             alerta: 'La frecuencia del plan es 0. Corrígela en Plan de Engrase.' };
-  }
-  if (plan.lastGreaseHour > equipment.hourmeter) {
-    // La referencia del último engrase es mayor que el horómetro actual: da un margen
-    // falso. Pasa al corregir un horómetro hacia abajo o al importar datos mal.
-    return { code: 'GRIS', label: 'DATOS INCONSISTENTES', remaining: null, plan,
-             alerta: `El plan dice que se engrasó a ${fmt(plan.lastGreaseHour)} h, pero el equipo marca ${fmt(equipment.hourmeter)} h. Revisa el horómetro o la referencia del plan.` };
-  }
-
-  const nextHour = plan.lastGreaseHour + plan.frequency;
-  const remaining = nextHour - equipment.hourmeter;
-  let code, label;
-  if (remaining < 0) { code = 'ROJO'; label = 'VENCIDO'; }
-  else if (remaining <= (plan.alertYellowHours || 10)) { code = 'AMARILLO'; label = 'PRÓXIMO'; }
-  else { code = 'VERDE'; label = 'AL DÍA'; }
-  return { code, label, remaining, nextHour, plan };
-}
 
 // Calcula el estado de una lista de equipos leyendo planes/registros UNA sola vez,
 // en vez de una vez por cada equipo (antes: N equipos = N consultas completas a la BD).
@@ -1442,7 +1315,7 @@ function redibujarPantallaActual() {
   try {
     const esLubricador = !!document.querySelector('.lub-shell');
     if (esLubricador) {
-      const pintar = { anomalias: renderAnomalias, historial: renderHistorial, turno: renderTurno };
+      const pintar = { anomalias: renderAnomalias, historial: renderLubricadorHistorial, turno: renderLubricadorHome };
       const fn = pintar[App.route] || renderLubricadorHome;
       fn();
     } else {
@@ -1460,6 +1333,12 @@ function wireQuickFind() {
   const caja = $('#quick-find-results');
   if (!input || !caja || input.dataset.wired) return;
   input.dataset.wired = '1';
+
+  // En pantallas angostas el buscador arranca colapsado en solo el ícono
+  // (ver .quick-find-toggle en styles.css); tocarlo enfoca el input, que se
+  // expande solo por CSS (:focus-within), sin más estado que mantener.
+  const toggle = $('#quick-find-toggle');
+  if (toggle) toggle.addEventListener('click', () => input.focus());
 
   let resultados = [];
   let seleccion = -1;
@@ -1852,10 +1731,10 @@ function boot() {
           <div class="topbar-title" id="topbar-title">Dashboard</div>
           <div class="topbar-right">
             <div class="quick-find">
+              <button type="button" id="quick-find-toggle" class="icon-btn quick-find-toggle" aria-label="Buscar equipo">${ic('search')}</button>
               <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
               <div id="quick-find-results" class="quick-find-results hidden"></div>
             </div>
-            ${themeButtonHTML()}
             <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
             <span class="topbar-shift" id="topbar-shift"></span>
             <span class="topbar-user">${esc(App.currentUser.name)} · ${App.currentUser.role}</span>
@@ -1881,7 +1760,6 @@ function boot() {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
   $('#btn-logout').addEventListener('click', logout);
-  $('#btn-theme').addEventListener('click', openThemePicker);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
@@ -1895,7 +1773,11 @@ function updateShiftBadge() {
   const el = $('#topbar-shift');
   if (!el) return;
   const isDay = currentShiftId() === 'shift_dia';
-  el.textContent = isDay ? '☀ Turno Día' : '☾ Turno Noche';
+  const label = isDay ? 'Turno Día' : 'Turno Noche';
+  el.title = label;
+  // El texto se separa del ícono para poder ocultarlo solo en móvil (CSS)
+  // y ahorrar espacio horizontal, sin perder el dato (queda en el title).
+  el.innerHTML = `<span class="topbar-shift-icon">${isDay ? '☀' : '☾'}</span><span class="topbar-shift-label"> ${label}</span>`;
 }
 
 function navigate(route) {
@@ -1951,9 +1833,8 @@ function bootLubricador() {
           </div>
         </div>
         <div class="lub-topbar-right">
-          ${themeButtonHTML()}
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
-          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">⏻</button>
+          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}</button>
         </div>
       </header>
       <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
@@ -1972,7 +1853,6 @@ function bootLubricador() {
   setInterval(shiftLabel, 60000);
 
   $('#btn-logout').addEventListener('click', logout);
-  $('#btn-theme').addEventListener('click', openThemePicker);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
     $$('.lub-nav-item').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
@@ -3839,27 +3719,9 @@ async function renderMatrizSemanal() {
     return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
   }).sort((a, b) => (a.shiftId || '').localeCompare(b.shiftId || '') || a.code.localeCompare(b.code));
 
-  function estadoCelda(eq, fecha) {
-    const plan = plans.find(p => p.equipmentId === eq.id);
-    if (!plan) return { tipo: 'vacio' };
-    const nombreDia = WEEKDAY_NAMES[fecha.getDay()];
-    if (!(plan.assignedDays || []).includes(nombreDia)) return { tipo: 'vacio' };
-
-    const hecho = records.find(r => r.equipmentId === eq.id &&
-      new Date(r.date).toDateString() === fecha.toDateString());
-    if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
-
-    // Se distinguen tres situaciones distintas, que antes se veían todas iguales:
-    //   futuro     -> le toca más adelante en la semana (aún no es su día)
-    //   pendiente  -> le toca HOY y todavía no se ha hecho (se puede cumplir)
-    //   no_realizado -> el día ya pasó sin registrarse: es un incumplimiento real
-    if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
-    if (fecha.getTime() < hoy.getTime()) {
-      const dias = Math.round((hoy.getTime() - fecha.getTime()) / 86400000);
-      return { tipo: 'no_realizado', diasAtras: dias };
-    }
-    return { tipo: 'pendiente' };
-  }
+  // estadoCelda() se movió a src/core/weekly-matrix.js (lógica pura, sin DOM
+  // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
+  // datos ya cargados (plans, records, hoy).
 
   const tablaTurno = (titulo, lista) => {
     if (!lista.length) return '';
@@ -3878,7 +3740,7 @@ async function renderMatrizSemanal() {
               <tr>
                 <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
                 ${dias.map(d => {
-                  const s = estadoCelda(eq, d);
+                  const s = estadoCelda(eq, d, plans, records, hoy);
                   if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
                   if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
                   if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
@@ -3895,8 +3757,8 @@ async function renderMatrizSemanal() {
   const deNoche = visibles.filter(e => e.shiftId === 'shift_noche');
 
   // Conteos de la semana visible
-  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === tipo).length, 0);
-  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo !== 'vacio').length, 0);
+  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
+  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo !== 'vacio').length, 0);
   const hechas = contar('hecho');
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
@@ -4069,7 +3931,7 @@ async function renderMatrizSemanal() {
           border: bordes
         })];
         dias.forEach(d => {
-          const s = estadoCelda(eq, d);
+          const s = estadoCelda(eq, d, plans, records, hoy);
           if (s.tipo === 'hecho') {
             fila.push(celda('REALIZADO', {
               font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },
@@ -4783,76 +4645,29 @@ async function renderAnomalias() {
    mantenimiento le dé seguimiento. Control de duplicados: si ya existe una
    anomalía ABIERTA por ese mismo punto del mismo equipo, no se crea otra —
    solo se actualiza para dejar constancia de que volvió a ocurrir. */
-const CRITICIDAD_POR_MOTIVO = {
-  'Grasera dañada': 'Alta',
-  'Línea de engrase obstruida': 'Alta',
-  'Falla mecánica': 'Crítica',
-  'Sello dañado': 'Alta',
-  'Punto inaccesible': 'Media',
-  'Falta de lubricante': 'Media',
-  'Equipo trabajando': 'Baja',
-  'Equipo detenido': 'Baja',
-  'Otro': 'Media'
-};
+/* CRITICIDAD_POR_MOTIVO se movió a src/core/anomalies.js (sigue disponible
+   como global, ver docs/MODULARIZATION.md). */
 
+// La decisión de negocio (¿crear anomalía nueva, actualizar una existente, o
+// no hacer nada?) vive en src/core/anomaly-actions.js
+// (evaluateAnomalyActions/hayPuntosOAnomaliaHorometro) — pura, sin DB ni
+// DOM. Aquí solo se aplica esa decisión contra IndexedDB. Ver
+// docs/MODULARIZATION.md.
 async function createAutoAnomalies(record, equipment) {
-  const pendientes = (record.details || []).filter(d => !d.done);
-  const avisos = [];
-  if (!pendientes.length && !record.sinHorometro) return avisos;
+  if (!hayPuntosOAnomaliaHorometro(record)) return [];
 
   const abiertas = (await DB.allActive('anomalies'))
     .filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
 
-  for (const d of pendientes) {
-    const motivo = d.reason || 'Sin motivo indicado';
-    // ¿Ya hay una anomalía abierta por este mismo punto? (se identifica por el punto,
-    // no por el motivo, para no duplicar si el lubricador elige un motivo distinto)
-    const yaExiste = abiertas.find(a => a.autoPointId && a.autoPointId === d.pointId);
+  const { acciones, avisos } = evaluateAnomalyActions(record, equipment, abiertas);
 
-    if (yaExiste) {
-      yaExiste.repeticiones = (yaExiste.repeticiones || 1) + 1;
-      yaExiste.description = `${d.pointName}: ${motivo}. Reportado ${yaExiste.repeticiones} veces (última: ${fmtDate(record.date)} por ${record.userName}).`;
-      await DB.put('anomalies', stamp(yaExiste, App.currentUser.name));
+  for (const accion of acciones) {
+    if (accion.tipo === 'actualizar') {
+      const existente = abiertas.find(a => a.id === accion.anomaliaId);
+      Object.assign(existente, accion.cambios);
+      await DB.put('anomalies', stamp(existente, App.currentUser.name));
     } else {
-      await DB.put('anomalies', stamp({
-        id: uid('anom'),
-        equipmentId: equipment.id,
-        component: motivo,
-        description: `${d.pointName}: ${motivo}. Detectado al engrasar el ${fmtDate(record.date)} por ${record.userName}.`,
-        criticality: CRITICIDAD_POR_MOTIVO[motivo] || 'Media',
-        status: 'Abierta',
-        photos: record.photos || [], photo: (record.photos || [])[0] || null,
-        autoGenerada: true,
-        autoPointId: d.pointId,
-        repeticiones: 1
-      }, record.userName));
-      avisos.push(d.pointName);
-    }
-  }
-
-  // También el horómetro dañado/ilegible genera anomalía (es una falla del equipo)
-  if (record.sinHorometro) {
-    const motivoHm = record.noHourmeterReason || 'Horómetro no legible';
-    const yaHm = abiertas.find(a => a.autoPointId === '__horometro__');
-    if (yaHm) {
-      yaHm.repeticiones = (yaHm.repeticiones || 1) + 1;
-      yaHm.description = `${motivoHm}. Reportado ${yaHm.repeticiones} veces (última: ${fmtDate(record.date)} por ${record.userName}).`;
-      await DB.put('anomalies', stamp(yaHm, App.currentUser.name));
-    } else if (motivoHm !== 'El equipo no tiene horómetro') {
-      // Si el equipo simplemente NO tiene horómetro, no es una falla — no se crea anomalía
-      await DB.put('anomalies', stamp({
-        id: uid('anom'),
-        equipmentId: equipment.id,
-        component: 'Horómetro',
-        description: `${motivoHm}. Detectado al engrasar el ${fmtDate(record.date)} por ${record.userName}.`,
-        criticality: 'Media',
-        status: 'Abierta',
-        photos: [], photo: null,
-        autoGenerada: true,
-        autoPointId: '__horometro__',
-        repeticiones: 1
-      }, record.userName));
-      avisos.push('Horómetro');
+      await DB.put('anomalies', stamp({ id: uid('anom'), ...accion.anomalia }, record.userName));
     }
   }
 
@@ -6327,6 +6142,14 @@ async function renderAyuda() {
   const help = await getHelpContent();
 
   c.innerHTML = `
+    ${canEdit ? '' : `
+    <div class="panel">
+      <div class="panel-head"><h3>Apariencia</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
+        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+      </div>
+    </div>`}
     <div class="panel">
       <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
       <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
@@ -6344,7 +6167,10 @@ async function renderAyuda() {
     </div>`;
   wirePhotoThumbs(c);
 
-  if (!canEdit) return;
+  if (!canEdit) {
+    $('#btn-theme').addEventListener('click', openThemePicker);
+    return;
+  }
   $('#family-add-btn').addEventListener('click', () => openFamilyEditForm(help, null));
   $('#faq-edit-btn').addEventListener('click', () => openFaqEditForm(help));
   $$('.family-edit-btn', c).forEach(btn => {
@@ -7059,6 +6885,13 @@ async function renderConfig() {
 
   c.innerHTML = `
     <div class="panel">
+      <div class="panel-head"><h3>Apariencia</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
+        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+      </div>
+    </div>
+    <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
         <p class="dim">Estos valores controlan toda la app: qué hora se considera turno día/noche, cuánto antes se marca "próximo a vencer" un plan nuevo, y la meta de cumplimiento que se muestra en Dashboard y Reportes.</p>
@@ -7192,6 +7025,8 @@ async function renderConfig() {
     await previewAndImportBackup(file);
     ev.target.value = '';
   });
+
+  $('#btn-theme').addEventListener('click', openThemePicker);
 
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
