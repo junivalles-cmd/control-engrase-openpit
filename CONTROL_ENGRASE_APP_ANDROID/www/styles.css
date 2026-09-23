@@ -286,7 +286,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5;
 }
 .topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-dim); }
+.topbar-right {
+  margin-left: auto; display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; row-gap: 8px; gap: 14px; font-size: 12px; color: var(--text-dim);
+}
 .topbar-shift { padding: 4px 10px; background: var(--surface-2); border-radius: 20px; }
 .topbar-user { white-space: nowrap; }
 .conn-badge {
