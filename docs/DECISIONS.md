@@ -63,3 +63,35 @@ seguridad general, no un bloqueante para el control de versiones.
 **Razón:** instrucción explícita para esta fase; todavía no implica que la
 migración a TypeScript esté decidida o en curso — solo reserva el nombre de
 rama para cuando se planifique ese trabajo.
+
+## 6. Baja de `PLAN_MANTENIMIENTO_MAYOR_D8T_05-68.xlsx` del repositorio
+**Decisión:** eliminado del seguimiento de Git (commit `e5af5ff`) y agregado
+a `.gitignore` (`/PLAN_MANTENIMIENTO_MAYOR_D8T_05-68.xlsx`), sin restaurar el
+archivo físicamente.
+**Razón:** el usuario confirmó que ese archivo no pertenece al sistema
+Control de Engrase — se coló en el commit baseline por estar suelto en la
+misma carpeta raíz. No se usó `git reset --hard` ni `git clean`; se hizo un
+commit explícito de limpieza para no reescribir el commit baseline.
+**Verificación:** tras la baja, se revisó el resto de la raíz del repositorio
+en busca de otros archivos evidentemente ajenos (`.xlsx`, `.xls`, `.docx`,
+`.pptx`, PDFs administrativos) y no se encontró ninguno más.
+
+## 7. Arquitectura recomendada para la fuente única (FASE 1)
+**Decisión:** recomendar la Opción A (`CONTROL_ENGRASE_WEB` como fuente
+canónica, `www` generado automáticamente por script) como siguiente fase
+ejecutable, dejando la Opción C (Vite + TypeScript, `src/`+`public/`→`dist/`)
+documentada como destino final para una fase posterior, no inmediata.
+**Razón:** el análisis con hashes SHA-256 (ver
+`docs/PLAN_UNIFICACION_WEB_ANDROID.md`, sección 3) mostró que el código de
+negocio ya es 100% idéntico entre `CONTROL_ENGRASE_WEB` y `www` — el riesgo
+real no es que estén desincronizados hoy, sino que nada impide que se
+desincronicen mañana por depender de una copia manual. Automatizar esa copia
+resuelve el riesgo real sin tocar GitHub Pages, Capacitor, ni ningún archivo
+de negocio, cumpliendo las restricciones explícitas de "evitar una
+reescritura" y "minimizar el riesgo de romper el sistema actual". Adoptar
+Vite/TypeScript de inmediato (Opción C) mezclaría ese cambio de bajo riesgo
+con uno de alto riesgo (nuevo sistema de build, nuevo flujo de publicación),
+que es más seguro separar en una fase posterior y validada aparte.
+**Esta es una decisión de análisis, no ejecutada:** no se creó ningún script,
+no se movió ningún archivo. Ver plan detallado en
+`docs/PLAN_UNIFICACION_WEB_ANDROID.md`.
