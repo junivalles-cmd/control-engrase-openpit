@@ -55,3 +55,31 @@
   que `app.js`/`db.js`/`sync.js`/`sw.js` no tienen errores de sintaxis.
 - `.nojekyll` y `.well-known/assetlinks.json` verificados intactos e
   idénticos entre fuente y destino, sin necesidad de corrección.
+
+## 2026-09-23 — Validación manual en dispositivo real: ajustes de UI
+Serie de correcciones iterativas de interfaz, cada una sincronizada a `www`,
+recompilada e instalada en el Samsung SM-S938B real preservando datos
+(`adb install -r`, `firstInstallTime` sin cambios en todas):
+
+- `5751a21` `fix: prevent mobile search bar overlap` — `flex-wrap` en
+  `.topbar-right` (bug `UI-ANDROID-001`).
+- `1867ba5` `fix: collapse search bar into icon on narrow screens` — el
+  buscador colapsa a solo ícono en móvil y oculta sus hermanos al expandirse
+  (continuación de `UI-ANDROID-001`, a pedido del usuario).
+- `86ff816` `fix: use consistent logout icon for lubricador role` — bug
+  `UI-ANDROID-002`, ícono Unicode reemplazado por el sistema de íconos del
+  proyecto.
+- `21a0ed8` `fix: compact mobile topbar spacing` — bug `UI-ANDROID-003`,
+  padding/gaps/fuente reducidos en el topbar móvil (~58-60px de alto),
+  manteniendo los botones de ícono en el mínimo táctil de 44px.
+- `c126f82` `refactor: move theme picker out of topbar into Config/Ayuda
+  screens` — a pedido del usuario, se quitó el botón de tema (🎨) del
+  topbar (tanto el principal como el de Lubricador). Ahora vive dentro de
+  un panel "Apariencia": en **Configuración** para Administrador (única
+  pantalla con esa ruta), y en **Ayuda** para el resto de los roles
+  (Planificador, Supervisor, Lubricador, Visor). El botón de tema del login
+  no se tocó.
+
+`UI-ANDROID-001` validado visualmente por el usuario (PASS). `UI-ANDROID-002`
+y `UI-ANDROID-003` corregidos en código, sincronizados e instalados, aún
+pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
