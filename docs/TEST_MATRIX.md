@@ -58,6 +58,25 @@ la migración, para distinguir claramente lo verificado de lo asumido.
 
 Ver `docs/BUG_REGISTER.md` para el detalle completo de causa raíz y corrección de cada uno.
 
+## FASE A4 — NOTIF-ANDROID-001: separar OneSignal Web vs. nativo (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| Suite automatizada completa | PASS (82 → 88/88, 6 pruebas nuevas: `tests/unit/notificaciones-plataforma.test.js`) |
+| `initWebPush()` crea `<script>` del SDK Web solo sin `window.Capacitor` | PASS (test unitario) |
+| `initWebPush()` NO crea `<script>` con `window.Capacitor` presente | PASS (test unitario) |
+| `initPushNotifications()` usa plugin nativo en Android, nunca el SDK Web | PASS (test unitario) |
+| `initPushNotifications()` usa SDK Web en navegador, nunca el plugin nativo | PASS (test unitario) |
+| Sin `ONESIGNAL_APP_ID` configurado, no hace nada en ninguna plataforma | PASS (test unitario) |
+| Build Android (`./gradlew assembleDebug`) | PASS |
+| Instalación en Samsung SM-S938B (`adb install -r`) | PASS (datos preservados, `firstInstallTime` sin cambios) |
+| Error `Cannot read properties of undefined (reading 'triggerEvent')` en logcat | ELIMINADO — 11 lanzamientos consecutivos sin reproducirse tras el fix completo (los primeros 2 lanzamientos justo después de subir la versión de `sw.js` aún mostraban el error viejo, por el retraso normal de actualización del Service Worker) |
+| Mensaje `Incompatible browser.` (SDK Web) en logcat dentro de Android | ELIMINADO |
+| Arranque general, login, pantalla inicial, sin crash | PASS (11 lanzamientos limpios; confirmado también por captura de pantalla, `docs/evidence/NOTIF-ANDROID-001_after_fix.png`) |
+| Modo offline | NO RE-PROBADO en esta fase específica (ya validado PASS en la Fase A3 con los mismos archivos de precaché; esta fase solo agregó una entrada de versión a `sw.js`, sin tocar la lógica offline) |
+| Push real (Web o Android) | NO PROBADO — `ONESIGNAL_APP_ID` está vacío en el código de producción actual, el envío de push está deshabilitado por configuración, no por este fix |
+| Mecanismo Web de OneSignal (`initWebPush`) sigue intacto | PASS por revisión de código — no hay herramienta de automatización de navegador disponible en esta sesión, no se pudo probar en un navegador real |
+
 ## Pruebas automatizadas de lógica (2026-09-23)
 
 Ver `docs/AUTOMATED_TESTS.md` para el detalle completo (framework, estructura,

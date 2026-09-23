@@ -239,3 +239,15 @@ confirmados **NO relacionados con la modularización** (ver
 OneSignal dentro del WebView, preexistente — ocurre antes de que carguen
 los módulos nuevos) y `UI-ANDROID-005` (tabla genérica sin adaptar a
 tarjeta móvil en el Dashboard, presente desde el commit baseline).
+
+**NOTIF-ANDROID-001: CORREGIDO Y VALIDADO EN ANDROID REAL** (2026-09-23).
+Causa raíz de dos partes: `index.html` cargaba el SDK Web de OneSignal sin
+condición (también en Android) pese a que `app.js` ya tenía la separación
+correcta por plataforma; y el Service Worker servía el `index.html` viejo
+desde caché tras el primer fix, por lo que también se subió la versión de
+`CACHE` en `sw.js`. 88/88 pruebas automatizadas PASS (6 nuevas). 11
+lanzamientos consecutivos en el Samsung SM-S938B sin el error
+`triggerEvent`. Push real no probado (`ONESIGNAL_APP_ID` vacío en
+producción). Ver `docs/BUG_REGISTER.md` y `docs/DECISIONS.md` (§10) para el
+detalle completo. `UI-ANDROID-005` permanece sin corregir, deferido a
+propósito.

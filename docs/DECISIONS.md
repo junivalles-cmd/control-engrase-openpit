@@ -132,3 +132,36 @@ y sin excepciones, aunque signifique que un horómetro que llegue como
 string numérico también se marque como inconsistente (el formulario real
 siempre entrega un `number`, así que ese caso no debería ocurrir en uso
 normal; si llega como string, es en sí mismo una señal de dato corrupto).
+
+## 10. Arquitectura de notificaciones push: OneSignal Web SDK solo en navegador, plugin nativo solo en Android (NOTIF-ANDROID-001)
+**Decisión:** hay dos rutas de inicialización de OneSignal, mutuamente
+excluyentes según la plataforma:
+- **Navegador (Web/GitHub Pages):** `app.js` → `initWebPush()` inyecta
+  dinámicamente el `<script>` del SDK Web de OneSignal
+  (`cdn.onesignal.com/sdks/web/...`) solo si `!window.Capacitor` y hay
+  `ONESIGNAL_APP_ID` configurado. `index.html` **no** carga ese SDK de
+  forma estática.
+- **Android (app instalada con Capacitor):** se usa exclusivamente el
+  plugin nativo `onesignal-cordova-plugin`
+  (`window.plugins.OneSignal`/`window.OneSignal`), vía `wirePushListeners()`
+  e `initPushNotifications()`.
+- La plataforma se detecta con `window.Capacitor`, el mismo mecanismo que
+  ya usa el resto del proyecto — no se hardcodea navegador, fabricante ni
+  modelo de dispositivo.
+
+**Razón:** el SDK Web de OneSignal, al cargarse dentro del WebView de
+Capacitor, detecta un entorno "no compatible" y lanza
+`Uncaught TypeError: Cannot read properties of undefined (reading
+'triggerEvent')` (bug `NOTIF-ANDROID-001`, ver `docs/BUG_REGISTER.md`).
+`app.js` ya tenía esta separación correctamente implementada en su propia
+lógica; el bug estaba en que `index.html` cargaba el mismo SDK Web *además*,
+sin la misma condición, duplicando la inicialización en Android.
+
+**Consecuencia aceptada:** al quitar esa carga estática de `index.html`,
+también fue necesario subir la versión de `CACHE` en `sw.js`
+(`engrase-openpit-v23` → `v24`), porque el Service Worker sirve
+`index.html` con estrategia cache-first y no vuelve a precachear un
+archivo cuyo contenido cambió si `sw.js` mismo no cambió de bytes —
+sin este paso, dispositivos ya instalados habrían seguido viendo el
+`index.html` viejo (con el bug) indefinidamente pese al fix en el código
+fuente.

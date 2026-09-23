@@ -147,3 +147,30 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   un error dentro del WebView, preexistente) y `UI-ANDROID-005` (tabla del
   Dashboard sin adaptar a tarjeta móvil, presente desde el commit
   baseline).
+
+## 2026-09-23 — Corrección de NOTIF-ANDROID-001: separar OneSignal Web y nativo
+- Causa raíz de dos partes: (1) `index.html` cargaba el `<script>` del SDK
+  Web de OneSignal de forma incondicional, también dentro de
+  Capacitor/Android, pese a que `app.js` ya tenía una ruta correcta
+  (`initWebPush()`) gateada por `window.Capacitor`; (2) tras quitar esa
+  etiqueta, el Service Worker seguía sirviendo el `index.html` viejo desde
+  caché porque `sw.js` no había cambiado de bytes (sin nuevo evento
+  `install`).
+- Fix: se eliminó la etiqueta `<script>` incondicional de `index.html`
+  (Web y su copia en `www`); se subió `CACHE` en `sw.js` de
+  `engrase-openpit-v23` a `engrase-openpit-v24` para forzar la
+  actualización del caché en dispositivos ya instalados. `app.js` no se
+  modificó — su lógica de selección de plataforma ya era correcta.
+- Se agregaron 6 pruebas unitarias nuevas (`tests/unit/notificaciones-plataforma.test.js`
+  + helper `tests/helpers/loadNotificationLogic.js`) que ejercitan las
+  funciones reales `initWebPush`/`initPushNotifications` extraídas de
+  `app.js`. Suite completa: 82 → 88/88 PASS.
+- Validado en Samsung SM-S938B real (`adb install -r`, datos preservados):
+  11 lanzamientos consecutivos sin el error
+  `Cannot read properties of undefined (reading 'triggerEvent')` ni el
+  mensaje `Incompatible browser.` en logcat.
+  Push real no se probó (`ONESIGNAL_APP_ID` vacío en producción — push
+  deshabilitado por configuración, no por este fix).
+- Ver `docs/BUG_REGISTER.md` (`NOTIF-ANDROID-001`) para el detalle completo
+  y `docs/DECISIONS.md` para la arquitectura Web vs. Android de OneSignal.
+- Commit: `fix: separate web and native OneSignal initialization`.

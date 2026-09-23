@@ -241,9 +241,9 @@
 ## NOTIF-ANDROID-001 — SDK Web de OneSignal lanza error dentro del WebView de Capacitor
 
 - **Fecha:** 2026-09-23
-- **Prioridad:** P2 (elevar a P1 si se confirma que impide recibir
-  notificaciones push en Android)
-- **Estado:** REPRODUCIDO
+- **Prioridad:** P2
+- **Estado:** CORREGIDO — validado en dispositivo real (11 lanzamientos
+  consecutivos sin reproducirse, tras el fix completo)
 - **Origen:** PREEXISTENTE
 - **Relacionado con modularización:** NO
 - **Descripción:** el SDK Web de OneSignal
@@ -275,8 +275,80 @@
     nada — el problema es que el `<script>` del SDK web se carga
     igual (sin esa misma condición a nivel de `index.html`) y él solo, por
     su cuenta, ya lanza este error interno al detectar el WebView.
-- **Acción actual:** NO corregir todavía. Se continúa con la validación
-  manual (M1-M6 y prueba offline) de la modularización JS Fase 1.
+- **Causa raíz (confirmada, dos partes):**
+  1. `index.html` cargaba el `<script>` del SDK Web de OneSignal
+     (`https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js`) **de
+     forma incondicional**, incluso dentro de Capacitor/Android — pese a que
+     su propio comentario decía que no debía usarse ahí. `app.js` ya tenía
+     una ruta separada y correcta (`initWebPush()`) que carga ese mismo SDK
+     dinámicamente solo cuando `!window.Capacitor`, pero la etiqueta
+     `<script>` estática de `index.html` la sobrepasaba: el SDK se cargaba
+     igual, sin pasar por esa comprobación, y al detectar un WebView "no
+     compatible" lanzaba `Incompatible browser.` y, acto seguido, el error
+     `Cannot read properties of undefined (reading 'triggerEvent')` al
+     intentar inicializarse igual sobre un objeto que nunca terminó de
+     armarse.
+  2. Al quitar esa etiqueta de `index.html`, el error **siguió
+     reproduciéndose 8/8 veces** en las primeras pruebas post-fix. Causa:
+     el Service Worker (`sw.js`) sirve `index.html` con estrategia
+     cache-first; como `sw.js` no había cambiado de bytes, no se disparó un
+     nuevo evento `install` y el dispositivo seguía usando el `index.html`
+     cacheado (con el `<script>` viejo). Se corrigió subiendo la versión de
+     `CACHE` en `sw.js` (`engrase-openpit-v23` → `v24`) para forzar la
+     actualización del caché en dispositivos ya instalados.
+- **Arquitectura después del fix:**
+  - **Web (navegador):** `app.js` → `initWebPush()` inyecta el SDK Web de
+    OneSignal dinámicamente, solo si `!window.Capacitor` y hay
+    `ONESIGNAL_APP_ID` configurado. `index.html` ya no lo carga de forma
+    estática.
+  - **Android (app instalada):** se usa exclusivamamente el plugin nativo
+    `onesignal-cordova-plugin` (`window.plugins.OneSignal`), vía
+    `initPushNotifications()`. El SDK Web nunca se carga dentro de
+    Capacitor.
+  - La detección de plataforma sigue el mismo mecanismo que ya usaba el
+    resto del proyecto: `window.Capacitor` (sin hardcodear navegador ni
+    fabricante de dispositivo).
+- **Archivos modificados:**
+  - `CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/index.html` (y su copia
+    sincronizada en `CONTROL_ENGRASE_APP_ANDROID/www/index.html`): se quitó
+    la etiqueta `<script>` incondicional del SDK Web.
+  - `CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/sw.js` (y su copia en `www/`):
+    `CACHE` subido a `engrase-openpit-v24`.
+  - `tests/helpers/loadNotificationLogic.js` (nuevo) y
+    `tests/unit/notificaciones-plataforma.test.js` (nuevo, 6 pruebas): test
+    unitario de la lógica REAL de selección de plataforma
+    (`initWebPush`/`initPushNotifications`), extraída de `app.js`.
+  - `app.js` **no se modificó** — su lógica de selección de plataforma ya
+    era correcta antes del fix; el bug estaba solo en `index.html`.
+- **Pruebas:**
+  - Suite automatizada: 82 → 88/88 PASS (6 pruebas nuevas de
+    NOTIF-ANDROID-001).
+  - Validación en dispositivo real (Samsung SM-S938B, `adb install -r`,
+    datos preservados): 11 lanzamientos consecutivos sin el error
+    `triggerEvent` ni el mensaje `Incompatible browser.` en logcat (tras el
+    segundo fix — los primeros 2 lanzamientos inmediatamente después de
+    subir la versión de `sw.js` aún mostraban el comportamiento viejo, por
+    el tiempo normal de propagación de actualización del Service Worker).
+  - **PUSH REAL: NO PROBADO.** `ONESIGNAL_APP_ID` está vacío (`''`) en el
+    código de producción actual (`app.js`), por lo que tanto
+    `initWebPush()` como `initPushNotifications()` retornan sin hacer nada
+    en ambas plataformas — el envío de push está deshabilitado por
+    configuración, independientemente de este fix. No se envió ninguna
+    notificación real ni se pidió autorización para hacerlo, porque no hay
+    ningún App ID configurado con el que probar. Esto no bloquea la
+    aprobación del fix: el error corregido era puramente de carga del SDK,
+    no de recepción de push.
+  - **WEB ONESIGNAL:** confirmado por revisión de código (no hay
+    herramienta de automatización de navegador disponible en esta sesión).
+    `initWebPush()` no se modificó y sigue intacta: crea el `<script>` del
+    SDK Web dinámicamente, llama a `OneSignal.init(...)`,
+    `Notifications.requestPermission()` y registra el listener de cambio de
+    suscripción exactamente igual que antes del fix. El único cambio fue
+    eliminar la carga *duplicada e incondicional* en `index.html`, que
+    convivía con esta ruta ya correcta.
+- **Acción actual:** Corregido y validado. Ver también
+  `docs/DECISIONS.md` (arquitectura Web vs. Android de OneSignal) y
+  `docs/CHANGELOG_MIGRATION.md`.
 
 ## UI-ANDROID-005 — Panel "Equipos que requieren atención" del Dashboard usa tabla genérica sin adaptar a tarjeta móvil
 
