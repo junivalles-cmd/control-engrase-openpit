@@ -44,6 +44,31 @@ tracking`. No se encontraron otros archivos ajenos al proyecto en la raíz.
 - **No se movió, copió, borró ni modificó ningún archivo de código en esta
   fase.**
 
+## FASE A2 — Script de sincronización WEB → www
+**Estado:** COMPLETADA (2026-09-23) — herramienta creada y probada, `--apply`
+NO ejecutado.
+
+- FUENTE CANÓNICA TEMPORAL: `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`
+- SINCRONIZACIÓN: script creado en `tools/sync-web-to-android.mjs` (ver
+  `docs/SYNC_WEB_ANDROID.md`). Calcula el set de archivos runtime a partir de
+  `index.html`, `manifest.json` y `sw.js` de la fuente (no copia a ciegas);
+  excluye explícitamente documentación, manuales, SQL y Edge Functions.
+- APPLY: **NO EJECUTADO**. Solo se corrió en modo dry-run.
+- ANDROID: **NO MODIFICADO** (ni `www`, ni `android\app\src\main\assets\public`,
+  ni ningún archivo de Android Studio/Gradle).
+- GITHUB PAGES: **NO MODIFICADO**.
+- Dry-run contra el proyecto real confirmó las diferencias ya conocidas
+  (`manifest.json` desactualizado en `www`, 3 íconos faltantes, 10 íconos con
+  contenido distinto) y además detectó dos hallazgos nuevos: `www` contiene
+  `schema.sql` (no es runtime del frontend, no debería estar ahí) e
+  `icon-180.png` (existe en ambas copias pero no está referenciado por
+  `manifest.json`, `index.html` ni `sw.js` — parece un ícono huérfano). Ambos
+  quedan documentados, sin tocarlos.
+- Pruebas del script (ruta inexistente, manifest inválido) se hicieron en
+  copias aisladas dentro de una carpeta temporal, nunca contra el proyecto
+  real.
+- Commit: `5d42f66` — `build: add safe web to android sync tool`.
+
 ## Próximas fases (NO iniciadas)
 
 Estas fases se planificarán y ejecutarán en conversaciones futuras, una por
