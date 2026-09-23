@@ -1900,7 +1900,11 @@ function updateShiftBadge() {
   const el = $('#topbar-shift');
   if (!el) return;
   const isDay = currentShiftId() === 'shift_dia';
-  el.textContent = isDay ? '☀ Turno Día' : '☾ Turno Noche';
+  const label = isDay ? 'Turno Día' : 'Turno Noche';
+  el.title = label;
+  // El texto se separa del ícono para poder ocultarlo solo en móvil (CSS)
+  // y ahorrar espacio horizontal, sin perder el dato (queda en el title).
+  el.innerHTML = `<span class="topbar-shift-icon">${isDay ? '☀' : '☾'}</span><span class="topbar-shift-label"> ${label}</span>`;
 }
 
 function navigate(route) {
