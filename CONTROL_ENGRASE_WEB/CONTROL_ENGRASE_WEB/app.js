@@ -1461,6 +1461,12 @@ function wireQuickFind() {
   if (!input || !caja || input.dataset.wired) return;
   input.dataset.wired = '1';
 
+  // En pantallas angostas el buscador arranca colapsado en solo el ícono
+  // (ver .quick-find-toggle en styles.css); tocarlo enfoca el input, que se
+  // expande solo por CSS (:focus-within), sin más estado que mantener.
+  const toggle = $('#quick-find-toggle');
+  if (toggle) toggle.addEventListener('click', () => input.focus());
+
   let resultados = [];
   let seleccion = -1;
 
@@ -1852,6 +1858,7 @@ function boot() {
           <div class="topbar-title" id="topbar-title">Dashboard</div>
           <div class="topbar-right">
             <div class="quick-find">
+              <button type="button" id="quick-find-toggle" class="icon-btn quick-find-toggle" aria-label="Buscar equipo">${ic('search')}</button>
               <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
               <div id="quick-find-results" class="quick-find-results hidden"></div>
             </div>
