@@ -29,6 +29,7 @@ export const SHIFTS_JS_PATH = path.join(SRC_ROOT, 'src/core/shifts.js');
 export const HOURMETER_JS_PATH = path.join(SRC_ROOT, 'src/core/hourmeter.js');
 export const LUBRICATION_STATUS_JS_PATH = path.join(SRC_ROOT, 'src/core/lubrication-status.js');
 export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
+export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -79,6 +80,22 @@ const DB_JS_NAMES = ['uid', 'nowISO', 'stamp'];
 /** Devuelve uid/nowISO/stamp reales de db.js (no requieren IndexedDB). */
 export function loadDbLogic() {
   const body = buildBodyFromSources([[DB_JS_PATH, DB_JS_NAMES]]);
+  const factory = new Function(body);
+  return factory();
+}
+
+// estadoCelda() (weekly-matrix.js) usa el global WEEKDAY_NAMES, exactamente
+// como en el navegador (scripts clásicos, scope compartido) — por eso se
+// extrae junto con él en el mismo cuerpo, igual que hace APP_LOGIC_SOURCES
+// con statusFor()/WEEKDAY_NAMES.
+const WEEKLY_MATRIX_SOURCES = [
+  [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
+  [WEEKLY_MATRIX_JS_PATH, ['estadoCelda']],
+];
+
+/** Devuelve la función real estadoCelda() de src/core/weekly-matrix.js. */
+export function loadWeeklyMatrixLogic() {
+  const body = buildBodyFromSources(WEEKLY_MATRIX_SOURCES);
   const factory = new Function(body);
   return factory();
 }

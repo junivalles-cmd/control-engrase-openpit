@@ -3719,27 +3719,9 @@ async function renderMatrizSemanal() {
     return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
   }).sort((a, b) => (a.shiftId || '').localeCompare(b.shiftId || '') || a.code.localeCompare(b.code));
 
-  function estadoCelda(eq, fecha) {
-    const plan = plans.find(p => p.equipmentId === eq.id);
-    if (!plan) return { tipo: 'vacio' };
-    const nombreDia = WEEKDAY_NAMES[fecha.getDay()];
-    if (!(plan.assignedDays || []).includes(nombreDia)) return { tipo: 'vacio' };
-
-    const hecho = records.find(r => r.equipmentId === eq.id &&
-      new Date(r.date).toDateString() === fecha.toDateString());
-    if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
-
-    // Se distinguen tres situaciones distintas, que antes se veían todas iguales:
-    //   futuro     -> le toca más adelante en la semana (aún no es su día)
-    //   pendiente  -> le toca HOY y todavía no se ha hecho (se puede cumplir)
-    //   no_realizado -> el día ya pasó sin registrarse: es un incumplimiento real
-    if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
-    if (fecha.getTime() < hoy.getTime()) {
-      const dias = Math.round((hoy.getTime() - fecha.getTime()) / 86400000);
-      return { tipo: 'no_realizado', diasAtras: dias };
-    }
-    return { tipo: 'pendiente' };
-  }
+  // estadoCelda() se movió a src/core/weekly-matrix.js (lógica pura, sin DOM
+  // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
+  // datos ya cargados (plans, records, hoy).
 
   const tablaTurno = (titulo, lista) => {
     if (!lista.length) return '';
@@ -3758,7 +3740,7 @@ async function renderMatrizSemanal() {
               <tr>
                 <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
                 ${dias.map(d => {
-                  const s = estadoCelda(eq, d);
+                  const s = estadoCelda(eq, d, plans, records, hoy);
                   if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
                   if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
                   if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
@@ -3775,8 +3757,8 @@ async function renderMatrizSemanal() {
   const deNoche = visibles.filter(e => e.shiftId === 'shift_noche');
 
   // Conteos de la semana visible
-  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo === tipo).length, 0);
-  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d).tipo !== 'vacio').length, 0);
+  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
+  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo !== 'vacio').length, 0);
   const hechas = contar('hecho');
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
@@ -3949,7 +3931,7 @@ async function renderMatrizSemanal() {
           border: bordes
         })];
         dias.forEach(d => {
-          const s = estadoCelda(eq, d);
+          const s = estadoCelda(eq, d, plans, records, hoy);
           if (s.tipo === 'hecho') {
             fila.push(celda('REALIZADO', {
               font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },

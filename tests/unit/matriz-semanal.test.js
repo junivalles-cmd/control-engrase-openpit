@@ -3,13 +3,12 @@
 // real extraído de app.js. Fecha fija: miércoles 2026-01-14.
 //
 // IMPORTANTE — límite de esta cobertura: la función que pinta cada CELDA
-// exacta de la grilla (REALIZADO / NO REALIZADO / PENDIENTE HOY / vacío),
-// llamada estadoCelda(), vive DENTRO de renderMatrizSemanal() como función
-// anidada que cierra sobre variables locales (plans/records/hoy cargadas de
-// IndexedDB) — no es una declaración top-level y no se puede extraer de forma
-// aislada sin refactor. REQUIERE EXTRACCIÓN DURANTE MODULARIZACIÓN.
-// weekdayStatusFor() cubre la misma decisión de negocio (¿le tocaba, se hizo,
-// está vencido?) para la ficha del equipo y el plan de engrase.
+// exacta de la grilla (REALIZADO / NO REALIZADO / PENDIENTE HOY / vacío) es
+// estadoCelda(), extraída durante la Modularización JS Fase 2 a
+// src/core/weekly-matrix.js — ver tests/unit/matriz-estado-celda.test.js
+// para su cobertura dedicada. weekdayStatusFor() (probada aquí) cubre la
+// misma decisión de negocio (¿le tocaba, se hizo, está vencido?) pero para
+// la ficha del equipo y el plan de engrase (Dashboard), no para la Matriz.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadAppLogic } from '../helpers/loadLubricationLogic.js';
 
