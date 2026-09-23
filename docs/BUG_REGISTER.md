@@ -120,7 +120,11 @@
   - Resultado esperado: ~58-60px de alto total en móvil (padding 7+7=14px +
     44px del ícono más alto), dentro del rango 56-64px pedido, con todo en
     una sola fila en la mayoría de los casos.
-- **Evidencia:** `docs/evidence/UI-ANDROID-003_after.png`.
+- **Evidencia:** no se pudo capturar una screenshot "después" por ADB — la
+  pantalla del dispositivo se bloqueaba (timeout muy corto) en cada intento
+  inmediatamente después de reabrir la app. El "antes" tampoco quedó
+  capturado por el mismo motivo; la corrección se diseñó a partir de la
+  descripción del usuario más el análisis estático del CSS.
 - **Validación:** sincronizado a `www`/Android, recompilado e instalado en
   el dispositivo real preservando datos. **Pendiente de validación visual
   del usuario.**
