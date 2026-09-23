@@ -96,6 +96,32 @@ NO ejecutado.
 - Commits: `build: synchronize android web assets from canonical web source`
   (sincronización real de `www` + documentación).
 
+## Validación manual en dispositivo real (post Fase A3)
+**Estado:** EN CURSO (iniciada 2026-09-23)
+
+- Dispositivo: Samsung SM-S938B, conectado por USB, autorizado en ADB.
+- APK debug instalado con `adb install` (limpio, sin instalación previa —
+  0 riesgo de pérdida de datos) y actualizado varias veces con
+  `adb install -r` (preservando datos; `firstInstallTime` sin cambios en
+  todas las reinstalaciones).
+- Arranque de la app confirmado (proceso vivo, actividad en primer plano,
+  sin errores fatales en logcat).
+- **UI-ANDROID-001** (buscador superpuesto): reproducido con evidencia real
+  (`docs/evidence/UI-ANDROID-001_before.png`), corregido en dos commits
+  (`5751a21`, `1867ba5`) y **validado visualmente por el usuario en el
+  dispositivo real — PASS**. Ver `docs/BUG_REGISTER.md`.
+- **UI-ANDROID-002** (ícono de logout del Lubricador): corregido en código
+  (commit `86ff816`), sincronizado e instalado en el dispositivo —
+  **pendiente de validación visual del usuario**.
+- App Links con el APK debug: analizado y **BLOQUEADO EN DEBUG** (el
+  certificado del keystore de depuración no coincide con el que exige
+  `assetlinks.json`, que sí coincide con el keystore de release
+  `engrase-key.jks`) — requiere un build firmado para probarse de verdad,
+  fuera de alcance de esta fase.
+- Checklist completo de validación manual (login por rol, navegación,
+  Lubricador, Equipos, Matriz Semanal, offline, etc.) preparado en
+  `docs/MANUAL_VALIDATION.md`, aún no ejecutado caso por caso.
+
 ## Próximas fases (NO iniciadas)
 
 Estas fases se planificarán y ejecutarán en conversaciones futuras, una por

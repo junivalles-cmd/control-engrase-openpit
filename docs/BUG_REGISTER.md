@@ -4,7 +4,7 @@
 
 - **Fecha:** 2026-09-23
 - **Prioridad:** P2
-- **Estado:** REPRODUCIDO EN DISPOSITIVO REAL
+- **Estado:** CORREGIDO — PROBADO EN DISPOSITIVO REAL — PASS
 - **Dispositivo:** Samsung SM-S938B (Android, vía APK debug instalado por ADB)
 - **Descripción:** en la barra superior (`.topbar`), el campo de búsqueda
   rápida (`#quick-find`) se renderiza superpuesto sobre el título
@@ -36,9 +36,45 @@
   de responder al toque — si al validar la corrección se confirma que algún
   control quedó inutilizable por el solapamiento, esta entrada debe subir a
   **P1**.
-- **Corrección:** ver `docs/CHANGELOG_MIGRATION.md` y el commit
-  `fix: prevent mobile search bar overlap` — se agregó `flex-wrap: wrap` y
-  `justify-content: flex-end` a `.topbar-right` en la fuente canónica
-  (`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\styles.css`), sincronizado luego
-  a `www` y a Android. **Pendiente de validación visual del usuario en el
-  dispositivo real** antes de marcar este bug como resuelto.
+- **Corrección (dos pasos, ambos en la fuente canónica
+  `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`, sincronizados a `www` y Android):**
+  1. Commit `5751a21` — `fix: prevent mobile search bar overlap`: se agregó
+     `flex-wrap: wrap` y `justify-content: flex-end` a `.topbar-right`.
+  2. Commit `1867ba5` — `fix: collapse search bar into icon on narrow
+     screens`: a pedido del usuario ("se mira feo... que no aparezca arriba
+     de los demás controles"), se rediseñó el comportamiento móvil: el
+     buscador arranca colapsado mostrando solo el ícono de lupa
+     (`#quick-find-toggle`, reutilizando `.icon-search` ya existente); al
+     tocarlo, el campo se expande (`:focus-within`) y **oculta temporalmente
+     sus hermanos** (tema, sincronización, turno) para quedar en la misma
+     línea sin superponerse ni empujarlos a otra fila; al perder el foco,
+     todo vuelve al estado colapsado.
+- **Validación:** confirmada visualmente por el usuario en el dispositivo
+  real (Samsung SM-S938B) tras instalar el APK debug con ambos commits.
+
+## UI-ANDROID-002 — Ícono de cerrar sesión del Lubricador no usa el sistema de íconos del proyecto
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P3 (cosmético, el botón funciona correctamente — el `id="btn-logout"` y su listener no cambiaron)
+- **Estado:** CORREGIDO EN CÓDIGO — PENDIENTE DE VALIDACIÓN VISUAL DEL USUARIO
+- **Reportado por:** usuario ("corrige el ícono de cerrar sesión de los lubricos")
+- **Descripción:** en la barra superior simplificada del rol Lubricador
+  (`.lub-topbar`), el botón de cerrar sesión usaba el carácter Unicode
+  `⏻` (U+23FB) en vez del ícono SVG en máscara (`.icon-logout`) que ya usa
+  el mismo botón en el menú lateral de los demás roles. Los caracteres
+  Unicode de este tipo se renderizan de forma inconsistente entre
+  dispositivos/fuentes de emoji (en Samsung, con estilo y color distintos al
+  resto de los íconos de la app), lo cual se veía fuera de lugar.
+- **Causa raíz:** `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js`, función
+  `bootLubricador()`, botón `#btn-logout` con el glifo `⏻` en vez de usar el
+  helper `ic('logout')` ya usado en el resto del proyecto.
+- **Corrección:** commit `86ff816` — `fix: use consistent logout icon for
+  lubricador role`. Se reemplazó el carácter por `${ic('logout')}`
+  (reutilizando `.icon-logout`, ya definido en `styles.css`) y se agregó
+  `.lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }`
+  para que el ícono tenga un tamaño de toque cómodo dentro de esa barra,
+  consistente con el resto de los botones de ícono del proyecto.
+- **Validación:** sincronizado a `www`/Android, recompilado e instalado en
+  el dispositivo real (Samsung SM-S938B) preservando datos. **Aún no
+  confirmado visualmente por el usuario** — pendiente de que inicie sesión
+  con un usuario de rol Lubricador y revise el ícono.

@@ -37,12 +37,21 @@ la migración, para distinguir claramente lo verificado de lo asumido.
 | `assets/public` coincide por hash con `www` (archivos runtime) | PASS |
 | Ningún archivo versionado de Android modificado por `cap sync` | PASS (`git status` limpio fuera de `www`) |
 | Build debug (`./gradlew assembleDebug`) | PASS (tras `./gradlew clean` para resolver un `AccessDeniedException` de Windows en artefactos de build obsoletos — no relacionado con el código sincronizado) |
-| Instalación en dispositivo/emulador | NO PROBADO EN DISPOSITIVO (sin dispositivo ni emulador conectado — `adb devices` vacío) |
-| Arranque de la app | NO PROBADO EN DISPOSITIVO |
+| Instalación en dispositivo/emulador | PASS (Samsung SM-S938B real, vía `adb install`/`adb install -r`, actualizado desde el 2026-09-23 posterior a la Fase A3) |
+| Arranque de la app | PASS (proceso vivo, `ResumedActivity` = `MainActivity`, sin `FATAL EXCEPTION`/`AndroidRuntime` en logcat) |
 | IndexedDB en el WebView | NO PROBADO EN DISPOSITIVO |
-| Interfaz / íconos | NO PROBADO EN DISPOSITIVO |
+| Interfaz / íconos | PASS parcial — se confirmó y corrigió `UI-ANDROID-001` (buscador superpuesto) y `UI-ANDROID-002` (ícono de logout de Lubricador, corrección enviada, validación visual del usuario pendiente); el resto de pantallas aún no revisado |
 | Modo offline | NO PROBADO EN DISPOSITIVO |
-| QR / App Links | NO PROBADO EN DISPOSITIVO (verificado en archivos: `.nojekyll` y `.well-known/assetlinks.json` idénticos entre fuente y destino, sin romperse) |
+| QR / App Links | NO PROBADO EN DISPOSITIVO (verificado en archivos: `.nojekyll` y `.well-known/assetlinks.json` idénticos entre fuente y destino, sin romperse; además confirmado que el certificado del APK debug NO coincide con el de `assetlinks.json` — ver `docs/MANUAL_VALIDATION.md`, App Links queda BLOQUEADO EN DEBUG hasta probar con un build firmado de release) |
 | Cámara | NO PROBADO EN DISPOSITIVO |
 | OneSignal | NO PROBADO EN DISPOSITIVO |
 | Notificaciones locales | NO PROBADO EN DISPOSITIVO |
+
+## Bugs de UI detectados y corregidos en validación manual (2026-09-23)
+
+| ID | Descripción | Estado |
+|---|---|---|
+| UI-ANDROID-001 | Buscador superior superpuesto con otros controles en Android | CORREGIDO — PASS, validado visualmente por el usuario en Samsung SM-S938B |
+| UI-ANDROID-002 | Ícono de cerrar sesión del Lubricador usaba carácter Unicode en vez del sistema de íconos | CORREGIDO EN CÓDIGO — pendiente de validación visual del usuario |
+
+Ver `docs/BUG_REGISTER.md` para el detalle completo de causa raíz y corrección de cada uno.
