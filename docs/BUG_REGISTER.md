@@ -136,3 +136,58 @@
 - **Validación:** confirmada visualmente por el usuario en el dispositivo
   real (Samsung SM-S938B) — topbar de Administrador en una sola línea,
   altura compacta. **PASS.**
+
+## BUG-004 — Lubricador ve la tabla de escritorio en vez de sus tarjetas después de sincronizar
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P1 (bloquea el flujo principal de registro de engrase para
+  el rol Lubricador — el motivo de ser del sistema)
+- **Estado:** CORREGIDO EN CÓDIGO — PENDIENTE DE VALIDACIÓN VISUAL/FUNCIONAL
+  DEL USUARIO
+- **Reportado por:** usuario, durante la prueba manual ADM-01, navegando por
+  la pantalla "Mi Turno" del rol Lubricador ("las tarjetas no las muestra
+  como se debe")
+- **Dispositivo:** Samsung SM-S938B (pero el bug **no es específico de
+  Android** — vive en `app.js`, compartido byte a byte con la versión WEB,
+  así que afecta igual a `CONTROL_ENGRASE_WEB`)
+- **Evidencia:** `docs/evidence/lub-turno-cards-check.png` — captura real
+  del dispositivo mostrando, dentro del shell de Lubricador (topbar, tira de
+  usuario, bottom-nav "Mi Turno" activo), el contenido de la tabla
+  `<table class="data-table">` de `renderTurno()` ("Plan de engrase del
+  turno — Día", "5 equipos", filas con botón "Realizar engrase") en vez de
+  las tarjetas táctiles `.lub-eq-btn` de `renderLubricadorHome()`.
+- **Causa raíz:** `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js`, función
+  `redibujarPantallaActual()` (la que vuelve a pintar la pantalla actual
+  cuando una sincronización en segundo plano trae datos nuevos —
+  `onSyncStateChange()` → `pantallasQueSeRefrescan` incluye `'turno'`).
+  Su mapa `pintar` para el shell de Lubricador apuntaba a las funciones
+  **genéricas** (compartidas con Administrador/Planificador/Supervisor):
+  ```js
+  const pintar = { anomalias: renderAnomalias, historial: renderHistorial, turno: renderTurno };
+  ```
+  `renderHistorial` y `renderTurno` son las vistas de **tabla de
+  escritorio** (`<table class="data-table">`), completamente distintas de
+  `renderLubricadorHistorial()`/`renderLubricadorHome()` (tarjetas táctiles
+  pensadas para el flujo de un lubricador en campo). La pantalla se
+  renderiza bien al abrirla (el despachador de la barra inferior sí usa las
+  funciones correctas), pero en cuanto llega una sincronización con datos
+  nuevos mientras el Lubricador está en "Mi Turno" o "Mis Engrases", se
+  redibuja con la función equivocada, reemplazando silenciosamente las
+  tarjetas por la tabla de escritorio.
+  Además, `renderTurno()` llama `startGreaseFlow(b.dataset.id)` **sin**
+  el segundo argumento `target` que sí pasa `renderLubricadorHome()`
+  (`startGreaseFlow(equipmentId, target)`), así que el botón "Realizar
+  engrase" de la tabla mal-renderizada muy probablemente falla o no
+  encuentra dónde dibujar el flujo — no se confirmó con logcat en vivo,
+  pero es la lectura más probable del código.
+- **Corrección:** una línea, en la fuente canónica —
+  ```js
+  const pintar = { anomalias: renderAnomalias, historial: renderLubricadorHistorial, turno: renderLubricadorHome };
+  ```
+  `anomalias: renderAnomalias` se dejó igual a propósito: esa función SÍ es
+  compartida intencionalmente entre todos los roles (el Lubricador ya la ve
+  igual al entrar por la barra inferior, no es un mapeo equivocado).
+- **Validación:** sincronizado a `www`/Android, recompilado e instalado en
+  el dispositivo real preservando datos. **Pendiente de que el usuario
+  confirme** que, tras una sincronización, "Mi Turno" y "Mis Engrases" del
+  Lubricador siguen mostrando las tarjetas correctas.
