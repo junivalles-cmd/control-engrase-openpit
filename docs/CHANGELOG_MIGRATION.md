@@ -217,3 +217,33 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   para una fase futura — ver `docs/BUG_REGISTER.md`.
 - No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
   TypeScript. Ninguna funcionalidad nueva.
+
+## 2026-09-23 — Fase Vite 1: build paralelo (shadow build)
+- Tag local de checkpoint `pre-vite-js-stable` → commit `df69898` (no se
+  hizo push).
+- `npm install --save-dev vite` (5.4.21) en el `package.json` raíz;
+  scripts `dev`/`build`/`preview` nuevos, `test`/`test:watch` intactos.
+- `vite.config.js` (nuevo): `root` = fuente canónica (sin reorganizar a
+  `src/`+`public/`), `base: './'`, `outDir` = `dist/` (gitignored).
+- Se comprobó empíricamente (build sin plugin, antes de escribir la
+  configuración final) que Vite deja intactos los `<script src>` clásicos
+  pero no los copia, y SÍ hashea `manifest.json`/íconos/CSS — habría roto
+  el precache exacto de `sw.js`.
+- Se extrajo `computeRuntimeFileSet()` y sus auxiliares de
+  `tools/sync-web-to-android.mjs` a un módulo nuevo sin shebang,
+  `tools/runtime-file-set.mjs` (esbuild no tolera un shebang en un archivo
+  importado) — comportamiento del script de sincronización verificado
+  idéntico antes/después (mismo dry-run, mismo resultado).
+- Plugin `copyStableRuntimeFiles()` en `vite.config.js`: copia, con
+  nombre estable, el mismo set runtime que ya usa
+  `tools/sync-web-to-android.mjs`, y reescribe en `dist/index.html` las 4
+  referencias que Vite había hasheado, de vuelta a su ruta relativa
+  original.
+- `npm run build`: PASS. 27 archivos runtime en `dist/`, idénticos byte a
+  byte a la fuente (`cmp`). `dist/index.html` solo difiere en detalles
+  cosméticos de Vite. `npm run dev`/`npm run preview`: PASS por HTTP (sin
+  404). `npm test`: 125/125 PASS, sin cambios en las pruebas.
+- `capacitor.config.json` (`webDir: "www"`), `CONTROL_ENGRASE_APP_ANDROID/www`,
+  GitHub Pages y Supabase: sin modificar. No se publicó nada.
+- Ver `docs/VITE_MIGRATION.md` para el detalle completo (arquitectura,
+  configuración, riesgos, rollback).

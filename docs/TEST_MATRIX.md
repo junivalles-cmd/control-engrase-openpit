@@ -94,6 +94,28 @@ Ver `docs/BUG_REGISTER.md` para el detalle completo de causa raíz y corrección
 | IndexedDB / `sync.js` / Supabase modificados | NO (ninguno de los tres se tocó) |
 | Hallazgo nuevo, no relacionado con esta fase: lanzamientos con la pantalla apagada/dozing (charging lock screen de Samsung) producen brevemente `App resumed→paused→stopped` y, en algunos casos, el mismo error `Cannot read properties of undefined (reading 'triggerEvent')` — registrado como bug aparte, ver `docs/BUG_REGISTER.md` (`ANDROID-DOZE-001`) | Documentado, no bloquea esta fase (con la pantalla despierta y desbloqueada, 100% de los lanzamientos probados fueron limpios) |
 
+## FASE VITE 1 — Build paralelo / shadow build (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| `npm test` tras instalar Vite | PASS (125/125, sin cambios en las pruebas) |
+| `npm run build` | PASS |
+| 27 archivos runtime en `dist/` idénticos byte a byte a la fuente (`cmp`) | PASS |
+| `dist/index.html`: mismo orden/contenido de `<script>`, solo diferencias cosméticas en `<link>` | PASS |
+| `.nojekyll` en `dist/` | PASS |
+| `.well-known/assetlinks.json` en `dist/` | PASS |
+| `manifest.json` en `dist/` con nombre estable (sin hash) | PASS |
+| `sw.js` en `dist/`, rutas de `ASSETS` todas resolubles en `dist/` | PASS |
+| `src/core/*.js` (6 archivos) en `dist/` con nombre estable | PASS |
+| `npm run dev`: recursos clave sirven 200 por HTTP | PASS |
+| `npm run preview`: 18 recursos runtime comprobados por HTTP, 0 errores 404 | PASS |
+| Interacción real en navegador (login, consola sin errores JS) | NO PROBADO — sin herramienta de automatización de navegador disponible en esta sesión |
+| Prueba offline del build Vite (`dist/` online → SW → sin red → recarga) | NO PROBADO — mismo motivo; no bloquea la fase (`sw.js` no se modificó y ya está validado offline sobre la fuente canónica) |
+| `capacitor.config.json` / `webDir` | SIN MODIFICAR (`"www"`) |
+| `CONTROL_ENGRASE_APP_ANDROID/www` | SIN MODIFICAR |
+| GitHub Pages / publicación | SIN TOCAR — nada publicado |
+| Supabase / IndexedDB / `sync.js` | SIN MODIFICAR |
+
 ## Pruebas automatizadas de lógica (2026-09-23)
 
 Ver `docs/AUTOMATED_TESTS.md` para el detalle completo (framework, estructura,

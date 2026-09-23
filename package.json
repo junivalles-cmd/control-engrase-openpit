@@ -6,9 +6,13 @@
   "description": "Herramientas de desarrollo del repositorio (pruebas automatizadas, scripts de sincronización). No es la app en sí — ver CONTROL_ENGRASE_WEB y CONTROL_ENGRASE_APP_ANDROID.",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "devDependencies": {
+    "vite": "^5.4.21",
     "vitest": "^2.1.9"
   }
 }

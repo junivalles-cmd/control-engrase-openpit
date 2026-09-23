@@ -297,3 +297,35 @@ No corregido, fuera de alcance de esta fase. Ver `docs/BUG_REGISTER.md`.
 No se tocó Supabase, IndexedDB ni `sync.js`. No se instaló Vite ni
 TypeScript. Ninguna funcionalidad nueva. `UI-ANDROID-005` sigue sin
 corregir, deferido a propósito.
+
+## FASE VITE 1 — Build paralelo / shadow build
+**Estado:** COMPLETADA (2026-09-23)
+
+Checkpoint previo: tag local `pre-vite-js-stable` → commit `df69898`. Se
+instaló Vite 5.4.21 como devDependency única en el `package.json` raíz
+(scripts `dev`/`build`/`preview`), configurado para leer la fuente
+canónica (`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`) sin reorganizarla, y
+generar `dist/` (gitignored, artefacto reconstruible) — sin sustituir
+`www` ni GitHub Pages.
+
+Hallazgo empírico clave: Vite no hashea los `<script src>` clásicos (los
+deja intactos) pero tampoco los copia; en cambio SÍ hashea
+`manifest.json`/íconos/CSS referenciados por `<link>`, lo que habría roto
+el precache exacto de `sw.js`. Se resolvió con un plugin propio
+(`copyStableRuntimeFiles()` en `vite.config.js`) que copia el mismo *set*
+runtime que ya calcula `tools/sync-web-to-android.mjs` con nombres
+estables, y reescribe las 4 referencias hasheadas de vuelta. Esa lógica
+compartida se extrajo a `tools/runtime-file-set.mjs` (nuevo, sin shebang —
+esbuild no tolera un shebang en un módulo importado) para no duplicarla.
+
+`npm run build`: PASS. Los 27 archivos runtime en `dist/` son idénticos
+byte a byte a la fuente (verificado con `cmp`); `dist/index.html` solo
+difiere en normalizaciones cosméticas de Vite (rutas `./`, atributo
+`crossorigin`, orden del `<link>` de estilos). `npm run dev` y
+`npm run preview`: PASS por HTTP (sin 404, tipos de contenido correctos) —
+sin validación de interacción real en navegador (sin herramienta de
+automatización disponible en esta sesión, marcado honestamente NO
+PROBADO, igual que la prueba offline del build Vite). `npm test`: 125/125
+PASS, sin cambios en las pruebas. `capacitor.config.json`/`webDir`/`www`/
+GitHub Pages/Supabase: sin modificar. Ver `docs/VITE_MIGRATION.md` para el
+detalle completo, riesgos y plan de rollback.

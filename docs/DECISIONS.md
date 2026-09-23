@@ -210,3 +210,37 @@ cada archivo nuevo agregado a `ASSETS`), subiendo `CACHE` de `v24` a `v25`
 y luego a `v26` — mismo patrón ya establecido en `NOTIF-ANDROID-001` y en
 la Fase 1, no una novedad. No se tocó ninguna otra parte de `sw.js`
 (estrategia de cacheo/fetch/activate).
+
+## 12. Vite Fase 1: `root` sobre la fuente actual + copia estable, en vez de reorganizar a `src/`+`public/`
+**Decisión:** `vite.config.js` apunta `root` directamente a
+`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`, sin mover ni un archivo — el
+patrón estándar de Vite (`public/` para estáticos sin procesar) se
+descartó para esta fase porque habría obligado a reorganizar rutas que
+otros sistemas (`sync-web-to-android.mjs`, GitHub Pages, `sw.js`) ya
+referencian por su ubicación actual. En vez de eso, un plugin propio
+(`copyStableRuntimeFiles()`, hook `closeBundle`) copia el set runtime con
+nombres SIN hash y reescribe en `dist/index.html` las 4 referencias
+(`manifest.json`, `favicon.png`, `apple-touch-icon.png`, `styles.css`) que
+Vite sí hashea por tratarse de `<link href>`.
+
+**Razón:** se comprobó empíricamente (no se asumió) que Vite deja
+intactos los `<script src>` clásicos pero no los copia, y SÍ hashea
+`manifest.json`/íconos/CSS — eso habría roto el precache por nombre
+exacto de `sw.js` (`ASSETS`). El pedido explícito de esta fase era
+"preservar nombres/rutas estables antes que rediseñar el Service Worker".
+
+**Reutilización, no duplicación:** el plugin usa `computeRuntimeFileSet()`
+— la MISMA función que ya calcula qué es "runtime" para Android —
+extraída a `tools/runtime-file-set.mjs` (nuevo módulo sin shebang, porque
+esbuild no tolera un `#!/usr/bin/env node` en un archivo importado desde
+`vite.config.js`). `tools/sync-web-to-android.mjs` ahora importa de ahí en
+vez de tener su propia copia; su comportamiento como CLI se verificó
+idéntico antes/después.
+
+**Consecuencia aceptada:** `dist/` pierde algunas optimizaciones típicas
+de Vite en esta fase (CSS sin minificar, sin hashing para cache-busting
+por contenido) — deliberado: la estabilidad de nombres para `sw.js` pesa
+más que la optimización en una fase que solo busca demostrar equivalencia,
+no reemplazar el despliegue actual. `dist/` es gitignored (artefacto
+reconstruible con `npm run build`, igual que ya se declaraba en el
+`.gitignore` de la Fase 0, anticipando este caso).
