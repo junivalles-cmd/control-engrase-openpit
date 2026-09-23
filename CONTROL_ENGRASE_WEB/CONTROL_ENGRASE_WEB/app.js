@@ -1960,7 +1960,7 @@ function bootLubricador() {
         <div class="lub-topbar-right">
           ${themeButtonHTML()}
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
-          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">⏻</button>
+          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}</button>
         </div>
       </header>
       <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
