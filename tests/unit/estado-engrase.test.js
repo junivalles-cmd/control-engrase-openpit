@@ -73,24 +73,55 @@ describe('statusFor() — plan por frecuencia de horómetro', () => {
     expect(r).toMatchObject({ code: 'VERDE', label: 'AL DÍA', remaining: 50 });
   });
 
-  it(
-    'BUG conocido (ver docs/BUG_REGISTER.md #ENGRASE-001): horómetro no numérico ' +
-    '("abc") no dispara DATOS INCONSISTENTES — cae en VERDE/AL DÍA con remaining=NaN. ' +
-    'Esta prueba documenta el comportamiento ACTUAL, no lo aprueba.',
-    async () => {
+  // ENGRASE-001 (docs/BUG_REGISTER.md): un horómetro que no es un número
+  // válido debe marcarse como dato inconsistente, NUNCA como "AL DÍA".
+  // Estas pruebas representan el comportamiento CORRECTO esperado, no el
+  // que tenía el código antes de corregirse.
+  describe('ENGRASE-001 — horómetro inválido debe marcarse como dato inconsistente', () => {
+    it('hourmeter = "abc" (string no numérico) -> GRIS / DATOS INCONSISTENTES', async () => {
       const r = await statusFor(equipo({ hourmeter: 'abc' }), [planHorometro()], []);
-      expect(r.code).toBe('VERDE');
-      expect(r.label).toBe('AL DÍA');
-      expect(Number.isNaN(r.remaining)).toBe(true);
-    },
-  );
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+      expect(r.remaining).toBeNull();
+    });
 
-  it(
-    'BUG conocido (mismo que arriba): horómetro undefined también cae en VERDE/AL DÍA con remaining=NaN',
-    async () => {
+    it('hourmeter = undefined -> GRIS / DATOS INCONSISTENTES', async () => {
       const r = await statusFor(equipo({ hourmeter: undefined }), [planHorometro()], []);
-      expect(r.code).toBe('VERDE');
-      expect(Number.isNaN(r.remaining)).toBe(true);
-    },
-  );
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+      expect(r.remaining).toBeNull();
+    });
+
+    it('hourmeter = "" (string vacío) -> GRIS / DATOS INCONSISTENTES', async () => {
+      const r = await statusFor(equipo({ hourmeter: '' }), [planHorometro()], []);
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+      expect(r.remaining).toBeNull();
+    });
+
+    it('hourmeter = NaN (número inválido) -> GRIS / DATOS INCONSISTENTES', async () => {
+      const r = await statusFor(equipo({ hourmeter: NaN }), [planHorometro()], []);
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+      expect(r.remaining).toBeNull();
+    });
+
+    it('hourmeter = null sigue marcando DATOS INCONSISTENTES (ya funcionaba, no debe regresar)', async () => {
+      const r = await statusFor(equipo({ hourmeter: null }), [planHorometro()], []);
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+    });
+
+    it('un número válido en formato string ("1200") también se marca inconsistente — se exige el tipo number real, sin coerción', async () => {
+      // Decisión explícita: no se hace coerción de ningún tipo (ni siquiera
+      // "segura") para no repetir el patrón que causó el bug original. El
+      // formulario real siempre entrega un `number`; si llega como string,
+      // es en sí mismo una señal de dato corrupto (por ejemplo de una
+      // importación) y debe tratarse igual que cualquier otro valor inválido.
+      const r = await statusFor(equipo({ hourmeter: '1200' }), [planHorometro()], []);
+      expect(r).toMatchObject({ code: 'GRIS', label: 'DATOS INCONSISTENTES' });
+    });
+
+    it('nunca queda un remaining=NaN visible al usuario para ningún valor de horómetro', async () => {
+      for (const valorInvalido of ['abc', undefined, '', NaN, {}, []]) {
+        const r = await statusFor(equipo({ hourmeter: valorInvalido }), [planHorometro()], []);
+        expect(Number.isNaN(r.remaining)).toBe(false);
+      }
+    });
+  });
 });

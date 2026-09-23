@@ -198,8 +198,7 @@
 - **Prioridad:** P2 (no bloquea el uso normal — el formulario de horómetro es
   un campo numérico — pero es un hueco real si el dato llega corrupto por
   importación Excel, sincronización, o edición directa en Supabase)
-- **Estado:** DESCUBIERTO POR PRUEBA AUTOMATIZADA, NO CORREGIDO (fuera de
-  alcance de esta fase — no se modifica lógica de negocio sin que se pida)
+- **Estado:** CORREGIDO — PROBADO AUTOMÁTICAMENTE
 - **Descubierto en:** `tests/unit/estado-engrase.test.js`, al escribir
   pruebas para `statusFor()` con valores límite de horómetro (Paso 7
   #11-#12 de esta fase: horómetro null/inválido)
@@ -218,11 +217,23 @@
   compara como `0` y normalmente dispara "DATOS INCONSISTENTES" si
   `lastGreaseHour > 0`; el hueco es específicamente para `undefined` y
   valores no numéricos como strings.)
-- **Evidencia:** pruebas `tests/unit/estado-engrase.test.js` — "BUG
-  conocido..." — documentan el comportamiento actual exacto (no lo corrigen).
 - **Impacto potencial:** un equipo con horómetro corrupto podría no recibir
-  atención de engrase porque el sistema lo muestra como "al día".
-- **Recomendación (no aplicada todavía):** en `statusFor()`, agregar
-  `Number.isFinite(equipment.hourmeter)` a la condición que dispara "DATOS
-  INCONSISTENTES", junto al chequeo de `lastGreaseHour > hourmeter` ya
-  existente.
+  atención de engrase porque el sistema lo mostraba como "al día".
+- **Corrección:** `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js`,
+  `statusFor()` — se agregó, ANTES del chequeo existente de
+  `lastGreaseHour > hourmeter`, un guard explícito:
+  `if (!Number.isFinite(equipment.hourmeter)) return { code: 'GRIS', label: 'DATOS INCONSISTENTES', ... }`.
+  `Number.isFinite()` no hace ninguna coerción (a propósito, para no repetir
+  el patrón que causó el bug): un string como `"abc"` o `"1200"`, `null`,
+  `undefined`, `NaN`, un objeto o un arreglo quedan todos excluidos por
+  igual — se exige el tipo `number` real y finito. No se tocó ninguna otra
+  regla de frecuencia.
+- **Pruebas:** `tests/unit/estado-engrase.test.js`, bloque "ENGRASE-001 —
+  horómetro inválido debe marcarse como dato inconsistente" (8 casos:
+  `"abc"`, `undefined`, `""`, `NaN`, `null` [ya funcionaba, no debe
+  regresar], `"1200"` [string numérico también inválido, por diseño], y un
+  bucle que confirma que `remaining` nunca vuelve a ser `NaN`). Suite
+  completa: 82/82 PASS (antes del fix, esas pruebas fallaban 4/4 —
+  reproducción confirmada antes de corregir).
+- **Sincronización:** `node tools/sync-web-to-android.mjs --apply` → `npx cap
+  sync android` → `./gradlew assembleDebug` — todo PASS.

@@ -1160,6 +1160,15 @@ async function statusFor(equipment, plansList, recordsList) {
     return { code: 'GRIS', label: 'PLAN MAL CONFIGURADO', remaining: null, plan,
              alerta: 'La frecuencia del plan es 0. Corrígela en Plan de Engrase.' };
   }
+  // ENGRASE-001: el horómetro del equipo debe ser un número real. Antes, un
+  // valor ausente/no numérico (undefined, texto, NaN) no se detectaba aquí y
+  // terminaba mostrando "AL DÍA" (remaining daba NaN, que no es < 0 ni <=
+  // alertYellowHours). Se valida explícitamente ANTES de comparar, sin
+  // convertir el valor: Number.isFinite() no hace coerción.
+  if (!Number.isFinite(equipment.hourmeter)) {
+    return { code: 'GRIS', label: 'DATOS INCONSISTENTES', remaining: null, plan,
+             alerta: `El horómetro del equipo no es un número válido (valor actual: ${JSON.stringify(equipment.hourmeter)}). Corrígelo en la ficha del equipo.` };
+  }
   if (plan.lastGreaseHour > equipment.hourmeter) {
     // La referencia del último engrase es mayor que el horómetro actual: da un margen
     // falso. Pasa al corregir un horómetro hacia abajo o al importar datos mal.
