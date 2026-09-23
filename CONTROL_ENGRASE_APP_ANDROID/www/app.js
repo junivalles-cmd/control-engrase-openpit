@@ -1442,7 +1442,7 @@ function redibujarPantallaActual() {
   try {
     const esLubricador = !!document.querySelector('.lub-shell');
     if (esLubricador) {
-      const pintar = { anomalias: renderAnomalias, historial: renderHistorial, turno: renderTurno };
+      const pintar = { anomalias: renderAnomalias, historial: renderLubricadorHistorial, turno: renderLubricadorHome };
       const fn = pintar[App.route] || renderLubricadorHome;
       fn();
     } else {
