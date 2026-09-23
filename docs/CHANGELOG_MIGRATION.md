@@ -247,3 +247,39 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   GitHub Pages y Supabase: sin modificar. No se publicó nada.
 - Ver `docs/VITE_MIGRATION.md` para el detalle completo (arquitectura,
   configuración, riesgos, rollback).
+
+## 2026-09-23 — Fase Vite 2: `dist` → Capacitor → Android
+- `capacitor.config.json`: `webDir` de `"www"` a `"../dist"` — ruta
+  verificada leyendo `node_modules/@capacitor/cli/dist/config.js`
+  (`webDirAbs = path.resolve(process.cwd(), webDir)`), no asumida.
+- Comparación `dist` vs `www` del set runtime (28 archivos): 27 idénticos
+  por hash, solo `index.html` difiere (normalizaciones cosméticas de
+  Vite, ya documentadas en Fase 1). Los 2 sobrantes históricos de `www`
+  (`icon-180.png`, `schema.sql`) NO se copiaron a `dist` — no forman
+  parte del set runtime real.
+- `npx cap sync android`: confirmado por su propia salida que copia desde
+  `dist`, no desde `www`.
+- Verificación por hash en dos niveles, sin texto de debug visible: el
+  `.apk` local y el APK **realmente instalado** en el dispositivo
+  (extraído con `adb pull` del `base.apk` real vía `adb shell pm path`)
+  contienen `assets/public/index.html` con el mismo SHA-256 que
+  `dist/index.html`, distinto al de `www/index.html`.
+- `./gradlew assembleDebug`: PASS. `adb install -r` en el Samsung
+  SM-S938B: datos conservados (`firstInstallTime` sin cambios).
+- Smoke test A01–A10 (app abre, login, Dashboard, Turno, Equipos, estados
+  de engrase, Matriz Semanal, Anomalías, Historial, Reportes), validado
+  por el usuario con datos de producción reales: todos PASS. Logcat sin
+  `FATAL EXCEPTION` ni errores de `Capacitor/Console`.
+- **Offline real con `dist` (obligatoria, quedaba pendiente de Fase 1):**
+  online → varias pantallas → modo avión → cierre completo → reapertura
+  offline (shell desde el precache de `sw.js`) → login y navegación
+  offline (Turno/Equipos/estados/Matriz/Anomalías) con datos ya
+  guardados localmente → vuelta a online. **PASS.**
+- `CONTROL_ENGRASE_APP_ANDROID/www` y `tools/sync-web-to-android.mjs`:
+  sin tocar, sin intervenir en ningún paso de esta fase (confirmado con
+  `git status`) — quedan como *fallback temporal*, documentado el
+  procedimiento de rollback (3 pasos) sin ejecutarlo.
+- `npm test`: 125/125 PASS, sin cambios. GitHub Pages, Supabase,
+  IndexedDB, `sync.js`: sin modificar. No se publicó nada.
+- Ver `docs/VITE_MIGRATION.md` (sección Fase 2) para el detalle completo.
+- Commit: `build: use vite dist for capacitor android`.

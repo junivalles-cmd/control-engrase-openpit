@@ -1,9 +1,12 @@
-# MIGRACIÓN A VITE — FASE 1: BUILD PARALELO (SHADOW BUILD)
+# MIGRACIÓN A VITE
+
+Rama: `migration-typescript`
+Checkpoint previo a Vite: tag local `pre-vite-js-stable` → commit
+`df69898` (Modularización JS Fase 2 completa, 125 tests).
+
+# FASE 1 — BUILD PARALELO (SHADOW BUILD)
 
 Fecha: 2026-09-23
-Rama: `migration-typescript`
-Checkpoint previo: tag local `pre-vite-js-stable` → commit `df69898`
-(Modularización JS Fase 2 completa, 125 tests).
 
 ## Objetivo de esta fase
 
@@ -323,3 +326,194 @@ código a `src/`; reescribir `app.js`; reescribir el Service Worker; usar un
 plugin PWA/Workbox; convertir los scripts clásicos a ES modules; tocar
 Supabase/IndexedDB/Auth/RLS; corregir `UI-ANDROID-005` o
 `ANDROID-DOZE-001`; agregar funcionalidades nuevas.
+
+# FASE 2 — `dist` → CAPACITOR → ANDROID
+
+Fecha: 2026-09-23
+Commit Fase 1: `a7591de`.
+
+## Objetivo de esta fase
+
+Demostrar que `dist/` (generado por Vite) funciona como `webDir` real de
+Capacitor, de punta a punta hasta un APK instalado en el Samsung SM-S938B
+real — **sin eliminar el camino anterior todavía**:
+
+- `CONTROL_ENGRASE_APP_ANDROID\www` NO se borró — queda como *fallback*.
+- `tools/sync-web-to-android.mjs` NO se borró ni se tocó su lógica — queda
+  como *fallback*, y de hecho **no intervino en ningún paso de esta fase**
+  (confirmado con `git status`: `CONTROL_ENGRASE_APP_ANDROID/www` sin
+  cambios en todo el flujo `npm run build` → `npx cap sync android` →
+  `assembleDebug` → `adb install -r`).
+- GitHub Pages no se tocó, no se publicó nada.
+- No se migró nada a TypeScript.
+
+## Arquitectura DESPUÉS de esta fase
+
+```
+CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB   (fuente canónica, sin cambios)
+        │
+        └── npm run build (Vite)  →  dist/  →  npx cap sync android  →  assets/public  →  APK
+```
+
+```
+FALLBACK TEMPORAL (no eliminado, no usado por el flujo activo):
+CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB → tools/sync-web-to-android.mjs → www → (requeriría volver webDir a "www")
+```
+
+## `webDir`: de `"www"` a `"../dist"`
+
+**No se asumió la ruta relativa.** Se verificó en el código fuente de
+`@capacitor/cli` (`node_modules/@capacitor/cli/dist/config.js`) cómo
+Capacitor resuelve `webDir`:
+
+```js
+const appRootDir = process.cwd();
+...
+webDirAbs: path.resolve(appRootDir, webDir)
+```
+
+`appRootDir` es el directorio de trabajo desde el que se ejecuta `cap` —
+en este proyecto, siempre `CONTROL_ENGRASE_APP_ANDROID` (donde vive
+`capacitor.config.json`). Se confirmó con `node -e "console.log(path.resolve(process.cwd(), '../dist'))"`
+ejecutado desde ahí, que arroja exactamente
+`C:\Users\Planificador\Documents\CONTROL_ENGRASE\dist`.
+
+`capacitor.config.json`:
+```diff
+- "webDir": "www",
++ "webDir": "../dist",
+```
+
+## Comparación `dist` vs `www` (antes del cambio)
+
+Se comparó el set runtime completo (28 archivos, mismo cálculo de
+`computeRuntimeFileSet()`) entre `dist/` y `www/`:
+
+| Resultado | Cantidad |
+|---|---|
+| Idénticos (hash SHA-256) | 27 |
+| Diferentes | 1 (`index.html` — normalizaciones cosméticas de Vite, ver Fase 1 §12) |
+| Faltantes en `dist` | 0 |
+| Faltantes en `www` | 0 |
+
+`www` tiene 2 archivos sobrantes históricos (`icon-180.png`, `schema.sql`)
+que **no** forman parte del set runtime calculado — a propósito, **no se
+copiaron a `dist`** solo para igualar carpetas (habría sido inventar una
+necesidad que no existe; ninguno de los dos aparece en `index.html`,
+`manifest.json` ni `sw.js`).
+
+## `npx cap sync android` usa `dist`, no `www`
+
+Confirmado por la salida del propio comando:
+```
+√ Copying web assets from dist to android\app\src\main\assets\public in 177.83ms
+```
+(antes decía `from www`).
+
+## Verificación por hash: Android usa `dist`
+
+Los 16 archivos runtime clave (`index.html`, `app.js`, `db.js`, `sync.js`,
+`styles.css`, `sw.js`, `manifest.json`, `OneSignalSDKWorker.js`,
+`.nojekyll`, `.well-known/assetlinks.json`, los 6 `src/core/*.js`) en
+`android/app/src/main/assets/public` son **idénticos byte a byte** a los
+de `dist/` (`cmp`). Como control adicional, `assets/public/index.html`
+**difiere** de `www/index.html` (línea 8, distinto por el `href`
+normalizado de Vite) — confirma que el contenido vino de `dist`, no de
+`www`.
+
+## Android build
+
+`./gradlew assembleDebug`: **PASS**.
+
+## Prueba objetiva de que el APK instalado viene de `dist` (sin texto de debug)
+
+En vez de agregar cualquier indicador visible en la UI, se verificó por
+hash criptográfico en dos niveles:
+
+1. El `.apk` generado localmente (`app-debug.apk`) contiene
+   `assets/public/index.html` con SHA-256 `b928bd94...`, **idéntico** al
+   de `dist/index.html`, y **distinto** al de `www/index.html`
+   (`00f23cd6...`).
+2. Se extrajo el APK **realmente instalado en el dispositivo**
+   (`adb shell pm path` → `adb pull` del `base.apk` real) y se repitió la
+   misma verificación: `assets/public/index.html` dentro del APK
+   instalado tiene el mismo hash `b928bd94...` — prueba objetiva, a nivel
+   de dispositivo, de que la app que se va a probar corre sobre el
+   contenido de `dist`.
+
+## `adb install -r` — datos conservados
+
+`firstInstallTime` sin cambios antes/después de la instalación
+(`2026-09-23 09:47:08`) — mismos datos locales (IndexedDB) preservados, sin
+`adb uninstall` ni `pm clear`.
+
+## Smoke test Android real (A01–A10)
+
+Validado manualmente por el usuario en el Samsung SM-S938B real, con datos
+de producción reales (sin datos ficticios): app abre, login, Dashboard,
+Turno, Equipos, estados de engrase, Matriz Semanal, Anomalías, Historial y
+Reportes — **todos PASS**. Logcat sin `FATAL EXCEPTION`, sin errores de
+`Capacitor/Console`, sin solicitudes locales fallidas (`Handling local
+request` para los 6 `src/core/*.js` y el resto del set, todas exitosas).
+
+## Offline real con `dist` (obligatorio — quedaba pendiente de Fase 1)
+
+Fase 1 había dejado "OFFLINE BUILD VITE = NO PROBADO" por falta de
+herramienta de navegador. En Android real sí se pudo probar de punta a
+punta:
+
+1. App abierta con internet, navegación por varias pantallas — `SINCRONIZADO`.
+2. Modo avión activado (confirmado: ícono de avión, Wi-Fi deshabilitado).
+3. App cerrada por completo (`am force-stop`, proceso confirmado terminado).
+4. Reabierta offline: shell cargó normalmente (ícono, textos, estilos
+   intactos), sin errores en logcat.
+5. Usuario confirmó, offline: login, Turno, Equipos, estados de engrase,
+   Matriz Semanal y Anomalías — todos con los datos ya guardados
+   localmente, **todos PASS**, sin registrar datos nuevos.
+6. Vuelta a modo online al finalizar.
+
+**OFFLINE DIST: PASS.** Confirma que `sw.js` (sin modificar en ninguna de
+las dos fases de Vite) sigue precacheando correctamente el shell y los 6
+módulos de `src/core/` cuando estos provienen de `dist/` en vez de `www/`.
+
+## `www` no interviene en el nuevo flujo
+
+Confirmado con `git status --short CONTROL_ENGRASE_APP_ANDROID/www` antes
+y después de todo el flujo (`npm run build` → `npx cap sync android` →
+`assembleDebug` → `adb install -r`): **sin cambios**. No se ejecutó
+`tools/sync-web-to-android.mjs` en ningún punto de esta fase.
+
+## Rollback documentado (no ejecutado)
+
+Si `dist` fallara y hubiera que volver a `www`:
+
+1. Restaurar `capacitor.config.json`: `"webDir": "www"` (revertir el
+   único archivo que cambió esta fase, o `git checkout` sobre el commit
+   anterior a esta fase).
+2. `npx cap sync android` (vuelve a copiar desde `www`, que nunca se dejó
+   de mantener actualizado).
+3. `./gradlew assembleDebug` (o `clean` + `assembleDebug` si hay
+   artefactos viejos).
+
+Tres pasos, sin tocar Supabase/IndexedDB/datos del dispositivo — el mismo
+nivel de riesgo que cualquier otro rebuild ya practicado en este proyecto.
+
+## Pruebas automatizadas
+
+`npm test`: **125/125 PASS**, sin cambios — las pruebas siguen leyendo
+directamente de `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`, no de `dist/`.
+
+## Qué NO se hizo en esta fase (a propósito)
+
+Borrar `www`; borrar `tools/sync-web-to-android.mjs`; publicar `dist` en
+GitHub Pages; cambiar el repositorio remoto; migrar a TypeScript;
+reorganizar el proyecto a `src/`+`public/`; tocar Supabase/IndexedDB/
+`sync.js`/Auth/RLS; corregir `UI-ANDROID-005` o `ANDROID-DOZE-001`;
+agregar funcionalidades nuevas.
+
+## Siguiente fase natural
+
+Fase Vite 3: validar `dist` como fuente también para GitHub Pages, y
+evaluar convertir `dist` en la única salida Web + Android (momento en el
+que `www` y `tools/sync-web-to-android.mjs` dejarían de ser necesarios) —
+**no iniciada todavía**, pendiente de aprobación explícita.

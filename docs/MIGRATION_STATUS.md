@@ -329,3 +329,40 @@ PROBADO, igual que la prueba offline del build Vite). `npm test`: 125/125
 PASS, sin cambios en las pruebas. `capacitor.config.json`/`webDir`/`www`/
 GitHub Pages/Supabase: sin modificar. Ver `docs/VITE_MIGRATION.md` para el
 detalle completo, riesgos y plan de rollback.
+
+## FASE VITE 2 — `dist` → Capacitor → Android
+**Estado:** COMPLETADA Y VALIDADA EN ANDROID REAL (2026-09-23)
+
+`capacitor.config.json`: `webDir` cambiado de `"www"` a `"../dist"` (ruta
+verificada leyendo el código fuente de `@capacitor/cli`, no asumida).
+`npx cap sync android` confirmó por su propia salida
+(`Copying web assets from dist to ...assets/public`) que usa `dist`, no
+`www`. `www` y `tools/sync-web-to-android.mjs` **no se borraron** y **no
+intervinieron** en ningún paso de esta fase (`git status` sin cambios en
+`www` antes/después de todo el flujo) — quedan como *fallback temporal*.
+
+Verificación por hash en dos niveles (sin texto de debug visible en la
+UI): el `.apk` local y el APK **realmente instalado** en el dispositivo
+(extraído con `adb pull` del `base.apk` real) contienen
+`assets/public/index.html` con el mismo SHA-256 que `dist/index.html`, y
+distinto al de `www/index.html` — prueba objetiva de que el APK probado
+viene de `dist`.
+
+`./gradlew assembleDebug`: PASS. `adb install -r`: datos conservados
+(`firstInstallTime` sin cambios). Smoke test A01–A10 (app abre, login,
+Dashboard, Turno, Equipos, estados de engrase, Matriz Semanal, Anomalías,
+Historial, Reportes) validado por el usuario en el Samsung SM-S938B real
+con datos de producción: **todos PASS**, sin `FATAL EXCEPTION` ni errores
+de `Capacitor/Console`.
+
+**Prueba obligatoria pendiente de Fase 1 completada:** offline real con
+`dist` — app abierta online, modo avión, cierre completo, reapertura
+offline (shell cargó desde el precache de `sw.js`, sin modificar), login y
+navegación offline (Turno/Equipos/estados/Matriz/Anomalías) con datos ya
+guardados localmente: **PASS**. Confirma que `sw.js` funciona igual de
+bien sirviendo contenido de `dist/` que de `www/`.
+
+`npm test`: 125/125 PASS, sin cambios. Rollback a `www` documentado (3
+pasos: restaurar `webDir`, `cap sync`, rebuild) pero no ejecutado — no
+hizo falta. Ver `docs/VITE_MIGRATION.md` (sección Fase 2) para el detalle
+completo.

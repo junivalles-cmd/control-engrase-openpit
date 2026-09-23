@@ -167,3 +167,25 @@ dispositivo no tenía internet real funcionando (confirmado por el monitor
 de red del sistema) — `sync.js` reportó `Failed to fetch` de forma
 esperada (comportamiento correcto offline-first), sin afectar la validación
 de los módulos modularizados en sí.
+
+## FASE VITE 2 — `dist` → Capacitor → Android (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| `npm test` / `npm run build` (precheck) | PASS (125/125, build OK) |
+| Comparación `dist` vs `www` (28 archivos runtime) | PASS — 27 idénticos por hash, solo `index.html` difiere (cosmético, ya documentado); sobrantes históricos de `www` (`icon-180.png`, `schema.sql`) correctamente NO copiados a `dist` |
+| Ruta de `webDir` verificada en el código fuente de `@capacitor/cli` (no asumida) | PASS — `../dist` resuelve exactamente a `C:\Users\Planificador\Documents\CONTROL_ENGRASE\dist` |
+| `npx cap sync android` usa `dist` (confirmado por su propia salida) | PASS |
+| `android/app/src/main/assets/public` — 16 archivos clave idénticos por hash a `dist/` | PASS |
+| `assets/public/index.html` distinto de `www/index.html` (confirma que NO vino de `www`) | PASS |
+| `./gradlew assembleDebug` | PASS |
+| `adb install -r` en Samsung SM-S938B, datos conservados (`firstInstallTime` sin cambios) | PASS |
+| Prueba objetiva (hash) de que el APK **instalado en el dispositivo** viene de `dist`, sin texto de debug en la UI | PASS — `assets/public/index.html` del APK extraído del dispositivo (`adb pull` del `base.apk` real) coincide en SHA-256 con `dist/index.html` |
+| Smoke test A01–A10 (abre, login, Dashboard, Turno, Equipos, estados de engrase, Matriz, Anomalías, Historial, Reportes) con datos reales | PASS (validado por el usuario) |
+| Logcat durante todo el smoke test | Sin `FATAL EXCEPTION`, sin errores de `Capacitor/Console`, sin solicitudes locales fallidas |
+| **Offline real con `dist`** (online → varias pantallas → modo avión → cierre completo → reapertura offline → login y navegación offline → vuelta a online) | **PASS** — prueba obligatoria que Fase Vite 1 había dejado NO PROBADO |
+| `www` interviene en el flujo nuevo | NO — `git status` sin cambios en `CONTROL_ENGRASE_APP_ANDROID/www` en todo el flujo |
+| `tools/sync-web-to-android.mjs` se ejecutó en esta fase | NO |
+| `npm test` (post) | PASS (125/125, sin cambios) |
+| GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR |
+| Rollback a `www` | Documentado (3 pasos), no ejecutado (no hizo falta) |

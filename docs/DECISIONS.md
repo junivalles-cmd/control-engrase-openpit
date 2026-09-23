@@ -244,3 +244,34 @@ más que la optimización en una fase que solo busca demostrar equivalencia,
 no reemplazar el despliegue actual. `dist/` es gitignored (artefacto
 reconstruible con `npm run build`, igual que ya se declaraba en el
 `.gitignore` de la Fase 0, anticipando este caso).
+
+## 13. Vite Fase 2: `webDir` apunta a `dist`, `www` queda como fallback temporal (no se borra)
+**Decisión:** `capacitor.config.json` cambió `webDir` de `"www"` a
+`"../dist"` — verificado leyendo el código fuente real de
+`@capacitor/cli` (no asumiendo la ruta) que la resuelve como
+`path.resolve(process.cwd(), webDir)` desde `CONTROL_ENGRASE_APP_ANDROID`.
+`CONTROL_ENGRASE_APP_ANDROID\www` y `tools/sync-web-to-android.mjs` NO se
+eliminaron — siguen existiendo, actualizados, sin usarse en el flujo
+activo, como *fallback* de bajo riesgo mientras se termina de validar
+esta transición.
+
+**Razón:** el pedido explícito de esta fase era demostrar
+`dist → Capacitor → Android` sin quemar el camino anterior — "ambos
+quedan temporalmente como rollback". Mantener `www` sincronizado y
+`sync-web-to-android.mjs` funcional cuesta prácticamente nada (nadie lo
+ejecuta en este flujo) y reduce el rollback a 3 pasos documentados
+(restaurar `webDir`, `cap sync`, rebuild) en vez de tener que
+reconstruir `www` desde cero si algo saliera mal.
+
+**Verificación, no asunción:** en vez de confiar en que "seguramente"
+Capacitor usó `dist`, se verificó con evidencia objetiva en dos niveles —
+comparación por hash del `.apk` local Y del APK realmente instalado en el
+dispositivo (extraído con `adb pull`) — sin agregar ningún texto de debug
+visible a la UI de la aplicación, tal como se pidió explícitamente.
+
+**Consecuencia aceptada:** por ahora existen DOS copias mantenidas del
+mismo contenido runtime (`www`, actualizada por
+`sync-web-to-android.mjs` cuando se ejecuta manualmente, y `dist`,
+regenerada por `npm run build`) — redundancia temporal y deliberada,
+hasta que una fase futura decida si `www`/el script de sincronización
+dejan de ser necesarios.
