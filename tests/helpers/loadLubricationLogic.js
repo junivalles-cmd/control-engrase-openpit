@@ -30,6 +30,7 @@ export const HOURMETER_JS_PATH = path.join(SRC_ROOT, 'src/core/hourmeter.js');
 export const LUBRICATION_STATUS_JS_PATH = path.join(SRC_ROOT, 'src/core/lubrication-status.js');
 export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
 export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix.js');
+export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-actions.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -96,6 +97,22 @@ const WEEKLY_MATRIX_SOURCES = [
 /** Devuelve la función real estadoCelda() de src/core/weekly-matrix.js. */
 export function loadWeeklyMatrixLogic() {
   const body = buildBodyFromSources(WEEKLY_MATRIX_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
+// evaluateAnomalyActions() (anomaly-actions.js) usa los globales fmtDate
+// (app.js) y CRITICIDAD_POR_MOTIVO (anomalies.js), exactamente como en el
+// navegador — se extraen juntos en el mismo cuerpo.
+const ANOMALY_ACTIONS_SOURCES = [
+  [APP_JS_PATH, ['fmtDate']],
+  [ANOMALIES_JS_PATH, ['CRITICIDAD_POR_MOTIVO']],
+  [ANOMALY_ACTIONS_JS_PATH, ['hayPuntosOAnomaliaHorometro', 'evaluateAnomalyActions']],
+];
+
+/** Devuelve las funciones reales de src/core/anomaly-actions.js. */
+export function loadAnomalyActionsLogic() {
+  const body = buildBodyFromSources(ANOMALY_ACTIONS_SOURCES);
   const factory = new Function(body);
   return factory();
 }

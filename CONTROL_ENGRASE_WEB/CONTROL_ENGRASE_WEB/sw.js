@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v25'; // v25: se agregó src/core/weekly-matrix.js (Modularización JS Fase 2, Matriz Semanal) a ASSETS — subir versión fuerza a precachear el archivo nuevo en dispositivos ya instalados.
+const CACHE = 'engrase-openpit-v26'; // v26: se agregó src/core/anomaly-actions.js (Modularización JS Fase 2, decisión de anomalías) a ASSETS — subir versión fuerza a precachear el archivo nuevo en dispositivos ya instalados.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
@@ -6,7 +6,7 @@ const ASSETS = [
   // siga funcionando.
   './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
-  './src/core/weekly-matrix.js',
+  './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',

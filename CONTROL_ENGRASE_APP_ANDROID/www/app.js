@@ -4648,64 +4648,26 @@ async function renderAnomalias() {
 /* CRITICIDAD_POR_MOTIVO se movió a src/core/anomalies.js (sigue disponible
    como global, ver docs/MODULARIZATION.md). */
 
+// La decisión de negocio (¿crear anomalía nueva, actualizar una existente, o
+// no hacer nada?) vive en src/core/anomaly-actions.js
+// (evaluateAnomalyActions/hayPuntosOAnomaliaHorometro) — pura, sin DB ni
+// DOM. Aquí solo se aplica esa decisión contra IndexedDB. Ver
+// docs/MODULARIZATION.md.
 async function createAutoAnomalies(record, equipment) {
-  const pendientes = (record.details || []).filter(d => !d.done);
-  const avisos = [];
-  if (!pendientes.length && !record.sinHorometro) return avisos;
+  if (!hayPuntosOAnomaliaHorometro(record)) return [];
 
   const abiertas = (await DB.allActive('anomalies'))
     .filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
 
-  for (const d of pendientes) {
-    const motivo = d.reason || 'Sin motivo indicado';
-    // ¿Ya hay una anomalía abierta por este mismo punto? (se identifica por el punto,
-    // no por el motivo, para no duplicar si el lubricador elige un motivo distinto)
-    const yaExiste = abiertas.find(a => a.autoPointId && a.autoPointId === d.pointId);
+  const { acciones, avisos } = evaluateAnomalyActions(record, equipment, abiertas);
 
-    if (yaExiste) {
-      yaExiste.repeticiones = (yaExiste.repeticiones || 1) + 1;
-      yaExiste.description = `${d.pointName}: ${motivo}. Reportado ${yaExiste.repeticiones} veces (última: ${fmtDate(record.date)} por ${record.userName}).`;
-      await DB.put('anomalies', stamp(yaExiste, App.currentUser.name));
+  for (const accion of acciones) {
+    if (accion.tipo === 'actualizar') {
+      const existente = abiertas.find(a => a.id === accion.anomaliaId);
+      Object.assign(existente, accion.cambios);
+      await DB.put('anomalies', stamp(existente, App.currentUser.name));
     } else {
-      await DB.put('anomalies', stamp({
-        id: uid('anom'),
-        equipmentId: equipment.id,
-        component: motivo,
-        description: `${d.pointName}: ${motivo}. Detectado al engrasar el ${fmtDate(record.date)} por ${record.userName}.`,
-        criticality: CRITICIDAD_POR_MOTIVO[motivo] || 'Media',
-        status: 'Abierta',
-        photos: record.photos || [], photo: (record.photos || [])[0] || null,
-        autoGenerada: true,
-        autoPointId: d.pointId,
-        repeticiones: 1
-      }, record.userName));
-      avisos.push(d.pointName);
-    }
-  }
-
-  // También el horómetro dañado/ilegible genera anomalía (es una falla del equipo)
-  if (record.sinHorometro) {
-    const motivoHm = record.noHourmeterReason || 'Horómetro no legible';
-    const yaHm = abiertas.find(a => a.autoPointId === '__horometro__');
-    if (yaHm) {
-      yaHm.repeticiones = (yaHm.repeticiones || 1) + 1;
-      yaHm.description = `${motivoHm}. Reportado ${yaHm.repeticiones} veces (última: ${fmtDate(record.date)} por ${record.userName}).`;
-      await DB.put('anomalies', stamp(yaHm, App.currentUser.name));
-    } else if (motivoHm !== 'El equipo no tiene horómetro') {
-      // Si el equipo simplemente NO tiene horómetro, no es una falla — no se crea anomalía
-      await DB.put('anomalies', stamp({
-        id: uid('anom'),
-        equipmentId: equipment.id,
-        component: 'Horómetro',
-        description: `${motivoHm}. Detectado al engrasar el ${fmtDate(record.date)} por ${record.userName}.`,
-        criticality: 'Media',
-        status: 'Abierta',
-        photos: [], photo: null,
-        autoGenerada: true,
-        autoPointId: '__horometro__',
-        repeticiones: 1
-      }, record.userName));
-      avisos.push('Horómetro');
+      await DB.put('anomalies', stamp({ id: uid('anom'), ...accion.anomalia }, record.userName));
     }
   }
 
