@@ -321,8 +321,22 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .bottom-item.active { color: var(--accent); }
   .topbar-user { display: none; }
   .app-content { padding: 14px 12px 96px; }
-  .topbar { padding: 10px 12px; }
-  .topbar-title { font-size: 17px; }
+  /* Topbar compacto: en escritorio hay espacio de sobra para el padding y
+     los gaps generosos, pero en un teléfono ese mismo espaciado sumado a
+     cuatro controles de ~44px de alto (mínimo táctil, no se toca) hacía que
+     la barra se viera excesivamente alta. Aquí solo se reduce el "aire"
+     alrededor (padding, gaps, texto), nunca el tamaño de toque. */
+  .topbar { padding: 7px 10px; gap: 8px; }
+  .topbar-title {
+    font-size: 15px; max-width: 40vw; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .topbar-right { gap: 8px; }
+  .topbar-shift { padding: 3px 8px; font-size: 11px; }
+  .conn-badge {
+    padding: 3px 8px; font-size: 10px; max-width: 120px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .kpi-grid { gap: 8px; }
   .kpi-card { padding: 11px; }
   .kpi-value { font-size: 22px; }
