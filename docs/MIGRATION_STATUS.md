@@ -113,6 +113,12 @@ NO ejecutado.
 - **UI-ANDROID-002** (ícono de logout del Lubricador): corregido en código
   (commit `86ff816`), sincronizado e instalado en el dispositivo —
   **pendiente de validación visual del usuario**.
+- **UI-ANDROID-003** (topbar de Administrador excesivamente alto en móvil):
+  corregido en tres iteraciones (`21a0ed8` compactar padding/gaps,
+  `c126f82` sacar el botón de tema del topbar, `d6b3c34` turno solo ícono en
+  móvil) y **validado visualmente por el usuario en el dispositivo real —
+  PASS**. Topbar de Administrador ahora en una sola línea. Ver
+  `docs/BUG_REGISTER.md`.
 - App Links con el APK debug: analizado y **BLOQUEADO EN DEBUG** (el
   certificado del keystore de depuración no coincide con el que exige
   `assetlinks.json`, que sí coincide con el keystore de release

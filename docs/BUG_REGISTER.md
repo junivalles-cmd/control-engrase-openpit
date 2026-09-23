@@ -84,7 +84,7 @@
 - **Fecha:** 2026-09-23
 - **Prioridad:** P3 UX (no tapa contenido ni impide operar — reduce el área
   útil de trabajo en pantalla, pero todo sigue siendo usable)
-- **Estado:** CORREGIDO EN CÓDIGO — PENDIENTE DE VALIDACIÓN VISUAL DEL USUARIO
+- **Estado:** CORREGIDO — PROBADO EN DISPOSITIVO REAL — PASS
 - **Reportado por:** usuario, durante la prueba manual LOGIN-01+DASH-01
   ("todavía se ve demasiado grande... ocupa demasiado espacio vertical")
 - **Dispositivo:** Samsung SM-S938B
@@ -125,6 +125,14 @@
   inmediatamente después de reabrir la app. El "antes" tampoco quedó
   capturado por el mismo motivo; la corrección se diseñó a partir de la
   descripción del usuario más el análisis estático del CSS.
-- **Validación:** sincronizado a `www`/Android, recompilado e instalado en
-  el dispositivo real preservando datos. **Pendiente de validación visual
-  del usuario.**
+- **Iteraciones adicionales** (a pedido del usuario, mismo bug/hilo de
+  trabajo, todas sincronizadas/recompiladas/instaladas igual que arriba):
+  - Commit `c126f82` — se quitó el botón de tema (🎨) del topbar por
+    completo (se movió a Configuración/Ayuda, ver changelog), liberando
+    espacio horizontal adicional.
+  - Commit `d6b3c34` — el badge de turno muestra solo el ícono (☀/☾) en
+    móvil en vez de "Turno Día"/"Turno Noche" (el texto completo queda en
+    el atributo `title`), para que el topbar quede en una sola línea.
+- **Validación:** confirmada visualmente por el usuario en el dispositivo
+  real (Samsung SM-S938B) — topbar de Administrador en una sola línea,
+  altura compacta. **PASS.**
