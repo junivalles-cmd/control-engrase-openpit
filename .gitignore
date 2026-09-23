@@ -66,3 +66,6 @@ CONTROL_ENGRASE_APP_ANDROID/CONTRASENA_KEYSTORE.txt
 *CONTRASENA*
 *PASSWORD*
 *credentials*.json
+
+# ---- Archivos ajenos al proyecto (colados en la raíz por error) ----
+/PLAN_MANTENIMIENTO_MAYOR_D8T_05-68.xlsx
