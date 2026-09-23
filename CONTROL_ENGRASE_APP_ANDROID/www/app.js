@@ -1862,7 +1862,6 @@ function boot() {
               <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
               <div id="quick-find-results" class="quick-find-results hidden"></div>
             </div>
-            ${themeButtonHTML()}
             <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
             <span class="topbar-shift" id="topbar-shift"></span>
             <span class="topbar-user">${esc(App.currentUser.name)} · ${App.currentUser.role}</span>
@@ -1888,7 +1887,6 @@ function boot() {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
   $('#btn-logout').addEventListener('click', logout);
-  $('#btn-theme').addEventListener('click', openThemePicker);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
@@ -1958,7 +1956,6 @@ function bootLubricador() {
           </div>
         </div>
         <div class="lub-topbar-right">
-          ${themeButtonHTML()}
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           <button class="icon-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}</button>
         </div>
@@ -1979,7 +1976,6 @@ function bootLubricador() {
   setInterval(shiftLabel, 60000);
 
   $('#btn-logout').addEventListener('click', logout);
-  $('#btn-theme').addEventListener('click', openThemePicker);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
     $$('.lub-nav-item').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
@@ -6334,6 +6330,14 @@ async function renderAyuda() {
   const help = await getHelpContent();
 
   c.innerHTML = `
+    ${canEdit ? '' : `
+    <div class="panel">
+      <div class="panel-head"><h3>Apariencia</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
+        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+      </div>
+    </div>`}
     <div class="panel">
       <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
       <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
@@ -6351,7 +6355,10 @@ async function renderAyuda() {
     </div>`;
   wirePhotoThumbs(c);
 
-  if (!canEdit) return;
+  if (!canEdit) {
+    $('#btn-theme').addEventListener('click', openThemePicker);
+    return;
+  }
   $('#family-add-btn').addEventListener('click', () => openFamilyEditForm(help, null));
   $('#faq-edit-btn').addEventListener('click', () => openFaqEditForm(help));
   $$('.family-edit-btn', c).forEach(btn => {
@@ -7066,6 +7073,13 @@ async function renderConfig() {
 
   c.innerHTML = `
     <div class="panel">
+      <div class="panel-head"><h3>Apariencia</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
+        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+      </div>
+    </div>
+    <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
         <p class="dim">Estos valores controlan toda la app: qué hora se considera turno día/noche, cuánto antes se marca "próximo a vencer" un plan nuevo, y la meta de cumplimiento que se muestra en Dashboard y Reportes.</p>
@@ -7199,6 +7213,8 @@ async function renderConfig() {
     await previewAndImportBackup(file);
     ev.target.value = '';
   });
+
+  $('#btn-theme').addEventListener('click', openThemePicker);
 
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
