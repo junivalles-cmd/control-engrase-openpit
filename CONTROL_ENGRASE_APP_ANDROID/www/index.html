@@ -15,9 +15,12 @@
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<!-- Notificaciones push en el NAVEGADOR (que lleguen aunque la pestaña esté cerrada).
-     En la app instalada de Android esto no se usa: ahí trabaja el plugin nativo. -->
-<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<!-- El SDK Web de OneSignal (notificaciones push en el NAVEGADOR, que lleguen
+     aunque la pestaña esté cerrada) YA NO se carga aquí de forma incondicional.
+     app.js -> initWebPush() lo inyecta dinámicamente solo cuando corresponde
+     (navegador real, no dentro de la app Android/Capacitor) — ver NOTIF-ANDROID-001
+     en docs/BUG_REGISTER.md. En la app instalada de Android se usa el plugin
+     nativo (onesignal-cordova-plugin), no este SDK web. -->
 </head>
 <body>
 <div class="loading">Cargando Control de Engrase…</div>

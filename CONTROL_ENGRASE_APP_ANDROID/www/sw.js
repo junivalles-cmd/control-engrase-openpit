@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v23';
+const CACHE = 'engrase-openpit-v24'; // v24: index.html ya no carga el SDK Web de OneSignal sin condición (NOTIF-ANDROID-001) — subir versión fuerza a refrescar el index.html cacheado en dispositivos ya instalados.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
