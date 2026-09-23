@@ -1,0 +1,12 @@
+{
+  "appId": "com.conequisa.engraseopenpit",
+  "appName": "Control de Engrase",
+  "webDir": "www",
+  "backgroundColor": "#14171A",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

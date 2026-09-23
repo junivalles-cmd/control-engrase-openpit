@@ -1,0 +1,68 @@
+# =========================================================
+# CONTROL DE ENGRASE — .gitignore raíz (FASE 0, baseline)
+# Cubre CONTROL_ENGRASE_WEB y CONTROL_ENGRASE_APP_ANDROID.
+# NO borra nada del disco: solo evita que Git rastree
+# archivos generados, temporales o secretos.
+# =========================================================
+
+# ---- Dependencias / paquetes ----
+node_modules/
+
+# ---- Gradle / Android build ----
+.gradle/
+CONTROL_ENGRASE_APP_ANDROID/android/build/
+CONTROL_ENGRASE_APP_ANDROID/android/app/build/
+CONTROL_ENGRASE_APP_ANDROID/android/app/debug/
+CONTROL_ENGRASE_APP_ANDROID/android/capacitor-cordova-android-plugins/
+CONTROL_ENGRASE_APP_ANDROID/android/local.properties
+build/
+*.apk
+*.aab
+*.aar
+*.ap_
+*.dex
+*.class
+*.hprof
+
+# ---- Copia generada automáticamente por "npx cap sync android" ----
+# Ver docs/DECISIONS.md y docs/LINEA_BASE.md: esta carpeta se
+# regenera siempre a partir de CONTROL_ENGRASE_APP_ANDROID/www,
+# igual que ya lo indica el .gitignore que el propio Capacitor
+# creó dentro de android/. No es una fuente de verdad.
+CONTROL_ENGRASE_APP_ANDROID/android/app/src/main/assets/public/
+CONTROL_ENGRASE_APP_ANDROID/android/app/src/main/assets/capacitor.config.json
+CONTROL_ENGRASE_APP_ANDROID/android/app/src/main/assets/capacitor.plugins.json
+CONTROL_ENGRASE_APP_ANDROID/android/app/src/main/res/xml/config.xml
+
+# ---- IDE / editores ----
+.idea/
+.vscode/
+*.iml
+
+# ---- dist / bundlers (por si se agregan más adelante) ----
+dist/
+
+# ---- Variables de entorno y configuración local ----
+.env
+.env.*
+*.local
+
+# ---- Logs y archivos temporales ----
+*.log
+*.tmp
+*.temp
+*~
+Thumbs.db
+.DS_Store
+
+# ---- Firmas / keystores Android (NO se borran del disco, solo no se versionan) ----
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# ---- Contraseñas / credenciales sueltas en archivos de texto ----
+CONTROL_ENGRASE_APP_ANDROID/CONTRASENA_KEYSTORE.txt
+*CONTRASENA*
+*PASSWORD*
+*credentials*.json

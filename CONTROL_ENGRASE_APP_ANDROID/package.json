@@ -1,0 +1,23 @@
+{
+  "name": "control-engrase-openpit",
+  "version": "1.0.0",
+  "description": "Control de Engrase - Open Pit (app Android nativa con Capacitor)",
+  "scripts": {
+    "sync": "npx cap sync android",
+    "open:android": "npx cap open android",
+    "icons": "npx capacitor-assets generate --iconBackgroundColor '#14171A' --iconBackgroundColorDark '#14171A' --splashBackgroundColor '#14171A' --splashBackgroundColorDark '#14171A'",
+    "applinks": "node configure-applinks.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/camera": "^6.0.2",
+    "@capacitor/local-notifications": "^6.1.0",
+    "@capawesome/capacitor-badge": "^6.0.0",
+    "onesignal-cordova-plugin": "^5.2.6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/assets": "^3.0.5"
+  }
+}
