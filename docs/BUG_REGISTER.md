@@ -191,3 +191,38 @@
   el dispositivo real preservando datos. **Pendiente de que el usuario
   confirme** que, tras una sincronización, "Mi Turno" y "Mis Engrases" del
   Lubricador siguen mostrando las tarjetas correctas.
+
+## ENGRASE-001 — Horómetro con valor no numérico no se detecta como dato inconsistente
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P2 (no bloquea el uso normal — el formulario de horómetro es
+  un campo numérico — pero es un hueco real si el dato llega corrupto por
+  importación Excel, sincronización, o edición directa en Supabase)
+- **Estado:** DESCUBIERTO POR PRUEBA AUTOMATIZADA, NO CORREGIDO (fuera de
+  alcance de esta fase — no se modifica lógica de negocio sin que se pida)
+- **Descubierto en:** `tests/unit/estado-engrase.test.js`, al escribir
+  pruebas para `statusFor()` con valores límite de horómetro (Paso 7
+  #11-#12 de esta fase: horómetro null/inválido)
+- **Descripción:** `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\app.js`,
+  función `statusFor()`. Si `equipment.hourmeter` es `undefined` o un valor
+  no numérico (por ejemplo, el string `"abc"` — dato corrupto de una
+  importación o edición manual), el guard existente
+  `plan.lastGreaseHour > equipment.hourmeter` **no lo detecta** (la
+  comparación con un no-número da `false`, no dispara "DATOS
+  INCONSISTENTES"). El cálculo sigue adelante:
+  `remaining = nextHour - equipment.hourmeter` da `NaN`, y como
+  `NaN < 0` y `NaN <= alertYellowHours` son ambos `false`, el código cae en
+  el `else` final y el equipo se muestra como **VERDE / AL DÍA** — el
+  estado más tranquilizador posible, para un dato que en realidad es basura.
+  (Nota: `hourmeter: null` SÍ se detecta correctamente, porque `null` se
+  compara como `0` y normalmente dispara "DATOS INCONSISTENTES" si
+  `lastGreaseHour > 0`; el hueco es específicamente para `undefined` y
+  valores no numéricos como strings.)
+- **Evidencia:** pruebas `tests/unit/estado-engrase.test.js` — "BUG
+  conocido..." — documentan el comportamiento actual exacto (no lo corrigen).
+- **Impacto potencial:** un equipo con horómetro corrupto podría no recibir
+  atención de engrase porque el sistema lo muestra como "al día".
+- **Recomendación (no aplicada todavía):** en `statusFor()`, agregar
+  `Number.isFinite(equipment.hourmeter)` a la condición que dispara "DATOS
+  INCONSISTENTES", junto al chequeo de `lastGreaseHour > hourmeter` ya
+  existente.

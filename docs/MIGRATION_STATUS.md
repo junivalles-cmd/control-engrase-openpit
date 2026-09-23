@@ -128,6 +128,46 @@ NO ejecutado.
   Lubricador, Equipos, Matriz Semanal, offline, etc.) preparado en
   `docs/MANUAL_VALIDATION.md`, aún no ejecutado caso por caso.
 
+## Cierre de validación funcional manual (previo a esta fase)
+- `UI-ANDROID-001` y `UI-ANDROID-003`: **PASS**, validados visualmente por
+  el usuario en el Samsung SM-S938B real.
+- `UI-ANDROID-002` y `BUG-004`: corregidos en código, sincronizados e
+  instalados; **pendiente confirmación visual/funcional del usuario**.
+- El checklist detallado por pantalla (`ADM-01`…`ADM-13` para
+  Administrador, y el bloque de profundidad para Lubricador) preparado en
+  la conversación **no llegó a completarse caso por caso** — la sesión de
+  pruebas se desvió hacia la corrección de `UI-ANDROID-003` y `BUG-004` en
+  cuanto aparecieron. El usuario indicó que las pruebas funcionales de la
+  versión actual ya se dieron por realizadas y aprobadas para continuar,
+  pero **no existe un registro fila-por-fila** de cada pantalla en
+  `docs/MANUAL_VALIDATION.md` más allá de lo ya anotado ahí.
+- **Explícitamente sin probar (no se marca PASS por inferencia):** modo
+  offline real, reconexión, sincronización real contra Supabase, y
+  verificación de que no se dupliquen registros al sincronizar. Ver
+  `docs/TEST_MATRIX.md`.
+
+## FASE — Pruebas automatizadas de lógica
+**Estado:** COMPLETADA (2026-09-23)
+
+- Framework: Vitest (devDependency, raíz del repositorio). Ver
+  `docs/AUTOMATED_TESTS.md` para el detalle completo.
+- 77 pruebas en 8 archivos, todas **PASS**, protegiendo: turnos (incluye
+  cruce de medianoche en turno Noche), estado de engrase por frecuencia de
+  horómetro, matriz semanal (plan por día/turno), criticidad y no-duplicado
+  de anomalías automáticas, validación de horómetro, borrado lógico
+  `active:true/false`, y las reglas de orden/detección de sincronización
+  (sin tocar Supabase real).
+- Las funciones probadas se **extraen del código fuente real**
+  (`tests/helpers/extractFromSource.js`) — no se reescribió ni se duplicó
+  lógica a mano. `app.js`, `db.js` y `sync.js` **no fueron modificados**.
+- Se descubrió y registró un bug real (`ENGRASE-001`, P2): un horómetro con
+  valor no numérico no se detecta como dato inconsistente. No se corrigió
+  en esta fase (no se pidió tocar lógica de negocio); queda documentado en
+  `docs/BUG_REGISTER.md`.
+- Queda documentado qué requiere extracción durante la modularización antes
+  de poder probarse: `estadoCelda()` (Matriz Semanal), `createAutoAnomalies()`,
+  `Sync.pushAll/pullAll/fullSync`, y `DB.allActive`/`DB.put`/etc. reales.
+
 ## Próximas fases (NO iniciadas)
 
 Estas fases se planificarán y ejecutarán en conversaciones futuras, una por

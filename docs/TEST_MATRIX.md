@@ -54,5 +54,24 @@ la migración, para distinguir claramente lo verificado de lo asumido.
 | UI-ANDROID-001 | Buscador superior superpuesto con otros controles en Android | CORREGIDO — PASS, validado visualmente por el usuario en Samsung SM-S938B |
 | UI-ANDROID-002 | Ícono de cerrar sesión del Lubricador usaba carácter Unicode en vez del sistema de íconos | CORREGIDO EN CÓDIGO — pendiente de validación visual del usuario |
 | UI-ANDROID-003 | Topbar de Administrador excesivamente alto en móvil (2 filas constantes por `flex-wrap`) | CORREGIDO — PASS, validado visualmente por el usuario en Samsung SM-S938B |
+| BUG-004 | Lubricador ve la tabla de escritorio en vez de sus tarjetas tras sincronizar (route-mapping) | CORREGIDO EN CÓDIGO — pendiente de validación funcional del usuario |
 
 Ver `docs/BUG_REGISTER.md` para el detalle completo de causa raíz y corrección de cada uno.
+
+## Pruebas automatizadas de lógica (2026-09-23)
+
+Ver `docs/AUTOMATED_TESTS.md` para el detalle completo (framework, estructura,
+qué se prueba, qué requiere extracción). Resumen:
+
+| Área | Resultado |
+|---|---|
+| Suite completa (`npm test`) | PASS — 77/77 pruebas, 8 archivos |
+| Turnos (Día/Noche, cruce de medianoche) | PASS — 13 pruebas |
+| Estado de engrase / horómetro por frecuencia | PASS — 12 pruebas (incluye 2 que documentan `ENGRASE-001`, un bug real descubierto y no corregido en esta fase) |
+| Matriz semanal (plan por día/turno) | PASS — 7 pruebas |
+| Anomalías (criticidad, no-duplicado) | PASS — 9 pruebas |
+| Validación de horómetro | PASS — 8 pruebas |
+| Borrado lógico `active:true/false` | PASS — 9 pruebas |
+| Sincronización (reglas documentadas, sin tocar Supabase) | PASS — 8 pruebas |
+| Seguridad básica (`esc`, objetos incompletos) | PASS — 11 pruebas |
+| `estadoCelda()` de la Matriz Semanal, `createAutoAnomalies()`, `Sync.pushAll/pullAll/fullSync`, `DB.allActive` reales | NO PROBABLE TODAVÍA — requiere extracción durante la modularización (ver `docs/AUTOMATED_TESTS.md`) |

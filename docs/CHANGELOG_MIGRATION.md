@@ -83,3 +83,34 @@ recompilada e instalada en el Samsung SM-S938B real preservando datos
 `UI-ANDROID-001` validado visualmente por el usuario (PASS). `UI-ANDROID-002`
 y `UI-ANDROID-003` corregidos en código, sincronizados e instalados, aún
 pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
+
+## 2026-09-23 — Continuación de validación manual: UI-ANDROID-003 (PASS) y BUG-004
+- `UI-ANDROID-003` (topbar de Administrador) **validado visualmente PASS**
+  por el usuario en el Samsung SM-S938B real.
+- `d6b3c34` `fix: show shift badge as icon only on mobile to keep topbar on
+  one line` — el turno se reduce a ícono (☀/☾) en móvil.
+- Durante la prueba manual ADM-01 (Dashboard), el usuario reportó que las
+  tarjetas de "Mi Turno" del Lubricador no se veían como deberían. Se
+  encontró `BUG-004`: `redibujarPantallaActual()` redibujaba las pantallas
+  del Lubricador con las funciones de tabla de Administrador
+  (`renderTurno`, `renderHistorial`) en vez de las tarjetas del Lubricador,
+  cada vez que una sincronización en segundo plano traía datos nuevos.
+  Corregido en `644700f` `fix: redraw lubricador screens with correct
+  handlers after sync` — una línea, corrige el mapa de funciones. Este bug
+  **no es exclusivo de Android**: vive en `app.js`, compartido con la
+  versión WEB.
+
+## 2026-09-23 — Pruebas automatizadas de lógica (Vitest)
+- Se creó `package.json`/`vitest.config.js` en la raíz del repositorio
+  (devDependency únicamente — no afecta la web ni el build de Android) y
+  `tests/` con 8 archivos, 77 pruebas, todas PASS.
+- Las pruebas extraen y ejecutan las funciones **reales** de `app.js`/`db.js`
+  (turnos, estado de engrase, matriz semanal, criticidad de anomalías,
+  validación de horómetro, borrado lógico, reglas de sincronización,
+  `esc()`) directamente desde el código fuente — `app.js`, `db.js` y
+  `sync.js` no fueron modificados.
+- Se descubrió y registró `ENGRASE-001` (P2): un horómetro con valor no
+  numérico no dispara "DATOS INCONSISTENTES" en `statusFor()`; queda
+  documentado, sin corregir en esta fase.
+- Ver `docs/AUTOMATED_TESTS.md` para el detalle completo, incluida la lista
+  de lo que todavía requiere extracción durante la modularización.
