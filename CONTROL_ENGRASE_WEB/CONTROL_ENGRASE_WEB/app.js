@@ -4088,83 +4088,100 @@ async function startGreaseFlow(equipmentId, target) {
       ${duplicateWarning}
       ${draft ? `<div class="draft-banner" id="draft-banner">📝 Tienes un progreso sin terminar guardado ${fmtDate(draft.savedAt)}. <button type="button" class="btn btn-sm btn-accent" id="btn-restore-draft">Continuar</button> <button type="button" class="btn btn-sm" id="btn-discard-draft">Descartar</button></div>` : ''}
       <form id="grease-form">
-        <div class="form-grid">
-          <label class="span-2">Horómetro actual
-            <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
-          </label>
-          <label class="span-2 nohm-toggle">
-            <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
-            <span>Este equipo NO tiene horómetro, o está dañado / no se puede leer</span>
-          </label>
-          <div id="nohm-reason-wrap" class="span-2 hidden">
-            <label>¿Por qué no se pudo leer?
-              <select name="noHourmeterReason">
-                ${['El equipo no tiene horómetro', 'Horómetro dañado', 'Pantalla ilegible / rota', 'Equipo apagado, no se pudo leer', 'Otro'].map(o => `<option>${o}</option>`).join('')}
-              </select>
-              <span class="field-hint">El engrase se registra igual. Queda anotado que no se pudo tomar el horómetro, y el plan por horas de este equipo no se recalcula.</span>
+        <div class="grease-section">
+          <h4 class="grease-section-head">Horómetro</h4>
+          <div class="form-grid">
+            <label class="span-2">Horómetro actual
+              <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
             </label>
-          </div>
-          <label>Tipo de grasa utilizada
-            <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
-          </label>
-          <label>Cantidad utilizada (kg)<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
-          ${puedeRetroactivo ? `
-          <div class="span-2 retro-box">
-            <label class="retro-toggle">
-              <input type="checkbox" id="retro-check"/>
-              <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
+            <label class="span-2 nohm-toggle">
+              <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
+              <span>Este equipo NO tiene horómetro, o está dañado / no se puede leer</span>
             </label>
-            <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
-              <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
-              <label>Turno en que se hizo
-                <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
-              </label>
-              <label class="span-2">Lo realizó
-                <select name="retroUser">
-                  ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
+            <div id="nohm-reason-wrap" class="span-2 hidden">
+              <label>¿Por qué no se pudo leer?
+                <select name="noHourmeterReason">
+                  ${['El equipo no tiene horómetro', 'Horómetro dañado', 'Pantalla ilegible / rota', 'Equipo apagado, no se pudo leer', 'Otro'].map(o => `<option>${o}</option>`).join('')}
                 </select>
-                <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
+                <span class="field-hint">El engrase se registra igual. Queda anotado que no se pudo tomar el horómetro, y el plan por horas de este equipo no se recalcula.</span>
               </label>
             </div>
-          </div>` : ''}
+          </div>
         </div>
 
-        <div class="checklist-head">
-          <h4>Checklist de puntos de engrase</h4>
-          ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
-        </div>
-        ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
-        <div id="checklist">
-          ${points.length ? points.map(p => `
-            <div class="checklist-item" data-point="${p.id}">
-              <label class="check-row">
-                ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}"/>` : ''}
-                <input type="checkbox" class="chk-done" checked/>
-                <span class="check-row-text">${esc(p.point)}</span>
-                <span class="check-row-mark">✓</span>
+        <div class="grease-section">
+          <h4 class="grease-section-head">Engrase</h4>
+          <div class="form-grid">
+            <label>Tipo de grasa utilizada
+              <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
+            </label>
+            <label>Cantidad utilizada (kg)<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
+            ${puedeRetroactivo ? `
+            <div class="span-2 retro-box">
+              <label class="retro-toggle">
+                <input type="checkbox" id="retro-check"/>
+                <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
               </label>
-              <select class="chk-reason hidden">
-                <option value="">¿Por qué no se realizó?</option>
-                ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+              <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
+                <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
+                <label>Turno en que se hizo
+                  <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+                </label>
+                <label class="span-2">Lo realizó
+                  <select name="retroUser">
+                    ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
+                  </select>
+                  <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
+                </label>
+              </div>
+            </div>` : ''}
+          </div>
+
+          <div class="checklist-head">
+            <h4>Checklist de puntos de engrase</h4>
+            ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
+          </div>
+          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
+          <div id="checklist">
+            ${points.length ? points.map(p => `
+              <div class="checklist-item" data-point="${p.id}">
+                <label class="check-row">
+                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}"/>` : ''}
+                  <input type="checkbox" class="chk-done" checked/>
+                  <span class="check-row-text">${esc(p.point)}</span>
+                  <span class="check-row-mark">✓</span>
+                </label>
+                <select class="chk-reason hidden">
+                  <option value="">¿Por qué no se realizó?</option>
+                  ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+                </select>
+              </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
+          </div>
+
+          <div class="form-grid" style="margin-top:16px">
+            <label class="span-2">Condición encontrada
+              <select name="condition">
+                <option>Normal</option><option>Con desgaste</option><option>Requiere atención</option>
               </select>
-            </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
+            </label>
+          </div>
         </div>
 
-        <div class="form-grid" style="margin-top:16px">
-          <label>Condición encontrada
-            <select name="condition">
-              <option>Normal</option><option>Con desgaste</option><option>Requiere atención</option>
-            </select>
-          </label>
-          <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
-          ${photoFieldHTML()}
+        <div class="grease-section">
+          <h4 class="grease-section-head">Evidencia</h4>
+          <div class="form-grid">
+            <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
+            ${photoFieldHTML()}
+          </div>
         </div>
 
-        <div class="modal-actions">
-          <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
-          <button type="submit" class="btn btn-accent">${ic("check")}Finalizar engrase</button>
+        <div class="grease-section grease-section-final">
+          <div class="modal-actions">
+            <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
+            <button type="submit" class="btn btn-accent btn-grease-submit">${ic("check")}Finalizar engrase</button>
+          </div>
+          <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>
         </div>
-        <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>
       </form>
     </div>`;
 

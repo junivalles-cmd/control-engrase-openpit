@@ -495,6 +495,29 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .btn-accent:hover { background: var(--accent-dark); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
+/* ---------------- Secciones visuales del formulario "Registrar engrase" ----------------
+   UI/Responsive Fase 3 (docs/UI_RESPONSIVE.md): agrupa los MISMOS campos que ya
+   existían (Horómetro / Engrase / Evidencia / Finalizar) bajo un encabezado, sin
+   agregar ni quitar ningún campo. Misma tipografía que .checklist-head h4, para
+   que todos los encabezados de sección del formulario se vean consistentes. */
+.grease-section { margin-top: var(--sp-5); }
+.grease-section:first-child { margin-top: 0; }
+.grease-section-head {
+  margin: 0 0 10px; padding: 0 2px 6px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-display); font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; font-size: 13px; color: var(--text-dim);
+}
+/* Separa claramente la acción principal de "Reportar anomalía" (secundaria) y del
+   borde inferior de la pantalla — antes ambos botones tenían el mismo peso visual
+   salvo por el color de fondo. */
+.grease-section-final { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
+@media (max-width: 640px) {
+  /* Doble clase a propósito: .btn ya trae min-height:var(--tap) (44px) desde la
+     sección de accesibilidad al final del archivo, que por orden de cascada
+     ganaría sobre una sola clase — aquí se busca más alto que ese mínimo. */
+  .btn.btn-grease-submit { min-height: 52px; font-size: 16px; }
+}
+
 /* ---------------- Checklist ---------------- */
 .checklist-head { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 0 2px; }
 .checklist-head h4 { margin: 0; font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.03em; font-size: 16px; }
