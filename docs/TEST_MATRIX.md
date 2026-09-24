@@ -231,5 +231,6 @@ de los módulos modularizados en sí.
 | `npx cap sync android` | PASS — copia desde `dist` |
 | `./gradlew assembleDebug` | **BUILD SUCCESSFUL** |
 | Android real (Samsung) | **NO PROBADO** — dispositivo no conectado |
-| `UI-ANDROID-005` — validación visual del usuario | **PENDIENTE** (`UI-MANUAL-01`) — no se marca PASS por inferencia |
+| `UI-ANDROID-005` — validación visual del usuario (`UI-MANUAL-01`, Dashboard móvil) | **PASS**, confirmado por el usuario (2026-09-23) |
+| 768px/1366px — sin regresión tablet/desktop | PASS, vía suite automatizada (ya cubría explícitamente ambas resoluciones) |
 | GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR — nada publicado |

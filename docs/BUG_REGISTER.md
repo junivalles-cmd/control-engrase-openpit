@@ -356,9 +356,14 @@
   (UI/Responsive Fase 2, ver `docs/UI_RESPONSIVE.md`)
 - **Prioridad:** P3 UX (los datos y estados mostrados son correctos — no es
   un problema de lógica ni de datos, solo de presentación)
-- **Estado:** **CORREGIDO EN CÓDIGO, PENDIENTE DE VALIDACIÓN VISUAL DEL
-  USUARIO** (`UI-MANUAL-01`) — no se cierra como PASS hasta esa
-  confirmación.
+- **Estado:** **CORREGIDO, VALIDADO VISUALMENTE, PASS** —
+  `UI-MANUAL-01` (Dashboard móvil) confirmado PASS por el usuario
+  (2026-09-23). Tablet/desktop (768/1366) verificados sin regresión vía
+  la suite automatizada (`tests/ui/kpi-grid.spec.js` +
+  `tests/ui/dashboard-table-density.spec.js`, 21/21 PASS en las 7
+  resoluciones, incluidas 768 y 1366) — no se pidió una segunda ronda de
+  captura manual aparte, la evidencia automatizada mide directamente el
+  CSS real, no es una suposición.
 - **Origen:** PREEXISTENTE — confirmado presente ya en el commit baseline
   `c6d6f78` (el primer commit de todo este repositorio), mucho antes de la
   modularización JS. **No relacionado con la modularización.**

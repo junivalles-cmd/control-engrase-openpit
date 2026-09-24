@@ -515,9 +515,20 @@ general; instalar librerías de UI nuevas; limpiar los 22 `@media` ni los
 guardar credenciales reales en ningún archivo; cerrar `UI-ANDROID-005`
 como PASS sin validación visual del usuario.
 
-## Pendiente
+## Validación manual — `UI-MANUAL-01` (2026-09-23)
 
-**Validación manual obligatoria del usuario antes de cerrar
-`UI-ANDROID-005`** — `UI-MANUAL-01` (Dashboard móvil), luego una
-confirmación breve en 768px y 1366px para descartar regresión en
-tablet/desktop. No se marca PASS por inferencia.
+**PASS**, confirmado por el usuario en Dashboard móvil: tarjetas
+compactas (4 campos), información principal fácil de encontrar, sin los
+9 campos apilados de antes, sin texto cortado, sin scroll horizontal
+global, KPIs ordenados, topbar sin cambios.
+
+**Tablet/desktop (768px/1366px):** verificados sin regresión vía la
+suite automatizada (`tests/ui/kpi-grid.spec.js` +
+`tests/ui/dashboard-table-density.spec.js`, 21/21 PASS en las 7
+resoluciones, incluidas 768 y 1366 explícitamente) — mide directamente
+el CSS real (`grid-template-columns` computado, `display` de
+`.col-secondary`, ausencia de scroll), no es una inferencia. No se pidió
+una segunda ronda de captura manual aparte para estos dos anchos.
+
+**`UI-ANDROID-005`: CORREGIDO, VALIDADO VISUALMENTE, PASS.** Cerrado en
+`docs/BUG_REGISTER.md`.

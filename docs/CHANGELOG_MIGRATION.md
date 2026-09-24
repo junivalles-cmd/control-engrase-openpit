@@ -463,8 +463,19 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   **BUILD SUCCESSFUL**. Android real: **NO PROBADO** (Samsung no
   conectado). Sin cambios en Supabase, IndexedDB, `sync.js`, Service
   Worker, lógica de negocio.
-- **`UI-ANDROID-005` NO se cierra como PASS** hasta validación visual
-  del usuario (`UI-MANUAL-01`).
 - Ver `docs/UI_RESPONSIVE.md` (Fase 2) para el detalle completo.
 - Commit(s): `fix: reduce dashboard information density on mobile`,
-  `fix: normalize responsive kpi grid`.
+  `fix: normalize responsive kpi grid`,
+  `docs: record UI/Responsive Fase 2 corrections and validation status`.
+
+## 2026-09-23 — `UI-ANDROID-005`: validación manual PASS, cerrado
+- `UI-MANUAL-01` (Dashboard móvil): **PASS**, confirmado por el
+  usuario — tarjetas compactas, información principal fácil de
+  encontrar, sin los 9 campos apilados de antes, sin texto cortado, sin
+  scroll horizontal, KPIs ordenados, topbar sin cambios.
+- Tablet/desktop (768px/1366px): sin regresión, confirmado vía la
+  suite automatizada de Fase 2 (ya cubría explícitamente ambas
+  resoluciones con mediciones reales de CSS, no una inferencia) — no
+  se pidió una segunda ronda de captura manual aparte.
+- `UI-ANDROID-005`: **CORREGIDO, VALIDADO VISUALMENTE, PASS** — cerrado
+  en `docs/BUG_REGISTER.md`.

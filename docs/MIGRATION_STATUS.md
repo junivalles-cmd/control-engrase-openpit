@@ -548,7 +548,7 @@ clasificado como deuda técnica CSS, no bug). Ver `docs/UI_RESPONSIVE.md`
 (Fase 1) para el detalle completo, incluida la tabla de hallazgos.
 
 ## UI/RESPONSIVE FASE 2 — Correcciones dirigidas
-**Estado:** CORREGIDO EN CÓDIGO, PENDIENTE DE VALIDACIÓN VISUAL DEL USUARIO (2026-09-23)
+**Estado:** CORREGIDO, VALIDADO VISUALMENTE, PASS (2026-09-23)
 
 Dos correcciones puntuales sobre los únicos hallazgos accionables de la
 Fase 1 (P1=0, P2=0) — sin refactorización general de `styles.css`, sin
@@ -585,7 +585,9 @@ preview`: sin 404, sin errores JS, login visible. `npx cap sync android`
 PROBADO** (Samsung no conectado). Sin cambios en Supabase, IndexedDB,
 `sync.js`, Service Worker, lógica de negocio.
 
-**No se cierra `UI-ANDROID-005` como PASS** hasta validación visual del
-usuario (`UI-MANUAL-01`, Dashboard móvil) — ver `docs/UI_RESPONSIVE.md`
-(Fase 2) para el detalle completo, incluida la tabla de priorización de
-columnas.
+**`UI-MANUAL-01` (Dashboard móvil): PASS confirmado por el usuario.**
+768px/1366px verificados sin regresión vía la suite automatizada (ya
+cubrían esas 2 resoluciones explícitamente). **`UI-ANDROID-005`:
+CORREGIDO, VALIDADO VISUALMENTE, PASS** — cerrado en
+`docs/BUG_REGISTER.md`. Ver `docs/UI_RESPONSIVE.md` (Fase 2) para el
+detalle completo, incluida la tabla de priorización de columnas.
