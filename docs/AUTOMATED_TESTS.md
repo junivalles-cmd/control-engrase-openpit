@@ -211,3 +211,27 @@ de evaluar el texto TypeScript tal cual). El uso actual de JSDoc +
 `// @ts-check` (sin cambiar la extensión del archivo ni su sintaxis
 ejecutable) es totalmente compatible con este arnés, confirmado
 ejecutando la suite completa sin cambios de resultado.
+
+## Aviso: `npm run preview` conecta contra Supabase real (2026-09-24)
+
+Al verificar visualmente la corrección de unidad de grasa (kg→lb) con
+`npm run preview` + Playwright, se confirmó que `db.js` (`DEFAULT_SYNC_CONFIG`)
+precarga credenciales reales de Supabase de producción en el primer arranque
+de cualquier instancia servida (web o preview), y `sync.js` sincroniza
+automáticamente cada 20s si hay conexión. Una sesión de prueba (equipo de
+código `VERIF-01`, 4 registros creados por reintentos del script) alcanzó a
+sincronizar hacia el servidor real antes de detectarse.
+
+**Resuelto**: se aplicó borrado lógico (`deleted: true` en `engrase_sync`,
+mismo mecanismo de tombstone que usa `sync.js`/`pushAll()` — sin `DELETE`
+físico) a los 4 equipos + 4 registros de engrase de prueba, verificado con
+lectura posterior (0 activos, 8 tombstones, ningún otro registro tocado). No
+había copia local persistente en ningún dispositivo (los perfiles de
+navegador usados por el script eran temporales y ya se habían limpiado o no
+llegaron a crear los registros).
+
+**Pendiente para quien retome pruebas visuales contra `npm run preview`**:
+o bien configurar un proyecto Supabase de pruebas antes de sincronizar por
+primera vez (Configuración → Sincronización), o evitar interacciones que
+disparen `fullSync()` (crear/editar equipos, registrar engrases) mientras la
+sesión esté conectada a internet.
