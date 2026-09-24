@@ -470,3 +470,56 @@ Arquitectura final: `CONTROL_ENGRASE_WEB` → Vite → `dist/` → (GitHub
 Pages + Capacitor/Android), única salida runtime. Ver
 `docs/VITE_MIGRATION.md` (Fase 5) para el detalle completo, incluida la
 auditoría archivo por archivo y el plan de rollback en tres niveles.
+
+## TYPESCRIPT FASE 1 — Preparación segura (infraestructura, sin conversión masiva)
+**Estado:** COMPLETADA (2026-09-23)
+
+Checkpoint: tag local `pre-typescript-stable` → commit `a284e5c` (sin
+push). `typescript@^7.0.2` instalado como única `devDependency` nueva
+(`npm audit --omit=dev`: 0 vulnerabilidades). `tsconfig.json` con
+`allowJs: true`, `checkJs: false` (opt-in por archivo vía
+`// @ts-check`), `noEmit: true`, `strict: true`, `include` acotado a
+`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\src\**` — deja fuera
+`app.js`/`db.js`/`sync.js` a propósito. Nuevo `npm run typecheck`
+(`tsc --noEmit`), sin tocar `test`/`build`/`build:web`/`verify:dist`.
+Línea base: **0 errores** (estrategia de opt-in evitó "cientos de
+errores inútiles" sin usar `// @ts-ignore`).
+
+Mapa de dependencias completo de los 6 módulos de `src/core/`
+(exports, dependencias globales, tests, riesgo) documentado en
+`docs/TYPESCRIPT_MIGRATION.md`. Tipos del dominio creados como
+declaraciones puras (`src/types/lubrication.ts`, `src/types/shift.ts`),
+derivados de objetos reales del código — no referenciados desde
+`index.html`, por lo que Vite nunca los procesa ni los copia a `dist/`
+(confirmado sin cambios en el inventario tras `build:web`).
+
+**Hallazgo crítico, verificado empíricamente en un proyecto Vite
+aislado (no en el repo real):** un `<script src="archivo.ts">` clásico
+se comporta igual que un `.js` clásico en Vite — no se bundlea NI se
+copia a `dist/`. Renombrar cualquier `src/core/*.js` a `.ts`
+manteniéndolo como script clásico dejaría al navegador recibiendo
+sintaxis TypeScript real vía `<script src="...">` → `SyntaxError`
+inmediato. Segundo bloqueo independiente: el arnés de tests
+(`tests/helpers/extractFromSource.js`) evalúa texto fuente crudo con
+`new Function(...)`, incompatible con sintaxis TS real. Por la regla
+explícita del pedido ("si no puedes garantizar la ruta, no migres
+todavía"), **no se renombró ningún archivo productivo a `.ts`** esta
+fase.
+
+En su lugar: `src/core/hourmeter.js` (elegido tras comparar
+técnicamente contra `shifts.js` — menor superficie de dependencias,
+cero declaraciones ambient necesarias) recibió `// @ts-check` + JSDoc
+tipado (unión discriminada para el resultado de
+`validateHourmeterChange()`), **sin cambiar su extensión ni una sola
+línea de lógica**. `npm run typecheck`: PASS, 0 errores bajo `strict:
+true`. `npm test`: 125/125 PASS sin cambios (el arnés de extracción
+sigue funcionando idéntico). `npm run build:web`: PASS;
+`dist/src/core/hourmeter.js` idéntico por hash a la fuente, misma ruta
+estable. `npx cap sync android` + `./gradlew assembleDebug`: **BUILD
+SUCCESSFUL**; verificado por hash que el APK contiene el
+`hourmeter.js` correcto. **Android real: NO PROBADO** (Samsung no
+conectado). Sin cambios en Supabase, IndexedDB, `sync.js`, Service
+Worker. Ver `docs/TYPESCRIPT_MIGRATION.md` para el detalle completo,
+incluida la estrategia recomendada para Fase 2 (orden de módulos
+siguientes y los dos caminos posibles para resolver la conversión real
+de extensión).

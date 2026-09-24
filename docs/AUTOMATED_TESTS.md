@@ -191,3 +191,23 @@ corrige).
   deliberadamente acotado a lo que protege ENGRASE / TURNOS / HORÓMETROS /
   ANOMALÍAS / CUMPLIMIENTO / MATRIZ / SYNC / NOTIFICACIONES, no cobertura
   artificial.
+
+## Incompatibilidad con TypeScript real (hallazgo de TypeScript Fase 1)
+
+`extractDeclaration()` (`tests/helpers/extractFromSource.js`) extrae el
+**texto fuente crudo** de una declaración top-level (por nombre, contando
+llaves) y lo ejecuta con `new Function(...)` — no importa el archivo como
+módulo. Esto significa que, si algún día un archivo de `src/core/`
+pasara a tener sintaxis TypeScript real dentro del cuerpo de la función
+(anotaciones de tipo como `: string`), `new Function(...)` fallaría con
+`SyntaxError`, porque esas anotaciones no son JavaScript válido.
+
+Confirmado como uno de los dos bloqueos técnicos (junto con el de
+Vite/Service Worker) que impiden convertir cualquier `src/core/*.js` a
+`.ts` real sin trabajo adicional — ver `docs/TYPESCRIPT_MIGRATION.md`
+para el detalle completo y la estrategia para una fase futura (probablemente:
+transformar con `esbuild`/`ts-blank-space` antes de `new Function`, en vez
+de evaluar el texto TypeScript tal cual). El uso actual de JSDoc +
+`// @ts-check` (sin cambiar la extensión del archivo ni su sintaxis
+ejecutable) es totalmente compatible con este arnés, confirmado
+ejecutando la suite completa sin cambios de resultado.

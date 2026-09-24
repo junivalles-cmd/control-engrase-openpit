@@ -386,3 +386,42 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   incluida la auditoría archivo por archivo y el rollback en tres
   niveles.
 - Commit: `build: remove legacy www deployment flow`.
+
+## 2026-09-23 — TypeScript Fase 1: preparación segura (infraestructura)
+- Checkpoint: tag local `pre-typescript-stable` → `a284e5c` (sin push).
+- `typescript@^7.0.2` instalado como única devDependency nueva (`npm
+  audit --omit=dev`: 0 vulnerabilidades — las 5 que reporta el audit
+  completo son de `vite`/`vitest`/`esbuild`, preexistentes, no tocadas).
+- `tsconfig.json`: `allowJs: true`, `checkJs: false` (opt-in por archivo
+  con `// @ts-check`), `noEmit: true`, `strict: true`, `include` acotado
+  a `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\src\**` (deja fuera
+  `app.js`/`db.js`/`sync.js` a propósito). Nuevo `npm run typecheck`.
+  Línea base: **0 errores**, sin usar `// @ts-ignore`.
+- Mapa de dependencias de los 6 módulos de `src/core/` (exports,
+  globales, tests, riesgo) documentado en
+  `docs/TYPESCRIPT_MIGRATION.md`. Tipos del dominio nuevos, solo
+  declaraciones: `src/types/lubrication.ts`, `src/types/shift.ts` —
+  campos tomados de objetos reales, no referenciados desde `index.html`
+  (Vite no los procesa ni los copia a `dist/`, confirmado).
+- **Hallazgo crítico verificado en un proyecto Vite aislado:** un
+  `<script src="archivo.ts">` clásico no se bundlea ni se copia a
+  `dist/` (mismo comportamiento que un `.js` clásico) — renombrar
+  cualquier `src/core/*.js` a `.ts` produciría `SyntaxError` en el
+  navegador si se copiara igual. Segundo bloqueo independiente: el
+  arnés de tests evalúa texto fuente crudo con `new Function(...)`,
+  incompatible con sintaxis TS real. **No se renombró ningún archivo
+  productivo a `.ts`** esta fase, siguiendo la regla explícita del
+  pedido.
+- `src/core/hourmeter.js` (elegido sobre `shifts.js` tras comparación
+  técnica) recibió `// @ts-check` + JSDoc tipado, sin cambiar extensión
+  ni lógica. `npm run typecheck`: PASS, 0 errores con `strict: true`.
+  `npm test`: 125/125 PASS sin cambios. `npm run build:web`: PASS,
+  `dist/src/core/hourmeter.js` idéntico por hash, ruta estable sin
+  cambios. `npx cap sync android` + `./gradlew assembleDebug`: **BUILD
+  SUCCESSFUL**, verificado por hash que el APK contiene el archivo
+  correcto. Android real: **NO PROBADO** (Samsung no conectado). Sin
+  cambios en Supabase, IndexedDB, `sync.js`, Service Worker.
+- Ver `docs/TYPESCRIPT_MIGRATION.md` para el detalle completo, la
+  estrategia de Fase 2 y el rollback en tres niveles.
+- Commit(s): `build: add typescript migration foundation`,
+  `refactor: type-annotate hourmeter core module with jsdoc`.

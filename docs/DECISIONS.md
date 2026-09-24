@@ -350,3 +350,52 @@ repositorio, comparación por hash `www` vs. `dist`, y una reconstrucción
 completa de `dist` desde cero con `www` ya ausente) que la retirada no
 rompía nada. Ver `docs/VITE_MIGRATION.md` (Fase 5) para el detalle
 completo de esa verificación.
+
+## 17. TypeScript Fase 1: `checkJs: false` global + opt-in por archivo con `// @ts-check`, en vez de `checkJs: true` global
+
+**Decisión:** `tsconfig.json` activa `allowJs: true` (para que
+TypeScript pueda inferir tipos de dependencias entre archivos `.js`)
+pero mantiene `checkJs: false` a nivel de proyecto. Cada archivo que se
+quiera verificar opta individualmente agregando `// @ts-check` como
+primera línea (mecanismo estándar de TypeScript).
+
+**Razón:** `app.js`/`db.js`/`sync.js` sin tipar tienen miles de líneas;
+activar `checkJs: true` globalmente habría producido cientos de errores
+de una sola vez, sin ningún valor real (nadie iba a corregirlos todos en
+esta fase) — exactamente lo que el pedido pidió evitar explícitamente
+("no activar de golpe opciones estrictas que produzcan cientos de
+errores inútiles"). El opt-in por archivo permite mantener `strict:
+true` con toda su fuerza en los archivos que SÍ se verifican
+(`src/core/hourmeter.js`, `src/types/*.ts`) sin que eso implique tocar
+ni diagnosticar el resto del código todavía sin preparar.
+
+**Verificado:** línea base con 0 archivos verificados → 0 errores;
+tras agregar `// @ts-check` a `hourmeter.js` → sigue en 0 errores
+(tipado correctamente desde el principio, sin necesitar `// @ts-ignore`
+en ningún punto).
+
+## 18. TypeScript Fase 1: no renombrar ningún archivo productivo de `.js` a `.ts`
+
+**Decisión:** ningún archivo de `src/core/` cambió de extensión esta
+fase. Donde el pedido pedía "si no puedes garantizar que el archivo
+compilado conserve una ruta compatible, no migres todavía", se
+interpretó y aplicó literalmente: se hizo la prueba antes de decidir, no
+después.
+
+**Razón:** dos hallazgos independientes, cada uno suficiente por sí
+solo. (1) Prueba aislada en un proyecto Vite temporal (fuera del repo
+real): un `<script src="archivo.ts">` clásico se comporta igual que un
+`.js` clásico — Vite no lo bundlea ni lo copia a `dist/`; si se copiara
+igual con el plugin propio, el navegador recibiría sintaxis TypeScript
+real vía `<script src="...">`, que no es JavaScript válido. (2) El
+arnés de tests (`tests/helpers/extractFromSource.js`) evalúa texto
+fuente crudo con `new Function(...)` — sintaxis TS real ahí también
+rompería con `SyntaxError`, sin relación con el problema de Vite.
+
+**Alternativa aplicada en su lugar:** JSDoc + `// @ts-check` sobre el
+`.js` real (`hourmeter.js`), que no cambia ni un byte de código
+ejecutable — confirmado con hash idéntico salvo por los propios
+comentarios agregados, mismo comportamiento en Vite/`dist`/`sw.js`/
+arnés de tests. Ver `docs/TYPESCRIPT_MIGRATION.md` (sección 9) para el
+detalle completo y los dos caminos posibles para resolver esto en una
+fase futura.
