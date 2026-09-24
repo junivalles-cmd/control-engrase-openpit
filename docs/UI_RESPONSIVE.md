@@ -532,3 +532,170 @@ una segunda ronda de captura manual aparte para estos dos anchos.
 
 **`UI-ANDROID-005`: CORREGIDO, VALIDADO VISUALMENTE, PASS.** Cerrado en
 `docs/BUG_REGISTER.md`.
+
+# FASE 3 — EXPERIENCIA DEL LUBRICADOR
+
+Fecha: 2026-09-23
+Checkpoint previo: commit `2178045` (cierre de `UI-ANDROID-005`).
+
+## Objetivo de esta fase
+
+Tres mejoras visuales puntuales, identificadas por el usuario, sobre la
+experiencia del Lubricador en campo — **sin tocar lógica de negocio,
+IndexedDB, Supabase, `sync.js`, TypeScript ni Service Worker**:
+
+1. Márgenes de la pantalla "Mi Turno".
+2. Ícono que representa el equipo (mejorado a un camión articulado —
+   maquinaria minera).
+3. Reorganización visual del formulario "Registrar engrase" (Agregar
+   Engrase) en secciones.
+
+Se propuso primero (tabla de columnas/campos reales, sin inventar
+ninguno) y se esperó aprobación explícita antes de tocar código.
+
+## 1. Mi Turno — márgenes
+
+**Medido con Playwright antes de proponer nada** (fragmento estático con
+la estructura real de `bootLubricador()`/`renderLubricadorHome()` contra
+el `styles.css` real): el contenedor (`.lub-content`, 14px) y cada
+tarjeta (`.lub-eq-btn`, 16px) sumaban un **inset acumulado de 36px por
+lado** (10.0% del ancho a 360px) — ningún valor individual excesivo,
+pero ninguno usaba la escala `--sp-*` ya declarada y sumados restaban
+ancho útil de forma redundante.
+
+**Corrección:** ambos paddings laterales pasan a `var(--sp-3)` (12px) —
+`.lub-content` y `.lub-eq-btn` (además de `.lub-anomaly-fab`, mismo
+patrón de tarjeta ancha, por consistencia). Solo el padding **lateral**
+cambia; el vertical (16px) se mantiene igual, así que ningún área
+táctil se reduce. Inset resultante: 36px → 30px por lado (12+12+6, el
+borde de color de 6px se conserva — es información de estado, no
+espacio desperdiciado). Verificado con Playwright: el inset real
+medido queda entre 15px y 36px en las 7 resoluciones (tarjetas ni
+pegadas al borde ni con margen excesivo).
+
+## 2. Mi Equipo — ícono
+
+**Hallazgo antes de proponer nada:** ningún ícono representaba al
+equipo dentro de "Mi Turno" (`.lub-eq-btn` solo mostraba texto) ni en
+la pantalla de QR — el único ícono de tipo vehículo en toda la app era
+`icon-truck` (camión de reparto genérico, Lucide estándar), usado en el
+menú lateral de Administrador/Planificador/Supervisor, invisible para
+el rol Lubricador.
+
+**Decisión del usuario:** dibujar un ícono nuevo, camión articulado
+(minero) — no reutilizar `icon-truck` tal cual.
+
+**Implementación:** `.icon-hauler` (`styles.css`), en el **mismo
+formato exacto** que los 24 íconos ya existentes (SVG inline 24×24,
+`stroke`, sin relleno, mismo mecanismo `-webkit-mask-image`/
+`mask-image`) — no es una librería nueva, es un ícono más agregado al
+mismo sistema, de la misma forma en que se agregó cada uno de los 24
+anteriores. Diseño: cabina baja (`M2 19v-4h2.5l2 2v2`) + caja tonel
+alta con frente inclinado (`M9 19V8h8l4 5v6`) + 3 ruedas — tándem
+trasero, diferenciándolo deliberadamente de `icon-truck` (cabina+caja
+del mismo tamaño, 2 ruedas, una sola pieza cerrada).
+
+**Validado antes de integrarlo al código real:**
+- Decodificado el data-URI y comparado carácter por carácter contra el
+  SVG fuente — coincide exactamente.
+- Renderizado vía `mask-image` (la técnica real de la app, no solo como
+  imagen de fondo) junto al `icon-truck` real, para comparar.
+- Renderizado a los tamaños reales de uso (20/24/32/44/96px) — legible
+  incluso al tamaño más pequeño.
+
+Colocado en `.lub-eq-top` de cada tarjeta de "Mi Turno" (`app.js`),
+antes del código del equipo. `.lub-eq-top` cambió de
+`justify-content: space-between` (2 hijos) a `align-items: center; gap:
+8px` (3 hijos: ícono, código, chip) con `margin-left: auto` en
+`.status-chip` para mantener el chip de estado alineado a la derecha
+— mismo resultado visual que antes, con el ícono nuevo integrado.
+
+## 3. Agregar Engrase — reorganización visual
+
+**PASO A — inventario real** (`startGreaseFlow()`, `app.js`, en orden
+de aparición): Horómetro actual · "Sin horómetro/dañado" (checkbox) ·
+motivo (condicional) · Tipo de grasa · Cantidad (kg) · "Registrar como
+ATRASADO" (checkbox, solo Planificador/Administrador) con sus 3 campos
+condicionales · Checklist de puntos de engrase (dinámico) · Condición
+encontrada · Observaciones · Fotografías · "Reportar anomalía" (botón
+secundario) · "Finalizar engrase" (botón primario, submit). Detalle
+completo con tipo/obligatoriedad/función de cada campo documentado en
+la propuesta previa a esta fase (conversación) — **ningún campo se
+agregó, quitó, renombró ni reordenó** en el `FormData` que se envía al
+guardar.
+
+**Reorganización aplicada** — los mismos campos, agrupados bajo 4
+encabezados de sección (`.grease-section`/`.grease-section-head`, misma
+tipografía que `.checklist-head h4` para consistencia):
+
+- **Horómetro**: horómetro actual + checkbox sin horómetro + motivo.
+- **Engrase**: tipo de grasa + cantidad + bloque retroactivo (si
+  aplica) + checklist de puntos + condición encontrada (movida aquí
+  desde el segundo `form-grid` original — es parte del engrase, no de
+  la evidencia).
+- **Evidencia**: observaciones + fotografías.
+- **Finalizar** (`.grease-section-final`, con borde superior separador):
+  "Reportar anomalía" (secundario) + "Finalizar engrase" (primario).
+
+**Botón primario más prominente en móvil:** `.btn.btn-grease-submit
+{ min-height: 52px; font-size: 16px; }` dentro de `@media (max-width:
+640px)` — dos clases a propósito: la regla de accesibilidad `.btn {
+min-height: var(--tap) }` (44px) vive más abajo en el archivo (sección
+"MEJORAS DE DISEÑO Y ACCESIBILIDAD", con prioridad de cascada
+deliberada) y con una sola clase la habría ganado por orden de
+declaración pese a la especificidad igual — confirmado con un test que
+falló primero (47px medido, no 52px) y se corrigió así.
+
+## Espaciado — uso controlado de `--sp-*`
+
+Tal como se pidió, `--sp-*` se usó **solo en las reglas tocadas por
+esta fase** (`--sp-3` en paddings de Mi Turno, `--sp-4`/`--sp-5` en el
+nuevo `.grease-section`/`.grease-section-final`) — no se tocaron los
+227 valores crudos restantes del archivo. `--fs-*` no se tocó en esta
+fase (no hizo falta para estos cambios).
+
+## Verificación automatizada
+
+Dos specs nuevos, ninguno requiere login (fragmentos estáticos con la
+estructura/clases REALES, texto de relleno, nunca datos de producción):
+
+- **`tests/ui/lubricador-mi-turno.spec.js`**: sin scroll horizontal,
+  ícono visible con tamaño no nulo, inset izquierdo entre 15px y 36px
+  (medido relativo al propio `.lub-content`, no al borde crudo del
+  viewport — a ≥640px `.lub-content` se centra con `max-width`).
+- **`tests/ui/lubricador-grease-form.spec.js`**: las 3 secciones
+  (Horómetro/Engrase/Evidencia) en el orden correcto, sin scroll
+  horizontal, y en móvil el botón "Finalizar engrase" mide ≥48px de
+  alto y es al menos tan ancho como "Reportar anomalía".
+
+**`npm run test:ui`: 35/35 PASS** (5 specs × 7 resoluciones, incluidas
+explícitamente 360/390/412/768/1366 pedidas para esta fase).
+
+## Regresión completa
+
+`npm test`: 125/125 PASS. `npm run typecheck`: PASS. `npm run
+build:web`: PASS. `npm run lint:css`: 0 errores, 56 warnings (idénticos
+a fases anteriores, ninguno nuevo — se corrigió en el camino un
+`selector-not-notation` sobre CSS ya existente antes de esta fase, ver
+Fase 2). `npm run preview`: login visible, 0 errores de JavaScript. `npx
+cap sync android` + `./gradlew assembleDebug`: **BUILD SUCCESSFUL**.
+**Android real: NO PROBADO** (Samsung no conectado). Sin cambios en
+Supabase, IndexedDB, `sync.js`, Service Worker, lógica de negocio,
+TypeScript.
+
+## Qué NO se hizo en esta fase (a propósito)
+
+Tocar formularios fuera de "Registrar engrase"; tocar la Matriz Semanal;
+cambiar validaciones, campos, orden de guardado o cualquier lógica de
+negocio; modificar `db.js`/`sync.js`/Supabase/IndexedDB; instalar una
+librería de íconos nueva; usar una fotografía o rediseñar el logo/
+branding; tocar TypeScript; refactorizar `styles.css` fuera de las
+reglas de estas 3 pantallas; los 22 `@media` dispersos, los 56 warnings
+de Stylelint, `--sp-*`/`--fs-*` fuera de lo tocado — siguen clasificados
+como deuda técnica CSS, sin tocar.
+
+## Pendiente
+
+Validación manual del usuario en dispositivo real (Samsung no conectado
+durante esta fase) — Mi Turno, ícono de equipo y formulario de
+Registrar engrase completos, en campo.

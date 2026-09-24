@@ -479,3 +479,28 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   se pidió una segunda ronda de captura manual aparte.
 - `UI-ANDROID-005`: **CORREGIDO, VALIDADO VISUALMENTE, PASS** — cerrado
   en `docs/BUG_REGISTER.md`.
+
+## 2026-09-23 — UI/Responsive Fase 3: experiencia del Lubricador
+- Mi Turno: inset lateral acumulado 36px → 30px por lado
+  (`.lub-content`/`.lub-eq-btn`/`.lub-anomaly-fab` a `var(--sp-3)`,
+  solo horizontal, medido con Playwright antes y después).
+- Nuevo ícono `.icon-hauler` (camión articulado minero, decisión del
+  usuario), mismo formato que los 24 íconos existentes, sin librería
+  nueva — validado por decodificación + render vía `mask-image` +
+  tamaños reales antes de integrarlo. En cada tarjeta de "Mi Turno".
+- Formulario "Registrar engrase" reorganizado en 4 secciones visuales
+  (Horómetro/Engrase/Evidencia/Finalizar) — mismos campos, mismo
+  `FormData`, sin cambios de lógica. Botón primario más prominente en
+  móvil (52px, doble clase para no perder contra la regla de
+  accesibilidad `.btn{min-height:var(--tap)}`).
+- Verificación: `tests/ui/lubricador-mi-turno.spec.js` +
+  `tests/ui/lubricador-grease-form.spec.js`, sin login — **35/35 PASS**
+  (5 specs × 7 resoluciones). `npm test`: 125/125. `npm run typecheck`:
+  PASS. `npm run build:web`: PASS. `npm run lint:css`: 0 errores, 56
+  warnings (sin cambios). `npx cap sync android` + `assembleDebug`:
+  **BUILD SUCCESSFUL**. Android real: **NO PROBADO**.
+- Sin cambios en Supabase, IndexedDB, `sync.js`, Service Worker,
+  TypeScript, lógica de negocio.
+- Ver `docs/UI_RESPONSIVE.md` (Fase 3) para el detalle completo.
+- Commits: `fix: improve lubricador mi turno spacing and equipment
+  icon`, `fix: reorganize agregar engrase form into visual sections`.

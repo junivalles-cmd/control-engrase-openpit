@@ -591,3 +591,37 @@ cubrían esas 2 resoluciones explícitamente). **`UI-ANDROID-005`:
 CORREGIDO, VALIDADO VISUALMENTE, PASS** — cerrado en
 `docs/BUG_REGISTER.md`. Ver `docs/UI_RESPONSIVE.md` (Fase 2) para el
 detalle completo, incluida la tabla de priorización de columnas.
+
+## UI/RESPONSIVE FASE 3 — Experiencia del Lubricador
+**Estado:** CORREGIDO EN CÓDIGO, PENDIENTE DE VALIDACIÓN MANUAL EN DISPOSITIVO (2026-09-23)
+
+Tres mejoras puntuales pedidas por el usuario, propuestas primero
+(tabla de columnas/campos reales) y aprobadas antes de tocar código —
+sin lógica de negocio, IndexedDB, Supabase, `sync.js`, TypeScript ni
+Service Worker.
+
+**Mi Turno:** inset lateral acumulado (medido con Playwright antes de
+proponer nada) 36px → 30px por lado — `.lub-content`/`.lub-eq-btn`/
+`.lub-anomaly-fab` pasan su padding lateral a `var(--sp-3)`, sin tocar
+el vertical (ningún área táctil se reduce).
+
+**Ícono de equipo:** nuevo `.icon-hauler` (camión articulado minero,
+decisión del usuario) en el mismo formato exacto que los 24 íconos ya
+existentes — sin librería nueva. Validado por decodificación,
+renderizado vía `mask-image` y a tamaños reales de uso antes de
+integrarlo. Colocado en cada tarjeta de "Mi Turno".
+
+**Registrar engrase:** los mismos campos (ningún campo nuevo/quitado/
+reordenado en el `FormData`) agrupados en 4 secciones visuales
+(Horómetro/Engrase/Evidencia/Finalizar). Botón "Finalizar engrase" más
+prominente en móvil (52px vs. 44px base).
+
+Verificación: dos specs Playwright nuevos sin login — **35/35 PASS**
+(5 specs × 7 resoluciones, incluidas explícitamente 360/390/412/768/
+1366). `npm test`: 125/125 PASS. `npm run typecheck`: PASS. `npm run
+build:web`: PASS. `npm run lint:css`: 0 errores, 56 warnings (idéntico
+a fases previas). `npx cap sync android` + `assembleDebug`: **BUILD
+SUCCESSFUL**. Android real: **NO PROBADO** (Samsung no conectado).
+
+**Pendiente validación manual en dispositivo real** — Ver
+`docs/UI_RESPONSIVE.md` (Fase 3) para el detalle completo.

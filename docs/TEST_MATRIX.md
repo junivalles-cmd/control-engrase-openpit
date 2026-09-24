@@ -234,3 +234,17 @@ de los módulos modularizados en sí.
 | `UI-ANDROID-005` — validación visual del usuario (`UI-MANUAL-01`, Dashboard móvil) | **PASS**, confirmado por el usuario (2026-09-23) |
 | 768px/1366px — sin regresión tablet/desktop | PASS, vía suite automatizada (ya cubría explícitamente ambas resoluciones) |
 | GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR — nada publicado |
+
+## UI/Responsive Fase 3 — Experiencia del Lubricador (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| `tests/ui/lubricador-mi-turno.spec.js` (7 resoluciones) | PASS 7/7 — sin scroll horizontal, ícono visible, inset entre 15-36px |
+| `tests/ui/lubricador-grease-form.spec.js` (7 resoluciones) | PASS 7/7 — 3 secciones en orden, sin scroll horizontal, botón primario ≥48px y ≥ancho del secundario en móvil |
+| `npm run test:ui` (suite completa) | **35/35 PASS** |
+| `npm run lint:css` | 0 errores, 56 warnings (idéntico a fases previas) |
+| `npm test` / `npm run typecheck` / `npm run build:web` | PASS |
+| `npm run preview` (login visible, sin errores JS) | PASS |
+| `npx cap sync android` + `./gradlew assembleDebug` | **BUILD SUCCESSFUL** |
+| Android real (Samsung) | **NO PROBADO** — dispositivo no conectado |
+| Validación manual en dispositivo | **PENDIENTE** |
