@@ -745,6 +745,16 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   }
   .data-table td:empty { display: none; }
   .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; }
+
+  /* Columnas marcadas como secundarias (ver UI-ANDROID-005 / docs/UI_RESPONSIVE.md):
+     se ocultan solo en esta tarjeta apilada móvil, nunca en escritorio, para reducir
+     la densidad de información sin tocar el mecanismo genérico data-label de arriba. */
+  .data-table td.col-secondary { display: none; }
+  /* :last-child ya no basta para quitar el borde inferior de la última celda VISIBLE
+     cuando alguna celda oculta por .col-secondary queda después de ella en el DOM —
+     esta regla generaliza esa lógica sin tocar la de arriba (que sigue cubriendo las
+     tablas .data-table que no usan .col-secondary). */
+  .data-table tr td:not(.col-secondary, :has(~ td:not(.col-secondary))) { border-bottom: none; }
 }
 
 /* ---------------- Íconos reemplazados por el set real de Lucide (lucide.dev, código abierto) ----------------

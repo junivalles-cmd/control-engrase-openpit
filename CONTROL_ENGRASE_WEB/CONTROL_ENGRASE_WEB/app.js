@@ -2139,7 +2139,7 @@ async function renderDashboard() {
         </label>
       </div>
       <table class="data-table" id="att-table">
-        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Control</th><th>Horómetro</th><th>Próximo / Día asignado</th><th>Restante / Atraso</th><th>Días sin engrase</th></tr></thead>
+        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th class="col-secondary">Turno</th><th class="col-secondary">Control</th><th class="col-secondary">Horómetro</th><th class="col-secondary">Próximo / Día asignado</th><th>Restante / Atraso</th><th class="col-secondary">Días sin engrase</th></tr></thead>
         <tbody id="att-tbody"></tbody>
       </table>`}
     </div>
@@ -2211,12 +2211,12 @@ async function renderDashboard() {
         <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
         <td class="mono">${esc(x.e.code)}</td>
         <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
-        <td>${x.e.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-        <td>${controlLabel}</td>
-        <td class="mono">${isHours ? fmt(x.e.hourmeter) + ' h' : '—'}</td>
-        <td class="mono">${nextCol}</td>
+        <td class="col-secondary">${x.e.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+        <td class="col-secondary">${controlLabel}</td>
+        <td class="mono col-secondary">${isHours ? fmt(x.e.hourmeter) + ' h' : '—'}</td>
+        <td class="mono col-secondary">${nextCol}</td>
         <td class="mono" style="color:${STATUS_COLOR[x.s.code]}">${restCol}</td>
-        <td class="mono">${dsg === null ? 'Nunca registrado' : dsg + ' día(s)'}</td>
+        <td class="mono col-secondary">${dsg === null ? 'Nunca registrado' : dsg + ' día(s)'}</td>
       </tr>`;
     }).join('') || `<tr><td colspan="9" class="empty-state">Sin equipos para este filtro.</td></tr>`;
     makeTablesResponsive($('#dash-attention-panel'));
