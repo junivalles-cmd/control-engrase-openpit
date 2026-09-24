@@ -694,8 +694,41 @@ reglas de estas 3 pantallas; los 22 `@media` dispersos, los 56 warnings
 de Stylelint, `--sp-*`/`--fs-*` fuera de lo tocado — siguen clasificados
 como deuda técnica CSS, sin tocar.
 
+## Ajustes tras revisión del usuario (2026-09-23)
+
+Antes de la validación manual en dispositivo, el usuario revisó los
+cambios y pidió dos ajustes puntuales:
+
+1. **Quitar el ícono de equipo.** "No me gustó" — se revirtió
+   completamente: se quitó `<span class="lub-eq-icon icon-hauler">` de
+   `renderLubricadorHome()` (`app.js`), la clase `.icon-hauler` (con su
+   SVG) y `.lub-eq-icon` de `styles.css`, y `.lub-eq-top` volvió a su
+   regla original (`justify-content: space-between`, 2 hijos: código y
+   chip de estado — ya no necesita `gap`/`margin-left:auto` con el
+   ícono fuera). El ajuste de márgenes de Mi Turno (`--sp-3`) **se
+   mantuvo** — el usuario solo objetó el ícono, no el espaciado.
+   `tests/ui/lubricador-mi-turno.spec.js` actualizado para no verificar
+   un ícono que ya no existe.
+2. **Alinear el checkbox "sin horómetro" a la derecha del horómetro.**
+   En `startGreaseFlow()` (`app.js`), se quitó `span-2` de las
+   etiquetas "Horómetro actual" y `.nohm-toggle` (antes cada una
+   ocupaba el ancho completo, una debajo de la otra) — al quedar sin
+   `span-2`, el `form-grid` de 2 columnas las coloca lado a lado:
+   horómetro a la izquierda, checkbox a la derecha, en pantallas
+   ≥561px. En ≤560px (donde `form-grid` ya colapsaba a 1 columna antes
+   de este cambio) se mantienen apiladas — comportamiento sin cambios
+   ahí, inevitable con ese ancho. No se tocó `nohm-reason-wrap` (sigue
+   `span-2`, tiene sentido a ancho completo cuando aparece) ni ningún
+   nombre/tipo/validación de campo.
+
+Verificado de nuevo tras ambos ajustes: `npm run test:ui` 35/35 PASS,
+`npm test` 125/125, `npm run typecheck` PASS, `npm run build:web` PASS,
+`npm run lint:css` 0 errores/56 warnings (sin cambios), `npm run
+preview` sin errores JS, `npx cap sync android` + `assembleDebug`
+**BUILD SUCCESSFUL**. Android real: NO PROBADO (Samsung no conectado).
+
 ## Pendiente
 
 Validación manual del usuario en dispositivo real (Samsung no conectado
-durante esta fase) — Mi Turno, ícono de equipo y formulario de
-Registrar engrase completos, en campo.
+durante esta fase) — Mi Turno (sin ícono), checkbox de horómetro
+realineado, y el resto del formulario de Registrar engrase, en campo.

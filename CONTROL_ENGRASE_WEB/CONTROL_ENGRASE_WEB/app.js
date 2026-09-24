@@ -1901,7 +1901,6 @@ async function renderLubricadorHome() {
       ${statuses.map(({ e, s }) => `
         <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
           <div class="lub-eq-top">
-            <span class="lub-eq-icon icon-hauler" aria-hidden="true"></span>
             <span class="lub-eq-code">${esc(e.code)}</span>
             <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
           </div>
@@ -4091,10 +4090,10 @@ async function startGreaseFlow(equipmentId, target) {
         <div class="grease-section">
           <h4 class="grease-section-head">Horómetro</h4>
           <div class="form-grid">
-            <label class="span-2">Horómetro actual
+            <label>Horómetro actual
               <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
             </label>
-            <label class="span-2 nohm-toggle">
+            <label class="nohm-toggle">
               <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
               <span>Este equipo NO tiene horómetro, o está dañado / no se puede leer</span>
             </label>

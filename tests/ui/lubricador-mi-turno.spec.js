@@ -4,6 +4,10 @@
 // No requiere login: usa un fragmento estático con la estructura/clases REALES
 // de bootLubricador()/renderLubricadorHome() (app.js) — datos de relleno,
 // nunca equipos/horómetros de producción.
+//
+// El ícono de equipo (icon-hauler) que esta fase agregó inicialmente se quitó
+// a pedido del usuario ("no me gustó") — ver docs/UI_RESPONSIVE.md. Este spec
+// ya no lo verifica; solo queda el ajuste de márgenes.
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -26,7 +30,6 @@ const FIXTURE = `
       <div class="lub-eq-list">
         <button class="lub-eq-btn" data-status="ROJO">
           <div class="lub-eq-top">
-            <span class="lub-eq-icon icon-hauler" aria-hidden="true"></span>
             <span class="lub-eq-code">EQ-0001</span>
             <span class="status-chip" style="--c:red">VENCIDO</span>
           </div>
@@ -44,7 +47,7 @@ const FIXTURE = `
   </div>
 `;
 
-test('Mi Turno: sin scroll horizontal, ícono de equipo visible, margen reducido consistente', async ({ page }, testInfo) => {
+test('Mi Turno: sin scroll horizontal, margen reducido consistente', async ({ page }, testInfo) => {
   await page.setContent(FIXTURE);
   await page.addStyleTag({ path: STYLES_PATH });
 
@@ -54,24 +57,15 @@ test('Mi Turno: sin scroll horizontal, ícono de equipo visible, margen reducido
   }));
   expect(scrollWidth, `scroll horizontal no deseado en ${testInfo.project.name}`).toBeLessThanOrEqual(clientWidth);
 
-  const iconVisible = await page.evaluate(() => {
-    const el = document.querySelector('.lub-eq-icon');
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  });
-  expect(iconVisible, 'el ícono de equipo (icon-hauler) debe estar visible en la tarjeta').toBe(true);
-
   // UI-RESP: el inset acumulado (padding del contenedor + padding de la tarjeta)
   // debe ser MENOR al valor medido antes de esta fase (36px por lado), sin llegar
   // a 0 (no queremos las tarjetas pegadas al borde). Medido relativo al propio
   // .lub-content (no al borde crudo del viewport): en ≥640px .lub-content se
   // centra con max-width, así que el borde del viewport ya no sirve de referencia.
-  // Se mide hasta .lub-eq-icon (el primer elemento dentro de la tarjeta) — no
-  // hasta .lub-eq-code, que ahora queda después del ícono nuevo a propósito.
   const leftInset = await page.evaluate(() => {
     const content = document.querySelector('.lub-content').getBoundingClientRect();
-    const icon = document.querySelector('.lub-eq-icon').getBoundingClientRect();
-    return icon.left - content.left;
+    const code = document.querySelector('.lub-eq-code').getBoundingClientRect();
+    return code.left - content.left;
   });
   expect(leftInset, 'inset izquierdo debe ser menor que el valor previo (36px)').toBeLessThan(36);
   expect(leftInset, 'inset izquierdo no debe ser 0 (tarjetas no deben pegarse al borde)').toBeGreaterThan(15);
