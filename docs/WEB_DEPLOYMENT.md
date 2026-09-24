@@ -3,11 +3,16 @@
 Este documento describe el flujo para publicar `dist/` (generado por
 Vite) como el sitio Web de Control de Engrase en GitHub Pages.
 
-**Estado actual: este flujo está VALIDADO pero NO EJECUTADO.** Nadie ha
-publicado `dist/` a producción todavía — ver `docs/VITE_MIGRATION.md`
-(Fase 3) para el detalle de qué se comprobó. La web productiva sigue
-siendo el contenido de `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB`, subido
-manualmente como hasta ahora.
+**Estado actual (actualizado en Vite Fase 4, 2026-09-23): `dist/` YA ES
+la producción real.** El primer despliegue controlado se ejecutó en la
+Fase 4 (commit `d52d43d` sobre `github.com/junivalles-cmd/control-engrase-openpit`,
+publicado en `https://junivalles-cmd.github.io/control-engrase-openpit/`
+— un Project Page, no la raíz del dominio como este documento asumía
+originalmente). Ver `docs/VITE_MIGRATION.md` (Fase 4) para la
+configuración remota real y la validación completa en producción. Desde
+la Fase 5, además, el flujo legado `www` +
+`tools/sync-web-to-android.mjs` ya no existe en el repositorio — `dist/`
+es la única salida runtime tanto para esta Web como para Android.
 
 ## 0. Contexto que hay que tener claro antes de publicar
 

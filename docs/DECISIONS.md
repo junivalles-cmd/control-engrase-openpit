@@ -322,3 +322,31 @@ actualiza una sin la otra.
 PASS"): se quitó `.nojekyll` de `dist/` temporalmente, se confirmó que
 `verify:dist` falla con código de salida 1 y el mensaje correcto, y se
 restauró el archivo.
+
+## 16. Vite Fase 5: retirar `www` y `sync-web-to-android.mjs` del repositorio en vez de dejarlos como código muerto
+
+**Decisión:** una vez confirmado, por inspección directa (no asumido),
+que ni `CONTROL_ENGRASE_APP_ANDROID/www` ni
+`tools/sync-web-to-android.mjs` participaban ya en ningún flujo activo
+(`capacitor.config.json` usa `webDir: "../dist"` desde la Fase 2; ningún
+script de `package.json` ni `vite.config.js`/`tools/verify-dist.mjs`
+importa o ejecuta el script legacy), se eliminaron del repositorio
+(`git rm`) en vez de dejarlos en disco "por si acaso".
+
+**Razón:** Git ya conserva el historial completo — un tag local
+(`pre-remove-legacy-www`) y el propio historial de commits permiten
+recuperar cualquiera de los dos exactamente como estaban
+(`git checkout pre-remove-legacy-www -- tools/sync-web-to-android.mjs
+CONTROL_ENGRASE_APP_ANDROID/www`). Mantener un script y una carpeta de
+29 archivos sin ningún consumidor activo, "solo por si acaso", es
+exactamente el tipo de código muerto que agrega confusión (¿cuál es la
+fuente real, `www` o `dist`?) sin aportar seguridad real — el rollback
+verdadero ya lo da Git, no un directorio duplicado en el árbol de
+trabajo.
+
+**Condición aplicada antes de borrar:** no se retiró nada hasta
+demostrar con evidencia (comparación de referencias en todo el
+repositorio, comparación por hash `www` vs. `dist`, y una reconstrucción
+completa de `dist` desde cero con `www` ya ausente) que la retirada no
+rompía nada. Ver `docs/VITE_MIGRATION.md` (Fase 5) para el detalle
+completo de esa verificación.

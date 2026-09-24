@@ -417,3 +417,56 @@ subida a `junivalles-cmd.github.io`, ni cambios en GitHub Pages. Android
 sigue usando `dist` sin cambios (`capacitor.config.json` no se tocó en
 esta fase). `www`, `tools/sync-web-to-android.mjs`, Supabase, IndexedDB,
 `sync.js`: sin modificar.
+
+## FASE VITE 4 — Primer despliegue controlado a GitHub Pages
+**Estado:** COMPLETADA Y VALIDADA EN PRODUCCIÓN (2026-09-23)
+
+Primer deploy real de `dist/` a producción, sobre el repositorio de
+Project Page `github.com/junivalles-cmd/control-engrase-openpit`
+(`https://junivalles-cmd.github.io/control-engrase-openpit/`) — la
+Fase 3 tenía la configuración remota desactualizada (asumía un User
+Page en la raíz); se detuvo y se pidió la configuración real en vez de
+adivinar. `base: './'` confirmado como la única opción correcta para
+un Project Page. Commit `d52d43d` sobre el repo de Pages, 16/16 URLs de
+producción con 200, `PROD-WEB-01` a `10` + offline: todos **PASS**
+validados por el usuario. Dos hallazgos nuevos registrados (ninguno
+causado por el deploy): `APP-LINKS-001` (P2, arquitectónico) y
+`MATRIZ-DOMINGO-001` (P3, preexistente). Ver `docs/VITE_MIGRATION.md`
+(Fase 4) y `docs/BUG_REGISTER.md` para el detalle completo.
+
+## FASE VITE 5 — Retiro controlado del flujo legacy `www`
+**Estado:** COMPLETADA (2026-09-23)
+
+Checkpoint: tag local `pre-remove-legacy-www` → commit `492e05d` (sin
+push). Auditoría completa (sin modificar nada primero) confirmó que ni
+`CONTROL_ENGRASE_APP_ANDROID/www` ni `tools/sync-web-to-android.mjs`
+participaban ya en ningún flujo activo (`capacitor.config.json` usa
+`webDir: "../dist"` desde la Fase 2; ningún script de `npm test`/`build`/
+`build:web`/`dev`/`preview`/`verify:dist` los importa o ejecuta). `www`
+solo contenía 27 archivos idénticos por hash a `dist` (más `index.html`
+con la diferencia cosmética ya conocida) y 2 sobrantes no-runtime
+(`schema.sql`, `icon-180.png`) — nada se copió de `www` a `dist`.
+
+Retirados del repositorio: `tools/sync-web-to-android.mjs` y
+`CONTROL_ENGRASE_APP_ANDROID/www` (29 archivos), recuperables vía Git
+(`git checkout pre-remove-legacy-www -- ...`). `android/app/src/main/assets/public`
+no se tocó — sigue siendo generado solo por Capacitor.
+
+Prueba crítica: `dist/` borrado y reconstruido desde cero (`npm run
+build:web`, 125/125 tests + build + `verify:dist`, todo PASS) **sin que
+`www` existiera en disco**. `npx cap sync android` confirmó por su
+salida que copia desde `dist`, sin errores por la ausencia de `www`.
+`./gradlew assembleDebug`: **BUILD SUCCESSFUL**; verificado por hash que
+`assets/public/index.html` del APK coincide con `dist/index.html`.
+`npm run preview`: 19/19 recursos con 200. `dist` no cambió respecto a
+la Fase 4 (fuente y `vite.config.js` sin tocar) — **no se publicó ningún
+redeploy**. `npm test` final: 125/125 PASS.
+
+**Android real y offline: NO PROBADO** — Samsung no conectado durante
+esta fase (`adb devices` sin dispositivos), marcado honestamente como
+pendiente en vez de asumido. Sin cambios en Supabase, IndexedDB,
+`sync.js`, Service Worker, `AndroidManifest.xml` ni fingerprints.
+Arquitectura final: `CONTROL_ENGRASE_WEB` → Vite → `dist/` → (GitHub
+Pages + Capacitor/Android), única salida runtime. Ver
+`docs/VITE_MIGRATION.md` (Fase 5) para el detalle completo, incluida la
+auditoría archivo por archivo y el plan de rollback en tres niveles.

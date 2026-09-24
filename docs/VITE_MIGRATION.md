@@ -873,9 +873,239 @@ fingerprints, `AndroidManifest.xml`, Capacitor, dominio o repositorio;
 enviar push real de OneSignal; usar `--force`; introducir GitHub Actions;
 empezar otra fase.
 
-## Siguiente fase natural
+## Siguiente fase natural (histórico — ver FASE 5 abajo)
 
 Retirar de forma controlada el flujo legado `www` + script
 WEB→`www`, y establecer definitivamente Vite/`dist` como única salida
 Web + Android — **no iniciado todavía**, pendiente de aprobación
 explícita.
+
+# FASE 5 — RETIRO CONTROLADO DEL FLUJO LEGACY WWW
+
+Fecha: 2026-09-23
+Commit previo: `492e05d`. Tag local de checkpoint (sin push):
+`pre-remove-legacy-www`.
+
+## Objetivo de esta fase
+
+Convertir oficialmente `dist/` en la **única** salida runtime para Web y
+Android, retirando el flujo legado que hasta ahora quedaba como
+*fallback* sin usarse:
+
+- `CONTROL_ENGRASE_APP_ANDROID\www`
+- `tools/sync-web-to-android.mjs`
+
+Con la condición explícita de no borrar nada hasta demostrar primero,
+con evidencia, que ninguno de los dos participaba ya en ningún flujo
+activo.
+
+## Arquitectura DESPUÉS de esta fase
+
+```
+CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB   (fuente canónica, sin cambios)
+        │
+        └── Vite (npm run build)  →  dist/  ─┬─→ GitHub Pages
+                                              └─→ npx cap sync android → APK
+```
+
+Sin flujo `www` en paralelo, sin script de sincronización manual.
+
+## Precheck (antes de tocar nada)
+
+- `git status`: working tree limpio, rama `migration-typescript`.
+- `npm test`: **125/125 PASS**.
+- `npm run build:web` (`test && build && verify:dist`): **PASS** los tres
+  pasos.
+
+## Auditoría de referencias a `www` / `sync-web-to-android` (antes de modificar nada)
+
+Búsqueda completa en el repositorio, clasificada:
+
+| Referencia | Clasificación |
+|---|---|
+| `capacitor.config.json` → `"webDir": "../dist"` | **ACTIVA** — ya usa `dist`, no `www`, desde la Fase 2 |
+| Docstrings/comentarios en `vite.config.js`, `tools/verify-dist.mjs`, `tools/runtime-file-set.mjs` que mencionan `sync-web-to-android.mjs` | DOCUMENTACIÓN HISTÓRICA (solo referencia en comentario, ninguno lo importa ni lo ejecuta) |
+| `docs/PLAN_UNIFICACION_WEB_ANDROID.md`, `docs/LINEA_BASE.md`, `docs/TEST_MATRIX.md`, `docs/AUTOMATED_TESTS.md`, `docs/MODULARIZATION.md`, `docs/MANUAL_VALIDATION.md`, `docs/MIGRATION_STATUS.md` (fases previas), `docs/CHANGELOG_MIGRATION.md` (entradas previas) | DOCUMENTACIÓN HISTÓRICA — snapshots de decisiones tomadas en su momento, **no se reescriben** |
+| `docs/VITE_MIGRATION.md` §"Rollback" de Fases 1/2 (instrucciones para volver a `www`) | ROLLBACK — se conservan tal cual, siguen siendo válidas como referencia histórica (recuperable vía Git aunque `www` ya no exista en disco) |
+| `tools/sync-web-to-android.mjs` (el propio script) | OBSOLETA — ver siguiente sección |
+| `CONTROL_ENGRASE_APP_ANDROID\www` (la carpeta) | OBSOLETA — ver Auditoría de carpeta `www` |
+| `package.json` → `"description"` (mencionaba "scripts de sincronización") | OPERATIVA, actualizada (ver Paso 8) |
+
+**Confirmado especialmente:** `capacitor.config.json` usa `"webDir":
+"../dist"`, no `"www"` (sin cambios en esta fase, ya estaba así desde la
+Fase 2 de Vite).
+
+## Auditoría del script legacy
+
+`tools/sync-web-to-android.mjs` y su helper compartido
+(`tools/runtime-file-set.mjs`) — verificado archivo por archivo si
+participaban en algún flujo activo:
+
+| Consumidor | ¿Importa/ejecuta `sync-web-to-android.mjs`? |
+|---|---|
+| `npm test` | No |
+| `npm run build` (`vite.config.js`) | No — importa `computeRuntimeFileSet` de `tools/runtime-file-set.mjs` directamente, nunca del script |
+| `npm run build:web` | No (encadena solo `test`+`build`+`verify:dist`) |
+| `npm run dev` / `npm run preview` | No |
+| `npm run verify:dist` (`tools/verify-dist.mjs`) | No — mismo patrón, importa `runtime-file-set.mjs` |
+| Capacitor (`npx cap sync android`) | No — no invoca ningún script Node del repo, solo lee `webDir` |
+| Build de Android (`assembleDebug`) | No |
+| `package.json` (raíz y de `CONTROL_ENGRASE_APP_ANDROID`) | Ningún script lo referencia |
+
+**Resultado: NO participa en ningún flujo activo**, confirmado por
+inspección directa del código (no asumido). Hallazgo adicional: el
+propio script tiene una validación interna (`webDirOk =
+capConfigJson.webDir === 'www'`) que desde la Fase 2 (cuando `webDir`
+pasó a `"../dist"`) haría que cualquier intento de `--apply` abortara de
+todos modos — el script ya estaba inerte para escritura antes de esta
+fase, aunque seguía presente en el repositorio.
+
+## Auditoría de la carpeta `www`
+
+Comparación completa `www` vs. `dist` por hash SHA-256 (29 archivos en
+`www`, 27 en `dist`):
+
+| Resultado | Cantidad | Detalle |
+|---|---|---|
+| Idénticos | 27 | Todo el set runtime real (`app.js`, `db.js`, `sync.js`, `styles.css`, `sw.js`, `manifest.json`, `OneSignalSDKWorker.js`, `.nojekyll`, `.well-known/assetlinks.json`, 10 íconos, 6 `src/core/*.js`) |
+| Diferente | 1 | `index.html` — misma diferencia cosmética de Vite ya documentada desde la Fase 1 (rutas `./`, `crossorigin`, orden del `<link>`) |
+| Solo en `www` | 2 | `schema.sql` (copia manual antigua, nunca fue runtime del frontend, ya señalada como "sobra" desde `docs/SYNC_WEB_ANDROID.md`/Fase A2) y `icon-180.png` (ícono huérfano, no referenciado por `manifest.json`/`index.html`/`sw.js`) |
+
+**No se copió nada de `www` hacia `dist`** — ninguno de los dos
+sobrantes es runtime real, confirmado, no asumido.
+
+## Checkpoint
+
+Tag local `pre-remove-legacy-www` → commit `492e05d` (sin push).
+Permite recuperar `www` y el script exactamente como estaban:
+```
+git checkout pre-remove-legacy-www -- tools/sync-web-to-android.mjs CONTROL_ENGRASE_APP_ANDROID/www
+```
+
+## Retiro del script
+
+`git rm tools/sync-web-to-android.mjs`. Se conserva en el historial de
+Git (recuperable con el comando de arriba o `git show
+pre-remove-legacy-www:tools/sync-web-to-android.mjs`). Su documentación
+dedicada, `docs/SYNC_WEB_ANDROID.md`, se conserva sin reescribir el
+cuerpo — solo se le agregó una nota de retiro al inicio.
+
+## Retiro de `www`
+
+`git rm -r CONTROL_ENGRASE_APP_ANDROID/www` (29 archivos). **No se tocó**
+`android/app/src/main/assets/public` — esa carpeta sigue siendo
+generada exclusivamente por `npx cap sync android`, nunca editada a
+mano.
+
+## Limpieza de configuración legacy
+
+- `package.json` → `description`: se quitó la mención a "scripts de
+  sincronización" (ya no existen). Los `scripts` (`test`, `build`,
+  `dev`, `preview`, `verify:dist`, `build:web`) no mencionaban el script
+  legacy, no requirieron cambios.
+- No se tocó ningún otro archivo operativo — `vite.config.js`,
+  `tools/verify-dist.mjs`, `tools/runtime-file-set.mjs`, `capacitor.config.json`
+  ya estaban correctos desde fases anteriores.
+
+## Reconstrucción de `dist` sin `www`
+
+Se borró `dist/` (gitignored, artefacto reconstruible, `rm -rf dist`) y
+se corrió `npm run build:web` con `www` y el script ya eliminados del
+repositorio:
+
+- `npm test`: 125/125 PASS.
+- `npm run build`: PASS, mismo comportamiento y mismos 27 archivos
+  runtime que en fases anteriores.
+- `npm run verify:dist`: **TODO OK** — `dist/` reconstruido íntegramente
+  a partir de la fuente canónica, **sin recuperar ni un solo archivo
+  desde `www`** (que en este punto ya no existe en disco).
+
+## `npx cap sync android` sin `www`
+
+Prueba crítica de esta fase: con `www` ya eliminado del repositorio,
+`npx cap sync android` confirmó por su propia salida `Copying web assets
+from dist to android\app\src\main\assets\public` — **sin errores, sin
+buscar `www`**.
+
+## Android build
+
+`./gradlew assembleDebug`: **BUILD SUCCESSFUL**, sin ningún error
+relacionado con `www` inexistente.
+
+**Verificación por hash** (mismo método que la Fase 2): `assets/public/index.html`
+dentro del `.apk` generado tiene el mismo SHA-256 (`b928bd94...`) que
+`dist/index.html` — prueba objetiva de que el APK compilado sin `www`
+en disco sigue viniendo de `dist`.
+
+## Android real / offline
+
+**NO PROBADO** — el Samsung SM-S938B no estaba conectado durante esta
+fase (`adb devices` sin dispositivos). Marcado honestamente como
+pendiente, no asumido como PASS. El build y la verificación por hash
+(APK ⇔ `dist`) sí se completaron y dieron PASS; falta la validación
+manual en el dispositivo real cuando esté disponible.
+
+## Web preview
+
+`npm run preview` sobre el `dist/` reconstruido: 19 recursos runtime
+comprobados por HTTP (`index.html`, `app.js`, `db.js`, `sync.js`,
+`styles.css`, `sw.js`, `manifest.json`, `OneSignalSDKWorker.js`,
+`.nojekyll`, `.well-known/assetlinks.json`, los 6 `src/core/*.js`,
+íconos) — **19/19 con 200, 0 errores 404**.
+
+## `dist` no cambió — sin redeploy
+
+Ni `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB` (fuente) ni
+`vite.config.js` se tocaron en esta fase — solo se eliminaron `www` y el
+script de sincronización, que no forman parte de la entrada de Vite.
+Por lo tanto **`dist/` es exactamente el mismo contenido que en la Fase
+4** (ya publicado en producción). **No se publicó ningún redeploy** en
+esta fase — no había nada nuevo que publicar, y publicar solo por haber
+borrado archivos legacy locales habría sido una acción sin efecto real
+en producción.
+
+## Pruebas automatizadas
+
+`npm test`: **125/125 PASS**, sin cambios, ejecutado al final de esta
+fase sobre el estado ya sin `www`.
+
+## Revisión de que no se tocó nada fuera de alcance
+
+`git diff --stat` confirma que esta fase solo modificó: la eliminación
+de `tools/sync-web-to-android.mjs` y `CONTROL_ENGRASE_APP_ANDROID/www`
+(29 archivos), y ediciones de documentación (`package.json` descripción,
+`docs/SYNC_WEB_ANDROID.md`, y los archivos de esta sección). **Sin
+cambios** en `sync.js`, Supabase, IndexedDB, `AndroidManifest.xml`,
+`capacitor.config.json`, keystores, ni en la lógica de negocio de
+`app.js`/`db.js`/`src/core/*.js`.
+
+## Rollback
+
+Tres niveles, ninguno ejecutado (no hizo falta):
+
+1. **Recuperar `www` y el script sin revertir nada más:**
+   `git checkout pre-remove-legacy-www -- tools/sync-web-to-android.mjs CONTROL_ENGRASE_APP_ANDROID/www`,
+   y volver `capacitor.config.json` a `"webDir": "www"` si además se
+   quisiera volver a usarlo como entrada real de Capacitor.
+2. **Revertir el commit completo de esta fase:** `git revert <hash>`
+   sobre el commit de "PASO 18" (ver más abajo).
+3. **Volver al estado exacto previo a esta fase:** `git reset --hard
+   pre-remove-legacy-www` (destructivo, solo si se decide no continuar
+   en absoluto con este cambio).
+
+## Qué NO se hizo en esta fase (a propósito)
+
+Migrar a TypeScript; corregir `APP-LINKS-001`, `MATRIZ-DOMINGO-001`,
+`UI-ANDROID-005` ni `ANDROID-DOZE-001`; modificar Supabase, IndexedDB,
+`sync.js` ni el Service Worker; cambiar `AndroidManifest.xml`,
+fingerprints ni el keystore; publicar un nuevo deploy a GitHub Pages
+(`dist` no cambió); reescribir el contenido histórico de
+`docs/PLAN_UNIFICACION_WEB_ANDROID.md`, `docs/LINEA_BASE.md` ni otros
+documentos de fases anteriores; editar `android/app/src/main/assets/public`
+a mano.
+
+## Siguiente fase natural
+
+Preparar la migración gradual de JavaScript a TypeScript sobre la
+arquitectura Vite/`dist` ya consolidada como única salida Web + Android
+— **no iniciada todavía**, pendiente de aprobación explícita.

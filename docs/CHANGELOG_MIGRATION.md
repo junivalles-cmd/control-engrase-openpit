@@ -327,3 +327,62 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
 - Ver `docs/VITE_MIGRATION.md` (sección Fase 3) y `docs/WEB_DEPLOYMENT.md`
   para el detalle completo.
 - Commit: `build: prepare vite dist for github pages deployment`.
+
+## 2026-09-23 — Fase Vite 4: primer despliegue controlado a GitHub Pages
+- Configuración remota real verificada con `git ls-remote` (corrigiendo
+  el dato desactualizado de la Fase 3): repo de Project Page
+  `github.com/junivalles-cmd/control-engrase-openpit`, publicado en
+  `https://junivalles-cmd.github.io/control-engrase-openpit/` (con
+  subpath). `base: './'` confirmado como la única opción correcta para
+  esa configuración, no solo "más portable".
+- Deploy real: commit `d52d43d` sobre el repositorio de Pages (checkout
+  separado, sin tocar el `remote` de este repositorio). 28 archivos
+  runtime comparados por hash antes de escribir.
+- Validación HTTP de producción: 16/16 URLs con 200, `sw.js` en `CACHE
+  v26`, 0 referencias incondicionales a `onesignal.com`.
+- `PROD-WEB-01` a `10` + offline en producción: todos **PASS**,
+  confirmados uno por uno por el usuario.
+- Hallazgos nuevos, ninguno causado por el deploy: `APP-LINKS-001` (P2,
+  arquitectónico — Project Page no puede servir `.well-known/` en la
+  raíz del host) y `MATRIZ-DOMINGO-001` (P3, preexistente — la Matriz
+  Semanal nunca incluyó el domingo).
+- Ver `docs/VITE_MIGRATION.md` (Fase 4) y `docs/BUG_REGISTER.md` para el
+  detalle completo.
+- Commit (documental): `492e05d`.
+
+## 2026-09-23 — Fase Vite 5: retiro controlado del flujo legacy `www`
+- Checkpoint: tag local `pre-remove-legacy-www` → `492e05d` (sin push).
+- Auditoría previa a cualquier cambio: `capacitor.config.json` ya usaba
+  `webDir: "../dist"` (desde la Fase 2); `tools/sync-web-to-android.mjs`
+  no era importado ni ejecutado por `npm test`/`build`/`build:web`/
+  `dev`/`preview`/`verify:dist`/Capacitor/Android — confirmado por
+  inspección directa del código, no asumido.
+- Comparación `www` vs. `dist` por hash: 27/29 archivos idénticos (más
+  `index.html` con la diferencia cosmética ya conocida), 2 sobrantes
+  no-runtime (`schema.sql`, `icon-180.png`) que no se copiaron a `dist`.
+- Retirados del repositorio: `tools/sync-web-to-android.mjs` y
+  `CONTROL_ENGRASE_APP_ANDROID/www` (29 archivos) — recuperables vía Git
+  desde el tag de checkpoint. `android/app/src/main/assets/public` sin
+  tocar (sigue siendo responsabilidad exclusiva de Capacitor).
+  `docs/SYNC_WEB_ANDROID.md` conservado como referencia histórica, con
+  nota de retiro agregada al inicio.
+- Prueba crítica: `dist/` borrado y reconstruido desde cero (`npm run
+  build:web`) con `www` ya eliminado del repositorio — 125/125 tests,
+  build y `verify:dist` **PASS**, sin recuperar nada de `www`.
+- `npx cap sync android` confirmó por su salida que copia desde `dist`
+  sin errores por la ausencia de `www`. `./gradlew assembleDebug`:
+  **BUILD SUCCESSFUL**; verificado por hash que `assets/public/index.html`
+  del APK coincide con `dist/index.html`.
+- Android real y offline: **NO PROBADO** (Samsung no conectado,
+  `adb devices` sin dispositivos) — marcado honestamente, no asumido.
+- `npm run preview`: 19/19 recursos con 200. `dist` no cambió respecto a
+  la Fase 4 (fuente Web y `vite.config.js` sin tocar en esta fase) — **no
+  se publicó ningún redeploy** a GitHub Pages.
+- `npm test` final: 125/125 PASS. Sin cambios en Supabase, IndexedDB,
+  `sync.js`, Service Worker, `AndroidManifest.xml` ni fingerprints.
+- Arquitectura final: `CONTROL_ENGRASE_WEB` → Vite → `dist/` → (GitHub
+  Pages + Capacitor/Android), única salida runtime.
+- Ver `docs/VITE_MIGRATION.md` (Fase 5) para el detalle completo,
+  incluida la auditoría archivo por archivo y el rollback en tres
+  niveles.
+- Commit: `build: remove legacy www deployment flow`.

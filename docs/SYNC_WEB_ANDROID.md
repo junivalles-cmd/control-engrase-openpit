@@ -1,6 +1,18 @@
 # HERRAMIENTA DE SINCRONIZACIÓN WEB → ANDROID
 
-Script: `tools/sync-web-to-android.mjs`
+> **RETIRADA — Vite Fase 5 (2026-09-23).** Este documento describe una
+> herramienta que ya no existe en el repositorio. Se eliminó junto con
+> `CONTROL_ENGRASE_APP_ANDROID/www` una vez confirmado que ninguno de los
+> dos participaba ya en ningún flujo activo (`capacitor.config.json` usa
+> `webDir: "../dist"` desde la Fase 2 de Vite; Android y GitHub Pages
+> corren sobre `dist/`). Detalle completo de la retirada, verificación y
+> checkpoint de rollback en `docs/VITE_MIGRATION.md` (Fase 5) y
+> `docs/DECISIONS.md`. Para recuperar el script o `www` tal como existían:
+> `git checkout pre-remove-legacy-www -- tools/sync-web-to-android.mjs
+> CONTROL_ENGRASE_APP_ANDROID/www`. El resto de este documento se conserva
+> sin cambios, como referencia histórica de cómo funcionaba.
+
+Script (histórico, ya no existe): `tools/sync-web-to-android.mjs`
 Fase: A2 del plan de unificación (`docs/PLAN_UNIFICACION_WEB_ANDROID.md`, §9).
 Estado: **creado y probado en dry-run. Nunca ejecutado en modo `--apply`.**
 
