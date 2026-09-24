@@ -12,9 +12,15 @@
     "preview": "vite preview",
     "verify:dist": "node tools/verify-dist.mjs",
     "build:web": "npm test && npm run build && npm run verify:dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:ui": "playwright test",
+    "test:ui:screenshots": "playwright test --update-snapshots",
+    "lint:css": "stylelint \"CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css\""
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "stylelint": "^17.15.0",
+    "stylelint-config-standard": "^40.0.0",
     "typescript": "^7.0.2",
     "vite": "^5.4.21",
     "vitest": "^2.1.9"
