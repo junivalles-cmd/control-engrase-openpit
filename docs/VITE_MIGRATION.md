@@ -712,9 +712,170 @@ Supabase/IndexedDB/`sync.js`; agregar funcionalidades; corregir
 `tools/sync-web-to-android.mjs`; agregar GitHub Actions; reescribir el
 Service Worker; probar push real de OneSignal.
 
-## Siguiente fase natural
+## Siguiente fase natural (histórico — ver FASE 4 abajo)
 
 Si se aprueba esta validación: primer despliegue controlado de `dist/` a
 GitHub Pages (siguiendo `docs/WEB_DEPLOYMENT.md`), y después evaluar
 retirar gradualmente `www`/`tools/sync-web-to-android.mjs` — **no
 iniciado todavía**, pendiente de aprobación explícita.
+
+# FASE 4 — PRIMER DESPLIEGUE CONTROLADO A GITHUB PAGES
+
+Fecha: **2026-09-23** — primer deploy real de `dist/` a producción.
+Commit del proyecto principal previo: `70924e8` (tag local
+`pre-github-pages-dist-deploy`).
+
+## Corrección importante sobre la configuración remota
+
+La Fase 3 había documentado (a partir de archivos locales, marcado
+explícitamente como NO VERIFICADO) que el repositorio de GitHub Pages
+era `junivalles-cmd/junivalles-cmd.github.io` (User Page, raíz del
+dominio). **Esa información local estaba desactualizada.** Al intentar
+verificarla en esta fase (`git ls-remote`), tanto ese repositorio como
+`https://junivalles-cmd.github.io/` devolvieron 404 reales desde los
+servidores de GitHub (confirmado que no era un problema de red, probando
+`github.com` y `github.com/anthropics`, ambos 200). Seguí la instrucción
+explícita de la Fase 3 ("si no puedes acceder a GitHub: DETENTE, no
+inventes configuración") y me detuve a pedir la configuración correcta
+en vez de adivinar o reintentar con variaciones del nombre.
+
+**Configuración remota real (confirmada por el usuario y verificada con
+`git ls-remote`):**
+- Repositorio: `https://github.com/junivalles-cmd/control-engrase-openpit`
+  — un **Project Page**, no un User Page.
+- URL pública: `https://junivalles-cmd.github.io/control-engrase-openpit/`
+  (con subpath, no en la raíz del dominio).
+- Branch: `main` (única rama del remoto, coincide con `HEAD`).
+- Commit de producción antes de este deploy: `4e74527` ("Add files via
+  upload").
+
+Esto cambia una conclusión de la Fase 3: con un Project Page, `base:
+'/'` habría roto todo (los recursos habrían intentado cargar desde la
+raíz del dominio en vez de `/control-engrase-openpit/`) — `base: './'`
+(ya configurado desde la Fase 1, nunca cambiado) resultó ser no solo
+"más portable" sino la única opción correcta para esta configuración
+real. Se verificó explícitamente que todas las rutas (index.html,
+manifest, sw.js, styles.css) resuelven correctamente bajo el subpath.
+
+## Checkpoint y checkout separado
+
+- Tag local `pre-github-pages-dist-deploy` → commit `70924e8` del
+  proyecto principal (sin push).
+- Ningún checkout local preexistente del repo de Pages (búsqueda
+  acotada a `C:\Users\Planificador\Documents`, sin resultados). Se clonó
+  en una carpeta separada:
+  `C:\Users\Planificador\Documents\CONTROL_ENGRASE_DEPLOY\control-engrase-openpit`
+  — el `remote` del proyecto principal (`CONTROL_ENGRASE`) **no se tocó
+  en ningún momento**.
+
+## Comparación y clasificación (antes de escribir nada)
+
+| Categoría | Cantidad | Detalle |
+|---|---|---|
+| Agregar | 7 | `.well-known/assetlinks.json`, los 6 `src/core/*.js` |
+| Actualizar (contenido real) | 4 | `app.js`, `index.html`, `styles.css`, `sw.js` |
+| Sin cambio real (solo CRLF↔LF del checkout Windows) | 4 | `db.js`, `sync.js`, `manifest.json`, `OneSignalSDKWorker.js` — confirmado con `xxd`, contenido semánticamente idéntico |
+| Idénticos | 13 | `.nojekyll` + los 12 íconos |
+| No runtime, **conservados sin tocar** | 9 | `ESTADO_DEL_PROYECTO.md`, `GUIA_*.md` (2), `MANUAL_*.pdf` (2), `README_SUBIR_A_GITHUB.txt`, `borrar_datos_prueba.sql`, `schema.sql`, `icon-180.png` — a propósito, "no mezclar limpieza con el primer deploy" |
+
+**DEPLOY TREE == DIST**, confirmado por hash SHA-256 para los 28 archivos
+runtime, no solo a simple vista.
+
+## Revisión de seguridad antes del commit
+
+`git diff` completo (623 líneas) escaneado con patrones de secretos
+(`service_role`, `api key`, `secret`, `password`, `token`, `bearer`,
+`private key`, `.jks`, `.keystore`, `node_modules`, `AndroidManifest`):
+**cero coincidencias**. Fingerprint de `assetlinks.json`: sin cambios,
+idéntico al validado en fases anteriores.
+
+## Commit y push
+
+- Identidad Git: el checkout nuevo no tenía `user.name`/`user.email`
+  configurados (ni local ni global) — se configuraron **localmente, solo
+  en ese repositorio**, replicando la misma identidad que ya usa el
+  proyecto principal (`Planificador <junivalles@gmail.com>`, configurada
+  ahí también solo a nivel de repo, nunca global). No se tocó ninguna
+  configuración global de Git.
+- Commit `d52d43d` "deploy: publish vite dist build" sobre `4e74527`.
+  `git push origin main` — **PASS**, sin `--force`, sin pedir
+  autenticación adicional (credenciales ya disponibles en el entorno).
+- `git ls-remote` posterior confirmó `HEAD` remoto = `d52d43d`.
+
+## Validación HTTP de producción
+
+Tras esperar a que GitHub Pages reconstruyera (sondeado sin agresividad,
+esperando a que `sw.js` sirviera `CACHE v26`): **16/16 URLs con 200**,
+incluidas todas las rutas `src/core/*.js` y `.well-known/assetlinks.json`
+**dentro del path del proyecto**. Confirmado explícitamente:
+- `sw.js` productivo: `CACHE = 'engrase-openpit-v26'` (antes `v23`).
+- `index.html` productivo: **0** referencias a `onesignal.com` — el SDK
+  Web de OneSignal ya no se carga de forma incondicional en producción
+  (`NOTIF-ANDROID-001` corregido también en la Web, no solo en Android:
+  la producción anterior a este deploy todavía tenía el bug en vivo).
+- `.well-known/assetlinks.json` **en la raíz del host**
+  (`https://junivalles-cmd.github.io/.well-known/assetlinks.json`, la
+  URL que Android realmente consulta): sigue en 404, igual que antes del
+  deploy — ver `APP-LINKS-001` en `docs/BUG_REGISTER.md`. **No se intentó
+  corregir**, tal como se pidió explícitamente.
+
+## Validación manual en producción (PROD-WEB-01 a 10 + offline)
+
+Guiada una prueba a la vez, con confirmación explícita del usuario en
+cada una — ninguna se asumió ni se dio por buena automáticamente:
+
+| Prueba | Resultado |
+|---|---|
+| PROD-WEB-01 Carga inicial | PASS |
+| PROD-WEB-02 Login | PASS |
+| PROD-WEB-03 Dashboard | PASS |
+| PROD-WEB-04 Equipos | PASS |
+| PROD-WEB-05 Turno | PASS |
+| PROD-WEB-06 Estados de engrase | PASS |
+| PROD-WEB-07 Matriz Semanal | PASS — con hallazgo nuevo registrado aparte (`MATRIZ-DOMINGO-001`, preexistente, no causado por este deploy — confirmado comparando contra `app.js` del commit `4e74527`) |
+| PROD-WEB-08 Anomalías | PASS |
+| PROD-WEB-09 Historial | PASS |
+| PROD-WEB-10 Reportes | PASS |
+| Offline en producción (SW activo → sin red → recarga → navegación) | PASS |
+
+Ningún fallo P0/P1 atribuible al commit `d52d43d` — **no hizo falta
+ningún rollback**.
+
+## Hallazgos de esta fase (ninguno causado por el deploy)
+
+- **`APP-LINKS-001`** (nuevo, P2): `.well-known/assetlinks.json` no
+  disponible en la raíz del host que Android necesita — limitación
+  arquitectónica de un Project Page, preexistente (ya fallaba en
+  `4e74527`), no corregida a propósito. `APP LINKS PRODUCCIÓN: PENDIENTE`.
+- **`MATRIZ-DOMINGO-001`** (nuevo, P3): la Matriz Semanal nunca incluyó
+  el domingo, en ninguna versión — confirmado preexistente comparando
+  contra `4e74527`. No corregido, registrado para una fase futura.
+
+## Rollback (documentado, no ejecutado — no hizo falta)
+
+```
+cd C:\Users\Planificador\Documents\CONTROL_ENGRASE_DEPLOY\control-engrase-openpit
+git revert d52d43d
+git push origin main
+```
+Restaura el contenido exacto de `4e74527`. Alternativa igualmente válida:
+publicar de nuevo el contenido de
+`CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB` sin pasar por Vite (el proceso
+manual que se usaba antes de esta fase, documentado en
+`docs/WEB_DEPLOYMENT.md`).
+
+## Qué NO se hizo en esta fase (a propósito)
+
+Borrar `www` ni `tools/sync-web-to-android.mjs`; migrar a TypeScript;
+corregir `APP-LINKS-001`, `UI-ANDROID-005`, `ANDROID-DOZE-001` ni
+`MATRIZ-DOMINGO-001`; modificar Supabase/IndexedDB/`sync.js`; cambiar
+fingerprints, `AndroidManifest.xml`, Capacitor, dominio o repositorio;
+enviar push real de OneSignal; usar `--force`; introducir GitHub Actions;
+empezar otra fase.
+
+## Siguiente fase natural
+
+Retirar de forma controlada el flujo legado `www` + script
+WEB→`www`, y establecer definitivamente Vite/`dist` como única salida
+Web + Android — **no iniciado todavía**, pendiente de aprobación
+explícita.

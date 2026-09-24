@@ -427,3 +427,79 @@
   sobre notificaciones ni ciclo de vida de Android). No bloquea la
   aprobación de esta fase: en uso normal (pantalla desbloqueada, que es
   como arranca la app real) no se reprodujo ni una vez.
+
+## APP-LINKS-001 — `.well-known/assetlinks.json` no disponible en la raíz del host que Android requiere para verificar App Links
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P2 (bloquea la verificación automática de Android App
+  Links — el QR/enlaces siguen abriendo el navegador en vez de la app
+  instalada — pero no afecta el funcionamiento normal de la Web ni de la
+  app)
+- **Estado:** REPRODUCIDO, NO CORREGIDO (arquitectónico, fuera de alcance
+  de esta fase)
+- **Origen:** PREEXISTENTE — confirmado presente ANTES de este deploy
+  (`https://junivalles-cmd.github.io/.well-known/assetlinks.json`
+  devolvía 404 ya en el commit de producción anterior, `4e74527`, que ni
+  siquiera tenía una carpeta `.well-known/` en el repositorio).
+- **Descubierto durante:** Vite Fase 4 (primer despliegue controlado de
+  `dist/` a GitHub Pages), al verificar ambas URLs de assetlinks antes y
+  después del deploy, tal como se pidió explícitamente.
+- **Descripción:** el repositorio de GitHub Pages
+  (`github.com/junivalles-cmd/control-engrase-openpit`) es un **Project
+  Page**, publicado en `https://junivalles-cmd.github.io/control-engrase-openpit/`
+  — NO en la raíz del dominio (`https://junivalles-cmd.github.io/`).
+  Android verifica App Links consultando
+  `https://<host>/.well-known/assetlinks.json` en la **raíz del host**
+  (`android:host="junivalles-cmd.github.io"` en `AndroidManifest.xml`),
+  no bajo ninguna subcarpeta. Un Project Page **no puede servir nada** en
+  la raíz de ese dominio — solo bajo `/control-engrase-openpit/`.
+- **Evidencia:**
+  - `https://junivalles-cmd.github.io/control-engrase-openpit/.well-known/assetlinks.json`
+    → **200**, JSON válido, `package_name`/fingerprint correctos (incluido
+    en este deploy).
+  - `https://junivalles-cmd.github.io/.well-known/assetlinks.json`
+    (la que realmente consulta Android) → **404**, antes y después del
+    deploy, sin cambios.
+- **Acción actual:** NO corregir ahora — resolverlo requeriría una
+  arquitectura distinta (por ejemplo, publicar también en un repositorio
+  de usuario `junivalles-cmd.github.io` en la raíz, o mover el dominio de
+  App Links a uno propio con control total de la raíz), un cambio de
+  infraestructura fuera de alcance de este deploy. No se tocaron
+  fingerprints, `AndroidManifest.xml`, Capacitor, dominio ni repositorio
+  para intentar resolverlo. **APP LINKS PRODUCCIÓN: PENDIENTE.**
+
+## MATRIZ-DOMINGO-001 — La Matriz Semanal nunca incluye el domingo
+
+- **Fecha:** 2026-09-23
+- **Prioridad:** P3 (los 6 días que sí muestra son correctos; es una
+  omisión de cobertura, no un dato erróneo)
+- **Estado:** REPRODUCIDO, NO CORREGIDO
+- **Origen:** PREEXISTENTE — confirmado presente ya en el commit de
+  producción anterior a este deploy (`4e74527`) y, por lo tanto, en
+  cualquier versión previa también. No relacionado con la Modularización
+  JS Fase 2 ni con la migración a Vite.
+- **Reportado por:** usuario, durante `PROD-WEB-07` (validación manual de
+  la Matriz Semanal en producción, tras el primer deploy de `dist/` a
+  GitHub Pages).
+- **Descripción:** `renderMatrizSemanal()` (`app.js`) calcula el lunes de
+  la semana visible y genera un arreglo `dias` con exactamente 6
+  entradas:
+  ```js
+  const dias = [];
+  for (let i = 0; i < 6; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  ```
+  Esto produce siempre Lunes–Sábado — el domingo nunca se agrega al
+  arreglo, así que nunca aparece una columna para ese día en la grilla,
+  sin importar si algún equipo tiene "Domingo" en sus `assignedDays`.
+- **Confirmado que es preexistente, no introducido por este deploy:** el
+  mismo bucle de 6 iteraciones existe, sin ninguna diferencia, en
+  `app.js` del commit de producción anterior (`4e74527`, previo a
+  cualquier cambio de esta migración) — verificado con
+  `git show 4e74527:app.js`.
+- **Acción actual:** NO corregir todavía. El usuario clasificó
+  `PROD-WEB-07` como PASS (la lógica y los datos de los 6 días mostrados
+  son correctos) con este hallazgo registrado aparte, mismo patrón que
+  `UI-ANDROID-005`. Queda pendiente decidir en una fase futura si el
+  domingo debe incluirse (y si `estadoCelda()`, ya extraída a
+  `src/core/weekly-matrix.js`, necesitaría el séptimo día) o si es
+  intencional (algunos ciclos de trabajo minero no operan los domingos).
