@@ -501,27 +501,94 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .btn-accent:hover { background: var(--accent-dark); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
-/* ---------------- Secciones visuales del formulario "Registrar engrase" ----------------
-   UI/Responsive Fase 3 (docs/UI_RESPONSIVE.md): agrupa los MISMOS campos que ya
-   existían (Horómetro / Engrase / Evidencia / Finalizar) bajo un encabezado, sin
-   agregar ni quitar ningún campo. Misma tipografía que .checklist-head h4, para
-   que todos los encabezados de sección del formulario se vean consistentes. */
-.grease-section { margin-top: var(--sp-5); }
-.grease-section:first-child { margin-top: 0; }
-.grease-section-head {
-  margin: 0 0 10px; padding: 0 2px 6px; border-bottom: 1px solid var(--border);
-  font-family: var(--font-display); font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.03em; font-size: 13px; color: var(--text-dim);
-}
-/* Separa claramente la acción principal de "Reportar anomalía" (secundaria) y del
-   borde inferior de la pantalla — antes ambos botones tenían el mismo peso visual
-   salvo por el color de fondo. */
-.grease-section-final { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
 @media (max-width: 640px) {
   /* Doble clase a propósito: .btn ya trae min-height:var(--tap) (44px) desde la
      sección de accesibilidad al final del archivo, que por orden de cascada
      ganaría sobre una sola clase — aquí se busca más alto que ese mínimo. */
   .btn.btn-grease-submit { min-height: 52px; font-size: 16px; }
+}
+
+/* ---------------- Registrar Engrase: UI Iteración 2 — cards (UI/Responsive Fase 4) ----------------
+   startGreaseFlow() es compartido por Lubricador y Administrador/Planificador/Supervisor
+   (docs/UI_RESPONSIVE.md). El pedido de iteración 1 (un único .panel con divisores
+   internos) se veía "como un formulario de escritorio comprimido" — se reemplaza por
+   bloques independientes (.grease-flow-card), cada uno sobre el fondo de página que
+   ya existía (var(--bg), distinto de var(--surface) en los 3 temas — dark/light/
+   contraste — no se introduce ningún color nuevo). Todo queda scoped bajo
+   .grease-flow-panel; no se toca .panel/.panel-head/.checklist-head global. */
+.grease-flow-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.grease-flow-card:last-child { margin-bottom: 0; }
+.grease-flow-card-head {
+  margin: 0 0 var(--sp-3); font-family: var(--font-display); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.02em; font-size: 15px; color: var(--text);
+}
+
+/* ---- Card "Equipo": código grande (nivel 1) → marca/modelo (nivel 2) → autor/fecha/turno (nivel 3) ---- */
+.grease-flow-equipo-code { font-family: var(--font-mono); font-weight: 700; font-size: 22px; }
+.grease-flow-equipo-model { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.grease-flow-equipo-meta { font-size: 12px; color: var(--text-dim); margin-top: var(--sp-2); }
+
+/* ---- Card "Horómetro": input + "sin horómetro" en la MISMA fila en todos los
+   anchos (pedido explícito) — el input crece, el checkbox queda compacto a la
+   derecha sin encogerse por debajo de un tamaño usable. ---- */
+.grease-flow-hm-row { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.grease-flow-hm-field { display: flex; flex: 1 1 auto; min-width: 140px; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.grease-flow-hm-field .big-input { width: 100%; box-sizing: border-box; }
+.grease-flow-toggle-row {
+  display: flex; align-items: flex-start; gap: 10px; flex: 0 0 auto; max-width: 46%;
+  padding: 12px var(--sp-3); border-radius: 8px; background: var(--surface-2);
+  cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1.3;
+}
+/* ---- Card "Lubricante utilizado": Tipo de grasa | Cantidad en 2 columnas desde
+   390px (más angosto que el quiebre general de .form-grid en 560px — a este
+   par de campos le alcanza el espacio antes; ver docs/UI_RESPONSIVE.md) +
+   subsector de registro retroactivo. ---- */
+@media (min-width: 390px) {
+  .grease-flow-panel .grease-flow-lube-grid { grid-template-columns: 1fr 1fr; }
+}
+.grease-flow-retro-head {
+  margin: 0 0 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  font-size: 12px; color: var(--amber);
+}
+
+/* ---- Card "Puntos de engrase": título + "Marcar todos" en la misma cabecera,
+   se apila en pantallas muy angostas (360px) en vez de comprimirse. Siempre
+   una sola columna de puntos (#checklist no lleva grid en ningún ancho). ---- */
+.grease-flow-points-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  flex-wrap: wrap; margin-bottom: var(--sp-3);
+}
+.grease-flow-points-head .grease-flow-card-head { margin-bottom: 0; }
+
+/* ---- Acción final: fuera de las cards, como cierre de página (no otra card) ---- */
+.grease-flow-final { margin-top: var(--sp-3); }
+
+/* ---- Iteración 3: ancho de página y layout tablet/desktop ----
+   Móvil (360-412): sin cambios, 1 columna, todo el ancho de .lub-content/
+   .app-content. Tablet (≥768): contenedor propio ~720px, centrado — se
+   neutraliza el límite de 560px que .lub-content aplica a otras pantallas
+   del Lubricador (Mi Turno, etc.) SOLO cuando contiene .grease-flow-panel,
+   vía :has() (ya usado en este archivo, líneas 157/1182). Desktop (≥1024):
+   contenedor ~960px; Horómetro y Lubricante comparten una fila de 2
+   columnas, el resto (Puntos/Condición/Evidencia/Finalizar) ocupa todo el
+   ancho del contenedor. */
+.grease-flow-panel { width: 100%; }
+@media (min-width: 768px) {
+  .grease-flow-panel { max-width: 720px; margin: 0 auto; }
+  .lub-content:has(.grease-flow-panel) { max-width: none; }
+  .grease-flow-equipo-card { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: var(--sp-3); }
+  .grease-flow-equipo-meta { flex-basis: 100%; }
+}
+@media (min-width: 1024px) {
+  .grease-flow-panel { max-width: 960px; }
+  .grease-flow-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+  .grease-flow-form > .grease-flow-card { margin-bottom: 0; }
+  /* Hijos 3 en adelante (Puntos, Condición, Evidencia, Finalizar): todo el ancho. */
+  .grease-flow-form > *:nth-child(n+3) { grid-column: 1 / -1; }
+  .grease-flow-panel .check-row { padding: 18px 10px; gap: 18px; }
 }
 
 /* ---------------- Checklist ---------------- */
@@ -531,6 +598,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .checklist-progress-fill { height: 100%; background: var(--green); border-radius: 20px; transition: width 0.25s ease; }
 
 .checklist-item { border-bottom: 1px solid var(--border); }
+/* Registrar Engrase (.grease-flow-panel): última fila sin línea colgando — ya
+   cierra con el borde de la .grease-flow-card que la contiene. */
+.grease-flow-panel .checklist-item:last-child { border-bottom: none; }
 .check-row {
   display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 16px 4px;
   cursor: pointer; -webkit-tap-highlight-color: transparent; position: relative;
@@ -554,6 +624,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 15px; margin: 0 4px 14px;
 }
 .chk-reason.hidden { display: none; }
+/* Registrar Engrase (.grease-flow-panel): ya no necesita el offset de 4px que
+   tenía dentro del .panel sin padding — ahora vive dentro del padding propio
+   de .grease-flow-card. */
+.grease-flow-panel .chk-reason { margin: 0 0 var(--sp-3); }
 
 .point-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
 .row-actions { display: flex; gap: 6px; flex: none; }
@@ -653,18 +727,32 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    INTERFAZ SIMPLIFICADA — LUBRICADOR (móvil, un toque, campo)
    ============================================================ */
 .lub-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
-.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+/* UI/Responsive Fase 4 (docs/UI_RESPONSIVE.md): topbar, user-strip y lub-content
+   comparten el mismo margen lateral (--sp-3, 12px) para que el borde izquierdo
+   de marca / usuario / tarjetas quede alineado en vez de saltar entre 16px y
+   12px. Se mantienen como bloques separados a pedido del usuario (no fusionar
+   usuario+turno dentro del topbar: en 360-412px ya lleva marca + estado de
+   sincronización + salir). */
+.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border); }
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
 .lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
-.lub-user-strip { padding: 8px 16px; font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+/* Vertical compactado de 8px a var(--sp-2) (6px): es texto informativo de una
+   sola línea (usuario + turno), no un control táctil, así que no aplica el
+   mínimo de 44px de --tap. */
+.lub-user-strip { padding: var(--sp-2) var(--sp-3); font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
 /* UI/Responsive Fase 3 (docs/UI_RESPONSIVE.md): padding lateral pasado a
    var(--sp-3) — antes 14px sin relación con la escala, sumado al padding
    propio de .lub-eq-btn (16px) daba un inset acumulado de 36px por lado
-   (medido con Playwright). Solo se ajusta el lateral: el vertical (16px)
-   no cambia, no reduce ningún área táctil. */
-.lub-content { flex: 1; padding: 16px var(--sp-3) 100px; }
+   (medido con Playwright). El lateral no cambia en Fase 4 (sigue en 12px,
+   ya estaba en el rango correcto); el superior baja de 16px a --sp-3 (12px)
+   para alinear con el nuevo padding de topbar/user-strip. No reduce ningún
+   área táctil: solo el espacio antes del primer encabezado. */
+.lub-content { flex: 1; padding: var(--sp-3) var(--sp-3) 100px; }
 .lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; }
-.lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 14px; }
+/* El turno (Día/Noche) ya se muestra en .lub-user-strip — este encabezado dejó
+   de repetirlo ("Equipos del turno Noche" → "Equipos asignados", app.js). El
+   margen inferior baja de 14px a --sp-3 (12px), atado a la escala existente. */
+.lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 var(--sp-3); }
 
 .lub-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
 .lub-scan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; }
@@ -694,13 +782,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-record-list { display: flex; flex-direction: column; gap: 10px; }
 .lub-record-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
 
-/* ---------------- Avisos dentro del formulario de engrase ---------------- */
+/* ---------------- Avisos dentro del formulario de engrase ----------------
+   UI/Responsive Fase 4: el margen lateral fijo (antes 14px) se quita — ahora viven
+   directamente sobre el fondo de página igual que las .grease-flow-card, así que el
+   único inset lateral es el de .lub-content/.app-content (ya existente). Solo margen
+   vertical, con --sp-3 en vez del 14px suelto sin relación con la escala. */
 .duplicate-warning {
-  margin: 0 14px 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5;
+  margin: 0 0 var(--sp-3); padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5;
   background: rgba(232,163,61,0.12); border: 1px solid var(--amber); color: var(--text);
 }
 .draft-banner {
-  margin: 0 14px 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6;
+  margin: 0 0 var(--sp-3); padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6;
   background: rgba(59,130,246,0.10); border: 1px solid #3B82F6; color: var(--text);
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
@@ -928,8 +1020,12 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   margin-bottom: 6px; background: var(--surface-2); font-size: 13px;
 }
 
-/* ---------------- Engrase atrasado (capturado retroactivamente) ---------------- */
-.retro-box { border: 1px dashed var(--amber); border-radius: 10px; padding: 12px; background: rgba(230,126,34,0.06); }
+/* ---------------- Engrase atrasado (capturado retroactivamente) ----------------
+   UI/Responsive Fase 4: antes era "span-2" dentro de .form-grid (heredaba el gap
+   de la grilla); ahora es un subsector propio ("Registro retroactivo") fuera del
+   grid, así que necesita su propio margin-top para no pegarse a Tipo de grasa/
+   Cantidad. */
+.retro-box { margin-top: var(--sp-3); border: 1px dashed var(--amber); border-radius: 10px; padding: 12px; background: rgba(230,126,34,0.06); }
 .retro-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
 .retro-toggle input { width: 20px; height: 20px; flex: none; }
 .retro-tag {
@@ -938,8 +1034,6 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 
 /* ---------------- Puntos no engrasados / sin horómetro ---------------- */
-.nohm-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
-.nohm-toggle input { width: 20px; height: 20px; flex: none; }
 .input-disabled { opacity: 0.45; }
 .skipped-summary { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 6px; }
 .skipped-chip {
@@ -964,23 +1058,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   margin-left: 3px; vertical-align: middle;
 }
 
-/* ---------------- Registrar Engrase en escritorio ----------------
-   El formulario está pensado para móvil (una columna, botones grandes). En pantallas
-   anchas se veía muy angosto con mucho espacio desaprovechado a los lados: aquí se
-   ensancha y el checklist pasa a dos columnas cuando hay sitio. */
-@media (min-width: 900px) {
-  #reg-flow-area { max-width: 1100px; }
-  #reg-flow-area .form-grid { grid-template-columns: repeat(3, 1fr); }
-  #reg-flow-area .form-grid .span-2 { grid-column: span 3; }
-  #reg-flow-area #checklist {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start;
-  }
-  #reg-flow-area .checklist-item { break-inside: avoid; }
-  #reg-flow-area .big-input { font-size: 22px !important; }
-}
-@media (min-width: 1300px) {
-  #reg-flow-area #checklist { grid-template-columns: repeat(3, 1fr); }
-}
+/* Registrar Engrase (Administrador/Planificador/Supervisor): #reg-flow-area
+   solo aloja el diseño en cards de .grease-flow-panel (ver más abajo, que ya
+   resuelve el ancho de escritorio por su cuenta) — mantiene el ancho de
+   .app-content, sin límite propio. */
 
 /* Formulario de punto de engrase simplificado */
 .pt-main-label { display: block; margin-bottom: 6px; }
@@ -1214,6 +1295,9 @@ input[type="checkbox"], input[type="radio"] {
 /* En el checklist de engrase, que es lo que más se toca en campo, más grandes aún */
 .checklist-item input[type="checkbox"],
 .chk-done { width: 26px; height: 26px; }
+/* Registrar Engrase (.grease-flow-panel): el checkbox de "sin horómetro" vive en
+   una fila táctil completa, un poco más grande que el checkbox genérico. */
+.grease-flow-toggle-row input[type="checkbox"] { width: 22px; height: 22px; flex: none; }
 
 /* Campos de formulario cómodos en móvil (16px evita que el móvil haga zoom al enfocar) */
 .form-grid input, .form-grid select, .form-grid textarea, .input {
