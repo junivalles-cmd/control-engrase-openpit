@@ -4541,6 +4541,12 @@ async function renderHorometros() {
     await handleHourmeterExcelImport(file, equipos);
     ev.target.value = '';
   });
+
+  // UI-FULL-102: navigate() ya aplica makeTablesResponsive() en la carga inicial de
+  // esta pantalla, pero "Guardar" (arriba) llama a renderHorometros() directamente
+  // para refrescar la tabla, sin pasar por navigate() — sin esta llamada, la tabla
+  // pierde las etiquetas móviles justo después del primer guardado.
+  makeTablesResponsive(c);
 }
 
 async function handleHourmeterExcelImport(file, equipos) {
@@ -4576,6 +4582,10 @@ async function handleHourmeterExcelImport(file, equipos) {
     </div>
     <div class="modal-actions"><button class="btn btn-accent" id="btn-confirm-hm">Aplicar actualización</button></div>
   `);
+  // UI-FULL-305: esta tabla vive dentro de un modal (openModal), fuera de #app-content
+  // — el gancho central de navigate() (que aplica makeTablesResponsive() a cada ruta)
+  // nunca la alcanza. openModal() es síncrona, así que la tabla ya existe en el DOM aquí.
+  makeTablesResponsive($('.modal-body'));
   $('#btn-confirm-hm').addEventListener('click', async () => {
     let applied = 0;
     for (const p of preview) {
@@ -7035,7 +7045,7 @@ async function renderConfig() {
         <p class="dim" style="margin-top:6px">Restaurar NO borra lo que ya tienes — combina los datos del archivo con los actuales (si un registro existe en ambos, gana el más reciente).</p>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel" id="audit-log-panel">
       <div class="panel-head"><h3>Registro de auditoría (últimas 50 acciones)</h3></div>
       <table class="data-table">
         <thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th><th>Usuario</th></tr></thead>
@@ -7096,6 +7106,13 @@ async function renderConfig() {
       <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
     </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
   makeTablesResponsive($('#push-tokens-list'));
+  // UI-FULL-103: navigate() ya aplica makeTablesResponsive() en la primera entrada a
+  // Configuración, pero renderConfig() se vuelve a llamar directamente (sin pasar por
+  // navigate()) después de casi cualquier acción de esta pantalla (guardar ajustes,
+  // agregar cuadrilla/ubicación/tipo, activar push, restaurar respaldo…) — cada una de
+  // esas veces reconstruye la tabla de auditoría sin la etiqueta móvil si no se repite
+  // la llamada aquí.
+  makeTablesResponsive($('#audit-log-panel'));
 
   // Al apagar un tipo de aviso, su tarjeta se atenúa enseguida (sin esperar a guardar)
   $$('[data-notif-toggle]', c).forEach(chk => {

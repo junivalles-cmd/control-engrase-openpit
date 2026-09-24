@@ -10,6 +10,17 @@ Auditoría **estática de código**, no interactiva: lectura de cada función `r
 
 Registrar Engrase (`renderRegistrar`/`startGreaseFlow`) y Mi Turno (`renderLubricadorHome`) **no están en esta auditoría** — ya se rediseñaron y corrigieron en las fases anteriores de esta misma sesión (cards responsive, `.grease-flow-panel`, contenedor 720px@768/960px@1024+), y quedan como referencia de PASS.
 
+## LOTE P1 — cerrado (2026-09-24)
+
+Antes de corregir, se estudió `navigate()` (app.js:1789-1809): esa función ya aplica `makeTablesResponsive($('#app-content'))` automáticamente después de renderizar CUALQUIER ruta del menú admin — el bug real en los 3 casos confirmados es que esas pantallas se **re-renderizan a sí mismas** (guardar, importar, cualquier acción de Configuración) llamando su propia función directamente, sin volver a pasar por `navigate()`, así que ese gancho nunca vuelve a aplicarse ahí.
+
+- **UI-FULL-101 (Engrase del Turno): FALSO POSITIVO.** `renderTurno()` no tiene ningún otro punto de entrada además de `navigate('turno')` (0 llamadas directas fuera de su propia declaración, verificado) — el gancho central ya la cubre siempre. No se tocó. Regresión: `tests/unit/table-responsive-audit-p1.test.js` (verifica que siga sin aparecer una segunda llamada).
+- **UI-FULL-102 (Actualizar Horómetros): RESUELTO.** `makeTablesResponsive(c)` agregado al final de `renderHorometros()`.
+- **UI-FULL-103 (Configuración → Registro de auditoría): RESUELTO.** `id="audit-log-panel"` + `makeTablesResponsive($('#audit-log-panel'))`, mismo patrón que ya usaba `#push-tokens-list` en la misma función.
+- **UI-FULL-305 (Horómetros → preview de importación Excel, modal): RESUELTO.** `makeTablesResponsive($('.modal-body'))` justo después de `openModal(...)`.
+
+Verificado con Playwright real (`tests/ui/table-responsive-p1.spec.js`, ejecutando la función `makeTablesResponsive()` real extraída del código fuente, no una reimplementación) en los 7 anchos: labels correctos, sin scroll horizontal, botones accesibles, modal dentro del viewport. 135/135 tests unitarios, 49/49 Playwright, typecheck/build/Android sin cambios de comportamiento.
+
 ## Inventario de pantallas (extraído del código real)
 
 Ruteo real: `PERMISSIONS` (app.js:1010-1016), `MENU` (app.js:1681-1695), mapa de rutas admin-family (app.js:1803-1807), shell Lubricador `bootLubricador()` (app.js ~1824) con sus 4 rutas propias.
@@ -61,9 +72,9 @@ Ruteo real: `PERMISSIONS` (app.js:1010-1016), `MENU` (app.js:1681-1695), mapa de
 
 | ID | Pantalla | Rol | Tipo | 360 | 390 | 412 | 768 | 1024 | 1366 | 1920 | Problema | Severidad | Archivo | Selector/función | Propuesta |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| UI-FULL-101 | Engrase del Turno | Admin/Planif/Superv | Tabla | FAIL | FAIL | FAIL | WARN | PASS | PASS | PASS | `renderTurno()` nunca llama `makeTablesResponsive(c)` (a diferencia de `renderPlan`/`renderLubricantes`). La tabla de 9 columnas SÍ se apila por CSS puro en ≤680px, pero **sin `data-label`** — cada celda queda sin etiqueta, ilegible (4 números seguidos: Horómetro/Último/Próximo/Restante). | P1 | app.js:3999-4035 | `renderTurno()` | Agregar `makeTablesResponsive(c)` |
-| UI-FULL-102 | Actualizar Horómetros | Admin/Planif | Tabla | FAIL | FAIL | FAIL | PASS | PASS | PASS | PASS | Mismo bug: `renderHorometros()` no llama `makeTablesResponsive(c)`. Input y botón siguen tocables, pero "horómetro anterior" vs "actual" pierde contexto. | P1 | app.js:4497-4544 | `renderHorometros()` | Agregar `makeTablesResponsive(c)` |
-| UI-FULL-103 | Horómetros → Importar Excel (preview) | Admin/Planif | Modal/Tabla | FAIL | FAIL | FAIL | PASS | PASS | PASS | PASS | Mismo bug dentro de un modal — `openModal()` no llama `makeTablesResponsive` automáticamente. | P1 | app.js:4564-4578 | `handleHourmeterExcelImport()` | Llamar `makeTablesResponsive()` sobre el contenedor tras `openModal()` |
+| UI-FULL-101 | Engrase del Turno | Admin/Planif/Superv | Tabla | PASS | PASS | PASS | PASS | PASS | PASS | PASS | **FALSO POSITIVO (verificado en LOTE P1, 2026-09-24).** `navigate()` (app.js:1789-1809) ya aplica `makeTablesResponsive($('#app-content'))` automáticamente tras renderizar cualquier ruta, y `renderTurno()` no tiene ningún otro punto de entrada — el gancho central ya la cubre siempre. Sin cambios. | — (era P1, descartado) | app.js:3999-4035; 1789-1809 | `renderTurno()`, `navigate()` | Ninguna — ya funciona |
+| UI-FULL-102 | Actualizar Horómetros | Admin/Planif | Tabla | PASS | PASS | PASS | PASS | PASS | PASS | PASS | **RESUELTO (LOTE P1, 2026-09-24).** Causa real: "Guardar" llama `renderHorometros()` directamente (bypassea `navigate()`), reconstruyendo la tabla sin re-etiquetar. `makeTablesResponsive(c)` agregado al final de la función. | — (era P1) | app.js:4497-4544 | `renderHorometros()` | Resuelto — verificado con Playwright real en 7 anchos |
+| UI-FULL-103 | Horómetros → Importar Excel (preview) | Admin/Planif | Modal/Tabla | PASS | PASS | PASS | PASS | PASS | PASS | PASS | **RESUELTO (LOTE P1, 2026-09-24).** Causa real: tabla dentro de `openModal()`, fuera de `#app-content` — el gancho de `navigate()` nunca la alcanza. `makeTablesResponsive($('.modal-body'))` agregado justo después de `openModal(...)`. | — (era P1) | app.js:4564-4578 | `handleHourmeterExcelImport()` | Resuelto — modal dentro del viewport verificado en 7 anchos |
 | UI-FULL-104 | Anomalías (Admin/Supervisor) | Admin/Superv | Tabla | WARN | WARN | WARN | PASS | PASS | PASS | PASS | `makeTablesResponsive` SÍ se llama, pero ninguna de las 9 columnas está marcada `col-secondary` (a diferencia del Dashboard) — tarjeta apilada muy larga en móvil. | P2 | app.js:4598-4672 | `renderAnomalias()` | Marcar 2-3 columnas (Responsable, Foto) como `col-secondary` |
 | UI-FULL-105 | Anomalías (vista Lubricador) | Lubricador | Pantalla | PASS | PASS | PASS | WARN | WARN | WARN | WARN | Misma función, pero dentro de `.lub-content` (max-width 560px desde 640px) **sin la excepción** que ya tiene Registrar Engrase (`:has(.grease-flow-panel)`). Sobran ~1360px a los lados en 1920. | P2 | styles.css:812-815 | `.lub-content` (global, no tocar) | Excepción scoped nueva para esta vista, sin tocar `.lub-content` para el resto del Lubricador |
 | UI-FULL-106 | Modal "Reportar/Editar anomalía" | Todos | Modal/Formulario | PASS | PASS | PASS | WARN | WARN | WARN | WARN | `<textarea name="description">` sin `class="span-2"` — queda a media columna junto al select de Criticidad, inconsistente con el resto de la app. | P3 | app.js:4727 | `openAnomalyForm()` | Agregar `class="span-2"` |
@@ -97,7 +108,7 @@ Ruteo real: `PERMISSIONS` (app.js:1010-1016), `MENU` (app.js:1681-1695), mapa de
 | UI-FULL-302 | Login | Público | Componente | WARN | WARN | WARN | WARN | WARN | WARN | WARN | Botón de tema (`.icon-btn.theme-btn`) mide ~41px de ancho, sin `min-width` — por debajo del objetivo táctil de 44px en el eje horizontal, en TODOS los anchos (no es un problema de breakpoint). | P3 | styles.css:369,1278 | `.icon-btn` | Agregar `min-width: var(--tap)` |
 | UI-FULL-303 | Login | Público | Componente | PASS | PASS | PASS | PASS | PASS | PASS | PASS | `.login-users` con scroll interno (44vh), ningún botón cortado con los 5 usuarios actuales. | — | styles.css:209-215 | `.login-users` | — |
 | UI-FULL-304 | Configuración | Admin | Pantalla | WARN | WARN | WARN | WARN | WARN | WARN | WARN | 10 `.panel` apilados en una sola columna en TODOS los anchos. En desktop cada panel se ensancha pero su contenido (2-4 campos) deja mucho espacio vacío — mismo patrón de "no aprovechar el ancho" que tenía Registrar Engrase, en su variante "panel ancho con contenido disperso". Obliga al mismo scroll larguísimo en 1920 que en 360. | P2 | app.js:6906-7044 | `renderConfig()` | En ≥1024px, agrupar paneles relacionados en 2-3 columnas (grid scoped, sin tocar `.panel` global) |
-| UI-FULL-305 | Configuración — Registro de auditoría | Admin | Tabla | FAIL | FAIL | FAIL | PASS | PASS | PASS | PASS | Nunca recibe `makeTablesResponsive()` (a diferencia de la tabla de push-tokens en la misma pantalla, que sí la recibe) — sin `data-label`, la tabla se apila SIN etiquetas: fecha/acción/detalle/usuario indistinguibles en móvil. | P1 | app.js:7039-7044 | tabla sin `makeTablesResponsive()` | Agregar la llamada, igual que ya se hace para push-tokens (línea 7098) |
+| UI-FULL-305 | Configuración — Registro de auditoría | Admin | Tabla | PASS | PASS | PASS | PASS | PASS | PASS | PASS | **RESUELTO (LOTE P1, 2026-09-24).** Causa real: `renderConfig()` se reinvoca a sí misma tras casi cualquier acción de la pantalla, reconstruyendo la tabla sin re-etiquetar. `id="audit-log-panel"` + `makeTablesResponsive($('#audit-log-panel'))` agregados junto a la llamada que ya existía para `#push-tokens-list`. | — (era P1) | app.js:7039-7044 | `renderConfig()` | Resuelto — verificado con Playwright real en 7 anchos |
 | UI-FULL-306 | Configuración — formularios generales/sync | Admin | Formulario | PASS | PASS | PASS | PASS | PASS | PASS | PASS | `.form-grid` estándar, campos cortos, funciona en ambas configuraciones. | — | app.js:6929-6999 | `#general-form`, `#sync-form` | — |
 | UI-FULL-307 | Configuración — Notificaciones | Admin | Formulario | PASS | PASS | PASS | PASS | PASS | PASS | PASS | Lista vertical de tarjetas, legible en cualquier ancho, aunque podría ir en 2 columnas en desktop. | P3 | app.js:6948-6969 | `notifCardHTML()` | Opcional: 2 columnas ≥1024px |
 | UI-FULL-308 | Ayuda | Todos | Pantalla | PASS | PASS | PASS | PASS | PASS | WARN | WARN | `.family-zones` (`flex:1 1 260px`) puede estirarse mucho junto a un diagrama fijo de 260px en 1366/1920, dejando una columna de texto muy ancha y dispersa. | P3 | app.js:6169-6210 | `.family-body`, `.family-zones` | Opcional: `max-width` a `.family-zones` en pantallas muy anchas |
@@ -113,10 +124,10 @@ Ruteo real: `PERMISSIONS` (app.js:1010-1016), `MENU` (app.js:1681-1695), mapa de
 |---|---|---|
 | `table.matriz` (Matriz Semanal) | A — scroll horizontal + columna sticky | Mantener (diseño intencional, ya validado) |
 | Dashboard "Equipos que requieren atención" | B + `col-secondary` | Mantener (ya corregido en fase anterior) |
-| Engrase del Turno | B pero rota (falta `makeTablesResponsive`) | **B — activar la llamada faltante (P1)** |
-| Actualizar Horómetros | B pero rota | **B — activar la llamada faltante (P1)** |
-| Horómetros → import preview | B pero rota (modal) | **B — activar en el modal (P1)** |
-| Configuración → auditoría | B pero rota | **B — activar la llamada faltante (P1)** |
+| Engrase del Turno | B (ya funcionaba — falso positivo del audit inicial) | Sin cambios |
+| Actualizar Horómetros | B, resuelta en LOTE P1 | Resuelto |
+| Horómetros → import preview | B (modal), resuelta en LOTE P1 | Resuelto |
+| Configuración → auditoría | B, resuelta en LOTE P1 | Resuelto |
 | Anomalías | B, sin recorte de columnas | B + agregar `col-secondary` a 2-3 columnas |
 | Historial — Búsqueda General | B, sin recorte | B + `col-secondary` |
 | Historial — por equipo | B, sin recorte | B + `col-secondary` |
@@ -164,22 +175,22 @@ TOTAL TABLAS: **14** (Dashboard-atención, Plan de Engrase, Matriz, Engrase del 
 
 TOTAL COMPONENTES RESPONSIVE REVISADOS: **45 filas de hallazgo** (`UI-FULL-001` a `313`, en 4 lotes de auditoría)
 
-**P1: 4** (`UI-FULL-101, 102, 103, 305` — todos el mismo patrón: tabla sin `makeTablesResponsive()`)
+**P1: 0 pendientes** (3 reales, los 3 RESUELTOS en LOTE P1 — `UI-FULL-102, 103, 305`; `UI-FULL-101` era falso positivo, descartado — ver "LOTE P1 — cerrado" arriba)
 
 **P2: 11** (`UI-FULL-001, 005, 006, 008, 104, 105, 109, 201, 202, 206, 304`)
 
 **P3: 8** (`UI-FULL-007, 106, 110, 205, 208, 302, 307, 308`)
 
-PANTALLAS PASS (sin ningún hallazgo, en ninguno de los 7 anchos): **8** — Dashboard, Equipos, Matriz Semanal, Lubricantes, Usuarios, Login, Registrar Engrase (ya corregido), Mi Turno (ya corregido)
+PANTALLAS PASS (sin ningún hallazgo pendiente, en ninguno de los 7 anchos): **11** — Dashboard, Equipos, Matriz Semanal, Lubricantes, Usuarios, Login, Registrar Engrase (ya corregido), Mi Turno (ya corregido), Engrase del Turno (falso positivo), Actualizar Horómetros (resuelto), Configuración → import Excel (resuelto)
 
-PANTALLAS CON PROBLEMAS: **9** — Plan de Engrase, Engrase del Turno, Actualizar Horómetros, Anomalías, Historial, Reportes, Configuración, Ayuda, Mis Engrases (Lubricador)
+PANTALLAS CON PROBLEMAS PENDIENTES: **7** — Plan de Engrase, Anomalías, Historial, Reportes, Configuración (paneles desktop), Ayuda, Mis Engrases (Lubricador)
 
 MANUAL REQUIRED: **0** — todos los hallazgos se pudieron determinar por lectura de código (estructura HTML + reglas CSS existentes); ninguno dependía de un estado de datos que solo apareciera con una sesión real autenticada.
 
 ## Orden de corrección propuesto
 
-**LOTE 1 — P1 (mismo fix, 4 pantallas):**
-Agregar la llamada faltante a `makeTablesResponsive()` en: `renderTurno()`, `renderHorometros()`, `handleHourmeterExcelImport()` (modal), y la tabla de auditoría en `renderConfig()`. Un solo patrón repetido, bajo riesgo, alto impacto (hoy esas 4 tablas son genuinamente ilegibles en 360-412).
+**LOTE 1 — P1 (mismo fix, 3 pantallas reales + 1 falso positivo descartado): CERRADO.**
+Agregada la llamada faltante a `makeTablesResponsive()` en: `renderHorometros()`, `handleHourmeterExcelImport()` (modal), y la tabla de auditoría en `renderConfig()`. `renderTurno()` no lo necesitaba (ver "LOTE P1 — cerrado" arriba). Un solo patrón repetido, bajo riesgo, alto impacto — verificado con Playwright real en los 7 anchos.
 
 **LOTE 2 — Modal breakpoint gap (P2, causa raíz de 4 hallazgos):**
 Ampliar `@media (max-width: 380px)` → ~480px en las reglas de `.modal`/`.detail-grid` (styles.css:330-363). Corrige de un solo cambio: UI-FULL-001, 005, 006, 008 (Equipos nuevo/editar, Detalle equipo, Plan config+puntos).
