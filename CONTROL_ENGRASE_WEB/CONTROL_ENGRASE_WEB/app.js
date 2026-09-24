@@ -1901,6 +1901,7 @@ async function renderLubricadorHome() {
       ${statuses.map(({ e, s }) => `
         <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
           <div class="lub-eq-top">
+            <span class="lub-eq-icon icon-hauler" aria-hidden="true"></span>
             <span class="lub-eq-code">${esc(e.code)}</span>
             <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
           </div>

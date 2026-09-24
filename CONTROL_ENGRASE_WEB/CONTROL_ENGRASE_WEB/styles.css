@@ -628,7 +628,12 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
 .lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
 .lub-user-strip { padding: 8px 16px; font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
-.lub-content { flex: 1; padding: 16px 14px 100px; }
+/* UI/Responsive Fase 3 (docs/UI_RESPONSIVE.md): padding lateral pasado a
+   var(--sp-3) — antes 14px sin relación con la escala, sumado al padding
+   propio de .lub-eq-btn (16px) daba un inset acumulado de 36px por lado
+   (medido con Playwright). Solo se ajusta el lateral: el vertical (16px)
+   no cambia, no reduce ningún área táctil. */
+.lub-content { flex: 1; padding: 16px var(--sp-3) 100px; }
 .lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; }
 .lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 14px; }
 
@@ -638,21 +643,26 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
 .lub-eq-btn {
   display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
-  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px; cursor: pointer; color: var(--text);
+  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); cursor: pointer; color: var(--text);
 }
 .lub-eq-btn[data-status="VERDE"] { border-left-color: var(--green); }
 .lub-eq-btn[data-status="AMARILLO"] { border-left-color: var(--amber); }
 .lub-eq-btn[data-status="ROJO"] { border-left-color: var(--red); }
 .lub-eq-btn[data-status="GRIS"] { border-left-color: var(--gray-status); }
 .lub-eq-btn:active { background: var(--surface-2); }
-.lub-eq-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.lub-eq-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+/* Camión articulado (icon-hauler, ver arriba) — identifica de un vistazo que la
+   tarjeta es un equipo de mina, no solo texto. Mismo currentColor que el resto
+   de .lub-eq-top (hereda el color del texto de la tarjeta). */
+.lub-eq-icon { width: 22px; height: 22px; flex: none; background: currentColor; opacity: 0.85; }
 .lub-eq-code { font-family: var(--font-mono); font-weight: 700; font-size: 20px; }
+.lub-eq-top .status-chip { margin-left: auto; }
 .lub-eq-model { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .lub-eq-location { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
 .lub-eq-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
 
 .lub-anomaly-fab {
-  display: block; width: 100%; margin-top: 18px; padding: 16px; border-radius: 12px;
+  display: block; width: 100%; margin-top: 18px; padding: 16px var(--sp-3); border-radius: 12px;
   background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--red);
   font-weight: 700; font-size: 15px; cursor: pointer;
 }
@@ -768,6 +778,15 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .icon-truck {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M14%2018V6a2%202%200%200%200-2-2H4a2%202%200%200%200-2%202v11a1%201%200%200%200%201%201h2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%2018H9%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M19%2018h2a1%201%200%200%200%201-1v-3.65a1%201%200%200%200-.22-.624l-3.48-4.35A1%201%200%200%200%2017.52%208H14%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2217%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%227%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M14%2018V6a2%202%200%200%200-2-2H4a2%202%200%200%200-2%202v11a1%201%200%200%200%201%201h2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%2018H9%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M19%2018h2a1%201%200%200%200%201-1v-3.65a1%201%200%200%200-.22-.624l-3.48-4.35A1%201%200%200%200%2017.52%208H14%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2217%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%227%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%3C/svg%3E");
+}
+/* Camión articulado (hauler) — maquinaria pesada/minería, distinto del camión de
+   reparto genérico de arriba (icon-truck): cabina baja + caja tonel alta con frente
+   inclinado + 3 ruedas (tándem trasero). UI/Responsive Fase 3, ver docs/UI_RESPONSIVE.md.
+   Mismo formato que los demás iconos de este archivo (SVG inline, 24x24, trazo, sin
+   relleno) — no es una librería nueva, es un ícono más dibujado a mano en el mismo estilo. */
+.icon-hauler {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M2%2019v-4h2.5l2%202v2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M9%2019V8h8l4%205v6%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%224.5%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2213%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2219%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M2%2019v-4h2.5l2%202v2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M9%2019V8h8l4%205v6%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%224.5%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2213%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2219%22%20cy%3D%2220.3%22%20r%3D%221.3%22%20/%3E%0A%3C/svg%3E");
 }
 .icon-list {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M3%205h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2012h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2019h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%205h13%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%2012h13%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%2019h13%22%20/%3E%0A%3C/svg%3E");
