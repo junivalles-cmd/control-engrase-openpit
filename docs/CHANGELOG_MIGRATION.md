@@ -425,3 +425,46 @@ pendientes de validación visual — ver `docs/BUG_REGISTER.md`.
   estrategia de Fase 2 y el rollback en tres niveles.
 - Commit(s): `build: add typescript migration foundation`,
   `refactor: type-annotate hourmeter core module with jsdoc`.
+
+## 2026-09-23 — UI/Responsive Fase 1: auditoría (sin corregir)
+- Playwright (7 resoluciones) + Stylelint instalados como tooling de
+  auditoría, sin frameworks de UI nuevos. Solo se automatizó la
+  pantalla de login (pública) — el resto requiere PIN real de
+  producción, marcado REQUIERE VALIDACIÓN MANUAL en vez de un PASS
+  inventado.
+- Stylelint: 595 errores/16 reglas en la línea base → clasificados uno
+  por uno → 0 errores, 56 warnings no bloqueantes, sin `--fix`.
+- Hallazgos: P1=0, P2=0, P3=5. `UI-ANDROID-005` (causa raíz: densidad,
+  no overflow) y `.kpi-grid` no monótono (`UI-RESP-003`) identificados
+  como los únicos accionables.
+- Ver `docs/UI_RESPONSIVE.md` (Fase 1) para el detalle completo.
+- Commit: `test: add responsive ui audit tooling`.
+
+## 2026-09-23 — UI/Responsive Fase 2: correcciones dirigidas
+- Corregidos solamente `UI-ANDROID-005` y `.kpi-grid` (`UI-RESP-003`) —
+  sin refactorización general de `styles.css`, sin tocar Lubricador,
+  formularios, Matriz Semanal, lógica de negocio ni TypeScript.
+- `UI-ANDROID-005`: 5 de 9 columnas del panel "Equipos que requieren
+  atención" marcadas `class="col-secondary"` (`app.js`), ocultas solo
+  en `≤680px` (`styles.css`) — Estado/Código/Equipo/Restante-Atraso
+  siempre visibles, desktop sin cambios. Sin `overflow-x`, sin
+  `nth-child`. Efecto colateral (borde huérfano) corregido con una
+  regla CSS genérica adicional.
+- `.kpi-grid`: progresión 2→4→3→6 (no monótona) → 2→2→3→4→6, usando
+  los mismos 3 breakpoints ya existentes (600/900/1100), sin agregar
+  ninguno nuevo — eliminada la declaración duplicada que causaba el
+  comportamiento dependiente del orden del archivo.
+- Verificación: dos specs Playwright nuevos sin login (fragmentos
+  estáticos con estructura/clases reales, nunca datos de producción) —
+  **21/21 PASS** (suite completa). `npm run lint:css`: 0 errores, 56
+  warnings (idénticos a Fase 1). `npm test`: 125/125 PASS. `npm run
+  typecheck`: PASS. `npm run build:web`: PASS. `npm run preview`: sin
+  404, sin errores JS. `npx cap sync android` + `assembleDebug`:
+  **BUILD SUCCESSFUL**. Android real: **NO PROBADO** (Samsung no
+  conectado). Sin cambios en Supabase, IndexedDB, `sync.js`, Service
+  Worker, lógica de negocio.
+- **`UI-ANDROID-005` NO se cierra como PASS** hasta validación visual
+  del usuario (`UI-MANUAL-01`).
+- Ver `docs/UI_RESPONSIVE.md` (Fase 2) para el detalle completo.
+- Commit(s): `fix: reduce dashboard information density on mobile`,
+  `fix: normalize responsive kpi grid`.

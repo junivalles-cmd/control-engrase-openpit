@@ -523,3 +523,69 @@ Worker. Ver `docs/TYPESCRIPT_MIGRATION.md` para el detalle completo,
 incluida la estrategia recomendada para Fase 2 (orden de módulos
 siguientes y los dos caminos posibles para resolver la conversión real
 de extensión).
+
+## UI/RESPONSIVE FASE 1 — Auditoría (sin corregir)
+**Estado:** COMPLETADA (2026-09-23)
+
+Playwright (7 resoluciones: 360/390/412/768/1024/1366/1920) + Stylelint
+instalados como tooling de auditoría — sin Tailwind/Bootstrap/Material
+UI/React/Vue/Angular. Solo se automatizó la pantalla de login (pública,
+sin autenticación) — el resto de pantallas requiere PIN real de
+producción, sin credenciales de prueba seguras en este entorno; se
+marcaron **REQUIERE VALIDACIÓN MANUAL** en vez de inventar un PASS.
+Stylelint: línea base 595 errores/16 reglas (bare `stylelint-config-
+standard`) clasificados uno por uno → 0 errores, 56 warnings no
+bloqueantes tras configuración controlada (sin `--fix`).
+
+Hallazgos: **P1=0, P2=0, P3=5** — el más relevante, `UI-ANDROID-005`
+(causa raíz confirmada: densidad de información, no overflow) y un
+comportamiento no monótono de `.kpi-grid` (`UI-RESP-003`, 2→4→3→6
+columnas al aumentar el ancho). También se encontró que el sistema ya
+tenía una base de accesibilidad/responsive más madura de lo asumido
+(touch targets de 44px, escalas `--sp-*`/`--fs-*`) aunque estas últimas
+casi sin adoptar en la práctica (0 y 6 usos reales respectivamente,
+clasificado como deuda técnica CSS, no bug). Ver `docs/UI_RESPONSIVE.md`
+(Fase 1) para el detalle completo, incluida la tabla de hallazgos.
+
+## UI/RESPONSIVE FASE 2 — Correcciones dirigidas
+**Estado:** CORREGIDO EN CÓDIGO, PENDIENTE DE VALIDACIÓN VISUAL DEL USUARIO (2026-09-23)
+
+Dos correcciones puntuales sobre los únicos hallazgos accionables de la
+Fase 1 (P1=0, P2=0) — sin refactorización general de `styles.css`, sin
+tocar Lubricador, formularios, Matriz Semanal, lógica de negocio,
+TypeScript, ni los 56 warnings de Stylelint/22 `@media`/`--sp-*`/
+`--fs-*` clasificados como deuda técnica CSS.
+
+**`UI-ANDROID-005`:** de las 9 columnas del panel "Equipos que
+requieren atención" del Dashboard, se priorizaron 4 (Estado, Código,
+Equipo, Restante/Atraso) como siempre visibles y se marcaron 5 como
+`class="col-secondary"` (Turno, Control, Horómetro, Próximo/Día
+asignado, Días sin engrase), ocultas solo en la tarjeta móvil
+(`≤680px`). Desktop conserva las 9 columnas sin cambios. Sin
+`overflow-x: auto`, sin `nth-child` — clases semánticas, sin tocar el
+mecanismo genérico `data-label` que comparten otras tablas (Historial,
+Reportes, Usuarios). Efecto colateral (borde inferior huérfano en la
+última celda visible) corregido con una regla CSS genérica adicional.
+
+**`.kpi-grid` (`UI-RESP-003`):** progresión de columnas corregida de no
+monótona (2→4→3→6) a monótona (2→2→3→4→6), usando los mismos 3
+breakpoints que ya existían (600/900/1100 — ninguno nuevo), eliminando
+la declaración duplicada que causaba el comportamiento dependiente del
+orden del archivo.
+
+Verificación: dos specs nuevos de Playwright sin requerir login
+(`tests/ui/kpi-grid.spec.js`, `tests/ui/dashboard-table-density.spec.js`
+— fragmentos estáticos con la estructura/clases REALES contra el
+`styles.css` real, nunca datos de producción) — **21/21 PASS** (suite
+completa, 3 specs × 7 resoluciones). `npm run lint:css`: 0 errores, 56
+warnings (idénticos a la Fase 1, ninguno nuevo). `npm test`: 125/125
+PASS. `npm run typecheck`: PASS. `npm run build:web`: PASS. `npm run
+preview`: sin 404, sin errores JS, login visible. `npx cap sync android`
++ `./gradlew assembleDebug`: **BUILD SUCCESSFUL**. **Android real: NO
+PROBADO** (Samsung no conectado). Sin cambios en Supabase, IndexedDB,
+`sync.js`, Service Worker, lógica de negocio.
+
+**No se cierra `UI-ANDROID-005` como PASS** hasta validación visual del
+usuario (`UI-MANUAL-01`, Dashboard móvil) — ver `docs/UI_RESPONSIVE.md`
+(Fase 2) para el detalle completo, incluida la tabla de priorización de
+columnas.

@@ -352,10 +352,13 @@
 
 ## UI-ANDROID-005 — Panel "Equipos que requieren atención" del Dashboard usa tabla genérica sin adaptar a tarjeta móvil
 
-- **Fecha:** 2026-09-23
+- **Fecha:** 2026-09-23 (reportado) — **corregido en código el 2026-09-23**
+  (UI/Responsive Fase 2, ver `docs/UI_RESPONSIVE.md`)
 - **Prioridad:** P3 UX (los datos y estados mostrados son correctos — no es
   un problema de lógica ni de datos, solo de presentación)
-- **Estado:** REPRODUCIDO, NO CORREGIDO
+- **Estado:** **CORREGIDO EN CÓDIGO, PENDIENTE DE VALIDACIÓN VISUAL DEL
+  USUARIO** (`UI-MANUAL-01`) — no se cierra como PASS hasta esa
+  confirmación.
 - **Origen:** PREEXISTENTE — confirmado presente ya en el commit baseline
   `c6d6f78` (el primer commit de todo este repositorio), mucho antes de la
   modularización JS. **No relacionado con la modularización.**
@@ -369,16 +372,25 @@
   móvil a filas apiladas "ETIQUETA: valor" mediante el mecanismo genérico de
   tabla responsive (`data-label`, ver `app.js` línea ~1807) — el mismo
   patrón de fondo que causó `BUG-004` en la pantalla del Lubricador. El
-  resultado es una tarjeta muy alta y densa de leer, en vez de un resumen
+  resultado era una tarjeta muy alta y densa de leer, en vez de un resumen
   compacto.
 - **Verificado que los DATOS son correctos:** los equipos mostrados
   ("05-0870" Caterpillar D8, "20-5530" Komatsu PC500LC-10M0) muestran
   "VENCIDO" con el detalle de atraso correspondiente — la lógica de
   `statusFor()`/`weekdayStatusFor()` (ya modularizada en
-  `src/core/lubrication-status.js`) está calculando correctamente.
-- **Evidencia:** `docs/evidence/UI-ANDROID-005_dashboard-table.png`.
-- **Acción actual:** NO corregir todavía. Queda para una fase de UI
-  dedicada (fuera de esta fase, que es de validación, no de diseño).
+  `src/core/lubrication-status.js`) está calculando correctamente. Esta
+  corrección es puramente visual — no se tocó esa lógica.
+- **Evidencia (antes):** `docs/evidence/UI-ANDROID-005_dashboard-table.png`.
+- **Corrección aplicada (UI/Responsive Fase 2):** de las 9 columnas, se
+  marcaron 5 como secundarias (`class="col-secondary"` en `app.js`:
+  Turno, Control, Horómetro, Próximo/Día asignado, Días sin engrase) y se
+  ocultan solo en la tarjeta móvil (`≤680px`, `styles.css`) — Estado,
+  Código, Equipo y Restante/Atraso siguen siempre visibles (identificación
+  + urgencia accionable). **Escritorio conserva las 9 columnas sin
+  cambios.** No se usó `overflow-x: auto` ni `nth-child` — clases
+  semánticas, sin tocar el mecanismo genérico `data-label` que usan otras
+  tablas. Detalle completo, tabla de priorización de columnas y
+  verificación automatizada en `docs/UI_RESPONSIVE.md` (Fase 2).
 
 ## ANDROID-DOZE-001 — Lanzar la app con la pantalla apagada/dozing puede producir un `App resumed→paused→stopped` abrupto y, a veces, el mismo error JS de `triggerEvent`
 

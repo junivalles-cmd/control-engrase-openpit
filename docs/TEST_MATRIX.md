@@ -212,4 +212,24 @@ de los módulos modularizados en sí.
 | `npm run build:web` (test+build+verify encadenados) | PASS |
 | `npm test` (post) | PASS (125/125, sin cambios) |
 | Android sigue usando `dist` (`capacitor.config.json` sin tocar en esta fase) | CONFIRMADO |
+
+## UI/Responsive Fase 2 — Correcciones dirigidas (2026-09-23)
+
+| Prueba | Resultado |
+|---|---|
+| Precheck (`npm test`/`typecheck`/`build:web`) | PASS (125/125, typecheck OK, build OK) |
+| `tests/ui/kpi-grid.spec.js` — columnas de `.kpi-grid` no decrecen al aumentar el ancho (7 resoluciones) | PASS — medido: 360→2, 390→2, 412→2, 768→3, 1024→4, 1366→6, 1920→6 |
+| `tests/ui/dashboard-table-density.spec.js` — `.col-secondary` oculto solo en ≤680px, visible en desktop, sin borde huérfano, sin scroll horizontal (7 resoluciones) | PASS 7/7 |
+| `tests/ui/login-responsive.spec.js` (re-ejecutado) | PASS 7/7, sin cambios frente a Fase 1 |
+| `npm run test:ui` (suite completa) | **21/21 PASS** |
+| `npm run lint:css` | 0 errores, 56 warnings (idéntico a la línea base de Fase 1 — ningún warning nuevo) |
+| `npm test` (post-cambio) | PASS (125/125) |
+| `npm run typecheck` (post-cambio) | PASS |
+| `npm run build:web` (post-cambio) | PASS |
+| `npm run preview`: recursos clave por HTTP | PASS, 0 errores 404 |
+| `npm run preview`: carga real en navegador (Playwright, 390×844) | PASS — login visible, 0 errores JS, sin scroll horizontal |
+| `npx cap sync android` | PASS — copia desde `dist` |
+| `./gradlew assembleDebug` | **BUILD SUCCESSFUL** |
+| Android real (Samsung) | **NO PROBADO** — dispositivo no conectado |
+| `UI-ANDROID-005` — validación visual del usuario | **PENDIENTE** (`UI-MANUAL-01`) — no se marca PASS por inferencia |
 | GitHub Pages / Supabase / IndexedDB / `sync.js` | SIN MODIFICAR — nada publicado |
