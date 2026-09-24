@@ -28,7 +28,7 @@ const FIXTURE = `
           <h4 class="grease-section-head">Engrase</h4>
           <div class="form-grid">
             <label>Tipo de grasa utilizada<select><option>Grasa</option></select></label>
-            <label>Cantidad utilizada (kg)<input type="number" value="0.5"/></label>
+            <label>Cantidad utilizada (lb)<input type="number" value="0.5"/></label>
           </div>
           <div class="checklist-head"><h4>Checklist de puntos de engrase</h4></div>
           <div id="checklist">

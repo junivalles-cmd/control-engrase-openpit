@@ -38,6 +38,12 @@ async function pickPhotoNative(source) {
 
 const MAX_PHOTOS = 5;
 
+// Unidad operativa real del consumo de grasa. La interfaz mostraba "kg" desde
+// el inicio del proyecto, pero en campo siempre se digitó en libras — la
+// etiqueta era incorrecta, no el dato: `qty`/`recommendedQty` no cambian de
+// valor ni de significado, solo el texto que los acompaña (docs/DECISIONS.md).
+const GREASE_UNIT = 'lb';
+
 function photoFieldHTML() {
   return `
     <label class="span-2">Fotografías (opcional, hasta ${MAX_PHOTOS})
@@ -1976,7 +1982,7 @@ async function openEditGreaseRecordForm(record) {
         <label>Tipo de grasa
           <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === record.greaseType ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
         </label>
-        <label>Cantidad (kg)<input type="number" step="0.1" name="qty" value="${record.qty}"/></label>
+        <label>Cantidad (${GREASE_UNIT})<input type="number" step="0.1" name="qty" value="${record.qty}"/></label>
       </div>
       ${details.length ? `
       <div class="checklist-head"><h4>Checklist</h4></div>
@@ -3481,7 +3487,7 @@ function pointRow(p, lubricants) {
   const lub = lubricants.find(l => l.id === p.greaseType);
   return `<div class="point-row">
     ${p.photo ? photoThumbHTML(p.photo, p.point) : ''}
-    <div><b>${esc(p.point)}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} kg</div></div>
+    <div><b>${esc(p.point)}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} ${GREASE_UNIT}</div></div>
     <div class="row-actions">
       <button class="btn btn-sm point-edit" data-id="${p.id}">${ic("edit")}Editar</button>
       <button class="btn btn-sm btn-danger point-del" data-id="${p.id}">${ic("trash")}Eliminar</button>
@@ -3638,7 +3644,7 @@ function openPointForm(planId, pointId, lubricants) {
             <label>Tipo de grasa
               <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === p.greaseType ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
             </label>
-            <label>Cantidad recomendada (kg)<input type="number" step="0.1" name="recommendedQty" value="${p.recommendedQty}"/></label>
+            <label>Cantidad recomendada (${GREASE_UNIT})<input type="number" step="0.1" name="recommendedQty" value="${p.recommendedQty}"/></label>
             <label>Sistema<input name="system" value="${esc(p.system)}" placeholder="General"/></label>
             <label>Componente<input name="component" value="${esc(p.component)}" placeholder="Opcional"/></label>
             <label class="span-2">Observaciones<input name="notes" value="${esc(p.notes || '')}" placeholder="Opcional"/></label>
@@ -4114,7 +4120,7 @@ async function startGreaseFlow(equipmentId, target) {
             <label>Tipo de grasa utilizada
               <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
             </label>
-            <label>Cantidad utilizada (kg)<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
+            <label>Cantidad utilizada (${GREASE_UNIT})<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
             ${puedeRetroactivo ? `
             <div class="span-2 retro-box">
               <label class="retro-toggle">
@@ -4758,7 +4764,7 @@ async function renderLubricantes() {
     </div>
     <div class="panel">
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (kg)</th>${canEdit ? '<th></th>' : ''}</tr></thead>
+        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (${GREASE_UNIT})</th>${canEdit ? '<th></th>' : ''}</tr></thead>
         <tbody>
           ${lubricants.map(l => {
             const total = records.filter(r => r.greaseType === l.id).reduce((s, r) => s + (r.qty || 0), 0);
@@ -4776,7 +4782,7 @@ async function renderLubricantes() {
   makeTablesResponsive(c);
 
   function lubForm(existing) {
-    const l = existing || { name: '', brand: '', type: '', grade: '', code: '', unit: 'kg' };
+    const l = existing || { name: '', brand: '', type: '', grade: '', code: '', unit: GREASE_UNIT };
     openModal(existing ? `Editar · ${esc(existing.name)}` : 'Nuevo lubricante', `
       <form id="lub-form" class="form-grid">
         <label>Nombre<input required name="name" value="${esc(l.name)}"/></label>
@@ -4784,7 +4790,7 @@ async function renderLubricantes() {
         <label>Tipo<input name="type" value="${esc(l.type)}"/></label>
         <label>Grado<input name="grade" placeholder="NLGI 2" value="${esc(l.grade)}"/></label>
         <label>Código interno<input name="code" value="${esc(l.code)}"/></label>
-        <label>Unidad<input name="unit" value="${l.unit || 'kg'}"/></label>
+        <label>Unidad<input name="unit" value="${l.unit || GREASE_UNIT}"/></label>
         <div class="modal-actions"><button type="submit" class="btn btn-accent">${existing ? 'Guardar cambios' : 'Guardar'}</button></div>
       </form>`);
     $('#lub-form').addEventListener('submit', async (ev) => {
@@ -4978,7 +4984,7 @@ async function drawHistory(equipmentId) {
             <td class="mono">${fmt(r.hourmeter)} h</td>
             <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
             <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
-            <td class="mono">${fmt(r.qty, 1)} kg</td>
+            <td class="mono">${fmt(r.qty, 1)} ${GREASE_UNIT}</td>
             <td>${esc(r.condition)}${(() => {
               const pend = (r.details || []).filter(d => !d.done);
               const avisos = [];
@@ -5359,7 +5365,7 @@ async function renderReportes() {
   });
   $('#exp-historico').addEventListener('click', () => {
     const records = applyFilters();
-    const rows = [['Fecha', 'Equipo', 'Horómetro', 'Turno', 'Responsable', 'Cantidad (kg)', 'Condición']];
+    const rows = [['Fecha', 'Equipo', 'Horómetro', 'Turno', 'Responsable', `Cantidad (${GREASE_UNIT})`, 'Condición']];
     records.forEach(r => {
       const eq = equipos.find(e => e.id === r.equipmentId);
       rows.push([fmtDate(r.date), eq ? eq.code : '', r.hourmeter, r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.qty, r.condition]);
@@ -5458,7 +5464,7 @@ async function renderReportes() {
     XLSX.utils.book_append_sheet(wb, wsEquipos, 'Equipos');
 
     /* ---------- Hoja 3: Histórico de engrases ---------- */
-    const colHist = ['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro (h)', 'Grasa', 'Cantidad (kg)', 'Condición', 'Observaciones'];
+    const colHist = ['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro (h)', 'Grasa', `Cantidad (${GREASE_UNIT})`, 'Condición', 'Observaciones'];
     const filasHist = records.map(r => {
       const eq = equipos.find(e => e.id === r.equipmentId);
       return [

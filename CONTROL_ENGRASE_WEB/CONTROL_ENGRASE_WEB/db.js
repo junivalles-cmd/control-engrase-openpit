@@ -238,10 +238,14 @@ async function seedIfEmpty() {
   ];
   for (const u of users_seed) await DB.put('users', stamp(u, 'sistema'));
 
+  // 'lb': mismo valor que GREASE_UNIT en app.js — db.js carga antes que app.js
+  // (scripts planos en index.html, sin módulos), así que no puede referenciar
+  // esa constante y se repite aquí. Solo afecta instalaciones nuevas/vacías
+  // (seedSoloSiElSistemaEstaVacio); nunca sobreescribe datos ya sembrados.
   const lubricants = [
-    { id: 'lub_ep2', name: 'Grasa EP2', brand: 'Mobil', type: 'Multiuso', grade: 'NLGI 2', code: 'GR-EP2', unit: 'kg', active: true },
-    { id: 'lub_moly', name: 'Grasa Moly', brand: 'Shell', type: 'Alta presión', grade: 'NLGI 2', code: 'GR-MOLY', unit: 'kg', active: true },
-    { id: 'lub_ht', name: 'Grasa Alta Temperatura', brand: 'Chevron', type: 'Alta temperatura', grade: 'NLGI 2', code: 'GR-HT', unit: 'kg', active: true }
+    { id: 'lub_ep2', name: 'Grasa EP2', brand: 'Mobil', type: 'Multiuso', grade: 'NLGI 2', code: 'GR-EP2', unit: 'lb', active: true },
+    { id: 'lub_moly', name: 'Grasa Moly', brand: 'Shell', type: 'Alta presión', grade: 'NLGI 2', code: 'GR-MOLY', unit: 'lb', active: true },
+    { id: 'lub_ht', name: 'Grasa Alta Temperatura', brand: 'Chevron', type: 'Alta temperatura', grade: 'NLGI 2', code: 'GR-HT', unit: 'lb', active: true }
   ];
   for (const l of lubricants) await DB.put('lubricants', stamp(l, 'sistema'));
 
