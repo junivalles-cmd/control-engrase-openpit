@@ -1676,7 +1676,7 @@ const MENU = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
   { id: 'equipos', label: 'Equipos', icon: 'truck' },
   { id: 'plan', label: 'Plan de Engrase', icon: 'list' },
-  { id: 'matriz', label: 'Matriz Semanal', icon: 'grid' },
+  { id: 'matriz', label: 'Matriz Semanal', icon: 'matrix' },
   { id: 'turno', label: 'Engrase del Turno', icon: 'clock' },
   { id: 'registrar', label: 'Registrar Engrase', icon: 'check' },
   { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge' },
