@@ -1840,7 +1840,7 @@ function bootLubricador() {
         </div>
         <div class="lub-topbar-right">
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
-          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}</button>
+          <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
       <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
@@ -6951,7 +6951,7 @@ async function renderConfig() {
     ${await simpleListPanelHTML('locations', 'Ubicaciones / Flotas', 'Aparecen como opción de "Ubicación" al crear o editar un equipo.')}
     ${await simpleListPanelHTML('equipment_types', 'Categorías de equipo', 'Aparecen como opción de "Categoría" al crear o editar un equipo.')}
 
-    <div class="panel">
+    <div class="panel" id="notif-panel">
       <div class="panel-head"><h3>Notificaciones — control por tipo</h3></div>
       <div style="padding:14px">
         <p class="dim">Cada aviso se controla por separado: puedes activarlo o apagarlo, elegir a qué hora suena y qué roles lo reciben. Los cambios aplican a todos los dispositivos al sincronizar.</p>
