@@ -370,7 +370,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .data-table { font-size: 12px; }
   .data-table th, .data-table td { padding: 8px 10px; }
   .filter-label { flex: 1 1 45%; min-width: 130px; }
-  .chart-box { height: 220px; padding: 8px 10px 12px; }
+  .chart-box { padding: 8px 10px 12px; }
   .lub-eq-code { font-size: 17px; }
   .lub-heading { font-size: 19px; }
 }
@@ -728,9 +728,18 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ---------------- Reportes: filtros y gráficas ---------------- */
 .filter-label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dim); }
 .filter-label .input { width: 100%; }
-.charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-.chart-box { position: relative; height: 240px; padding: 10px 14px 16px; }
-@media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+/* UI-VIS-203/204 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): antes fijo en 2
+   columnas SIEMPRE (incluso a 1920px, con .app-content ya corregido) y con
+   height:240px fijo contra un ancho de columna variable, dando aspect-ratio
+   erráticos (1.39 en 360px hasta 3.09 en 768px, medido). Patrón RAM (repeat/
+   auto-fit/minmax/min) reutilizable: cada columna nunca baja de min(100%,360px)
+   —así jamás se desborda en móvil, colapsando a 1 columna sola— ni crece más
+   allá de lo necesario; el número de columnas resulta del espacio real
+   disponible en vez de un valor fijo por breakpoint. aspect-ratio reemplaza el
+   height fijo para que la proporción del gráfico sea consistente sin importar
+   cuántas columnas entren. */
+.charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 14px; }
+.chart-box { position: relative; aspect-ratio: 16 / 9; min-height: 200px; padding: 10px 14px 16px; }
 
 /* ============================================================
    INTERFAZ SIMPLIFICADA — LUBRICADOR (móvil, un toque, campo)
