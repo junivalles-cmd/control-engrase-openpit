@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v35'; // v35: simplificación de Ayuda — se eliminó la ficha técnica por modelo (CAT 745C/Komatsu), solo queda Guía por familia + FAQ — app.js/styles.css; misma razón que v27-v34 para subir versión (stale-first).
+const CACHE = 'engrase-openpit-v36'; // v36: activación oficial del rollout de validación de engrase — GREASE_VALIDATION_ENABLED_FROM pasa de null al inicio del próximo Turno Día (2026-09-27T12:00:00.000Z) — src/core/grease-validation.js; misma razón que v27-v35 para subir versión (stale-first).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

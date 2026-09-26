@@ -217,44 +217,57 @@ describe('validationStatusFor() — 0/1/2+ → PENDIENTE / según signerRole / C
   });
 });
 
-describe('CORRECCIÓN CENTRAL — baseline null → funcionalidad de validación NO ACTIVADA (nunca "todo sigue sujeto")', () => {
-  it('GREASE_VALIDATION_ENABLED_FROM queda en null a propósito (no se inventó una fecha)', () => {
-    expect(GREASE_VALIDATION_ENABLED_FROM).toBeNull();
+describe('CORRECCIÓN CENTRAL — baseline REAL activado (rollout: inicio del próximo Turno Día tras 2026-09-26)', () => {
+  // Valor productivo real (src/core/grease-validation.js) — nunca se reinventa
+  // aquí, se lee de la fuente igual que el resto del módulo. Fechas de prueba
+  // fijas (nunca new Date()/"hoy"): el baseline es un instante concreto ya
+  // pasado el mediodía UTC de mañana en cualquier corrida futura de esta
+  // prueba, así que usar la hora real del reloj eventualmente cruzaría el
+  // baseline y volvería estos casos falsos con el tiempo — exactamente el
+  // tipo de prueba frágil que este proyecto evita (ver convención en
+  // tests/ui/mis-engrases-flow.spec.js).
+  const BASELINE = GREASE_VALIDATION_ENABLED_FROM;
+  const ANTES = '2026-09-27T11:59:59.000Z'; // 1 segundo antes
+  const DESPUES = '2026-09-27T12:00:01.000Z'; // 1 segundo después
+
+  it('está configurado con el inicio del próximo Turno Día (App.generalSettings real: shiftDayStart=6) — no quedó en null', () => {
+    expect(BASELINE).toBe('2026-09-27T12:00:00.000Z');
   });
 
-  it('isRecordSubjectToValidation() con baseline null → SIEMPRE false, sin importar qué tan vieja o nueva sea la fecha (única fuente de verdad, sin excepciones)', () => {
-    expect(isRecordSubjectToValidation('2020-01-01T00:00:00.000Z')).toBe(false);
-    expect(isRecordSubjectToValidation('2099-01-01T00:00:00.000Z')).toBe(false);
-    expect(isRecordSubjectToValidation(new Date().toISOString())).toBe(false); // ni siquiera "ahora mismo"
+  it('A) registro 1 segundo ANTES del baseline → NO sujeto a validación (queda Histórico)', () => {
+    expect(isRecordSubjectToValidation(ANTES)).toBe(false);
   });
 
-  it('validationStatusForRecord() con baseline null → SIEMPRE HISTORICO_SIN_VALIDACION, tenga o no grease_validations reales', () => {
-    const record = { id: 'greg_1', date: new Date().toISOString() }; // recién creado, "hoy"
+  it('B) registro EXACTAMENTE en el baseline → SÍ sujeto a validación (comparación inclusiva ">=")', () => {
+    expect(isRecordSubjectToValidation(BASELINE)).toBe(true);
+  });
+
+  it('C) registro DESPUÉS del baseline → sujeto a validación', () => {
+    expect(isRecordSubjectToValidation(DESPUES)).toBe(true);
+  });
+
+  it('G) un registro histórico (anterior al baseline) NUNCA aparece como pendiente, tenga o no grease_validations reales', () => {
+    const record = { id: 'greg_0', date: ANTES };
     expect(validationStatusForRecord(record, [])).toBe('HISTORICO_SIN_VALIDACION');
-    const validations = [{ lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true }];
-    // Aunque exista una firma real (ej. alguien probó "Validar ahora" en fase de
-    // prueba), el estado mostrado sigue siendo Histórico — la firma no se
-    // pierde en la base de datos, pero no cuenta oficialmente hasta el rollout.
+    const validations = [{ lubricationRecordId: 'greg_0', signerRole: 'OPERADOR', active: true }];
+    // Aunque exista una firma real (ej. una prueba anterior al rollout), el
+    // estado mostrado sigue siendo Histórico — la firma no se pierde en la
+    // base de datos, pero no cuenta oficialmente para un registro anterior.
     expect(validationStatusForRecord(record, validations)).toBe('HISTORICO_SIN_VALIDACION');
-  });
-
-  it('isRecordPendingValidation() con baseline null → SIEMPRE false (nunca "pendiente" mientras la funcionalidad no esté activada)', () => {
-    const record = { id: 'greg_1', date: new Date().toISOString() };
     expect(isRecordPendingValidation(record, [])).toBe(false);
-    expect(isRecordPendingValidation(record, [{ lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true }])).toBe(false);
   });
 
-  it('isRecordInConflict() con baseline null → SIEMPRE false, aunque técnicamente haya 2+ grease_validations activas para el mismo registro', () => {
-    const record = { id: 'greg_1', date: new Date().toISOString() };
+  it('un registro histórico con 2+ firmas activas tampoco cuenta como conflicto (sigue siendo anterior al rollout)', () => {
+    const record = { id: 'greg_0', date: ANTES };
     const validations = [
-      { id: 'val_a', lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true },
-      { id: 'val_b', lubricationRecordId: 'greg_1', signerRole: 'ENCARGADO', active: true },
+      { id: 'val_a', lubricationRecordId: 'greg_0', signerRole: 'OPERADOR', active: true },
+      { id: 'val_b', lubricationRecordId: 'greg_0', signerRole: 'ENCARGADO', active: true },
     ];
-    expect(hasValidationConflict('greg_1', validations)).toBe(true); // el dato crudo SÍ tiene conflicto
-    expect(isRecordInConflict(record, validations)).toBe(false); // pero no "cuenta" mientras no esté activada
+    expect(hasValidationConflict('greg_0', validations)).toBe(true); // el dato crudo SÍ tiene conflicto
+    expect(isRecordInConflict(record, validations)).toBe(false); // pero es anterior al baseline
   });
 
-  it('la comparación de fechas en la fuente usa ">=" (inclusive, "record.date >= ENABLED_FROM" → sujeto) para cuando SÍ se configure', () => {
+  it('la comparación de fechas en la fuente usa ">=" (inclusive, "record.date >= ENABLED_FROM" → sujeto)', () => {
     const srcFn = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'isRecordSubjectToValidation');
     expect(srcFn).toContain('new Date(recordDate).getTime() >= new Date(GREASE_VALIDATION_ENABLED_FROM).getTime()');
     expect(srcFn).toContain('if (!GREASE_VALIDATION_ENABLED_FROM) return false;');
@@ -287,6 +300,47 @@ describe('CORRECCIÓN CENTRAL — baseline null → funcionalidad de validación
       expect(fnSrc).toContain('isRecordSubjectToValidation(record.date)');
       expect(fnSrc).not.toMatch(/new Date\(record\.date\)\.getTime\(\)\s*>=/); // no repite la comparación a mano
     });
+  });
+});
+
+describe('Flujo end-to-end con el baseline REAL activado (fecha de registro DESPUÉS del rollout, sin fixture)', () => {
+  // A diferencia del describe de "baseline de fixture" (más abajo, con su
+  // propio ENABLED_FROM inventado para poder probar cualquier fecha), este
+  // bloque usa el módulo REAL tal cual queda importado arriba — prueba el
+  // comportamiento que de verdad va a correr en producción tras el rollout.
+  const DESPUES_DIA = '2026-09-28T09:00:00'; // turno Día, ya dentro del rollout
+
+  it('D) sujeto a validación + sin firma + dentro de la ventana → PENDIENTE_VALIDACION', () => {
+    const record = { id: 'greg_1', date: DESPUES_DIA };
+    const now = new Date('2026-09-28T11:00:00'); // mismo turno Día
+    expect(validationStatusForRecord(record, [], now, SHIFTS)).toBe('PENDIENTE_VALIDACION');
+    expect(isRecordPendingValidation(record, [], now, SHIFTS)).toBe(true);
+  });
+
+  it('E) firma dentro de los 2 turnos permitidos → VALIDADO_OPERADOR (no vencida)', () => {
+    const record = { id: 'greg_1', date: DESPUES_DIA };
+    const validations = [{ lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true }];
+    const now = new Date('2026-09-28T20:00:00'); // Noche del mismo día = 2º turno
+    expect(validationStatusForRecord(record, validations, now, SHIFTS)).toBe('VALIDADO_OPERADOR');
+    expect(isRecordValidationExpired(record, validations, now, SHIFTS)).toBe(false);
+  });
+
+  it('F) sin firma después de superado el 2º turno → VALIDACION_VENCIDA', () => {
+    const record = { id: 'greg_1', date: DESPUES_DIA };
+    const now = new Date('2026-09-29T07:00:00'); // Día del día siguiente = 3er turno
+    expect(validationStatusForRecord(record, [], now, SHIFTS)).toBe('VALIDACION_VENCIDA');
+    expect(isRecordPendingValidation(record, [], now, SHIFTS)).toBe(false);
+  });
+
+  it('H) 2+ firmas activas mantiene PRIORIDAD de conflicto aunque el plazo ya haya vencido', () => {
+    const record = { id: 'greg_1', date: DESPUES_DIA };
+    const validations = [
+      { id: 'val_a', lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true },
+      { id: 'val_b', lubricationRecordId: 'greg_1', signerRole: 'ENCARGADO', active: true },
+    ];
+    const now = new Date('2026-10-05T00:00:00'); // muy pasado el plazo
+    expect(validationStatusForRecord(record, validations, now, SHIFTS)).toBe('CONFLICTO_VALIDACION');
+    expect(isRecordInConflict(record, validations, now, SHIFTS)).toBe(true);
   });
 });
 
@@ -377,10 +431,14 @@ describe('PLAZO DE VALIDACIÓN con baseline de fixture ACTIVO (módulo cargado c
   // igual que ya hacían otras pruebas de este mismo repo para probar el
   // flujo Pendiente→Validado (ver docs/GREASE_VALIDATION_AUDIT.md).
   function loadWithBaseline(enabledFrom) {
-    const src = readSource(GREASE_VALIDATION_JS_PATH).replace(
-      'const GREASE_VALIDATION_ENABLED_FROM = null;',
-      `const GREASE_VALIDATION_ENABLED_FROM = ${JSON.stringify(enabledFrom)};`
-    );
+    // Regex (no un string literal exacto) a propósito: el valor real de
+    // GREASE_VALIDATION_ENABLED_FROM cambia con el rollout (era `null`, ahora
+    // la fecha activada) y un match exacto del literal anterior se rompería
+    // en silencio cada vez que ese valor cambie — con un patrón genérico,
+    // esta prueba sigue funcionando sin importar cuál sea el valor productivo.
+    const injected = `const GREASE_VALIDATION_ENABLED_FROM = ${JSON.stringify(enabledFrom)};`;
+    const src = readSource(GREASE_VALIDATION_JS_PATH).replace(/const GREASE_VALIDATION_ENABLED_FROM = .*?;/, injected);
+    if (!src.includes(injected)) throw new Error('loadWithBaseline: no se pudo reemplazar GREASE_VALIDATION_ENABLED_FROM en la fuente — revisa el patrón.');
     const factory = new Function(`${src}\nreturn { VALIDATION_STATUS, validationStatusForRecord, isRecordPendingValidation, isRecordInConflict, isRecordValidationExpired };`);
     return factory();
   }

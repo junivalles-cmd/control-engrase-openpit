@@ -394,13 +394,15 @@ test.describe('Cumplimiento del plan — columna en la tabla de Engrases', () =>
 });
 
 test.describe('Validación del engrase — columna en la tabla de Engrases (lectura REAL de grease_validations)', () => {
-  // CORRECCIÓN CENTRAL (ver docs/GREASE_VALIDATION_AUDIT.md §14): con la
-  // constante productiva real (GREASE_VALIDATION_ENABLED_FROM = null),
-  // isRecordSubjectToValidation() devuelve SIEMPRE false — todo registro se
-  // muestra como Histórico (ver el test dedicado más abajo). Para probar
-  // aquí las transiciones 0/1/active:false que sí necesitan un baseline
-  // real, se define uno EXPLÍCITO solo en esta página de prueba — nunca se
-  // toca la constante productiva para esto.
+  // Rollout activado (ver docs/BUG_REGISTER.md / grease-validation.js):
+  // GREASE_VALIDATION_ENABLED_FROM ya no es null, pero los registros fijos de
+  // este archivo (2026-09-25) siguen siendo ANTERIORES a ese baseline
+  // (2026-09-27T12:00:00.000Z) — con la constante productiva real,
+  // isRecordSubjectToValidation() sigue devolviendo false para ellos, así que
+  // se muestran como Histórico (ver el test dedicado más abajo). Para probar
+  // aquí las transiciones 0/1/active:false que sí necesitan un registro
+  // SUJETO a validación, se define un baseline EXPLÍCITO solo en esta página
+  // de prueba — nunca se toca la constante productiva para esto.
   async function activarBaselineDePrueba(page) {
     // Estas pruebas cubren las transiciones 0/1/active:false — no el plazo de
     // MAX_VALIDATION_SHIFTS turnos (eso se prueba aparte, con fechas
@@ -455,7 +457,7 @@ test.describe('Validación del engrase — columna en la tabla de Engrases (lect
     await expect(primera.locator('.hist-compliance-badge').nth(1)).toHaveText('Engrasado · Pendiente de validación');
   });
 
-  test('CORRECCIÓN CENTRAL — con baseline REAL (null, SIN override): todos los registros son "Histórico · Sin validación requerida", sin botón Validar/Ver validación', async ({ page }) => {
+  test('con la constante productiva REAL (sin override): registros de 2026-09-25 (anteriores al baseline 2026-09-27T12:00Z) son "Histórico · Sin validación requerida", sin botón Validar/Ver validación', async ({ page }) => {
     const validations = [{ id: 'val_1', lubricationRecordId: 'r3', equipmentId: 'e1', signerName: 'Juan Pérez', signerRole: 'OPERADOR', signedAt: '2026-09-25T09:00:00', active: true }];
     await bootPage(page, [], validations); // sin activarBaselineDePrueba(): usa la constante productiva real
     await page.locator('#hist-eq-search').fill('45-77');

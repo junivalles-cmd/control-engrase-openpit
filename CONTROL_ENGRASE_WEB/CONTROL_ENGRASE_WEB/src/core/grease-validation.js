@@ -66,22 +66,20 @@ const MAX_VALIDATION_SHIFTS = 2;
 // isRecordSubjectToValidation() (directo o vía validationStatusForRecord()/
 // isRecordPendingValidation()/isRecordInConflict()).
 //
-// PENDIENTE DE DEFINIR: todavía no existe una fecha de salida a producción
-// oficial — se deja en `null` A PROPÓSITO (no se inventa un valor). Mientras
-// sea `null`, la funcionalidad de validación NO está activada oficialmente:
-// isRecordSubjectToValidation() devuelve `false` para TODO registro (nuevo
-// o viejo) — ver esa función. Esto es intencional, no un bug: sin una fecha
-// real no existe un "antes/después del rollout" que evaluar, así que
-// ninguna pantalla puede mostrar honestamente "pendiente"/"validado" hasta
-// que se defina. El flujo de Finalizar Engrase (Validar ahora/después)
-// sigue funcionando igual (no se rompe, ver startGreaseFlow() en app.js) —
-// solo que, mientras el baseline sea null, el registro se sigue mostrando
-// como "Histórico · Sin validación requerida" en Historial/Mis Engrases
-// (fase de prueba/preproducción, ver docs/GREASE_VALIDATION_AUDIT.md §14).
-// Para probar el flujo Pendiente→Validado en tests automáticos, usar un
+// ROLLOUT ACTIVADO (2026-09-26): la validación queda sujeta a partir del
+// inicio del PRÓXIMO Turno Día — 2026-09-27T06:00:00 hora local (App.
+// generalSettings real: shiftDayStart=6, shiftNightStart=18; no había
+// `settings/general` configurado en producción, así que rige el default de
+// la app), expresado en UTC porque así se guardan `record.date`/`updatedAt`
+// en todo el proyecto (nowISO() = new Date().toISOString(), ver db.js) —
+// mismo formato, comparación directa sin ambigüedad de huso horario.
+// Cualquier lubrication_record con `date` ANTERIOR a este instante queda
+// HISTÓRICO para siempre (isRecordSubjectToValidation() abajo) — el rollout
+// nunca convierte engrases previos en pendientes. Para probar el flujo
+// Pendiente→Validado con OTRAS fechas en tests automáticos, usar un
 // baseline EXPLÍCITO dentro del propio test/fixture (nunca cambiar esta
 // constante productiva para eso).
-const GREASE_VALIDATION_ENABLED_FROM = null;
+const GREASE_VALIDATION_ENABLED_FROM = '2026-09-27T12:00:00.000Z';
 
 // true SOLO si hay un baseline real configurado Y record.date cae en o
 // después de esa fecha. Con baseline null, SIEMPRE false — ver comentario

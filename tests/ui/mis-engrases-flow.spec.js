@@ -134,14 +134,12 @@ test('Fuera del shell del Lubricador (escritorio), irAMisEngrasesTrasRegistrar()
 
 test('"Mis Engrases" con baseline ACTIVO (fixture de prueba): cards (no tabla), más reciente primero, Turno/Cantidad/Lubricador visibles, estados Pendiente/Validado/Conflicto correctos', async ({ page }) => {
   await bootPage(page, { lubShell: true });
-  // CORRECCIÓN CENTRAL (ver docs/GREASE_VALIDATION_AUDIT.md §14): con la
-  // constante productiva real (GREASE_VALIDATION_ENABLED_FROM = null),
-  // isRecordSubjectToValidation() devuelve SIEMPRE false — ningún registro
-  // es "pendiente"/"validado"/"conflicto" todavía (ver el test de más abajo
-  // que confirma exactamente eso). Para probar aquí las transiciones de
-  // estado 0/1/2+ activas (que sí necesitan un baseline real para
-  // manifestarse), se define un baseline EXPLÍCITO solo en esta página de
-  // prueba — NUNCA se toca la constante productiva para esto (instrucción
+  // Estas fechas (hace()/GREG3_DATE, relativas a "ahora") deben quedar SUJETAS
+  // a validación para probar las transiciones 0/1/2+ activas — se define un
+  // baseline EXPLÍCITO de fixture aquí (isRecordSubjectToValidation → true)
+  // en vez de depender de dónde caiga la constante productiva real
+  // (GREASE_VALIDATION_ENABLED_FROM, ya activada con el rollout) respecto a
+  // "ahora" — NUNCA se toca la constante productiva para esto (instrucción
   // explícita: "usar baseline explícito dentro de fixtures/tests").
   await page.evaluate(() => {
     window.isRecordSubjectToValidation = () => true;
@@ -182,12 +180,33 @@ test('"Mis Engrases" con baseline ACTIVO (fixture de prueba): cards (no tabla), 
   await expect(page.locator('.modal-body')).toContainText('Enc C');
 });
 
-test('"Mis Engrases" con baseline REAL (null, SIN override): TODOS los registros son "Histórico · Sin validación requerida", sin ningún botón de acción — nunca "Pendiente" fabricado', async ({ page }) => {
+test('"Mis Engrases" con la constante productiva REAL (SIN override): registros ANTERIORES al baseline del rollout son "Histórico · Sin validación requerida", sin ningún botón de acción', async ({ page }) => {
   await bootPage(page, { lubShell: true });
   // Sin ningún window.isRecordSubjectToValidation de prueba — esta es la
-  // constante productiva real (null). Los 3 registros (greg_1 con 0 activas,
-  // greg_2 con 1, greg_3 con 2) deben mostrarse TODOS como Histórico, sin
-  // excepción por cantidad de firmas — la funcionalidad no está activada.
+  // función productiva real, con el baseline del rollout ya activado
+  // (GREASE_VALIDATION_ENABLED_FROM = 2026-09-27T12:00:00.000Z). Por eso aquí
+  // NO se usan las fechas dinámicas hace()/GREG3_DATE (relativas a "ahora",
+  // pensadas para el test de deadline de más arriba) — con el tiempo real
+  // avanzando, esas fechas eventualmente caerían DESPUÉS del baseline y este
+  // test dejaría de probar lo mismo. Se sustituye DB.allActive con fechas
+  // fijas de antes del rollout (2026-09-20), sin tocar isRecordSubjectToValidation.
+  await page.evaluate(() => {
+    const registrosHistoricos = [
+      { id: 'greg_1', equipmentId: 'e1', date: '2026-09-20T09:00:00.000Z', shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 5200, qty: 1.5, condition: 'Normal' },
+      { id: 'greg_2', equipmentId: 'e2', date: '2026-09-20T07:30:00.000Z', shiftId: 'shift_noche', userId: 'u1', userName: 'Juan Pérez', hourmeter: 12000, qty: 1.2, condition: 'Normal' },
+      { id: 'greg_3', equipmentId: 'e3', date: '2026-09-20T07:00:00.000Z', shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 8900, qty: 2.0, condition: 'Con desgaste' },
+    ];
+    const validacionesHistoricas = [
+      { id: 'val_1', lubricationRecordId: 'greg_2', signerName: 'Op A', signerRole: 'OPERADOR', signedAt: '2026-09-20T07:36:00.000Z', active: true },
+      { id: 'val_2', lubricationRecordId: 'greg_3', signerName: 'Op B', signerRole: 'OPERADOR', signedAt: '2026-09-20T07:06:00.000Z', active: true },
+      { id: 'val_3', lubricationRecordId: 'greg_3', signerName: 'Enc C', signerRole: 'ENCARGADO', reason: 'Op no disponible', signedAt: '2026-09-20T07:12:00.000Z', active: true },
+    ];
+    window.DB.allActive = async (store) => ({
+      lubrication_records: registrosHistoricos,
+      equipment: [{ id: 'e1', code: '45-77', brand: 'Caterpillar', model: '740B' }, { id: 'e2', code: 'T-06', brand: 'Caterpillar', model: 'D8T' }, { id: 'e3', code: 'EXC-02', brand: 'Komatsu', model: 'PC200' }],
+      grease_validations: validacionesHistoricas,
+    }[store] || []);
+  });
   await page.evaluate(() => window.renderLubricadorHistorial());
 
   const cards = page.locator('.lub-record-card');
