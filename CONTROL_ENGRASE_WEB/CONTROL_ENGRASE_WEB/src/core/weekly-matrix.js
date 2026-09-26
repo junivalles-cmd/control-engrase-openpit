@@ -5,12 +5,19 @@
 // Extraída de app.js -> renderMatrizSemanal() (antes anidada ahí como
 // estadoCelda()) — ver docs/MODULARIZATION.md.
 //
-// Reglas conservadas EXACTAMENTE como estaban en app.js (no se agregó ni se
-// quitó ningún caso):
+// Reglas:
 //   - Si el equipo no tiene plan, o el plan no tiene asignado ese día de la
 //     semana (assignedDays), la celda es 'vacio' (no le corresponde ese día).
 //   - Si ya existe un registro de engrase (lubrication_records) para ese
-//     equipo en esa fecha exacta, es 'hecho'.
+//     equipo en esa fecha exacta, es 'hecho' — un registro real NUNCA se
+//     oculta, sin importar el status actual del equipo (no se reescribe
+//     historial).
+//   - Si el equipo NO está 'Operativo' (Detenido/En mantenimiento/Fuera de
+//     servicio) y ese día no tiene un registro real, es 'pausado' — no se
+//     inventa un "NO REALIZADO"/"PENDIENTE"/"futuro" mientras el equipo no
+//     puede operar. Usa el status ACTUAL de `eq` (snapshot de hoy) para
+//     todo el rango visible; no se reconstruye qué status tenía el equipo
+//     en el pasado (no existe ese historial).
 //   - Si la fecha es futura respecto a "hoy", es 'futuro' (todavía no le toca).
 //   - Si la fecha ya pasó sin registro, es 'no_realizado'.
 //   - Si la fecha es hoy y no hay registro, es 'pendiente'.
@@ -35,6 +42,8 @@ function estadoCelda(eq, fecha, plans, records, hoy) {
   const hecho = records.find(r => r.equipmentId === eq.id &&
     new Date(r.date).toDateString() === fecha.toDateString());
   if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
+
+  if (eq.status && eq.status !== 'Operativo') return { tipo: 'pausado', status: eq.status };
 
   if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
   if (fecha.getTime() < hoy.getTime()) {

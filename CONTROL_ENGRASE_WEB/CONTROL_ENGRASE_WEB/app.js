@@ -6,7 +6,16 @@ const App = {
   currentUser: null,
   route: 'dashboard',
   configAlertYellow: 10,
-  pendingQrEquipmentId: null // equipo pendiente de mostrar tras escanear un QR (ver captureQrDeepLink)
+  pendingQrEquipmentId: null, // equipo pendiente de mostrar tras escanear un QR (ver captureQrDeepLink)
+  // Estado EXPLÍCITO del flujo Registrar Engrase del Lubricador (formulario →
+  // guardado → "Validar ahora/después" → validación si aplica). true desde
+  // startLubricadorGreaseFlow() hasta que el flujo termina de verdad (llega a
+  // Mis Engrases) o la persona lo cancela ("← Volver a mi turno"). Fuente
+  // principal para que onSyncStateChange() no interrumpa el flujo con un
+  // rerender automático — más confiable que inferirlo de selectores DOM
+  // (#grease-form/.grease-validate-choice), que igual se conservan como
+  // defensa secundaria.
+  lubricadorGreaseFlowActive: false
 };
 
 /* ============================================================
@@ -1053,7 +1062,7 @@ async function loadGeneralSettings() {
 /* WEEKDAY_NAMES, mostRecentAssignedDate(), weekdayStatusFor() y statusFor()
    se movieron a src/core/lubrication-status.js (siguen disponibles como
    globales, ver docs/MODULARIZATION.md). */
-const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']; // Domingo se deja libre/rotativo, igual que en el plan en papel
+const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
 // Calcula el estado de una lista de equipos leyendo planes/registros UNA sola vez,
 // en vez de una vez por cada equipo (antes: N equipos = N consultas completas a la BD).
@@ -1222,9 +1231,12 @@ const THEMES = [
   { id: 'graphite', label: 'Grafito', color: '#9CA3AF' }
 ];
 
+// Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO.
+// Si el usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa
+// gana siempre — Object.assign la sobrescribe sobre este valor por defecto.
 function getTheme() {
-  try { return Object.assign({ accent: 'amber', mode: 'dark' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
-  catch { return { accent: 'amber', mode: 'dark' }; }
+  try { return Object.assign({ accent: 'amber', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
+  catch { return { accent: 'amber', mode: 'light' }; }
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme.accent);
@@ -1423,8 +1435,30 @@ function onSyncStateChange(state) {
   // del lubricador hasta que él cambiaba de pantalla a mano.
   const pantallasQueSeRefrescan = ['turno', 'dashboard', 'equipos', 'anomalias', 'historial', 'matriz', 'plan', 'horometros'];
   if (state.status === 'ok' && state.pulled > 0 && pantallasQueSeRefrescan.includes(App.route)) {
-    // No se redibuja si hay una ventana abierta: le borraría lo que está escribiendo
-    if (!document.querySelector('#modal-overlay.open')) redibujarPantallaActual();
+    // No se redibuja si hay una ventana abierta: le borraría lo que está escribiendo.
+    // BUG-CRÍTICO (doble guardado en Registrar Engrase): el flujo de Finalizar Engrase
+    // del Lubricador (startLubricadorGreaseFlow/startGreaseFlow) NO cambia App.route —
+    // se queda en 'turno' mientras el formulario está abierto Y mientras se muestra la
+    // pantalla "Validar ahora/después" (y la validación, si aplica) tras guardar. 'turno'
+    // SÍ está en la lista de arriba, así que un sync automático (cada 20s, al reconectar,
+    // al volver a la app) que trajera CUALQUIER cambio de CUALQUIER parte del sistema
+    // hacía redibujarPantallaActual() → renderLubricadorHome(), reemplazando #app-content
+    // entero — el formulario en curso o la confirmación recién guardada desaparecían sin
+    // aviso (el usuario veía "Mi Turno" en vez de su confirmación y, pensando que no se
+    // guardó, repetía la operación → 2 lubrication_record). El guardado en sí YA era
+    // correcto/idempotente (enviandoEngrase); el problema era que la UI se borraba antes
+    // de que la persona la viera.
+    //
+    // Fuente PRINCIPAL: App.lubricadorGreaseFlowActive, un estado explícito (no inferido
+    // de selectores DOM) que startLubricadorGreaseFlow() enciende al entrar y solo se
+    // apaga al terminar de verdad (Mis Engrases) o al cancelar ("← Volver a mi turno") —
+    // sigue true durante formulario, guardado, "Validar ahora/después" y el modal de
+    // validación. El guard DOM anterior se conserva como defensa secundaria (por si algún
+    // camino nuevo olvida tocar el flag), no como fuente principal.
+    if (!App.lubricadorGreaseFlowActive &&
+        !document.querySelector('#modal-overlay.open') && !document.querySelector('#grease-form') && !document.querySelector('.grease-validate-choice')) {
+      redibujarPantallaActual();
+    }
   }
   if (state.status === 'ok' && state.newAnomalies && state.newAnomalies.length) {
     notifyNewAnomalies(state.newAnomalies);
@@ -1621,6 +1655,7 @@ function logout() {
   stopInactivityTimer();
   sessionStorage.removeItem('engrase_user');
   App.currentUser = null;
+  App.lubricadorGreaseFlowActive = false; // salida explícita — no debe sobrevivir a la sesión siguiente
   renderLogin();
 }
 
@@ -1678,21 +1713,25 @@ function startInactivityTracking() {
 }
 
 /* ---------- shell principal ---------- */
+// Orden por prioridad operativa (no altera rutas/permisos, solo navegación):
+// 1) operación diaria, 2) consulta/control, 3) administración — el grupo se
+// usa únicamente para pintar un separador MUY discreto entre bloques (ver
+// boot(), ".menu-sep"), nunca para ocultar ni reordenar por rol.
 const MENU = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-  { id: 'equipos', label: 'Equipos', icon: 'truck' },
-  { id: 'plan', label: 'Plan de Engrase', icon: 'list' },
-  { id: 'matriz', label: 'Matriz Semanal', icon: 'matrix' },
-  { id: 'turno', label: 'Engrase del Turno', icon: 'clock' },
-  { id: 'registrar', label: 'Registrar Engrase', icon: 'check' },
-  { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge' },
-  { id: 'anomalias', label: 'Anomalías', icon: 'alert' },
-  { id: 'lubricantes', label: 'Lubricantes', icon: 'drop' },
-  { id: 'historial', label: 'Historial', icon: 'history' },
-  { id: 'reportes', label: 'Reportes', icon: 'report' },
-  { id: 'usuarios', label: 'Usuarios', icon: 'users' },
-  { id: 'config', label: 'Configuración', icon: 'gear' },
-  { id: 'ayuda', label: 'Ayuda', icon: 'help' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'grid', group: 'op' },
+  { id: 'plan', label: 'Plan de Engrase', icon: 'list', group: 'op' },
+  { id: 'matriz', label: 'Matriz Semanal', icon: 'matrix', group: 'op' },
+  { id: 'turno', label: 'Engrase del Turno', icon: 'clock', group: 'op' },
+  { id: 'registrar', label: 'Registrar Engrase', icon: 'check', group: 'op' },
+  { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge', group: 'op' },
+  { id: 'anomalias', label: 'Anomalías', icon: 'alert', group: 'op' },
+  { id: 'equipos', label: 'Equipos', icon: 'truck', group: 'con' },
+  { id: 'historial', label: 'Historial', icon: 'history', group: 'con' },
+  { id: 'reportes', label: 'Reportes', icon: 'report', group: 'con' },
+  { id: 'lubricantes', label: 'Lubricantes', icon: 'drop', group: 'con' },
+  { id: 'usuarios', label: 'Usuarios', icon: 'users', group: 'adm' },
+  { id: 'config', label: 'Configuración', icon: 'gear', group: 'adm' },
+  { id: 'ayuda', label: 'Ayuda', icon: 'help', group: 'adm' },
 ];
 
 function boot() {
@@ -1719,11 +1758,19 @@ function boot() {
           </div>
         </div>
         <nav class="menu">
-          ${MENU.filter(m => allowed.includes(m.id)).map(m => `
+          ${(() => {
+            const items = MENU.filter(m => allowed.includes(m.id));
+            let prevGroup = null;
+            return items.map(m => {
+              const sep = (prevGroup !== null && m.group !== prevGroup) ? '<div class="menu-sep" aria-hidden="true"></div>' : '';
+              prevGroup = m.group;
+              return `${sep}
             <button class="menu-item" data-route="${m.id}">
               <span class="menu-icon icon-${m.icon}"></span>
               <span>${m.label}</span>
-            </button>`).join('')}
+            </button>`;
+            }).join('');
+          })()}
         </nav>
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
@@ -1860,6 +1907,14 @@ function bootLubricador() {
 
   $('#btn-logout').addEventListener('click', logout);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
+    // La barra inferior vive FUERA de #app-content (nunca se borra al entrar a
+    // Registrar Engrase) — tocar cualquiera de estas 4 secciones es una salida
+    // EXPLÍCITA del flujo hacia una pantalla estable, sea cual sea la pantalla
+    // que estuviera mostrando #app-content en ese momento (formulario o
+    // "Validar ahora/después" incluidos). Sin este reset, el flag se quedaba en
+    // true para siempre y el sync dejaba de refrescar Anomalías/Mis Engrases/
+    // Ayuda/Mi Turno hasta recargar la app entera.
+    App.lubricadorGreaseFlowActive = false;
     $$('.lub-nav-item').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     App.route = b.dataset.route;
@@ -1929,11 +1984,21 @@ async function renderLubricadorHome() {
 async function startLubricadorGreaseFlow(equipmentId) {
   const c = $('#app-content');
   if (!c) return;
+  App.lubricadorGreaseFlowActive = true;
   c.innerHTML = `<button class="btn lub-back" id="lub-back">← Volver a mi turno</button><div id="lub-flow"></div>`;
-  $('#lub-back').addEventListener('click', renderLubricadorHome);
+  $('#lub-back').addEventListener('click', () => {
+    App.lubricadorGreaseFlowActive = false; // cancelación explícita: vuelve a una pantalla estable
+    renderLubricadorHome();
+  });
   await startGreaseFlow(equipmentId, $('#lub-flow'));
 }
 
+// "Mis Engrases" — trabajo YA realizado por este lubricador (distinto de
+// "Mi Turno" = trabajo por hacer, ver renderLubricadorHome). Es el destino
+// SIEMPRE correcto tras Finalizar Engrase (ver irAMisEngrasesTrasRegistrar).
+// Misma vista de tarjetas de siempre, ahora con Turno/Cantidad/Lubricador y
+// el estado de validación real (grease_validations) + su acción — sin
+// crear una segunda versión de esta pantalla.
 async function renderLubricadorHistorial() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -1942,6 +2007,7 @@ async function renderLubricadorHistorial() {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 30);
   const equipos = await DB.allActive('equipment');
+  const validations = await DB.allActive('grease_validations');
   const todayStr = new Date().toDateString();
   c.innerHTML = `
     <h2 class="lub-heading">Mis últimos engrases</h2>
@@ -1949,10 +2015,27 @@ async function renderLubricadorHistorial() {
       ${records.map(r => {
         const eq = equipos.find(e => e.id === r.equipmentId);
         const editable = new Date(r.date).toDateString() === todayStr;
+        const activasEsteRegistro = findActiveValidations(r.id, validations);
+        const valStatus = validationStatusForRecord(r, validations);
+        const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
+          activasEsteRegistro.length === 0
+            ? `<button type="button" class="btn btn-sm lub-validar-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Validar</button>`
+            : activasEsteRegistro.length === 1
+              ? `<button type="button" class="btn btn-sm lub-ver-validacion-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Ver validación</button>`
+              : `<button type="button" class="btn btn-sm lub-ver-conflicto-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Ver conflicto</button>`;
         return `<div class="lub-record-card">
           <div class="lub-eq-top"><span class="lub-eq-code">${eq ? eq.code : '—'}</span><span class="dim">${fmtDate(r.date)}</span></div>
           <div class="lub-eq-model">${eq ? eq.brand + ' ' + eq.model : ''}</div>
           <div class="lub-eq-bottom"><span class="mono">${fmt(r.hourmeter)} h</span><span>${esc(r.condition)}</span></div>
+          <div class="lub-record-meta dim">
+            <span>Turno ${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</span>
+            <span>${fmt(r.qty, 1)} ${GREASE_UNIT}</span>
+            <span>${esc(r.userName)}</span>
+          </div>
+          <div class="lub-record-validacion">
+            ${validationBadgeHTML(valStatus)}
+            ${valAction}
+          </div>
           ${editable ? `<button class="btn btn-sm lub-edit-record" data-id="${r.id}" style="margin-top:8px; width:100%">✏ Editar este engrase</button>` : `<div class="dim" style="margin-top:6px; font-size:11px">Solo se puede editar el mismo día que se registró.</div>`}
         </div>`;
       }).join('') || `<div class="empty-state">Aún no has registrado engrases.</div>`}
@@ -1960,6 +2043,23 @@ async function renderLubricadorHistorial() {
   $$('.lub-edit-record', c).forEach(btn => {
     btn.addEventListener('click', async () => openEditGreaseRecordForm(await DB.get('lubrication_records', btn.dataset.id)));
   });
+  $$('.lub-validar-btn', c).forEach(b => b.addEventListener('click', async () => {
+    const rec = await DB.get('lubrication_records', b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (rec && eq) openValidationModal(rec, eq, () => renderLubricadorHistorial());
+  }));
+  $$('.lub-ver-validacion-btn', c).forEach(b => b.addEventListener('click', async () => {
+    const validation = findActiveValidation(b.dataset.rec, validations);
+    const rec = records.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (validation && eq) openValidationDetailModal(validation, eq, rec ? rec.date : null);
+  }));
+  $$('.lub-ver-conflicto-btn', c).forEach(b => b.addEventListener('click', () => {
+    const activas = findActiveValidations(b.dataset.rec, validations);
+    const rec = records.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (activas.length > 1 && eq) openValidationConflictModal(activas, eq, rec ? rec.date : null);
+  }));
 }
 
 /* ---------- Editar un engrase ya registrado (mismo día, para corregir errores) ---------- */
@@ -2063,9 +2163,23 @@ async function renderDashboard() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   c.innerHTML = `<div class="loading">Calculando indicadores…</div>`;
-  const equipos = await DB.allActive('equipment');
   const records = await DB.allActive('lubrication_records');
   const anomalies = await DB.allActive('anomalies');
+  const plans = await DB.allActive('lubrication_plans');
+  const types = await DB.allActive('equipment_types');
+  const locations = await DB.allActive('locations');
+  const validations = await DB.allActive('grease_validations');
+
+  // Filtros generales Ubicación/Familia (AND, se combinan entre sí): mismo
+  // patrón ya usado en Matriz Semanal (App.matrizUbic/Tipo) — se guardan en
+  // App para sobrevivir el re-render al cambiar, y filtran `equipos` UNA vez
+  // aquí arriba, así todo lo que se deriva de él (KPIs, sin plan, atención,
+  // mayor tiempo sin engrasar, semáforo) queda consistente entre sí.
+  if (App.dashUbic === undefined) App.dashUbic = '';
+  if (App.dashFamilia === undefined) App.dashFamilia = '';
+  let equipos = await DB.allActive('equipment');
+  if (App.dashUbic) equipos = equipos.filter(e => e.locationId === App.dashUbic);
+  if (App.dashFamilia) equipos = equipos.filter(e => e.typeId === App.dashFamilia);
 
   const statuses = await computeAllStatuses(equipos);
   const counts = { VERDE: 0, AMARILLO: 0, ROJO: 0, GRIS: 0 };
@@ -2075,8 +2189,6 @@ async function renderDashboard() {
   const doneToday = records.filter(r => new Date(r.createdAt).toDateString() === today).length;
   const openAnomalies = anomalies.filter(a => a.status !== 'Cerrada').length;
 
-  const compliance = equipos.length ? Math.round(((counts.VERDE + counts.AMARILLO) / equipos.length) * 100) : 0;
-
   const attention = statuses
     .filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
     .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
@@ -2084,6 +2196,21 @@ async function renderDashboard() {
   // Equipos cuyo plan tiene datos imposibles: no salen como vencidos ni como al día,
   // así que sin este aviso quedarían invisibles y nadie los corregiría nunca.
   const conProblemas = statuses.filter(x => x.s.alerta);
+
+  // Equipos SIN NINGÚN plan configurado (ni "Día y turno de la semana" ni "Horas de
+  // operación") — distinto del balde GRIS de statusFor()/counts.GRIS, que también
+  // mezcla equipos detenidos y planes mal configurados. Prioridad de planificación
+  // día/turno > horas > sin plan: como cada equipo tiene a lo sumo 1 plan, basta con
+  // que NO exista ningún plan asociado (sea cual sea su tipo) para contar aquí — ya
+  // filtrados por DB.allActive('equipment') (equipos activos, mismo criterio que el
+  // resto del Dashboard, sin agregar un filtro nuevo por e.status).
+  const planPorEquipoId = new Set(plans.map(p => p.equipmentId));
+  const sinPlan = equipos.filter(e => !planPorEquipoId.has(e.id));
+
+  // Equipos CON plan pero no operativos: no cuentan como vencidos/próximos
+  // (statusFor() ya los manda a GRIS/DETENIDO) ni como sin plan — son un
+  // estado propio, igual criterio que PAUSADO en la Matriz Semanal.
+  const pausados = equipos.filter(e => e.status !== 'Operativo' && planPorEquipoId.has(e.id));
 
   // Días desde el último engrase registrado de cada equipo (sea cual sea su tipo de control)
   const lastRecordByEquipo = {};
@@ -2098,23 +2225,207 @@ async function renderDashboard() {
     return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
   }
 
+  // "Mayor tiempo sin engrasar": SOLO días de calendario desde el último
+  // registro — nunca se mezcla con vencimiento por horómetro (ROJO/AMARILLO
+  // ya es otro criterio, ver counts arriba). Prioriza equipos Operativos
+  // (los detenidos/en mantenimiento no sorprenden por no tener engrase
+  // reciente); "nunca engrasado" (null) se trata como el caso más urgente.
+  const tiempoSinEngrase = [...equipos].sort((a, b) => {
+    const opA = a.status === 'Operativo' ? 0 : 1, opB = b.status === 'Operativo' ? 0 : 1;
+    if (opA !== opB) return opA - opB;
+    const dA = daysSinceLastGrease(a.id), dB = daysSinceLastGrease(b.id);
+    return (dB === null ? Infinity : dB) - (dA === null ? Infinity : dA);
+  }).slice(0, 10);
+  // Resumen en vivo del header del panel ("Máximo: 11 d · A-02") — SIEMPRE
+  // calculado del propio tiempoSinEngrase, nunca hardcodeado. Si el primero
+  // de la lista nunca fue engrasado (dias === null) no hay un "máximo en
+  // días" real que mostrar, así que se omite el resumen.
+  const tiempoSinEngraseTop = tiempoSinEngrase[0] || null;
+  const tiempoSinEngraseMaxDias = tiempoSinEngraseTop ? daysSinceLastGrease(tiempoSinEngraseTop.id) : null;
+  const tiempoSinEngraseMaxCode = tiempoSinEngraseTop ? tiempoSinEngraseTop.code : null;
+  // Datos de apoyo para el rediseño operativo del Dashboard (solo
+  // presentación — ningún cálculo de negocio nuevo, reutiliza `statuses`/
+  // `attention`/`equipos` ya filtrados por Ubicación/Familia arriba).
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  const alDia = statuses.filter(x => x.s.code === 'VERDE');
+  const proximos = attention.filter(x => x.s.code === 'AMARILLO'); // `attention` ya viene ordenado por urgencia
+  const vencidos = attention.filter(x => x.s.code === 'ROJO'); // idem: más vencido (remaining más negativo) primero
+  // "Realizados hoy" respeta Ubicación/Familia en la LISTA del modal — el
+  // número del KPI (`doneToday`, arriba) se mantiene intacto tal cual ya se
+  // calculaba, sin cambiar esa fórmula.
+  const equipoIdsFiltrados = new Set(equipos.map(e => e.id));
+  const recordsHoy = records.filter(r => new Date(r.createdAt).toDateString() === today && equipoIdsFiltrados.has(r.equipmentId));
+
+  // "Pendientes de validación"/"Conflictos de validación" — KPIs secundarios,
+  // lectura REAL de grease_validations (entidad separada, ver
+  // docs/GREASE_VALIDATION_AUDIT.md). A propósito NO se acota a "hoy": la
+  // validación ahora puede diferirse (Validar ahora/Validar después) y
+  // regularizarse horas o incluso días después, así que un pendiente de
+  // ayer no debe desaparecer del KPI ni de la lista solo por cruzar la
+  // medianoche — usa `records` completo (ya en memoria), filtrado por los
+  // equipos que respetan Ubicación/Familia. Concepto DISTINTO de
+  // "Cumplimiento operativo" (trabajo programado ejecutado) — esto es sobre
+  // CONFIRMAR lo ya ejecutado, no sobre si se ejecutó. Ambos usan las
+  // funciones CENTRALES de src/core/grease-validation.js
+  // (isRecordPendingValidation()/isRecordInConflict(), que a su vez
+  // dependen de isRecordSubjectToValidation()) — MISMA regla que Historial/
+  // Mis Engrases/Reportes, sin excepción propia del Dashboard: mientras
+  // GREASE_VALIDATION_ENABLED_FROM siga en null, ningún registro es
+  // "sujeto" todavía, así que ambos conteos dan 0 (ver
+  // docs/GREASE_VALIDATION_AUDIT.md §14) — nunca 0 se fuerza a mano aquí,
+  // sale solo de la función central.
+  const recordsParaValidacion = records.filter(r => equipoIdsFiltrados.has(r.equipmentId));
+  const recordsPendientesValidacion = recordsParaValidacion
+    .filter(r => isRecordPendingValidation(r, validations))
+    .sort((a, b) => new Date(a.date) - new Date(b.date)); // más antiguo pendiente primero
+  const recordsConflictoValidacion = recordsParaValidacion.filter(r => isRecordInConflict(r, validations));
+  const pendientesTurnoActual = recordsPendientesValidacion.filter(r => r.shiftId === currentShiftId());
+
+  // Cola de atención unificada (reemplaza la tabla ancha de 9 columnas):
+  // mismos conjuntos ya calculados arriba (vencidos/proximos/sinPlan/
+  // pausados) — sin cálculo de negocio nuevo, solo se arma un texto legible
+  // por fila (motivo/plan aplicable/urgencia) a partir de datos que
+  // statusFor()/weekdayStatusFor() ya devuelven (x.s.plan/remaining/
+  // scheduleDate). Orden fijo por prioridad: Vencidos > Próximos > Sin
+  // plan > Pausados (solo si hay alguno).
+  const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
+  function planLabelFor(plan) {
+    if (!plan) return '—';
+    if (plan.controlType === 'Horas de operación') return `Cada ${fmt(plan.frequency || 0)} h`;
+    if (plan.controlType === 'Día y turno de la semana') return `Día: ${(plan.assignedDays || []).join('/') || '—'}`;
+    return '—';
+  }
+  function motivoFor(x) {
+    if (x.s.nextHour !== undefined) return x.s.code === 'ROJO' ? 'Vencido por horómetro' : 'Próximo por horómetro';
+    return x.s.code === 'ROJO' ? 'Vencido por día/turno' : 'Programado hoy';
+  }
+  function urgenciaFor(x) {
+    if (x.s.remaining !== undefined && x.s.remaining !== null) {
+      return x.s.remaining < 0 ? `Atraso: ${fmt(Math.abs(x.s.remaining))} h` : `Restante: ${fmt(x.s.remaining)} h`;
+    }
+    if (x.s.scheduleDate) return `Día: ${WEEKDAY_NAMES[x.s.scheduleDate.getDay()]}`;
+    return '—';
+  }
+  const colaAtencion = [
+    ...vencidos.map(x => ({ estado: 'Vencido', tone: 'red', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    ...proximos.map(x => ({ estado: 'Próximo', tone: 'amber', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'red', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
+    ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
+  ];
+
+  // KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — realizados/
+  // programados, SOLO planes "Día y turno de la semana". Planes por Horas
+  // se EXCLUYEN a propósito (auditado antes de implementar, ver
+  // docs/PLAN_COMPLIANCE_ANTICIPADO.md): su vencimiento depende del uso real
+  // del equipo (horómetro), no de un calendario — no hay forma de saber si
+  // a un equipo por horas "le tocaba" hoy/esta semana/este turno sin
+  // proyectar horas→tiempo (calcular un intervalo promedio de uso del
+  // equipo), y eso está explícitamente prohibido. "Programado" aquí
+  // siempre significa un día/turno REAL ya definido en
+  // `plan.assignedDays`/`plan.shiftId`, nunca un valor inventado.
+  // Independiente de `computeFleetCompliance()` (histórico por registro) —
+  // no se mezclan.
+  const nowTs = new Date();
+  const hoyWeekday = WEEKDAY_NAMES[nowTs.getDay()];
+  const turnoActual = currentShiftId();
+  const turnoActualLabel = turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
+  // Universo evaluable: equipos operativos (un equipo pausado no "debía"
+  // engrasarse) con plan Día/Turno, ya filtrados por Ubicación/Familia
+  // arriba (derivan de `equipos`).
+  const equiposDT = equipos.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+  function turnoOk(plan, shiftId) { return !plan.shiftId || plan.shiftId === shiftId; }
+  function hechoEnFecha(equipmentId, plan, fechaStr) {
+    return records.some(r => r.equipmentId === equipmentId && new Date(r.date).toDateString() === fechaStr && turnoOk(plan, r.shiftId));
+  }
+
+  // Hoy: equipos cuyo plan tiene HOY como día asignado.
+  const progHoy = equiposDT.filter(e => (planByEquipoId[e.id].assignedDays || []).includes(hoyWeekday));
+  const hechoHoy = progHoy.filter(e => hechoEnFecha(e.id, planByEquipoId[e.id], today));
+
+  // Turno actual: de lo programado hoy, lo que aplica al turno en curso
+  // (plan sin turno fijo = aplica a ambos) y tiene un registro hecho
+  // específicamente en ESE turno hoy (no en cualquier turno del día).
+  const progTurno = progHoy.filter(e => turnoOk(planByEquipoId[e.id], turnoActual));
+  const hechoTurno = progTurno.filter(e => records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today && r.shiftId === turnoActual));
+
+  // Semana: días de Lunes a HOY (nunca días futuros de la semana — eso sería
+  // proyectar); por cada equipo con plan Día/Turno se cuentan los días ya
+  // transcurridos que coinciden con su `assignedDays`.
+  function startOfWeek(d) {
+    const day = d.getDay(); // 0=Domingo..6=Sábado
+    const diff = (day === 0 ? -6 : 1) - day; // retrocede hasta el Lunes
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  }
+  const diasTranscurridosSemana = [];
+  for (let d = startOfWeek(nowTs); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));
+  let progSemana = 0, hechoSemana = 0;
+  equiposDT.forEach(e => {
+    const plan = planByEquipoId[e.id];
+    diasTranscurridosSemana.forEach(d => {
+      if ((plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) {
+        progSemana++;
+        if (hechoEnFecha(e.id, plan, d.toDateString())) hechoSemana++;
+      }
+    });
+  });
+
+  function cumplimientoPct(x, y) { return y ? Math.round((x / y) * 100) : null; }
+  const cumplHoy = { x: hechoHoy.length, y: progHoy.length, pct: cumplimientoPct(hechoHoy.length, progHoy.length) };
+  const cumplTurno = { x: hechoTurno.length, y: progTurno.length, pct: cumplimientoPct(hechoTurno.length, progTurno.length) };
+  const cumplSemana = { x: hechoSemana, y: progSemana, pct: cumplimientoPct(hechoSemana, progSemana) };
+
   const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
   c.innerHTML = `
-    <div class="kpi-grid">
-      ${kpiCard('TOTAL EQUIPOS', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'equipos' : null)}
-      ${kpiCard('AL DÍA', counts.VERDE, 'green', allowedRoutes.includes('equipos') ? 'equipos' : null)}
-      ${kpiCard('PRÓXIMOS A ENGRASE', counts.AMARILLO, 'amber', 'attention')}
-      ${kpiCard('ENGRASE VENCIDO', counts.ROJO, 'red', 'attention')}
-      ${kpiCard('REALIZADOS HOY', doneToday, 'neutral', allowedRoutes.includes('historial') ? 'historial' : null)}
-      ${kpiCard('ANOMALÍAS ABIERTAS', openAnomalies, 'amber', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+    <div class="layout-wide">
+    <div class="toolbar dash-filters-row">
+      <label class="filter-label">Ubicación
+        <select id="dash-ubic" class="input input-sm">
+          <option value="">Todas</option>
+          ${locations.map(l => `<option value="${l.id}" ${App.dashUbic === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="filter-label">Familia
+        <select id="dash-familia" class="input input-sm">
+          <option value="">Todas</option>
+          ${types.map(t => `<option value="${t.id}" ${App.dashFamilia === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+        </select>
+      </label>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Cumplimiento de engrase</h3>
-        <span class="pill">${compliance}% · objetivo ≥ ${App.generalSettings.complianceTarget}%</span>
+    <section class="dash-section">
+      <h2 class="dash-section-title">Estado de lubricación</h2>
+      <div class="dash-hero-grid">
+        ${dashHeroCard('Al día', counts.VERDE, 'green', 'al-dia')}
+        ${dashHeroCard('Próximos', counts.AMARILLO, 'amber', 'proximos')}
+        ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
+        ${dashHeroCard('Sin plan', sinPlan.length, sinPlan.length ? 'red' : 'neutral', 'sin-plan')}
+        ${dashHeroCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
       </div>
-      <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+    </section>
+
+    <section class="dash-section dash-section-secondary">
+      <h2 class="dash-section-title">Actividad</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
+        ${dashActivityCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
+        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+        ${dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)}
+        ${recordsConflictoValidacion.length > 0 ? dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion') : ''}
+      </div>
+    </section>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
+      <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
+      <div class="dash-compliance-grid">
+        ${dashComplianceCard('Hoy', cumplHoy)}
+        ${dashComplianceCard('Semana', cumplSemana)}
+        ${dashComplianceCard(turnoActualLabel, cumplTurno)}
+      </div>
     </div>
 
     ${conProblemas.length ? `
@@ -2132,9 +2443,25 @@ async function renderDashboard() {
       </table>
     </div>` : ''}
 
+    <div class="panel" id="dash-tiempo-sin-engrase-panel">
+      <div class="panel-head dash-exc-head">
+        <h3>Mayor tiempo sin engrasar</h3>
+        ${tiempoSinEngrase.length > 1 ? `<button type="button" class="link-btn" id="dash-tiempo-ver-todos">Ver todos</button>` : ''}
+      </div>
+      <div class="dash-exc-sub">
+        <span class="dim">Equipos ordenados por días desde el último engrase.</span>
+        ${tiempoSinEngraseMaxDias !== null ? `<span class="dash-exc-summary">Máximo: ${tiempoSinEngraseMaxDias} d · <span class="mono">${esc(tiempoSinEngraseMaxCode)}</span></span>` : ''}
+      </div>
+      ${tiempoSinEngrase.length === 0 ? `<div class="empty-state">Sin equipos para mostrar.</div>` : `
+      <div class="dash-exc-list">
+        ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0)).join('')}
+      </div>
+      `}
+    </div>
+
     <div class="panel" id="dash-attention-panel">
       <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
-      ${attention.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
+      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
       <div class="toolbar" style="padding:0 14px 10px">
         <label class="filter-label">Turno
           <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
@@ -2143,19 +2470,9 @@ async function renderDashboard() {
           <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
         </label>
       </div>
-      <table class="data-table" id="att-table">
-        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th class="col-secondary">Turno</th><th class="col-secondary">Control</th><th class="col-secondary">Horómetro</th><th class="col-secondary">Próximo / Día asignado</th><th>Restante / Atraso</th><th class="col-secondary">Días sin engrase</th></tr></thead>
-        <tbody id="att-tbody"></tbody>
-      </table>`}
+      <div class="dash-cola-atencion" id="dash-cola-atencion"></div>`}
     </div>
-
-    <div class="panel">
-      <div class="panel-head"><h3>Semáforo de equipos</h3></div>
-      <div class="cards-grid">
-        ${statuses.map(x => equipmentCard(x.e, x.s, anomalies.filter(a => a.equipmentId === x.e.id && a.status !== 'Cerrada'))).join('')}
-      </div>
     </div>
-    ${colorLegendHTML()}
   `;
 
   $$('.arreglar-plan', c).forEach(btn => {
@@ -2166,69 +2483,278 @@ async function renderDashboard() {
     });
   });
 
+  // Modales de listado del Dashboard (Al día/Próximos/Vencidos/Total
+  // equipos): mismo patrón que openSinPlanModal()/openPausadosModal()
+  // (abajo), con 3 acciones reutilizables por fila (dashListRowActionsHTML).
+  function openDashStatusModal(title, desc, list) {
+    openModal(title, `
+      <p class="dim">${desc}</p>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${list.map(x => `<tr>
+          <td class="mono">${esc(x.e.code)}</td>
+          <td>${esc((typePorId[x.e.typeId] || {}).name || '—')}</td>
+          <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
+          <td>${esc((locPorId[x.e.locationId] || {}).name || '—')}</td>
+          <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
+          ${dashListRowActionsHTML(x.e.id)}
+        </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+      </table>
+    `);
+    makeTablesResponsive($('.modal-body'));
+    wireDashListActions($('.modal-body'));
+  }
+
+  function openRealizadosHoyModal() {
+    openModal('Engrases realizados hoy', `
+      <p class="dim">${recordsHoy.length} engrase(s) hoy, según los filtros de Ubicación/Familia actuales.</p>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Hora</th><th></th></tr></thead>
+        <tbody>${recordsHoy.map(r => {
+          const eq = equipos.find(e => e.id === r.equipmentId);
+          if (!eq) return '';
+          return `<tr>
+            <td class="mono">${esc(eq.code)}</td>
+            <td>${esc((typePorId[eq.typeId] || {}).name || '—')}</td>
+            <td>${esc(eq.brand)} ${esc(eq.model)}</td>
+            <td>${esc((locPorId[eq.locationId] || {}).name || '—')}</td>
+            <td>${fmtDate(r.date)}</td>
+            ${dashListRowActionsHTML(eq.id)}
+          </tr>`;
+        }).join('') || '<tr><td colspan="6" class="empty-state">Sin engrases hoy.</td></tr>'}</tbody>
+      </table>
+    `);
+    makeTablesResponsive($('.modal-body'));
+    wireDashListActions($('.modal-body'));
+  }
+
+  // Lista de engrasados SIN firma (cualquier fecha, no solo hoy — la
+  // validación ahora puede diferirse, ver Finalizar engrase) — acción
+  // "Validar" abre el mismo modal real de Historial (openValidationModal),
+  // que persiste en grease_validations (ver
+  // docs/GREASE_VALIDATION_AUDIT.md). Re-renderiza el Dashboard al
+  // confirmar para que el KPI baje en vivo. Ordenada por más antiguo
+  // primero (recordsPendientesValidacion ya viene ordenada así).
+  function openPendientesValidacionModal() {
+    const turnoActualLabel = currentShiftId() === 'shift_dia' ? 'Día' : 'Noche';
+    const filaHTML = (r) => {
+      const eq = equipos.find(e => e.id === r.equipmentId);
+      return eq ? pendienteValidacionRowHTML(r, eq) : '';
+    };
+    openModal('Pendientes de validación', `
+      <p class="dim">${recordsPendientesValidacion.length} engrase(s) todavía sin firma, según los filtros de Ubicación/Familia actuales. Más antiguo primero.</p>
+      <div class="dash-tiempo-modal-list">
+        ${recordsPendientesValidacion.map(filaHTML).join('') || '<div class="empty-state">Sin pendientes.</div>'}
+      </div>
+      ${pendientesTurnoActual.length > 0 && pendientesTurnoActual.length < recordsPendientesValidacion.length ? `
+      <div class="dash-tiempo-modal-sub">
+        <div class="panel-head"><h4>Pendientes del turno actual (${turnoActualLabel})</h4></div>
+        <div class="dash-tiempo-modal-list">${pendientesTurnoActual.map(filaHTML).join('')}</div>
+      </div>` : ''}
+    `);
+    $$('.dash-validar-btn', $('.modal-body')).forEach(b => b.addEventListener('click', async () => {
+      const rec = recordsPendientesValidacion.find(r => r.id === b.dataset.rec);
+      const eq = equipos.find(e => e.id === b.dataset.eq);
+      if (rec && eq) openValidationModal(rec, eq, () => renderDashboard());
+    }));
+  }
+
+  // Lista de engrasados de hoy con 2+ firmas activas para el mismo registro
+  // (doble validación offline/multidispositivo, ver
+  // docs/GREASE_VALIDATION_AUDIT.md §10). "Ver conflicto" abre
+  // openValidationConflictModal() con TODAS las activas — nunca elige ni
+  // oculta ninguna.
+  function openConflictosValidacionModal() {
+    openModal('Conflictos de validación', `
+      <p class="dim">${recordsConflictoValidacion.length} engrase(s) de hoy con más de una firma activa para el mismo registro, según los filtros de Ubicación/Familia actuales.</p>
+      <div class="dash-tiempo-modal-list">
+        ${recordsConflictoValidacion.map(r => {
+          const eq = equipos.find(e => e.id === r.equipmentId);
+          if (!eq) return '';
+          return `<div class="dash-tiempo-modal-row">
+            <div class="dash-op-line1"><span class="mono">${esc(eq.code)}</span></div>
+            <div class="dash-op-line2">${esc(eq.brand)} ${esc(eq.model)} · ${fmtDate(r.date)}</div>
+            <div class="dash-list-actions compact">
+              <button type="button" class="btn btn-sm dash-ver-conflicto-btn" data-rec="${r.id}">Ver conflicto</button>
+            </div>
+          </div>`;
+        }).join('') || '<div class="empty-state">Sin conflictos.</div>'}
+      </div>
+    `);
+    $$('.dash-ver-conflicto-btn', $('.modal-body')).forEach(b => b.addEventListener('click', () => {
+      const activas = findActiveValidations(b.dataset.rec, validations);
+      const rec = recordsConflictoValidacion.find(r => r.id === b.dataset.rec);
+      const eq = rec ? equipos.find(e => e.id === rec.equipmentId) : null;
+      if (activas.length > 1) openValidationConflictModal(activas, eq, rec ? rec.date : null);
+    }));
+  }
+
+  function openTiempoSinEngraseModal(rows) {
+    // Mismo patrón visual compacto que el panel (tiempoExcepcionRowHTML), no
+    // una tabla distinta ni tarjetas — ya viene ordenado por días
+    // descendente. "Registrar" no aplica aquí: esta lista es para
+    // priorizar/navegar a Historial, no para reemplazar Registrar Engrase.
+    openModal(`Mayor tiempo sin engrasar (${rows.length})`, `
+      <div class="dash-exc-list">
+        ${rows.map(({ e, last, dias }, idx) => tiempoExcepcionRowHTML(e, last, dias, locPorId, idx === 0)).join('')}
+      </div>
+    `);
+    $$('.dash-exc-row', $('.modal-body')).forEach(row => {
+      row.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); });
+      row.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); closeModal(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); }
+      });
+    });
+  }
+
   $$('.kpi-clickable', c).forEach(card => {
     card.addEventListener('click', () => {
       const action = card.dataset.kpiAction;
-      if (action === 'attention') {
-        $('#dash-attention-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else if (action === 'anomalias') {
+      if (action === 'anomalias') {
         navigate('anomalias');
-      } else if (action === 'equipos') {
-        navigate('equipos');
-      } else if (action === 'historial') {
-        navigate('historial');
+      } else if (action === 'sin-plan') {
+        openSinPlanModal(sinPlan, types, locations);
+      } else if (action === 'pausados') {
+        openPausadosModal(pausados, types, locations);
+      } else if (action === 'al-dia') {
+        openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
+      } else if (action === 'proximos') {
+        openDashStatusModal('Próximos a engrase', `${proximos.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximos);
+      } else if (action === 'vencidos') {
+        openDashStatusModal('Equipos vencidos', `${vencidos.length} equipo(s) vencidos, los más atrasados primero.`, vencidos);
+      } else if (action === 'total-equipos') {
+        openDashStatusModal('Total de equipos', `${statuses.length} equipo(s) según los filtros actuales.`, statuses);
+      } else if (action === 'realizados-hoy') {
+        openRealizadosHoyModal();
+      } else if (action === 'pendientes-validacion') {
+        openPendientesValidacionModal();
+      } else if (action === 'conflictos-validacion') {
+        openConflictosValidacionModal();
       }
     });
   });
 
-  function drawAttentionTable() {
-    const tbody = $('#att-tbody');
-    if (!tbody) return;
+  $('#dash-tiempo-ver-todos')?.addEventListener('click', () => {
+    openTiempoSinEngraseModal(tiempoSinEngrase.map(e => ({ e, last: lastRecordByEquipo[e.id], dias: daysSinceLastGrease(e.id) })));
+  });
+  // Toda la fila navega a Historial (no hay otro control dentro de la fila
+  // con el que choque) — Registrar se quitó a propósito: esta lista es para
+  // priorizar, no reemplaza Registrar Engrase.
+  $$('.dash-exc-row', c).forEach(row => {
+    row.addEventListener('click', () => { App.dashJumpEquipoId = row.dataset.id; navigate('historial'); });
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); }
+    });
+  });
+
+  $('#dash-ubic')?.addEventListener('change', e => { App.dashUbic = e.target.value; renderDashboard(); });
+  $('#dash-familia')?.addEventListener('change', e => { App.dashFamilia = e.target.value; renderDashboard(); });
+
+  // Cola compacta (reemplaza la tabla ancha de 9 columnas): una fila
+  // horizontal en desktop, la misma información en tarjeta vertical en
+  // móvil vía CSS (sin duplicar markup) — sin scroll horizontal.
+  function drawColaAtencion() {
+    const cont = $('#dash-cola-atencion');
+    if (!cont) return;
     const turnoFilter = $('#att-turno').value;
     const diaFilter = $('#att-dia').value;
 
-    const filtered = attention.filter(x => {
-      if (turnoFilter && x.e.shiftId !== turnoFilter) return false;
+    const filtered = colaAtencion.filter(item => {
+      if (turnoFilter && item.e.shiftId !== turnoFilter) return false;
       if (diaFilter) {
-        if (!x.s.plan || !x.s.plan.assignedDays || !x.s.plan.assignedDays.includes(diaFilter)) return false;
+        if (!item.planObj || !item.planObj.assignedDays || !item.planObj.assignedDays.includes(diaFilter)) return false;
       }
       return true;
     });
 
-    tbody.innerHTML = filtered.map(x => {
-      const isWeekday = !!x.s.scheduleDate;
-      const isHours = x.s.nextHour !== undefined;
-      let controlLabel = '—', nextCol = '—', restCol = '—';
-      if (isHours) {
-        controlLabel = 'Por horas';
-        nextCol = fmt(x.s.nextHour) + ' h';
-        restCol = x.s.remaining !== undefined && x.s.remaining !== null
-          ? (x.s.remaining < 0 ? '+' + fmt(Math.abs(x.s.remaining)) + ' h atraso' : fmt(x.s.remaining) + ' h')
-          : '—';
-      } else if (isWeekday) {
-        controlLabel = 'Día/turno';
-        nextCol = WEEKDAY_NAMES[x.s.scheduleDate.getDay()];
-        const diffDays = Math.floor((new Date().setHours(0, 0, 0, 0) - x.s.scheduleDate.getTime()) / 86400000);
-        restCol = x.s.code === 'ROJO' ? `${diffDays} día(s) atraso` : (x.s.code === 'AMARILLO' ? 'Programado hoy' : '—');
-      }
-      const dsg = daysSinceLastGrease(x.e.id);
-      return `<tr>
-        <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
-        <td class="mono">${esc(x.e.code)}</td>
-        <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
-        <td class="col-secondary">${x.e.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-        <td class="col-secondary">${controlLabel}</td>
-        <td class="mono col-secondary">${isHours ? fmt(x.e.hourmeter) + ' h' : '—'}</td>
-        <td class="mono col-secondary">${nextCol}</td>
-        <td class="mono" style="color:${STATUS_COLOR[x.s.code]}">${restCol}</td>
-        <td class="mono col-secondary">${dsg === null ? 'Nunca registrado' : dsg + ' día(s)'}</td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="9" class="empty-state">Sin equipos para este filtro.</td></tr>`;
-    makeTablesResponsive($('#dash-attention-panel'));
+    // Estructura en líneas fijas (no flex-wrap de spans sueltos): en móvil
+    // cada línea ocupa solo el alto de su texto, sin huecos por centrado
+    // vertical entre elementos de distinta altura; en desktop (styles.css)
+    // las mismas líneas se acomodan en una sola fila compacta.
+    cont.innerHTML = filtered.map(item => `
+      <div class="dash-cola-row">
+        <div class="dash-op-line1">
+          <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
+          <span class="dash-cola-code mono">${esc(item.e.code)}</span>
+          <span class="dash-cola-urgencia" style="color:${item.tone === 'red' ? 'var(--red)' : item.tone === 'amber' ? 'var(--amber)' : 'var(--text-dim)'}">${esc(item.urgencia)}</span>
+        </div>
+        <div class="dash-op-line2">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</div>
+        <div class="dash-op-line3 dim">${esc(item.motivo)}</div>
+        <div class="dash-op-line4">Plan: ${esc(item.plan)}</div>
+        <div class="dash-cola-actions">
+          <button type="button" class="btn btn-sm dash-cola-hist" data-id="${item.e.id}">Historial</button>
+          <button type="button" class="btn btn-sm dash-cola-reg" data-id="${item.e.id}">Registrar</button>
+        </div>
+      </div>`).join('') || `<div class="empty-state">Sin equipos para este filtro.</div>`;
+
+    $$('.dash-cola-hist', cont).forEach(b => b.addEventListener('click', () => { App.dashJumpEquipoId = b.dataset.id; navigate('historial'); }));
+    $$('.dash-cola-reg', cont).forEach(b => b.addEventListener('click', () => startGreaseFlow(b.dataset.id)));
   }
-  drawAttentionTable();
-  $('#att-turno')?.addEventListener('change', drawAttentionTable);
-  $('#att-dia')?.addEventListener('change', drawAttentionTable);
+  drawColaAtencion();
+  $('#att-turno')?.addEventListener('change', drawColaAtencion);
+  $('#att-dia')?.addEventListener('change', drawColaAtencion);
+}
+
+// KPI "Equipos sin plan" del Dashboard: listado en modal (no crea una OT ni una
+// pantalla nueva), con código/familia/modelo/ubicación/estado de cada equipo.
+function openSinPlanModal(list, types, locations) {
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  openModal('Equipos sin plan de engrase', `
+    <p class="dim">${list.length} equipo(s) activo(s) sin plan por día/turno ni por horas — no se están controlando.</p>
+    <table class="data-table">
+      <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th></tr></thead>
+      <tbody>${list.map(e => `<tr>
+        <td class="mono">${esc(e.code)}</td>
+        <td>${esc((typePorId[e.typeId] || {}).name || '—')}</td>
+        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td>${esc((locPorId[e.locationId] || {}).name || '—')}</td>
+        <td>${esc(e.status)}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+    </table>
+  `);
+  makeTablesResponsive($('.modal-body'));
+}
+
+// KPI "Pausados" del Dashboard: equipos CON plan pero no operativos (mismo
+// criterio que PAUSADO en Matriz Semanal, ver src/core/weekly-matrix.js).
+function openPausadosModal(list, types, locations) {
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  openModal('Equipos pausados', `
+    <p class="dim">${list.length} equipo(s) con plan configurado, pero no operativos — no cuentan como vencidos ni próximos mientras estén así.</p>
+    <table class="data-table">
+      <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th></tr></thead>
+      <tbody>${list.map(e => `<tr>
+        <td class="mono">${esc(e.code)}</td>
+        <td>${esc((typePorId[e.typeId] || {}).name || '—')}</td>
+        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td>${esc((locPorId[e.locationId] || {}).name || '—')}</td>
+        <td>${esc(e.status)}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+    </table>
+  `);
+  makeTablesResponsive($('.modal-body'));
+}
+
+// Fila de acciones reutilizada en los modales de listado del Dashboard
+// rediseñado (Al día/Próximos/Vencidos/Total equipos/Realizados hoy/Mayor
+// tiempo sin engrasar) — mismas 3 acciones, sin duplicar el flujo real de
+// cada una: Ver equipo (openEquipmentDetail ya existente), Ver historial
+// (Historial con el equipo preseleccionado vía App.dashJumpEquipoId) y
+// Registrar engrase (startGreaseFlow ya existente, mismo botón que usa
+// Equipos/Engrase del Turno).
+function dashListRowActionsHTML(equipmentId) {
+  return `<td class="dash-list-actions">
+    <button type="button" class="btn btn-sm dash-list-ver-eq" data-id="${equipmentId}">Ver equipo</button>
+    <button type="button" class="btn btn-sm dash-list-ver-hist" data-id="${equipmentId}">Historial</button>
+    <button type="button" class="btn btn-sm dash-list-registrar" data-id="${equipmentId}">Registrar</button>
+  </td>`;
+}
+function wireDashListActions(root) {
+  $$('.dash-list-ver-eq', root).forEach(b => b.addEventListener('click', () => { closeModal(); openEquipmentDetail(b.dataset.id); }));
+  $$('.dash-list-ver-hist', root).forEach(b => b.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = b.dataset.id; navigate('historial'); }));
+  $$('.dash-list-registrar', root).forEach(b => b.addEventListener('click', () => { closeModal(); startGreaseFlow(b.dataset.id); }));
 }
 
 function colorLegendHTML() {
@@ -2245,6 +2771,85 @@ function kpiCard(label, value, tone, action) {
   return `<div class="kpi-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
     <div class="kpi-value">${fmt(value)}</div>
     <div class="kpi-label">${label}</div>
+  </div>`;
+}
+
+// Tarjetas del rediseño del Dashboard operativo: mayor jerarquía visual para
+// "Estado de lubricación" (dashHeroCard) y una fila discreta para
+// "Actividad" (dashActivityCard) — mismo mecanismo data-kpi-action/
+// kpi-clickable que kpiCard(), solo cambia la presentación (styles.css).
+function dashHeroCard(label, value, tone, action) {
+  return `<div class="dash-hero-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+    <div class="dash-hero-value">${fmt(value)}</div>
+    <div class="dash-hero-label">${label}</div>
+  </div>`;
+}
+// Tarjetas SECUNDARIAS de "Actividad" — número arriba (más visible), label
+// debajo (mismo orden visual que dashHeroCard, pero más chicas: son de
+// menor jerarquía que Al día/Próximos/Vencidos/Sin plan/Pausados).
+function dashActivityCard(label, value, tone, action) {
+  return `<div class="dash-activity-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+    <span class="dash-activity-value">${fmt(value)}</span>
+    <span class="dash-activity-label">${label}</span>
+  </div>`;
+}
+
+// Tarjeta de "Cumplimiento operativo" (Hoy/Semana/Turno actual): % +
+// "X de Y programados" + barra — estado neutro y sin % cuando y=0 (nunca
+// NaN/Infinity). `c` = { x, y, pct } ya calculado en renderDashboard().
+function dashComplianceCard(label, c) {
+  return `<div class="dash-compliance-card">
+    <div class="dash-compliance-label">${label}</div>
+    <div class="dash-compliance-pct">${c.pct === null ? '—' : c.pct + '%'}</div>
+    <div class="dash-compliance-frac">${c.y === 0 ? 'Sin engrases programados' : `${c.x} de ${c.y} programados`}</div>
+    <div class="progress-track"><div class="progress-fill" style="width:${c.pct === null ? 0 : c.pct}%; background:${c.pct === null ? 'var(--text-dim)' : c.pct >= App.generalSettings.complianceTarget ? 'var(--green)' : c.pct >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+  </div>`;
+}
+
+// Tiempo transcurrido desde el engrase hasta AHORA — solo para mostrar en
+// "Pendientes de validación" (nunca se usa para Cumplimiento ni para
+// vencimiento por horómetro, son conceptos separados).
+function tiempoPendienteDesde(dateISO) {
+  const horas = Math.floor((Date.now() - new Date(dateISO).getTime()) / 3600000);
+  if (horas < 1) return 'Menos de 1 h';
+  if (horas < 24) return `${horas} h`;
+  const dias = Math.floor(horas / 24);
+  const horasResto = horas % 24;
+  return horasResto ? `${dias} d ${horasResto} h` : `${dias} d`;
+}
+
+// Fila de "Pendientes de validación": código+tiempo pendiente (línea 1),
+// modelo (línea 2), fecha/turno/lubricador (línea 3) — mismo patrón
+// .dash-op-line* que el resto del Dashboard, con Validar como única acción.
+function pendienteValidacionRowHTML(r, eq) {
+  return `<div class="dash-tiempo-modal-row">
+    <div class="dash-op-line1">
+      <span class="mono">${esc(eq.code)}</span>
+      <span class="dash-pendiente-tiempo">${tiempoPendienteDesde(r.date)}</span>
+    </div>
+    <div class="dash-op-line2">${esc(eq.brand)} ${esc(eq.model)}</div>
+    <div class="dash-op-line3 dim">${fmtDate(r.date)} · Turno ${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'} · ${esc(r.userName || '—')}</div>
+    <div class="dash-list-actions compact">
+      <button type="button" class="btn btn-sm dash-validar-btn" data-rec="${r.id}" data-eq="${eq.id}">Validar</button>
+    </div>
+  </div>`;
+}
+
+// Lista compacta de excepciones (estilo Fiix/UpKeep/Fracttal: KPI/resumen →
+// lista → drill-down), NO ranking con números #1/#2/#3 ni tarjetas. Toda la
+// fila navega a Historial (no hay otro control dentro que choque); isMax
+// (el más urgente, ya viene primero por el sort de tiempoSinEngrase) recibe
+// solo un acento ámbar discreto vía CSS, nunca una tarjeta separada.
+// Reutilizada también en "Ver todos" (mismo patrón visual, nunca otra tabla).
+function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
+  return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}" role="button" tabindex="0">
+    <div class="dash-exc-main">
+      <div class="dash-exc-line1"><span class="dash-exc-code mono">${esc(e.code)}</span></div>
+      <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
+      <div class="dash-exc-line3 dim">Último engrase: ${last ? fmtDate(last) : 'Sin registro'}</div>
+    </div>
+    <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? 'Sin registro' : `${dias} d`}</span>
+    <span class="dash-exc-chevron" aria-hidden="true">›</span>
   </div>`;
 }
 
@@ -2295,6 +2900,7 @@ async function renderEquipos() {
   });
 
   c.innerHTML = `
+    <div class="layout-wide">
     <div class="toolbar">
       <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
       ${canEdit ? `<button class="btn btn-accent" id="eq-new">${ic("plus")}Nuevo equipo</button>` : ''}
@@ -2311,6 +2917,7 @@ async function renderEquipos() {
     </div>
     <div id="eq-recents"></div>
     <div class="cards-grid" id="eq-list"></div>
+    </div>
   `;
   $('#eq-recents').innerHTML = await recentEquiposHTML();
   $$('.recents-chip', $('#eq-recents')).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.recentId)));
@@ -3705,8 +4312,8 @@ async function renderMatrizSemanal() {
   const lunes = new Date(hoy);
   lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + (App.matrizOffset * 7));
   const dias = [];
-  for (let i = 0; i < 6; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
-  const finSemana = new Date(dias[5]); finSemana.setHours(23, 59, 59, 999);
+  for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  const finSemana = new Date(dias[6]); finSemana.setHours(23, 59, 59, 999);
 
   const filtroTurno = App.matrizTurno || '';
   const filtroTipo = App.matrizTipo || '';
@@ -3718,6 +4325,11 @@ async function renderMatrizSemanal() {
     if (filtroUbic && e.locationId !== filtroUbic) return false;
     return true;
   });
+  // Equipos SIN NINGÚN plan (ni día/turno ni horas), dentro de los mismos
+  // filtros turno/tipo/ubicación — no aparecen como filas en esta matriz (no
+  // tienen días asignados), así que se resumen en un aviso aparte (D, mismo
+  // criterio y modal que el KPI del Dashboard, sin duplicar lógica).
+  const sinPlan = visibles.filter(e => !plans.some(p => p.equipmentId === e.id));
   // Solo equipos con plan por día/turno (los que tienen días asignados)
   visibles = visibles.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
@@ -3749,6 +4361,7 @@ async function renderMatrizSemanal() {
                   if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
                   if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
                   if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
+                  if (s.tipo === 'pausado') return `<td class="celda-pausado" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
                   if (s.tipo === 'futuro') return `<td class="celda-futuro" title="Programado para este día"></td>`;
                   return '<td></td>';
                 }).join('')}
@@ -3768,6 +4381,7 @@ async function renderMatrizSemanal() {
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
   const futuras = contar('futuro');
+  const pausadas = contar('pausado');
   // El cumplimiento se mide solo sobre lo que YA debió hacerse (lo de más adelante en
   // la semana todavía no cuenta en contra). Antes lo futuro bajaba el porcentaje
   // injustamente: un lunes marcaba 17% aunque no se hubiera incumplido nada.
@@ -3775,9 +4389,10 @@ async function renderMatrizSemanal() {
   const pct = yaVencidas ? Math.round((hechas / yaVencidas) * 100) : 100;
 
   c.innerHTML = `
+    <div class="layout-wide">
     <div class="toolbar">
       <button class="btn btn-sm" id="mtz-prev">← Semana anterior</button>
-      <span class="matriz-rango">${dias[0].getDate()}/${dias[0].getMonth() + 1} — ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}${App.matrizOffset === 0 ? ' (semana actual)' : ''}</span>
+      <span class="matriz-rango">${dias[0].getDate()}/${dias[0].getMonth() + 1} — ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}${App.matrizOffset === 0 ? ' (semana actual)' : ''}</span>
       <button class="btn btn-sm" id="mtz-next">Semana siguiente →</button>
       ${App.matrizOffset !== 0 ? `<button class="btn btn-sm" id="mtz-hoy">Ir a hoy</button>` : ''}
       <button class="btn btn-sm btn-accent" id="mtz-print">${ic("print")}Imprimir</button>
@@ -3811,8 +4426,14 @@ async function renderMatrizSemanal() {
       ${kpiCard('REALIZADOS', hechas, 'green')}
       ${kpiCard('NO REALIZADOS', noRealizadas, noRealizadas ? 'red' : 'neutral')}
       ${kpiCard('PENDIENTES HOY', pendientes, pendientes ? 'amber' : 'neutral')}
+      ${kpiCard('PAUSADOS', pausadas, 'neutral')}
       ${kpiCard('CUMPLIMIENTO %', pct, pct >= App.generalSettings.complianceTarget ? 'green' : 'red')}
     </div>
+
+    ${sinPlan.length ? `
+    <button type="button" class="mtz-sin-plan-note" id="mtz-sin-plan-btn">
+      ${ic('alert')}${sinPlan.length} equipo(s) sin plan de engrase — no aparecen en esta matriz
+    </button>` : ''}
 
     ${visibles.length ? `
       ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
@@ -3822,11 +4443,14 @@ async function renderMatrizSemanal() {
         <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado (día ya pasado)</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente hoy</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183; opacity:0.5"></span>Programado más adelante</span>
+        <span class="color-legend-item"><span class="dot" style="background:var(--gray-status)"></span>Pausado (equipo no operativo)</span>
         <span class="color-legend-item"><span class="dot" style="background:var(--border)"></span>No le toca ese día</span>
       </div>`
     : `<div class="panel"><div class="empty-state">No hay equipos con plan por "Día y turno de la semana" que coincidan con estos filtros.<br/>Esta vista solo muestra equipos con días asignados — configúralos en Plan de Engrase.</div></div>`}
+    </div>
   `;
 
+  $('#mtz-sin-plan-btn')?.addEventListener('click', () => openSinPlanModal(sinPlan, types, locations));
   $('#mtz-prev').addEventListener('click', () => { App.matrizOffset--; renderMatrizSemanal(); });
   $('#mtz-next').addEventListener('click', () => { App.matrizOffset++; renderMatrizSemanal(); });
   $('#mtz-hoy')?.addEventListener('click', () => { App.matrizOffset = 0; renderMatrizSemanal(); });
@@ -3867,7 +4491,7 @@ async function renderMatrizSemanal() {
       .lg{width:14px;height:11px;border:1px solid #333;display:inline-block}
       .matriz-wrap{overflow:visible}
     </style></head><body>
-      <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</h1>
+      <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}</h1>
       <div class="sub">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento: ${pct}% (${hechas} de ${totalCeldas})</div>
       <div class="aviso-color">Si esta hoja sale sin colores: en el diálogo de impresión abre "Más ajustes" y activa <b>"Gráficos de fondo"</b>.</div>
       ${tablas}
@@ -3897,7 +4521,7 @@ async function renderMatrizSemanal() {
     const vacia = () => celda('', { border: bordes });
 
     // Encabezado del documento
-    filas.push([celda(`Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}`,
+    filas.push([celda(`Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}`,
       { font: { bold: true, sz: 15 } })]);
     merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: nCols - 1 } });
     filas.push([celda(`Generado el ${fmtDate(nowISO())} por ${App.currentUser.name} · Cumplimiento ${pct}% (${hechas} de ${totalCeldas})`,
@@ -3988,7 +4612,7 @@ async function renderMatrizSemanal() {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Plan semanal');
-    XLSX.writeFile(wb, `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[5].getFullYear()}.xlsx`);
+    XLSX.writeFile(wb, `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[6].getFullYear()}.xlsx`);
     showInAppToast('✓ Excel descargado con colores');
   });
 }
@@ -4041,19 +4665,52 @@ async function renderRegistrar() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
+  // Equipos recientes: función YA existente (trackRecentEquipment()/
+  // recentEquiposHTML(), reutilizada tal cual en Mi Turno y Equipos, ver
+  // línea ~178) — se muestra aquí porque ya hay datos reales para hacerlo
+  // (startGreaseFlow() ya llama trackRecentEquipment() al registrar), sin
+  // inventar ninguna persistencia ni funcionalidad nueva.
+  const recentsHTML = await recentEquiposHTML();
   c.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>Seleccionar equipo</h3></div>
-      <select id="reg-eq-select" class="input">
-        <option value="">— Selecciona un equipo —</option>
-        ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
-      </select>
+    <div class="reg-select-wrap">
+      <div class="reg-select-card">
+        <h2 class="reg-select-title">Seleccionar equipo</h2>
+        <p class="reg-select-subtitle">Busca y selecciona un equipo para registrar el engrase.</p>
+        <select id="reg-eq-select" class="input reg-eq-select">
+          <option value="">— Selecciona un equipo —</option>
+          ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
+        </select>
+        ${recentsHTML}
+      </div>
     </div>
     <div id="reg-flow-area"></div>
   `;
   $('#reg-eq-select').addEventListener('change', (e) => {
     if (e.target.value) startGreaseFlow(e.target.value, $('#reg-flow-area'));
   });
+  $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startGreaseFlow(b.dataset.recentId, $('#reg-flow-area'))));
+}
+
+// A dónde ir tras Finalizar Engrase (Validar ahora/después) — NUNCA usar
+// navigate() a secas aquí: navigate() es el router de escritorio
+// (renderTurno/renderHistorial de ADMIN) y, dentro del shell del
+// Lubricador (.lub-shell), App.route suele seguir en 'turno' porque
+// bootLubricador() lleva su propia navegación aparte (ver
+// redibujarPantallaActual, mismo criterio) — llamar a navigate('turno') ahí
+// terminaba pintando la tabla de escritorio "PLAN DE ENGRASE DEL TURNO"
+// dentro de la pantalla del Lubricador. "Mi Turno" (trabajo por hacer) y
+// "Mis Engrases" (trabajo ya hecho) son pantallas distintas — el destino
+// correcto después de registrar SIEMPRE es Mis Engrases, reutilizando
+// renderLubricadorHistorial() (misma vista de tarjetas, sin duplicarla).
+function irAMisEngrasesTrasRegistrar() {
+  App.lubricadorGreaseFlowActive = false; // el flujo terminó de verdad: llegó a Mis Engrases
+  if (document.querySelector('.lub-shell')) {
+    App.route = 'historial';
+    $$('.lub-nav-item').forEach(x => x.classList.toggle('active', x.dataset.route === 'historial'));
+    renderLubricadorHistorial();
+  } else {
+    navigate(App.route);
+  }
 }
 
 async function startGreaseFlow(equipmentId, target) {
@@ -4334,8 +4991,13 @@ async function startGreaseFlow(equipmentId, target) {
       $('#draft-banner')?.remove();
     });
 
+    let enviandoEngrase = false; // guarda contra doble click/doble submit: nunca duplicar lubrication_record
     $('#grease-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (enviandoEngrase) return;
+      enviandoEngrase = true;
+      $('.btn-grease-submit').disabled = true;
+      try {
       const fd = Object.fromEntries(new FormData(ev.target).entries());
       const newHourmeter = parseFloat(fd.hourmeter);
       const marcadoRetro = !!$('#retro-check')?.checked && fd.retroDate;
@@ -4485,8 +5147,36 @@ async function startGreaseFlow(equipmentId, target) {
       await refreshLocalNotifications();
       await refreshAppBadge();
 
-      area.innerHTML = `<div class="panel"><div class="empty-state success">✓ Engrase registrado para ${esc(equipment.code)}. Próximo engrase recalculado automáticamente.</div></div>`;
-      setTimeout(() => navigate(App.route), 900);
+      // La validación NO es obligatoria en el momento: el lubrication_record
+      // ya quedó guardado arriba pase lo que pase acá. "Validar ahora" abre
+      // el MISMO modal real (openValidationModal, grease_validations) sobre
+      // este `record`/`equipment"; "Validar después" solo navega — no crea
+      // ningún grease_validation, el estado derivado queda en
+      // PENDIENTE_VALIDACION hasta que alguien firme (ver
+      // docs/GREASE_VALIDATION_AUDIT.md).
+      area.innerHTML = `<div class="panel">
+        <div class="empty-state success">Engrase registrado correctamente — ${esc(equipment.code)}. Próximo engrase recalculado automáticamente.</div>
+        <div class="grease-validate-choice">
+          <p class="dim">¿Quién valida este engrase?</p>
+          <div class="grease-validate-choice-actions">
+            <button type="button" class="btn btn-accent" id="grease-validate-now-btn">Validar ahora</button>
+            <button type="button" class="btn" id="grease-validate-later-btn">Validar después</button>
+          </div>
+        </div>
+      </div>`;
+      $('#grease-validate-now-btn')?.addEventListener('click', () => {
+        openValidationModal(record, equipment, irAMisEngrasesTrasRegistrar);
+      });
+      $('#grease-validate-later-btn')?.addEventListener('click', irAMisEngrasesTrasRegistrar);
+      } finally {
+        // El botón puede ya no existir (éxito reemplazó `area.innerHTML`) —
+        // reactivarlo solo importa en los caminos de error/validación fallida,
+        // para que la persona pueda corregir y reintentar (nunca queda
+        // bloqueado, pero tampoco permite un doble submit mientras procesa).
+        enviandoEngrase = false;
+        const btnSubmit = $('.btn-grease-submit');
+        if (btnSubmit) btnSubmit.disabled = false;
+      }
     });
   }
 }
@@ -4612,6 +5302,7 @@ async function renderAnomalias() {
   const equipos = await DB.allActive('equipment');
 
   c.innerHTML = `
+    <div class="layout-wide">
     <div class="toolbar">
       <select id="anom-filter" class="input">
         <option value="">Todos los estados</option>
@@ -4624,6 +5315,7 @@ async function renderAnomalias() {
         <thead><tr><th>Criticidad</th><th>Equipo</th><th>Componente</th><th>Descripción</th><th>Fecha</th><th>Responsable</th><th>Estado</th><th>Foto</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
+    </div>
     </div>`;
 
 
@@ -4838,6 +5530,21 @@ async function renderLubricantes() {
   }));
 }
 
+// Búsqueda parcial, sin distinguir mayúsculas/minúsculas, sobre los campos
+// de equipo ya existentes (código, código ahorrativo, marca, modelo,
+// descripción, N° de serie, familia/tipo, ubicación) — reutilizada por el
+// buscador de Historial. `type`/`location` son opcionales (el equipo puede
+// no tener familia/ubicación asignada todavía).
+function equipoMatchesQuery(eq, type, location, query) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [
+    eq.code, eq.shortCode, eq.brand, eq.model, eq.description, eq.serial,
+    type ? type.name : '', location ? location.name : '',
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(q);
+}
+
 /* ============================================================
    HISTORIAL
    ============================================================ */
@@ -4846,56 +5553,155 @@ async function renderHistorial() {
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const types = await DB.allActive('equipment_types');
+  const locations = await DB.allActive('locations');
+  const plans = await DB.allActive('lubrication_plans');
+  const planPorEquipoIdHist = {}; plans.forEach(p => planPorEquipoIdHist[p.equipmentId] = p);
   const today = new Date().toISOString().slice(0, 10);
   let lastGeneralResults = [];
+  // Pestañas (misma pantalla, sin navigate() — solo se alterna display vía
+  // .hidden — ambos grupos ya cargaron sus datos, cambiar de pestaña no
+  // vuelve a pedirlos ni pierde filtros/resultados). "Por equipo" abre por
+  // defecto.
   c.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>Buscar en todo el historial</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <label class="filter-label">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
-        <label class="filter-label">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
-        <label class="filter-label">Turno
-          <select id="gh-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
-        </label>
-        <label class="filter-label">Familia
-          <select id="gh-familia" class="input input-sm"><option value="">Todas</option>${types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
-        </label>
-        <label class="filter-label">Estado del equipo
-          <select id="gh-estado" class="input input-sm">
-            <option value="">Todos</option>
-            <option value="ROJO">Vencidos</option>
-            <option value="AMARILLO">Próximos</option>
-            <option value="VERDE">Al día</option>
-          </select>
-        </label>
-        <button class="btn btn-accent" id="gh-apply">${ic("search")}Buscar</button>
+    <div class="layout-wide">
+    <div class="hist-tabs" role="tablist">
+      <button type="button" class="hist-tab active" data-tab="equipo" role="tab" aria-selected="true">Por equipo</button>
+      <button type="button" class="hist-tab" data-tab="global" role="tab" aria-selected="false">Historial global</button>
+    </div>
+    <div data-hist-panel="equipo">
+      <div class="panel" id="hist-eq-panel">
+        <div class="panel-head"><h3>Historial por equipo</h3></div>
+        <div id="hist-eq-search-area"></div>
       </div>
-      <div id="gh-results"></div>
+      <div id="hist-area"></div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Historial por equipo</h3></div>
-      <select id="hist-equipo" class="input">
-        <option value="">— Selecciona un equipo —</option>
-        ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
-      </select>
+    <div data-hist-panel="global" class="hidden">
+      <div class="panel hist-global-panel">
+        <div class="panel-head"><h3>Historial global</h3></div>
+        <div class="hist-global-body">
+          <input type="search" id="gh-search" class="input hist-global-search" placeholder="Buscar: código, familia, marca, modelo, ubicación…" autocomplete="off"/>
+          <div class="hist-global-filters-row">
+            <label class="filter-label hist-global-filter">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
+            <label class="filter-label hist-global-filter">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
+            <label class="filter-label hist-global-filter">Turno
+              <select id="gh-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+            </label>
+            <label class="filter-label hist-global-filter">Estado del equipo
+              <select id="gh-estado" class="input input-sm">
+                <option value="">Todos</option>
+                <option value="ROJO">Vencidos</option>
+                <option value="AMARILLO">Próximos</option>
+                <option value="VERDE">Al día</option>
+              </select>
+            </label>
+            <div class="hist-global-summary" id="gh-summary"></div>
+          </div>
+          <div id="gh-results"></div>
+        </div>
+      </div>
     </div>
-    <div id="hist-area"></div>
+    </div>
   `;
-  $('#hist-equipo').addEventListener('change', async (e) => {
-    const id = e.target.value;
-    if (!id) { $('#hist-area').innerHTML = ''; return; }
-    await drawHistory(id);
-  });
+
+  $$('.hist-tab', c).forEach(tab => tab.addEventListener('click', () => {
+    $$('.hist-tab', c).forEach(t => { t.classList.toggle('active', t === tab); t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
+    $$('[data-hist-panel]', c).forEach(p => p.classList.toggle('hidden', p.dataset.histPanel !== tab.dataset.tab));
+  }));
+
+  // Buscador de equipo (código/familia/marca/modelo/ubicación), reutiliza
+  // equipoMatchesQuery() — es la ÚNICA búsqueda de equipo de la pantalla (el
+  // historial global ya no tiene una propia, ver A7). Al elegir un equipo, la
+  // búsqueda se reemplaza por un encabezado compacto; "Cambiar equipo" vuelve
+  // a mostrarla. Debounce ~280ms, mismo patrón que wireQuickFind() (topbar).
+  const typePorIdHist = {}; types.forEach(t => typePorIdHist[t.id] = t);
+  const locPorIdHist = {}; locations.forEach(l => locPorIdHist[l.id] = l);
+
+  function renderEqSearch() {
+    $('#hist-eq-search-area').innerHTML = `
+      <div class="hist-eq-search-wrap">
+        <input type="search" id="hist-eq-search" class="input hist-eq-search" placeholder="Buscar equipo: código, familia, marca, modelo, ubicación…" autocomplete="off"/>
+        <div id="hist-eq-results" class="hist-eq-results hidden"></div>
+      </div>`;
+    $('#hist-area').innerHTML = '';
+    wireEqSearch();
+  }
+
+  function renderEqHeader(eq) {
+    const type = typePorIdHist[eq.typeId];
+    const loc = locPorIdHist[eq.locationId];
+    $('#hist-eq-search-area').innerHTML = `
+      <div class="hist-eq-header">
+        <div class="hist-eq-header-main">
+          <span class="hist-eq-header-code">${esc(eq.code)}</span>
+          <span class="hist-eq-header-model">${esc(eq.brand)} ${esc(eq.model)}</span>
+        </div>
+        <div class="hist-eq-header-meta">
+          <span>${esc((type || {}).name || 'Sin familia')}</span>
+          <span>${esc((loc || {}).name || 'Sin ubicación')}</span>
+          <span class="hist-eq-header-status">${esc(eq.status)}</span>
+        </div>
+        <button type="button" class="btn btn-sm" id="hist-eq-change">${ic('search')}Cambiar equipo</button>
+      </div>`;
+    $('#hist-eq-change').addEventListener('click', renderEqSearch);
+  }
+
+  function wireEqSearch() {
+    const input = $('#hist-eq-search');
+    const box = $('#hist-eq-results');
+    let temporizador;
+    function buscar() {
+      const q = input.value;
+      if (!q.trim()) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      const matches = equipos.filter(e => equipoMatchesQuery(e, typePorIdHist[e.typeId], locPorIdHist[e.locationId], q)).slice(0, 8);
+      if (!matches.length) {
+        box.innerHTML = '<div class="hist-eq-empty">Ningún equipo coincide</div>';
+        box.classList.remove('hidden');
+        return;
+      }
+      box.innerHTML = matches.map(e => `
+        <button type="button" class="hist-eq-result" data-id="${e.id}">
+          <span class="mono"><b>${esc(e.code)}</b></span>
+          <span class="dim">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorIdHist[e.locationId] || {}).name || 'Sin ubicación')}</span>
+        </button>`).join('');
+      box.classList.remove('hidden');
+      $$('.hist-eq-result', box).forEach(b => b.addEventListener('click', async () => {
+        const eq = equipos.find(e => e.id === b.dataset.id);
+        renderEqHeader(eq);
+        await drawHistory(eq.id);
+      }));
+    }
+    input.addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(buscar, 280); });
+    document.addEventListener('click', ev => { if (!ev.target.closest('.hist-eq-search-wrap')) box.classList.add('hidden'); });
+  }
+
+  renderEqSearch();
+
+  // Deep-link desde el Dashboard (fila/código de "Mayor tiempo sin
+  // engrasar" o acción "Ver historial" de sus modales): preselecciona el
+  // equipo igual que si el usuario lo hubiera elegido del buscador — no es
+  // un filtro nuevo, reutiliza renderEqHeader()/drawHistory() reales.
+  if (App.dashJumpEquipoId) {
+    const jumpId = App.dashJumpEquipoId;
+    App.dashJumpEquipoId = null;
+    const eqJump = equipos.find(e => e.id === jumpId);
+    if (eqJump) { renderEqHeader(eqJump); await drawHistory(eqJump.id); }
+  }
 
   async function runGeneralSearch() {
     const from = $('#gh-from').value ? new Date($('#gh-from').value + 'T00:00:00') : null;
     const to = $('#gh-to').value ? new Date($('#gh-to').value + 'T23:59:59') : null;
     const turno = $('#gh-turno').value;
-    const familia = $('#gh-familia').value;
     const estado = $('#gh-estado').value;
+    const query = $('#gh-search').value;
 
+    // Todos los filtros se combinan con AND: cada uno reduce matchEquipos por
+    // separado (vacío/"Todos" = no restringe), y turno/fechas filtran los
+    // registros aparte — el resultado final cumple TODAS las condiciones
+    // activas a la vez, nunca solo una.
     let matchEquipos = equipos;
-    if (familia) matchEquipos = matchEquipos.filter(e => e.typeId === familia);
+    if (query.trim()) {
+      matchEquipos = matchEquipos.filter(e => equipoMatchesQuery(e, typePorIdHist[e.typeId], locPorIdHist[e.locationId], query));
+    }
     if (estado) {
       const statuses = await computeAllStatuses(matchEquipos);
       const okIds = new Set(statuses.filter(x => x.s.code === estado).map(x => x.e.id));
@@ -4918,6 +5724,11 @@ async function renderHistorial() {
     // registros dejaba la pantalla congelada varios segundos.
     const eqPorId = {}; equipos.forEach(e => eqPorId[e.id] = e);
     const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
+    // Cumplimiento: el "registro anterior" para el vencimiento por horas es el
+    // anterior REAL del equipo en TODO el historial (allRecords, sin el filtro
+    // de fecha/turno visible), nunca del subconjunto filtrado en pantalla.
+    const recordsPorEquipo = {};
+    allRecords.forEach(r => { (recordsPorEquipo[r.equipmentId] = recordsPorEquipo[r.equipmentId] || []).push(r); });
 
     lastGeneralResults = results.map(r => ({ r, eq: eqPorId[r.equipmentId], lub: lubPorId[r.greaseType] }));
 
@@ -4928,16 +5739,19 @@ async function renderHistorial() {
     const visibles = results.slice(0, LIMITE_VISIBLE);
     const hayMas = results.length > LIMITE_VISIBLE;
 
+    $('#gh-summary').innerHTML = `
+      <span class="hist-global-count">${results.length} resultados${hayMas ? ` · ${LIMITE_VISIBLE} recientes` : ''}</span>
+      <button type="button" class="btn hist-export-btn" id="gh-export">${ic("download")}Exportar CSV</button>
+    `;
     $('#gh-results').innerHTML = `
-      <div class="toolbar" style="padding:10px 0">
-        <button class="btn btn-sm" id="gh-export">${ic("download")}Descargar estos resultados (CSV)</button>
-        <span class="dim">${results.length} resultado(s)${hayMas ? ` · mostrando los ${LIMITE_VISIBLE} más recientes` : ''}</span>
-      </div>
       ${hayMas ? `<div class="dim" style="padding:0 0 8px">Afina los filtros para ver menos resultados, o descarga el CSV que incluye los ${results.length} completos.</div>` : ''}
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Foto</th></tr></thead>
+      <div class="hist-global-table-wrap">
+      <table class="data-table hist-global-table">
+        <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Cumplimiento</th><th>Foto</th></tr></thead>
         <tbody>${visibles.map(r => {
           const eq = eqPorId[r.equipmentId];
+          const planEq = planPorEquipoIdHist[r.equipmentId] || null;
+          const compliance = evaluateRecordCompliance(r, planEq, findPreviousRecord(r, recordsPorEquipo[r.equipmentId] || []));
           return `<tr>
             <td>${fmtDate(r.date)}</td>
             <td class="mono">${eq ? eq.code : '—'}</td>
@@ -4947,10 +5761,12 @@ async function renderHistorial() {
             <td class="mono">${fmt(r.hourmeter)} h</td>
             <td>${(lubPorId[r.greaseType] || {}).name || '—'}</td>
             <td>${esc(r.condition)}</td>
+            <td>${complianceBadgeHTML(compliance)}</td>
             <td>${photoThumbsHTML(r, eq ? eq.code : '')}</td>
           </tr>`;
-        }).join('') || '<tr><td colspan="9" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
-      </table>`;
+        }).join('') || '<tr><td colspan="10" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
+      </table>
+      </div>`;
     makeTablesResponsive($('#gh-results'));
     wirePhotoThumbs($('#gh-results'));
     $('#gh-export')?.addEventListener('click', () => {
@@ -4962,89 +5778,412 @@ async function renderHistorial() {
     });
   }
 
-  $('#gh-apply').addEventListener('click', runGeneralSearch);
+  // Sin botón Buscar: el texto busca con debounce ~280ms (mismo patrón que el
+  // buscador de equipo de arriba); los demás filtros actualizan al cambiar.
+  let ghTemporizador;
+  $('#gh-search').addEventListener('input', () => { clearTimeout(ghTemporizador); ghTemporizador = setTimeout(runGeneralSearch, 280); });
+  $('#gh-from').addEventListener('change', runGeneralSearch);
+  $('#gh-to').addEventListener('change', runGeneralSearch);
+  $('#gh-turno').addEventListener('change', runGeneralSearch);
+  $('#gh-estado').addEventListener('change', runGeneralSearch);
   runGeneralSearch();
+}
+
+// Insignia visual para evaluateRecordCompliance()/findPreviousRecord()
+// (src/core/plan-compliance.js) — 4 estados, nunca color-saturado: "cumplido"
+// discreto (verde tenue), "fuera_de_plan" como alerta (rojo), "anticipado"
+// (solo Horas, tolerancia ±10%) ámbar tenue — no es alerta ni logro, es una
+// categoría propia — y "no_evaluable" gris/neutro (nunca se lee como un
+// juicio negativo, es solo "no se sabe").
+function complianceBadgeHTML(compliance) {
+  const MAP = {
+    cumplido: ['hist-compliance-ok', 'Cumplido'],
+    fuera_de_plan: ['hist-compliance-alert', 'Fuera de plan'],
+    anticipado: ['hist-compliance-early', 'Anticipado'],
+    no_evaluable: ['hist-compliance-neutral', 'No evaluable'],
+  };
+  const [cls, label] = MAP[compliance.estado] || MAP.no_evaluable;
+  return `<span class="hist-compliance-badge ${cls}" title="${esc(compliance.motivo || '')}">${label}</span>`;
+}
+
+// Insignia de VALIDATION_STATUS (src/core/grease-validation.js) — mismo
+// componente visual que complianceBadgeHTML(), tono propio para Encargado
+// (ni alerta ni el mismo verde que Operador, ver VALIDATION_BADGE).
+function validationBadgeHTML(status) {
+  const badge = VALIDATION_BADGE[status] || VALIDATION_BADGE[VALIDATION_STATUS.PENDIENTE];
+  const toneClass = { amber: 'hist-compliance-early', green: 'hist-compliance-ok', teal: 'hist-compliance-teal', red: 'hist-compliance-alert' }[badge.tone] || 'hist-compliance-neutral';
+  return `<span class="hist-compliance-badge ${toneClass}">${badge.label}</span>`;
+}
+
+// Modal de validación del engrase con firma manuscrita (canvas) — PERSISTE
+// en el store separado `grease_validations` (nunca escribe en
+// lubrication_records: la autoría del Lubricador no se toca, ver
+// docs/GREASE_VALIDATION_AUDIT.md). Guardado offline-first igual que el
+// resto de la app: DB.put() ya escribe primero en IndexedDB; sync.js
+// (uploadSignatureIfNeeded) sube la firma a Storage cuando hay señal.
+// Solo se debe abrir para un registro SIN validación activa — quien llama
+// ya filtró por pendientes, pero se re-verifica justo antes de guardar
+// (máximo una validación activa por registro, sin revalidación todavía).
+// `onDone` se llama tras confirmar, para que quien abrió el modal decida
+// cómo refrescar su propia pantalla (Historial vs. Dashboard).
+async function openValidationModal(record, equipment, onDone) {
+  const anomaliasRelacionadas = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
+
+  openModal('Validar engrase', `
+    <div class="val-info">
+      <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
+      <div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(record.date)}</span></div>
+      <div class="val-info-row"><span>Lubricador</span><span>${esc(record.userName)}</span></div>
+      <div class="val-info-row"><span>Turno</span><span>${record.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</span></div>
+      ${Number.isFinite(record.hourmeter) ? `<div class="val-info-row"><span>Horómetro</span><span>${fmt(record.hourmeter)} h</span></div>` : ''}
+      ${record.qty ? `<div class="val-info-row"><span>Cantidad de grasa</span><span>${fmt(record.qty, 1)} ${GREASE_UNIT}</span></div>` : ''}
+      ${anomaliasRelacionadas.length ? `<div class="val-info-row"><span>Anomalías abiertas del equipo</span><span>${anomaliasRelacionadas.length}</span></div>` : ''}
+    </div>
+    <div class="form-grid">
+      <label>Nombre<input type="text" id="val-name" class="input" placeholder="Nombre de quien valida" autocomplete="off"/></label>
+      <label>Rol
+        <select id="val-role" class="input">
+          <option value="">— Selecciona —</option>
+          <option value="OPERADOR">Operador</option>
+          <option value="ENCARGADO">Encargado</option>
+        </select>
+      </label>
+      <label class="span-2 hidden" id="val-reason-wrap">Motivo (obligatorio si Encargado)<textarea id="val-reason" class="input" placeholder="Ej: Operador no disponible"></textarea></label>
+    </div>
+    <div class="val-signature-wrap">
+      <div class="val-signature-label">Firma</div>
+      <canvas id="val-signature-canvas" class="val-signature-canvas" width="500" height="180"></canvas>
+      <div id="val-error" class="val-error hidden"></div>
+      <div class="val-signature-actions">
+        <button type="button" class="btn btn-sm" id="val-clear">Borrar firma</button>
+        <button type="button" class="btn btn-accent" id="val-confirm">Confirmar validación</button>
+      </div>
+    </div>
+  `);
+
+  const canvas = $('#val-signature-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1a1a1a';
+  let hasSignature = false;
+  let drawing = false;
+  function posFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+  function startStroke(e) { drawing = true; hasSignature = true; const p = posFromEvent(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }
+  function moveStroke(e) { if (!drawing) return; const p = posFromEvent(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+  function endStroke() { drawing = false; }
+  canvas.addEventListener('pointerdown', startStroke);
+  canvas.addEventListener('pointermove', moveStroke);
+  window.addEventListener('pointerup', endStroke);
+
+  $('#val-role').addEventListener('change', (e) => {
+    $('#val-reason-wrap').classList.toggle('hidden', e.target.value !== 'ENCARGADO');
+  });
+  $('#val-clear').addEventListener('click', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hasSignature = false;
+  });
+  $('#val-confirm').addEventListener('click', async () => {
+    const form = {
+      signerName: $('#val-name').value,
+      signerRole: $('#val-role').value,
+      reason: $('#val-reason') ? $('#val-reason').value : '',
+      hasSignature,
+    };
+    const result = validateValidationForm(form);
+    $('#val-error').classList.toggle('hidden', result.valid);
+    if (!result.valid) { $('#val-error').textContent = Object.values(result.errors).join(' '); return; }
+
+    // Re-chequeo justo antes de guardar (no solo al abrir el modal): si YA
+    // hay alguna validación activa (una o varias — p. ej. otro dispositivo
+    // validó offline mientras este formulario estaba abierto), NO se crea
+    // otra en silencio. Se muestra lo que ya existe en vez de sumar una más.
+    const yaActivas = findActiveValidations(record.id, await DB.allActive('grease_validations'));
+    if (yaActivas.length === 1) {
+      closeModal();
+      openValidationDetailModal(yaActivas[0], equipment, record.date);
+      return;
+    }
+    if (yaActivas.length > 1) {
+      closeModal();
+      openValidationConflictModal(yaActivas, equipment, record.date);
+      return;
+    }
+
+    const validation = stamp({
+      id: uid('val'), lubricationRecordId: record.id, equipmentId: equipment.id,
+      signerName: form.signerName.trim(), signerRole: form.signerRole,
+      reason: form.signerRole === 'ENCARGADO' ? form.reason.trim() : undefined,
+      signedAt: nowISO(),
+      signatureLocal: canvas.toDataURL('image/png'), // offline-first: base64 local primero
+      signatureUrl: null, // lo llena sync.js (uploadSignatureIfNeeded) cuando hay señal
+      signerUserId: App.currentUser ? App.currentUser.id : undefined,
+    }, App.currentUser ? App.currentUser.name : 'sistema');
+    await DB.put('grease_validations', validation);
+    closeModal();
+    if (onDone) onDone();
+  });
+}
+
+// Vista de SOLO LECTURA de una validación ya existente — "Ver validación"
+// (nunca se abre openValidationModal de nuevo sobre un registro ya
+// validado: esta primera versión no soporta revalidación).
+function openValidationDetailModal(validation, equipment, recordDate) {
+  const status = statusForSignerRole(validation.signerRole);
+  const signatureSrc = validation.signatureLocal || validation.signatureUrl;
+  openModal('Validación del engrase', `
+    <div class="val-info">
+      <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
+      <div class="val-info-row"><span>Estado</span><span>${validationBadgeHTML(status)}</span></div>
+      ${recordDate ? `<div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div>` : ''}
+      <div class="val-info-row"><span>Nombre</span><span>${esc(validation.signerName)}</span></div>
+      <div class="val-info-row"><span>Rol</span><span>${validation.signerRole === 'ENCARGADO' ? 'Encargado' : 'Operador'}</span></div>
+      <div class="val-info-row"><span>Fecha/hora de la validación</span><span>${fmtDate(validation.signedAt)}</span></div>
+      ${validation.reason ? `<div class="val-info-row"><span>Motivo</span><span>${esc(validation.reason)}</span></div>` : ''}
+    </div>
+    <div class="val-signature-wrap">
+      <div class="val-signature-label">Firma</div>
+      ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"/>` : '<p class="dim">Firma no disponible en este dispositivo todavía (pendiente de sincronizar).</p>'}
+    </div>
+  `);
+}
+
+// "Ver conflicto" — 2+ validaciones activas para el MISMO registro (doble
+// firma offline/multidispositivo, ver docs/GREASE_VALIDATION_AUDIT.md §10).
+// Muestra TODAS completas (nombre/rol/fecha/motivo/firma), sin elegir
+// ninguna ni borrar nada — la resolución (marcar cuál es la válida) NO está
+// implementada todavía (ver docs/GREASE_VALIDATION_AUDIT.md §13).
+function openValidationConflictModal(validationsActivas, equipment, recordDate) {
+  openModal(`Conflicto de validación (${validationsActivas.length})`, `
+    <p class="dim">${validationsActivas.length} personas validaron este mismo engrase por separado (probablemente offline, en dispositivos distintos). Ninguna firma se eliminó — revisa cuál es la correcta manualmente.</p>
+    ${recordDate ? `<div class="val-info"><div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div></div>` : ''}
+    ${validationsActivas.map((validation, idx) => {
+      const signatureSrc = validation.signatureLocal || validation.signatureUrl;
+      return `
+      <div class="val-conflict-item">
+        <div class="val-conflict-item-head">Firma ${idx + 1}</div>
+        <div class="val-info">
+          <div class="val-info-row"><span>Nombre</span><span>${esc(validation.signerName)}</span></div>
+          <div class="val-info-row"><span>Rol</span><span>${validation.signerRole === 'ENCARGADO' ? 'Encargado' : 'Operador'}</span></div>
+          <div class="val-info-row"><span>Fecha/hora</span><span>${fmtDate(validation.signedAt)}</span></div>
+          ${validation.reason ? `<div class="val-info-row"><span>Motivo</span><span>${esc(validation.reason)}</span></div>` : ''}
+        </div>
+        <div class="val-signature-wrap">
+          ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"/>` : '<p class="dim">Firma no disponible en este dispositivo todavía.</p>'}
+        </div>
+      </div>`;
+    }).join('')}
+  `);
 }
 
 async function drawHistory(equipmentId) {
   const equipment = await DB.get('equipment', equipmentId);
-  const records = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const anomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
+  const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const allAnomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
   const lubricants = await DB.allActive('lubricants');
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+  const validations = await DB.allActive('grease_validations');
   const isAdmin = App.currentUser.role === 'ADMINISTRADOR';
 
-  let avgInterval = '—';
-  if (records.length > 1) {
-    const sorted = [...records].sort((a, b) => a.hourmeter - b.hourmeter);
-    let diffs = [];
-    for (let i = 1; i < sorted.length; i++) diffs.push(sorted[i].hourmeter - sorted[i - 1].hourmeter);
-    avgInterval = fmt(diffs.reduce((a, b) => a + b, 0) / diffs.length, 1) + ' h';
-  }
-
+  // Filtro de período (Desde/Hasta) SOLO para este equipo — independiente del
+  // buscador/filtros de "Historial global" (ids distintos, sin estado
+  // compartido). Vacíos = todo el historial del equipo. Afecta Engrases Y
+  // Anomalías a la vez (AND con el equipo ya seleccionado).
   $('#hist-area').innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</h3></div>
-      <div class="detail-grid">
-        <div><b>Horómetro actual</b><div class="mono">${fmt(equipment.hourmeter)} h</div></div>
-        <div><b>Engrases registrados</b><div>${records.length}</div></div>
-        <div><b>Intervalo promedio real</b><div>${avgInterval}</div></div>
-        <div><b>Anomalías registradas</b><div>${anomalies.length}</div></div>
-      </div>
+    <div class="hist-eq-period-row">
+      <label class="filter-label hist-eq-period-filter">Desde <input type="date" id="hist-eq-from" class="input input-sm"/></label>
+      <label class="filter-label hist-eq-period-filter">Hasta <input type="date" id="hist-eq-to" class="input input-sm"/></label>
+      <button type="button" class="hist-eq-clear-dates hidden" id="hist-eq-clear-dates">✕ Limpiar fechas</button>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Engrases</h3></div>
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Turno</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad</th><th>Condición</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
-        <tbody>
-          ${records.map(r => `<tr data-rec="${r.id}">
-            <td>${fmtDate(r.date)}</td>
-            <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-            <td class="mono">${fmt(r.hourmeter)} h</td>
-            <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
-            <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
-            <td class="mono">${fmt(r.qty, 1)} ${GREASE_UNIT}</td>
-            <td>${esc(r.condition)}${(() => {
-              const pend = (r.details || []).filter(d => !d.done);
-              const avisos = [];
-              if (pend.length) avisos.push(`<div class="pendiente-nota">${pend.length} punto(s) sin engrasar: ${pend.map(d => `${esc(d.pointName)} <i>(${esc(d.reason || 'sin motivo')})</i>`).join(', ')}</div>`);
-              if (r.sinHorometro) avisos.push(`<div class="pendiente-nota">⚠ Sin lectura de horómetro: ${esc(r.noHourmeterReason || 'no se pudo leer')}</div>`);
-              return avisos.join('');
-            })()}</td>
-            <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
-            ${isAdmin ? `<td><button class="btn btn-sm btn-danger btn-del-record" data-id="${r.id}">${ic("trash")}Eliminar</button></td>` : ''}
-          </tr>`).join('') || `<tr><td colspan="${isAdmin ? 9 : 8}" class="empty-state">Sin registros.</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Anomalías</h3></div>
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Componente</th><th>Descripción</th><th>Criticidad</th><th>Estado</th><th>Foto</th></tr></thead>
-        <tbody>
-          ${anomalies.map(a => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin anomalías.</td></tr>'}
-        </tbody>
-      </table>
-    </div>
+    <div id="hist-eq-content"></div>
   `;
-  wirePhotoThumbs($('#hist-area'));
-  makeTablesResponsive($('#hist-area'));
 
-  if (isAdmin) {
-    $$('.btn-del-record').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm('¿Eliminar este registro de engrase? Esta acción se guarda como borrado lógico (queda en auditoría) y NO recalcula automáticamente el horómetro ni el plan de engrase del equipo — revísalos manualmente si era el registro más reciente.')) return;
-      const rec = await DB.get('lubrication_records', b.dataset.id);
-      rec.active = false;
-      await DB.put('lubrication_records', stamp(rec, App.currentUser.name));
-      await logAudit('ENGRASE_ELIMINADO', `${esc(equipment.code)} · ${fmtDate(rec.date)}`, App.currentUser.name);
-      showInAppToast('✓ Registro de engrase eliminado');
-      drawHistory(equipmentId);
+  function renderPeriodContent() {
+    const fromVal = $('#hist-eq-from').value;
+    const toVal = $('#hist-eq-to').value;
+    const from = fromVal ? new Date(fromVal + 'T00:00:00') : null;
+    const to = toVal ? new Date(toVal + 'T23:59:59') : null;
+    const filtered = !!(from || to);
+    $('#hist-eq-clear-dates').classList.toggle('hidden', !filtered);
+
+    const records = allRecords.filter(r => {
+      const d = new Date(r.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+    const anomalies = allAnomalies.filter(a => {
+      const d = new Date(a.createdAt);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+
+    let avgInterval = '—';
+    if (records.length > 1) {
+      const sorted = [...records].sort((a, b) => a.hourmeter - b.hourmeter);
+      let diffs = [];
+      for (let i = 1; i < sorted.length; i++) diffs.push(sorted[i].hourmeter - sorted[i - 1].hourmeter);
+      avgInterval = fmt(diffs.reduce((a, b) => a + b, 0) / diffs.length, 1) + ' h';
+    }
+
+    // Condición larga (puntos sin engrasar / sin horómetro) se resume como
+    // insignia corta + "Ver detalle" (modal), en vez de romper la fila de la
+    // tabla con texto largo — el detalle completo no se pierde, solo se oculta
+    // hasta que se pide.
+    const condDetails = {};
+    records.forEach(r => {
+      const pend = (r.details || []).filter(d => !d.done);
+      const avisos = [];
+      if (pend.length) avisos.push(`<div class="pendiente-nota">${pend.length} punto(s) sin engrasar: ${pend.map(d => `${esc(d.pointName)} <i>(${esc(d.reason || 'sin motivo')})</i>`).join(', ')}</div>`);
+      if (r.sinHorometro) avisos.push(`<div class="pendiente-nota">⚠ Sin lectura de horómetro: ${esc(r.noHourmeterReason || 'no se pudo leer')}</div>`);
+      condDetails[r.id] = avisos.join('');
+    });
+
+    // KPI del período filtrado (con etiqueta que lo deja claro) cuando hay
+    // fechas activas; histórico total del equipo cuando no las hay. El
+    // horómetro actual es el valor EN VIVO del equipo — no es un dato de
+    // período, así que nunca cambia con este filtro.
+    $('#hist-eq-content').innerHTML = `
+      <div class="kpi-grid hist-kpi-grid">
+        <div class="kpi-card"><div class="kpi-value mono">${fmt(equipment.hourmeter)} h</div><div class="kpi-label">Horómetro actual</div></div>
+        <div class="kpi-card"><div class="kpi-value">${records.length}</div><div class="kpi-label">Engrases ${filtered ? 'en el período' : 'registrados'}</div></div>
+        <div class="kpi-card"><div class="kpi-value">${avgInterval}</div><div class="kpi-label">Intervalo promedio ${filtered ? '(período)' : 'real'}</div></div>
+        <div class="kpi-card ${anomalies.length ? 'tone-amber' : ''}"><div class="kpi-value">${anomalies.length}</div><div class="kpi-label">Anomalías ${filtered ? 'en el período' : 'registradas'}</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Engrases</h3></div>
+        <table class="data-table hist-table">
+          <thead><tr><th>Fecha</th><th>Turno</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+          <tbody>
+            ${records.map(r => {
+              const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
+              const activasEsteRegistro = findActiveValidations(r.id, validations);
+              const valStatus = validationStatusForRecord(r, validations);
+              // Histórico (anterior a GREASE_VALIDATION_ENABLED_FROM): nunca exige
+              // firma — ni siquiera muestra el botón "Validar" — ver
+              // docs/GREASE_VALIDATION_AUDIT.md §14.
+              const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
+                activasEsteRegistro.length === 0
+                ? `<button type="button" class="btn btn-sm hist-validar-btn" data-rec="${r.id}">Validar</button>`
+                : activasEsteRegistro.length === 1
+                  ? `<button type="button" class="btn btn-sm hist-ver-validacion-btn" data-rec="${r.id}">Ver validación</button>`
+                  : `<button type="button" class="btn btn-sm hist-ver-conflicto-btn" data-rec="${r.id}">Ver conflicto</button>`;
+              return `<tr data-rec="${r.id}">
+              <td>${fmtDate(r.date)}</td>
+              <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+              <td class="mono">${fmt(r.hourmeter)} h</td>
+              <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
+              <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
+              <td class="mono">${fmt(r.qty, 1)} ${GREASE_UNIT}</td>
+              <td><span class="hist-cond-badge">${esc(r.condition)}</span>${condDetails[r.id] ? ` <button type="button" class="hist-cond-link" data-rec="${r.id}">Ver detalle</button>` : ''}</td>
+              <td>${complianceBadgeHTML(compliance)}</td>
+              <td>${validationBadgeHTML(valStatus)} ${valAction}</td>
+              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
+              ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
+            </tr>`;
+            }).join('') || `<tr><td colspan="${isAdmin ? 11 : 10}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Anomalías</h3></div>
+        <table class="data-table">
+          <thead><tr><th>Fecha</th><th>Componente</th><th>Descripción</th><th>Criticidad</th><th>Estado</th><th>Foto</th></tr></thead>
+          <tbody>
+            ${anomalies.map(a => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty-state">${filtered ? 'Sin anomalías en este período.' : 'Sin anomalías.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+    wirePhotoThumbs($('#hist-eq-content'));
+    makeTablesResponsive($('#hist-eq-content'));
+
+    $$('.hist-cond-link', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      openModal('Detalle de la condición', condDetails[b.dataset.rec] || '<p class="dim">Sin detalles adicionales.</p>');
     }));
+
+    $$('.hist-validar-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (rec) openValidationModal(rec, equipment, () => drawHistory(equipmentId));
+    }));
+    $$('.hist-ver-validacion-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      const validation = findActiveValidation(b.dataset.rec, validations);
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (validation) openValidationDetailModal(validation, equipment, rec ? rec.date : null);
+    }));
+    $$('.hist-ver-conflicto-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      const activas = findActiveValidations(b.dataset.rec, validations);
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (activas.length > 1) openValidationConflictModal(activas, equipment, rec ? rec.date : null);
+    }));
+
+    if (isAdmin) {
+      $$('.btn-del-record').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('¿Eliminar este registro de engrase? Esta acción se guarda como borrado lógico (queda en auditoría) y NO recalcula automáticamente el horómetro ni el plan de engrase del equipo — revísalos manualmente si era el registro más reciente.')) return;
+        const rec = await DB.get('lubrication_records', b.dataset.id);
+        rec.active = false;
+        await DB.put('lubrication_records', stamp(rec, App.currentUser.name));
+        await logAudit('ENGRASE_ELIMINADO', `${esc(equipment.code)} · ${fmtDate(rec.date)}`, App.currentUser.name);
+        showInAppToast('✓ Registro de engrase eliminado');
+        drawHistory(equipmentId);
+      }));
+    }
   }
+
+  renderPeriodContent();
+  $('#hist-eq-from').addEventListener('change', renderPeriodContent);
+  $('#hist-eq-to').addEventListener('change', renderPeriodContent);
+  $('#hist-eq-clear-dates').addEventListener('click', () => {
+    $('#hist-eq-from').value = '';
+    $('#hist-eq-to').value = '';
+    renderPeriodContent();
+  });
 }
 
 /* ============================================================
    REPORTES
    ============================================================ */
+// "YYYY-MM-DD" (valor nativo de <input type="date">) → "DD/MM/YYYY" para
+// mostrar el período de forma compacta — puramente visual, no toca ninguna
+// fecha usada en cálculos (esas siguen leyendo el input directo).
+function ddmmyyyy(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Agrupa un rango de días en "cubetas" para la Tendencia de cumplimiento:
+// 1 cubeta por día si el rango es corto (≤31 días, mismo criterio que "un
+// mes" para no saturar el eje X); si es más amplio, 1 cubeta por semana
+// (Lunes a Domingo) — infraestructura simple reutilizando el mismo cálculo
+// de programado/realizado por cubeta, sin inventar un tercer criterio.
+function construirBucketsTendencia(dias) {
+  if (dias.length <= 31) return dias.map(d => ({ label: d.toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }), dias: [d] }));
+  const buckets = [];
+  let actual = null;
+  dias.forEach(d => {
+    if (!actual || actual.dias.length >= 7) {
+      actual = { label: d.toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }), dias: [] };
+      buckets.push(actual);
+    }
+    actual.dias.push(d);
+  });
+  return buckets;
+}
+
+// REPORTES / INFORMES — análisis HISTÓRICO por período (distinto del
+// Dashboard: estado actual/alertas/acciones inmediatas). Pregunta que debe
+// responder: "¿cómo nos fue en este período, qué no se cumplió y por qué?".
+// El reporte principal es Realizados/Programados (computeProgramadoRealizadoPeriodo,
+// src/core/plan-compliance.js) — SOLO planes Día/Turno, ver esa función para
+// por qué los planes por Horas se excluyen a propósito (no se inventa una
+// proyección horómetro→fecha). Validación de engrases usa el mismo baseline
+// GREASE_VALIDATION_ENABLED_FROM del resto de la app (ver
+// docs/GREASE_VALIDATION_AUDIT.md §14) — mientras siga en null, la sección
+// se muestra como pendiente de configurar, nunca con datos fabricados.
 async function renderReportes() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -5054,237 +6193,437 @@ async function renderReportes() {
   const users = await DB.allActive('users');
   const locations = await DB.allActive('locations');
   const lubricants = await DB.allActive('lubricants');
+  const types = await DB.allActive('equipment_types');
+  const plans = await DB.allActive('lubrication_plans');
+  const validations = await DB.allActive('grease_validations');
   const statuses = await computeAllStatuses(equipos);
 
+  const equiposPorId = {}; equipos.forEach(e => equiposPorId[e.id] = e);
+  const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
+
   const total = equipos.length;
-  const vencidos = statuses.filter(x => x.s.code === 'ROJO').length;
-  const pendientes = statuses.filter(x => x.s.code === 'AMARILLO').length;
-  const alDia = statuses.filter(x => x.s.code === 'VERDE').length;
-  const compliance = total ? Math.round(((total - vencidos) / total) * 100) : 0;
 
   const today = new Date();
   const toInput = today.toISOString().slice(0, 10);
-  const fromInput = ''; // sin límite por defecto — antes ocultaba silenciosamente todo lo anterior a 30 días
+  // Antes: sin límite por defecto ("todo el historial"), lo que impedía
+  // calcular Programados/Realizados (necesita un rango ACOTADO de días para
+  // recorrer). 30 días es un período de análisis inicial razonable — se
+  // amplía con el filtro Desde, nunca se oculta nada silenciosamente (el
+  // filtro queda visible y editable).
+  const fromInput = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
 
   c.innerHTML = `
+    <div class="rep-page layout-wide">
     ${total === 0 ? `<div class="panel"><div class="empty-state">No hay equipos registrados en este dispositivo todavía. Si ya los cargaste en otro dispositivo, ve a Configuración → Sincronización y confirma que esté conectado — puede que falte sincronizar.</div></div>` : ''}
-    <div class="kpi-grid">
-      ${kpiCard('TOTAL EQUIPOS', total, 'neutral')}
-      ${kpiCard('AL DÍA', alDia, 'green')}
-      ${kpiCard('PENDIENTES', pendientes, 'amber')}
-      ${kpiCard('VENCIDOS', vencidos, 'red')}
-    </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Filtros del reporte</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <label class="filter-label">Desde <input type="date" id="f-from" class="input input-sm" value="${fromInput}"/></label>
-        <label class="filter-label">Hasta <input type="date" id="f-to" class="input input-sm" value="${toInput}"/></label>
-        <label class="filter-label">Equipo
+      <div class="panel-head"><h3>Filtros del informe</h3></div>
+      <div class="toolbar rep-filters-row" style="padding:0 14px 14px">
+        <label class="filter-label rep-filter-narrow">Desde <input type="date" id="f-from" class="input input-sm" value="${fromInput}"/></label>
+        <label class="filter-label rep-filter-narrow">Hasta <input type="date" id="f-to" class="input input-sm" value="${toInput}" max="${toInput}"/></label>
+        <label class="filter-label rep-filter-wide">Equipo
           <select id="f-equipo" class="input input-sm">
             <option value="">Todos</option>
             ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
           </select>
         </label>
-        <label class="filter-label">Turno
+        <label class="filter-label rep-filter-wide">Familia
+          <select id="f-familia" class="input input-sm">
+            <option value="">Todas</option>
+            ${types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter-label rep-filter-wide">Ubicación
+          <select id="f-ubic" class="input input-sm">
+            <option value="">Todas</option>
+            ${locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter-label rep-filter-mid">Turno
           <select id="f-turno" class="input input-sm">
             <option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option>
           </select>
         </label>
-        <label class="filter-label">Responsable
+        <label class="filter-label rep-filter-mid">Responsable
           <select id="f-resp" class="input input-sm">
             <option value="">Todos</option>
             ${users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}
           </select>
         </label>
-        <button class="btn btn-accent" id="f-apply">Aplicar filtros</button>
+        <button class="btn btn-accent rep-filter-apply" id="f-apply">Aplicar filtros</button>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Cumplimiento de engrase</h3><span class="pill">${compliance}%</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+      <div class="panel-head"><h3>Resumen del período</h3></div>
+      <div id="rep-resumen"></div>
     </div>
 
-    <div class="charts-grid">
-      <div class="panel"><div class="panel-head"><h3>Engrases por día</h3></div><div class="chart-box"><canvas id="chart-daily"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por turno</h3></div><div class="chart-box"><canvas id="chart-shift"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por equipo</h3></div><div class="chart-box"><canvas id="chart-equipo"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por responsable</h3></div><div class="chart-box"><canvas id="chart-resp"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Estado actual de la flota</h3></div><div class="chart-box"><canvas id="chart-fleet"></canvas></div></div>
+    <div class="rep-tendencia-turno-grid">
+      <div class="panel">
+        <div class="panel-head"><h3>Tendencia de cumplimiento</h3></div>
+        <div class="dim" style="padding:0 14px 10px">Cumplimiento % (realizados/programados) por día, o por semana si el rango es amplio. Independiente de Cumplimiento operativo del Dashboard.</div>
+        <div class="chart-box rep-chart-tendencia-box" id="chart-tendencia-box"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Cumplimiento por turno</h3></div>
+        <div id="rep-turno-area" class="rep-turno-grid"></div>
+      </div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Puntos no engrasados y sus motivos</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Cada punto que un lubricador no pudo engrasar, con la razón que anotó. Sirve para dar seguimiento a graseras dañadas, líneas obstruidas y puntos inaccesibles. Usa los mismos filtros de arriba.</div>
+      <div class="panel-head"><h3>Cumplimiento por equipo</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Ordenado de MENOR a mayor cumplimiento — más engrases no es mejor desempeño, esta lista es para detectar dónde actuar.</div>
+      <div id="rep-equipo-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Consumo de grasa</h3></div>
+      <div id="rep-consumo-stats"></div>
+      <div class="rep-tabs" id="rep-consumo-tabs">
+        <button type="button" class="rep-tab active" data-tab="equipo">Por equipo</button>
+        <button type="button" class="rep-tab" data-tab="familia">Por familia</button>
+        <button type="button" class="rep-tab" data-tab="lubricante">Por lubricante</button>
+      </div>
+      <div class="chart-box rep-chart-consumo-box" id="chart-consumo-box"></div>
+    </div>
+
+    <div class="rep-pareto-anomalias-grid">
+      <div class="panel">
+        <div class="panel-head"><h3>Puntos no engrasados</h3></div>
+        <div class="dim" style="padding:0 14px 8px">Motivos más frecuentes en el período — detalle completo más abajo.</div>
+        <div id="rep-motivos-pareto"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Anomalías de lubricación</h3></div>
+        <div id="rep-anomalias-area"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Detalle de puntos no engrasados</h3></div>
       <div id="skipped-points-area"></div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Informe fotográfico</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Fotos tomadas al registrar engrases y anomalías. Se filtran igual que las gráficas de arriba.</div>
-      <div id="photo-report-grid" class="photo-report-grid"></div>
+      <div class="panel-head"><h3>Validación de engrases</h3></div>
+      <div id="rep-validacion-area"></div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Informes ejecutivos</h3></div>
-      <div style="padding:0 14px 6px" class="dim">Listos para imprimir o enviar por correo. Usan los mismos filtros de fecha/equipo/turno/responsable de arriba.</div>
-      <div class="toolbar" style="padding:0 14px 14px">
+      <div class="panel-head"><h3>Actividad por responsable</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Carga de trabajo registrada — NO es una medición de cumplimiento ni de desempeño laboral.</div>
+      <div id="rep-actividad-resp-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Evidencia fotográfica</h3></div>
+      <div class="rep-photo-toggle-row">
+        <span id="rep-photo-count" class="dim">Cargando…</span>
+        <button type="button" class="btn btn-sm" id="rep-photo-toggle">Ver fotos</button>
+      </div>
+      <div id="photo-report-grid" class="photo-report-grid hidden"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Generar informe</h3></div>
+      <div style="padding:0 14px 6px" class="dim">Usan los mismos filtros de arriba.</div>
+      <div class="toolbar" style="padding:0 14px 10px">
         <button class="btn btn-accent" id="exp-pdf">${ic("download")}Informe ejecutivo (PDF)</button>
         <button class="btn btn-accent" id="exp-excel">${ic("download")}Informe completo (Excel)</button>
       </div>
+      <details class="rep-more-exports" style="padding:0 14px 14px">
+        <summary class="btn btn-sm">Más exportaciones ▾</summary>
+        <div class="toolbar" style="padding-top:10px">
+          <button class="btn btn-sm" id="exp-cumplimiento">${ic("download")}Cumplimiento (CSV)</button>
+          <button class="btn btn-sm" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
+          <button class="btn btn-sm" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
+          <button class="btn btn-sm" id="exp-puntos">${ic("download")}Puntos no engrasados (CSV)</button>
+        </div>
+      </details>
     </div>
-
-    <div class="panel">
-      <div class="panel-head"><h3>Exportar por separado (CSV)</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <button class="btn" id="exp-cumplimiento">${ic("download")}Cumplimiento (CSV)</button>
-        <button class="btn" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
-        <button class="btn" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
-      </div>
     </div>`;
 
   const charts = {};
-  function destroyCharts() { Object.values(charts).forEach(ch => ch && ch.destroy()); }
+  function destroyChart(key) { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
+  function destroyCharts() { Object.keys(charts).forEach(destroyChart); }
+
+  // Estado de la pestaña activa de "Consumo de grasa" — persiste entre
+  // llamadas a drawAll() (ej. al "Aplicar filtros") dentro del mismo render
+  // de la pantalla, se reinicia solo si se vuelve a entrar a Reportes.
+  let consumoTabActual = 'equipo';
+  let consumoDatasets = null;
+
+  // Equipos que pasan Equipo/Familia/Ubicación (sin fecha — se usan tanto
+  // para filtrar registros como para el universo de "programados").
+  function equiposFiltrados() {
+    const eqId = $('#f-equipo').value;
+    const fam = $('#f-familia').value;
+    const ubic = $('#f-ubic').value;
+    return equipos.filter(e => {
+      if (eqId && e.id !== eqId) return false;
+      if (fam && e.typeId !== fam) return false;
+      if (ubic && e.locationId !== ubic) return false;
+      return true;
+    });
+  }
 
   function applyFilters() {
     const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
     const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
-    const eqId = $('#f-equipo').value;
     const turno = $('#f-turno').value;
     const respId = $('#f-resp').value;
+    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
     return allRecords.filter(r => {
+      if (!idsPermitidos.has(r.equipmentId)) return false;
       const d = new Date(r.date);
       if (from && d < from) return false;
       if (to && d > to) return false;
-      if (eqId && r.equipmentId !== eqId) return false;
       if (turno && r.shiftId !== turno) return false;
       if (respId && r.userId !== respId) return false;
       return true;
     });
   }
 
-  function drawCharts() {
-    // Las tablas (fotos y puntos pendientes) se dibujan SIEMPRE, aunque el motor de
-    // gráficas no cargue — antes quedaban en blanco junto con las gráficas.
-    const registrosFiltrados = applyFilters();
-    try {
-      drawPhotoReport(registrosFiltrados);
-      drawSkippedPoints(registrosFiltrados);
-    } catch (err) {
-      console.error('Error dibujando las tablas de reportes', err);
-    }
-
-    destroyCharts();
-    if (!window.Chart) {
-      $$('.chart-box', c).forEach(box => box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>');
-      return;
-    }
-    try {
-      drawChartsInner();
-    } catch (err) {
-      console.error('Error dibujando reportes', err);
-      $$('.chart-box', c).forEach(box => box.innerHTML = `<div class="empty-state">No se pudo generar esta gráfica (${err.message}).</div>`);
-    }
+  function applyFiltersAnomalias() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
+    const respId = $('#f-resp').value;
+    const respUser = respId ? users.find(u => u.id === respId) : null;
+    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
+    return anomalies.filter(a => {
+      if (!idsPermitidos.has(a.equipmentId)) return false;
+      const d = new Date(a.createdAt);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      if (respUser && a.createdBy !== respUser.name) return false;
+      return true;
+    });
   }
 
-  function drawChartsInner() {
-    const records = applyFilters();
-    const CHART_TEXT = '#9BA3AA';
-    const GRID = 'rgba(255,255,255,0.06)';
-    Chart.defaults.color = CHART_TEXT;
-    Chart.defaults.borderColor = GRID;
-    Chart.defaults.font.family = "'Inter', sans-serif";
-
-    // Por día
-    const byDay = {};
-    records.forEach(r => { const k = new Date(r.date).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }); byDay[k] = (byDay[k] || 0) + 1; });
-    const dayKeys = Object.keys(byDay);
-    charts.daily = new Chart($('#chart-daily'), {
-      type: 'line',
-      data: { labels: dayKeys, datasets: [{ label: 'Engrases', data: dayKeys.map(k => byDay[k]), borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.15)', fill: true, tension: 0.3 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Por turno
-    const dia = records.filter(r => r.shiftId === 'shift_dia').length;
-    const noche = records.filter(r => r.shiftId === 'shift_noche').length;
-    charts.shift = new Chart($('#chart-shift'), {
-      type: 'bar',
-      data: { labels: ['Día', 'Noche'], datasets: [{ data: [dia, noche], backgroundColor: ['#F2A900', '#3B4A5A'] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Por equipo
-    const byEq = {};
-    records.forEach(r => { const eq = equipos.find(e => e.id === r.equipmentId); const k = eq ? eq.code : '—'; byEq[k] = (byEq[k] || 0) + 1; });
-    const eqKeys = Object.keys(byEq).sort((a, b) => byEq[b] - byEq[a]).slice(0, 10);
-    charts.equipo = new Chart($('#chart-equipo'), {
-      type: 'bar',
-      data: { labels: eqKeys, datasets: [{ data: eqKeys.map(k => byEq[k]), backgroundColor: '#E8A33D' }] },
-      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Por responsable
-    const byResp = {};
-    records.forEach(r => { byResp[r.userName] = (byResp[r.userName] || 0) + 1; });
-    const respKeys = Object.keys(byResp);
-    charts.resp = new Chart($('#chart-resp'), {
-      type: 'bar',
-      data: { labels: respKeys, datasets: [{ data: respKeys.map(k => byResp[k]), backgroundColor: '#3FB950' }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Estado de la flota
-    charts.fleet = new Chart($('#chart-fleet'), {
-      type: 'doughnut',
-      data: { labels: ['Al día', 'Próximos', 'Vencidos', 'Detenidos/Sin plan'], datasets: [{ data: [alDia, pendientes, vencidos, total - alDia - pendientes - vencidos], backgroundColor: ['#3FB950', '#E8A33D', '#E5484D', '#7A828A'] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } }
-    });
-
+  // null si no hay "Desde" (no se puede acotar el recorrido de días) — el
+  // valor por defecto del input ya trae 30 días, así que esto solo pasa si
+  // la persona lo borra a mano.
+  function diasDelPeriodo() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    if (!from) return null;
+    const hoy = new Date(new Date().setHours(0, 0, 0, 0));
+    const hastaInput = $('#f-to').value ? new Date($('#f-to').value + 'T00:00:00') : hoy;
+    // Nunca contar días futuros como "programados": un "Hasta" en el futuro
+    // (el input ya trae max=hoy, pero se re-valida aquí por si acaso) se
+    // recorta a HOY — de lo contrario días que todavía no ocurren se
+    // contarían como "no realizados" sin que fuera posible cumplirlos.
+    const to = hastaInput > hoy ? hoy : hastaInput;
+    const out = [];
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) out.push(new Date(d));
+    return out;
   }
 
-  // Lista todos los puntos que NO se engrasaron, con el motivo que anotó el lubricador.
-  // Antes esa información se guardaba pero no se mostraba en ninguna pantalla.
-  function drawSkippedPoints(records) {
-    const area = $('#skipped-points-area');
-    if (!area) return;
-
+  // Puntos que quedaron sin engrasar + su motivo — usado tanto para pintar
+  // la sección en pantalla como para el CSV (misma lógica, una sola vez).
+  function puntosNoEngrasadosDe(records) {
     const filas = [];
     records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       (r.details || []).filter(d => !d.done).forEach(d => {
-        filas.push({
-          fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—',
-          punto: d.pointName, motivo: d.reason || '(sin motivo anotado)', por: r.userName
-        });
+        filas.push({ fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—', punto: d.pointName, motivo: d.reason || '(sin motivo anotado)', por: r.userName });
       });
-      // También los engrases donde no se pudo leer el horómetro
       if (r.sinHorometro) {
-        filas.push({
-          fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—',
-          punto: '⚠ Sin lectura de horómetro', motivo: r.noHourmeterReason || 'No se pudo leer', por: r.userName
-        });
+        filas.push({ fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—', punto: '⚠ Sin lectura de horómetro', motivo: r.noHourmeterReason || 'No se pudo leer', por: r.userName });
       }
     });
     filas.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    return filas;
+  }
 
-    // Resumen por motivo, para ver de un vistazo qué falla más
+  // Fuente ÚNICA de Consumo (Resumen, sección Consumo, Excel y PDF calculan
+  // exactamente esto — nunca cada uno por su cuenta). "qty válida" = número
+  // finito (incluye 0); un registro sin horómetro/qty no cuenta ni en el
+  // total ni en el denominador del promedio, para no diluirlo con ceros que
+  // en realidad son "sin dato".
+  function consumoDe(records) {
+    const registrosConQty = records.filter(r => Number.isFinite(Number(r.qty)));
+    const totalQty = registrosConQty.reduce((s, r) => s + Number(r.qty), 0);
+    const promedio = registrosConQty.length ? totalQty / registrosConQty.length : null;
+    return { totalQty, promedio, registrosConQty };
+  }
+
+  function drawResumen(records, dias, progReal) {
+    const area = $('#rep-resumen');
+    const { totalQty } = consumoDe(records);
+    const consumoCard = `<div class="kpi-card tone-neutral"><div class="kpi-value">${fmt(totalQty, 1)}</div><div class="kpi-label">Consumo total (${GREASE_UNIT})</div></div>`;
+    const periodoTxt = `Período: ${ddmmyyyy($('#f-from').value)} – ${ddmmyyyy($('#f-to').value) || ddmmyyyy(toInput)}`;
+    if (!dias || !progReal) {
+      area.innerHTML = `<div class="empty-state">Selecciona una fecha "Desde" para calcular Cumplimiento/Programados/Realizados.</div><div class="rep-resumen-grid">${consumoCard}</div>`;
+      return;
+    }
+    const { programados, realizados } = progReal.general;
+    const pct = programados ? Math.round((realizados / programados) * 100) : null;
+    // No realizados = obligaciones programadas del período (Día/Turno) que
+    // NO tuvieron ejecución válida — nunca negativo (Math.max), nunca cuenta
+    // días futuros (dias ya viene recortado a HOY, ver diasDelPeriodo()),
+    // nunca usa el total de equipos como denominador (parte de `programados`,
+    // que ya es 1 slot por equipo/día programado, no por equipo existente).
+    const noRealizados = Math.max(programados - realizados, 0);
+    const tone = pct === null ? 'neutral' : pct >= App.generalSettings.complianceTarget ? 'green' : pct >= 80 ? 'amber' : 'red';
+    // "Vencidos" NO va aquí a propósito: es estado ACTUAL de la flota
+    // (Dashboard), no una métrica del período histórico filtrado.
+    area.innerHTML = `<div class="dim rep-periodo-line">${periodoTxt}</div>
+      <div class="rep-resumen-grid">
+        <div class="kpi-card tone-${tone}"><div class="kpi-value">${pct === null ? '—' : pct + '%'}</div><div class="kpi-label">Cumplimiento del período</div></div>
+        ${kpiCard('Programados', programados, 'neutral')}
+        ${kpiCard('Realizados', realizados, 'green')}
+        ${kpiCard('No realizados', noRealizados, noRealizados > 0 ? 'amber' : 'neutral')}
+        ${consumoCard}
+      </div>
+      <div class="dim rep-resumen-note">Cumplimiento basado en planes Día/Turno evaluables.</div>`;
+  }
+
+  function drawTendencia(records, dias, equiposDT, turnoSel) {
+    destroyChart('tendencia');
+    const box = $('#chart-tendencia-box');
+    if (!dias) { box.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde" para ver la tendencia.</div>'; return; }
+    if (!window.Chart) { box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>'; return; }
+    box.innerHTML = '<canvas id="chart-tendencia"></canvas>';
+    const buckets = construirBucketsTendencia(dias);
+    const labels = buckets.map(b => b.label);
+    const data = buckets.map(b => {
+      const r = computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, b.dias, turnoSel);
+      return r.general.programados ? Math.round((r.general.realizados / r.general.programados) * 100) : null;
+    });
+    charts.tendencia = new Chart($('#chart-tendencia'), {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.10)', fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
+          // Todos los datos siguen ahí (no se recorta ningún punto) — solo se
+          // reduce cuántas ETIQUETAS del eje X se dibujan, para que no se
+          // amontonen cuando el rango es amplio.
+          x: { ticks: { autoSkip: true, maxTicksLimit: 8 } }
+        }
+      }
+    });
+  }
+
+  function drawCumplimientoTurno(progReal) {
+    const area = $('#rep-turno-area');
+    if (!progReal) { area.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde".</div>'; return; }
+    area.innerHTML = [['shift_dia', 'Día'], ['shift_noche', 'Noche']].map(([id, label]) => {
+      const t = progReal.porTurno[id];
+      const pct = t.programados ? Math.round((t.realizados / t.programados) * 100) : null;
+      const tone = pct === null ? 'neutral' : pct >= App.generalSettings.complianceTarget ? 'green' : pct >= 80 ? 'amber' : 'red';
+      return `<div class="rep-turno-card tone-${tone}">
+        <div class="rep-turno-label">${label}</div>
+        <div class="rep-turno-pct">${pct === null ? '—' : pct + '%'}</div>
+        <div class="rep-turno-frac">${t.realizados} de ${t.programados}</div>
+        <div class="progress-track rep-turno-bar"><div class="progress-fill" style="width:${pct === null ? 0 : pct}%; background:${tone === 'neutral' ? 'var(--text-dim)' : `var(--${tone})`}"></div></div>
+      </div>`;
+    }).join('');
+  }
+
+  function drawCumplimientoEquipo(progReal) {
+    const area = $('#rep-equipo-area');
+    if (!progReal) { area.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde".</div>'; return; }
+    // Un equipo con 0 programados en el período (sin días asignados que
+    // cayeran en el rango) NO tiene un cumplimiento que evaluar — mostrar 0%
+    // lo haría ver como un incumplimiento cuando en realidad no le tocaba
+    // nada. Se EXCLUYE del ranking principal (nunca se le inventa un 0%).
+    const sinProgramacion = progReal.porEquipo.filter(x => x.programados === 0).length;
+    const filas = progReal.porEquipo
+      .filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct); // MENOR cumplimiento primero: ayuda a decidir dónde actuar
+    if (!filas.length) { area.innerHTML = '<div class="empty-state">Ningún equipo con plan Día/Turno tuvo días programados en este período.</div>'; return; }
+    area.innerHTML = `<table class="data-table rep-equipo-table">
+      <thead><tr><th>Código</th><th>Modelo</th><th>Realizados/Programados</th><th>Cumplimiento</th></tr></thead>
+      <tbody>${filas.map(f => `<tr>
+        <td class="mono">${esc(f.e.code)}</td>
+        <td>${esc(f.e.brand)} ${esc(f.e.model)}</td>
+        <td class="mono">${f.realizados}/${f.programados}</td>
+        <td><span class="hist-compliance-badge ${f.pct >= App.generalSettings.complianceTarget ? 'hist-compliance-ok' : f.pct >= 80 ? 'hist-compliance-early' : 'hist-compliance-alert'}">${f.pct}%</span></td>
+      </tr>`).join('')}</tbody>
+    </table>
+    ${sinProgramacion > 0 ? `<div class="dim rep-resumen-note">${sinProgramacion} equipo(s) sin programación en este período (0 días asignados dentro del rango) no se muestran aquí — no es un incumplimiento, simplemente no tenían nada programado.</div>` : ''}`;
+    makeTablesResponsive(area);
+  }
+
+  // Consumo de grasa: UN solo gráfico con tabs (Por equipo/Familia/
+  // Lubricante) en vez de 3 visualizaciones simultáneas — nunca se borra
+  // ningún dato, "Por equipo" solo RECORTA VISUALMENTE el ranking a los
+  // Top 7 con mayor consumo (excluye los de 0 lb del ranking, el detalle
+  // completo sigue en la exportación/informe). La altura del canvas se fija
+  // según la cantidad real de categorías (ver dibujarConsumoTab()).
+  function drawConsumo(records) {
+    const { totalQty, promedio, registrosConQty } = consumoDe(records);
+    $('#rep-consumo-stats').innerHTML = `<div class="kpi-grid">
+      <div class="kpi-card tone-neutral"><div class="kpi-value">${fmt(totalQty, 1)}</div><div class="kpi-label">Total (${GREASE_UNIT})</div></div>
+      <div class="kpi-card tone-neutral"><div class="kpi-value">${promedio === null ? '—' : fmt(promedio, 2)}</div><div class="kpi-label">Promedio por engrase (${GREASE_UNIT})</div></div>
+    </div>`;
+
+    const byEq = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; const k = eq ? eq.code : '—'; byEq[k] = (byEq[k] || 0) + Number(r.qty); });
+    const byFamilia = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; const t = eq ? typePorId[eq.typeId] : null; const k = t ? t.name : 'Sin familia'; byFamilia[k] = (byFamilia[k] || 0) + Number(r.qty); });
+    const byLub = {};
+    registrosConQty.forEach(r => { const l = lubPorId[r.greaseType]; const k = l ? l.name : 'Sin identificar'; byLub[k] = (byLub[k] || 0) + Number(r.qty); });
+
+    consumoDatasets = {
+      equipo: Object.entries(byEq).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 7),
+      familia: Object.entries(byFamilia).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
+      lubricante: Object.entries(byLub).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
+    };
+    dibujarConsumoTab(consumoTabActual);
+  }
+
+  function dibujarConsumoTab(tab) {
+    consumoTabActual = tab;
+    $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    destroyChart('consumo');
+    const box = $('#chart-consumo-box');
+    const entries = (consumoDatasets && consumoDatasets[tab]) || [];
+    if (!window.Chart) { box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas.</div>'; return; }
+    if (!entries.length) { box.innerHTML = '<div class="empty-state">Sin consumo registrado en este período.</div>'; return; }
+    // Altura proporcional a la cantidad real de categorías — nunca reserva
+    // espacio para filas que no existen (tope 220px, mínimo legible 120px).
+    box.style.height = `${Math.max(120, Math.min(220, entries.length * 32 + 40))}px`;
+    box.innerHTML = '<canvas id="chart-consumo"></canvas>';
+    charts.consumo = new Chart($('#chart-consumo'), {
+      type: 'bar',
+      data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: '#E8A33D' }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+    });
+  }
+
+  // Pareto de motivos (compacto, en su propio panel junto a Anomalías) +
+  // detalle (tabla completa, panel aparte más abajo) — misma información
+  // que antes, ahora en 2 paneles separados para reducir la altura del
+  // Pareto (pedido explícito de densidad). % junto al conteo se mantiene;
+  // el CSV sigue en "Generar informe".
+  function drawSkippedPoints(records) {
+    const paretoArea = $('#rep-motivos-pareto');
+    const detalleArea = $('#skipped-points-area');
+    if (!paretoArea || !detalleArea) return;
+    const filas = puntosNoEngrasadosDe(records);
     const porMotivo = {};
     filas.forEach(f => { porMotivo[f.motivo] = (porMotivo[f.motivo] || 0) + 1; });
     const resumen = Object.entries(porMotivo).sort((a, b) => b[1] - a[1]);
 
-    area.innerHTML = !filas.length
+    paretoArea.innerHTML = !filas.length
       ? '<div class="empty-state">Sin puntos pendientes en este periodo — todos los engrases se completaron.</div>'
-      : `
-        <div class="skipped-summary">
-          ${resumen.map(([motivo, n]) => `<span class="skipped-chip">${esc(motivo)}: <b>${n}</b></span>`).join('')}
+      : `<div class="skipped-summary">
+          ${resumen.map(([motivo, n]) => `<span class="skipped-chip">${esc(motivo)}: <b>${n}</b> (${Math.round(n / filas.length * 100)}%)</span>`).join('')}
         </div>
-        <div class="toolbar" style="padding:6px 14px 10px">
-          <button class="btn btn-sm" id="exp-skipped">${ic("download")}Descargar esta lista (CSV)</button>
-          <span class="dim">${filas.length} punto(s) pendiente(s)</span>
-        </div>
-        <table class="data-table">
+        <div class="dim" style="padding:6px 14px 0">${filas.length} punto(s) pendiente(s)</div>`;
+
+    detalleArea.innerHTML = !filas.length
+      ? '<div class="empty-state">Sin puntos pendientes en este periodo.</div>'
+      : `<table class="data-table">
           <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Punto</th><th>Motivo</th><th>Reportado por</th></tr></thead>
           <tbody>${filas.map(f => `<tr>
             <td>${fmtDate(f.fecha)}</td>
@@ -5295,27 +6634,109 @@ async function renderReportes() {
             <td>${esc(f.por)}</td>
           </tr>`).join('')}</tbody>
         </table>`;
-    makeTablesResponsive(area);
+    makeTablesResponsive(detalleArea);
+  }
 
-    $('#exp-skipped')?.addEventListener('click', () => {
-      const rows = [['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por']];
-      filas.forEach(f => rows.push([fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]));
-      downloadCSV(rows, 'puntos_no_engrasados.csv');
+  // El modelo real de anomalías (ver formulario de edición, app.js) permite
+  // 3 valores de `status`: 'Abierta', 'En atención', 'Cerrada' — NO existe
+  // un estado "Resuelta" separado, así que nunca se inventa. "Abiertas"
+  // (KPI) es status !== 'Cerrada' (agrupa Abierta+En atención, real y
+  // correcto); el desglose "Por estado" de abajo muestra el valor EXACTO de
+  // `status` tal como está en los datos, agrupado dinámicamente — si algún
+  // día se agrega/quita un valor, esto sigue siendo fiel sin tocar código.
+  function drawAnomaliasSeccion(anomaliasF) {
+    const area = $('#rep-anomalias-area');
+    const abiertas = anomaliasF.filter(a => a.status !== 'Cerrada').length;
+    const cerradas = anomaliasF.filter(a => a.status === 'Cerrada').length;
+    const porEstado = {};
+    anomaliasF.forEach(a => { const k = a.status || 'Sin estado'; porEstado[k] = (porEstado[k] || 0) + 1; });
+    const estadosOrdenados = Object.entries(porEstado).sort((a, b) => b[1] - a[1]);
+    const porTipo = {};
+    anomaliasF.forEach(a => { porTipo[a.component] = (porTipo[a.component] || 0) + 1; });
+    const tiposOrdenados = Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const porEquipo = {};
+    anomaliasF.forEach(a => { const eq = equiposPorId[a.equipmentId]; const k = eq ? eq.code : '—'; porEquipo[k] = (porEquipo[k] || 0) + 1; });
+    const equiposOrdenados = Object.entries(porEquipo).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('Detectadas', anomaliasF.length, 'neutral')}
+        ${kpiCard('Abiertas', abiertas, abiertas > 0 ? 'red' : 'neutral')}
+        ${kpiCard('Cerradas', cerradas, 'green')}
+      </div>
+      ${anomaliasF.length ? `
+      <div class="rep-subhead" style="padding:0 14px">Por estado (real)</div>
+      <div class="skipped-summary">${estadosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
+      <div class="rep-two-col">
+        <div>
+          <div class="rep-subhead">Principales tipos</div>
+          <div class="skipped-summary">${tiposOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
+        </div>
+        <div>
+          <div class="rep-subhead">Equipos con más anomalías</div>
+          ${equiposOrdenados.map(([k, n]) => `<div class="rep-consumo-row"><span class="mono">${esc(k)}</span><span>${n}</span></div>`).join('')}
+        </div>
+      </div>` : '<div class="empty-state">Sin anomalías en este período.</div>'}`;
+  }
+
+  function drawValidacionSeccion(records) {
+    const area = $('#rep-validacion-area');
+    // Sin excepción propia de Reportes: `sujetos` sale de la MISMA función
+    // central que usan Dashboard/Historial/Mis Engrases
+    // (isRecordSubjectToValidation()) — mientras GREASE_VALIDATION_ENABLED_FROM
+    // siga en null, ningún registro es "sujeto" todavía (ver
+    // docs/GREASE_VALIDATION_AUDIT.md §14), así que `sujetos` da vacío solo,
+    // nunca por una rama aparte aquí. El mensaje solo distingue el motivo
+    // (nunca fabrica un porcentaje falso como si fuera un dato real).
+    const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+    if (!sujetos.length) {
+      area.innerHTML = GREASE_VALIDATION_ENABLED_FROM
+        ? '<div class="empty-state">Ningún registro del período está sujeto a validación.</div>'
+        : '<div class="empty-state">Validación pendiente de activación — todavía no se definió la fecha/hora desde la cual un engrase queda sujeto a validación (GREASE_VALIDATION_ENABLED_FROM). Ver docs/GREASE_VALIDATION_AUDIT.md.</div>';
+      return;
+    }
+    let validados = 0, pendientes = 0, conflictos = 0, porOperador = 0, porEncargado = 0;
+    sujetos.forEach(r => {
+      const activas = findActiveValidations(r.id, validations);
+      if (activas.length === 0) pendientes++;
+      else if (activas.length === 1) { validados++; if (activas[0].signerRole === 'OPERADOR') porOperador++; else porEncargado++; }
+      else conflictos++;
     });
+    const pctValidado = Math.round(validados / sujetos.length * 100);
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('Sujetos a validación', sujetos.length, 'neutral')}
+        ${kpiCard('Validados', validados, 'green')}
+        ${kpiCard('Pendientes', pendientes, pendientes > 0 ? 'amber' : 'neutral')}
+        ${kpiCard('Conflictos', conflictos, conflictos > 0 ? 'red' : 'neutral')}
+        ${kpiCard('Por Operador', porOperador, 'neutral')}
+        ${kpiCard('Por Encargado', porEncargado, 'neutral')}
+      </div>
+      <div class="dim rep-resumen-note">% validado: ${pctValidado}%. Los registros anteriores a la activación no entran en este cálculo.</div>`;
+  }
+
+  // Ranking compacto (no un gráfico grande) — es secundario, solo carga de
+  // trabajo registrada, NUNCA se interpreta como desempeño.
+  function drawActividadResponsable(records) {
+    const area = $('#rep-actividad-resp-area');
+    const byResp = {};
+    records.forEach(r => { byResp[r.userName] = (byResp[r.userName] || 0) + 1; });
+    const entries = Object.entries(byResp).sort((a, b) => b[1] - a[1]);
+    area.innerHTML = entries.length
+      ? entries.map(([nombre, n]) => `<div class="rep-consumo-row"><span>${esc(nombre)}</span><span class="mono">${n} engrase(s)</span></div>`).join('')
+      : '<div class="empty-state">Sin actividad registrada en este período.</div>';
   }
 
   function drawPhotoReport(records) {
     const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
     const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
-    const eqId = $('#f-equipo').value;
     const respId = $('#f-resp').value;
     const respUser = respId ? users.find(u => u.id === respId) : null;
+    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
 
     const filteredAnomalies = anomalies.filter(a => {
       const d = new Date(a.createdAt);
+      if (!idsPermitidos.has(a.equipmentId)) return false;
       if (from && d < from) return false;
       if (to && d > to) return false;
-      if (eqId && a.equipmentId !== eqId) return false;
       if (respUser && a.createdBy !== respUser.name) return false;
       return true;
     });
@@ -5323,13 +6744,15 @@ async function renderReportes() {
     const photoItems = [
       ...records.filter(r => r.photo).map(r => ({
         photo: r.photo, date: r.date, type: 'Engrase',
-        eq: (equipos.find(e => e.id === r.equipmentId) || {}).code || '—', by: r.userName
+        eq: (equiposPorId[r.equipmentId] || {}).code || '—', by: r.userName
       })),
       ...filteredAnomalies.filter(a => a.photo).map(a => ({
         photo: a.photo, date: a.createdAt, type: 'Anomalía · ' + a.component,
-        eq: (equipos.find(e => e.id === a.equipmentId) || {}).code || '—', by: a.createdBy
+        eq: (equiposPorId[a.equipmentId] || {}).code || '—', by: a.createdBy
       }))
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    $('#rep-photo-count').textContent = `${photoItems.length} evidencia(s)`;
 
     // Las fotos se cargan de a tandas. Antes se insertaban TODAS de golpe: con 300 fotos
     // de 40 KB cada una eso son ~12 MB de texto que el navegador tiene que procesar de
@@ -5373,69 +6796,104 @@ async function renderReportes() {
     }
   }
 
-  drawCharts();
-  $('#f-apply').addEventListener('click', drawCharts);
+  function drawAll() {
+    const records = applyFilters();
+    const eqsF = equiposFiltrados();
+    const dias = diasDelPeriodo();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+
+    try {
+      drawResumen(records, dias, progReal);
+      drawTendencia(records, dias, equiposDT, turnoSel);
+      drawCumplimientoTurno(progReal);
+      drawCumplimientoEquipo(progReal);
+      drawConsumo(records);
+      drawSkippedPoints(records);
+      drawAnomaliasSeccion(applyFiltersAnomalias());
+      drawValidacionSeccion(records);
+      drawActividadResponsable(records);
+      drawPhotoReport(records);
+    } catch (err) {
+      console.error('Error dibujando reportes', err);
+    }
+  }
+
+  $('#rep-photo-toggle').addEventListener('click', () => {
+    const grid = $('#photo-report-grid');
+    const oculto = grid.classList.toggle('hidden');
+    $('#rep-photo-toggle').textContent = oculto ? 'Ver fotos' : 'Ocultar fotos';
+  });
+
+  $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => b.addEventListener('click', () => dibujarConsumoTab(b.dataset.tab)));
+
+  drawAll();
+  $('#f-apply').addEventListener('click', drawAll);
 
   $('#exp-cumplimiento').addEventListener('click', () => {
+    const idsF = new Set(equiposFiltrados().map(e => e.id));
     const rows = [['Código', 'Equipo', 'Horómetro', 'Estado', 'Próximo engrase', 'Restante/Atraso']];
-    statuses.forEach(({ e, s }) => rows.push([e.code, `${esc(e.brand)} ${esc(e.model)}`, e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? '']));
+    statuses.filter(x => idsF.has(x.e.id)).forEach(({ e, s }) => rows.push([e.code, `${esc(e.brand)} ${esc(e.model)}`, e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? '']));
     downloadCSV(rows, 'reporte_cumplimiento_engrase.csv');
   });
   $('#exp-historico').addEventListener('click', () => {
     const records = applyFilters();
     const rows = [['Fecha', 'Equipo', 'Horómetro', 'Turno', 'Responsable', `Cantidad (${GREASE_UNIT})`, 'Condición']];
     records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       rows.push([fmtDate(r.date), eq ? eq.code : '', r.hourmeter, r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.qty, r.condition]);
     });
     downloadCSV(rows, 'historico_engrases.csv');
   });
   $('#exp-anomalias').addEventListener('click', () => {
     const rows = [['Fecha', 'Equipo', 'Componente', 'Descripción', 'Criticidad', 'Estado', 'Responsable']];
-    anomalies.forEach(a => {
-      const eq = equipos.find(e => e.id === a.equipmentId);
+    applyFiltersAnomalias().forEach(a => {
+      const eq = equiposPorId[a.equipmentId];
       rows.push([fmtDate(a.createdAt), eq ? eq.code : '', a.component, a.description, a.criticality, a.status, a.createdBy]);
     });
     downloadCSV(rows, 'reporte_anomalias.csv');
   });
+  $('#exp-puntos').addEventListener('click', () => {
+    const filas = puntosNoEngrasadosDe(applyFilters());
+    const rows = [['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por']];
+    filas.forEach(f => rows.push([fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]));
+    downloadCSV(rows, 'puntos_no_engrasados.csv');
+  });
 
   $('#exp-excel').addEventListener('click', () => {
     const records = applyFilters();
-    const filteredAnomalies = anomalies;
+    const anomaliasF = applyFiltersAnomalias();
+    const dias = diasDelPeriodo();
+    const eqsF = equiposFiltrados();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+    const pct = progReal && progReal.general.programados ? Math.round((progReal.general.realizados / progReal.general.programados) * 100) : null;
+    const { totalQty, registrosConQty } = consumoDe(records);
+    const abiertas = anomaliasF.filter(a => a.status !== 'Cerrada').length;
+
     const wb = XLSX.utils.book_new();
     const C = REPORT_COLORS;
     const meta = App.generalSettings.complianceTarget;
-    const colorCumpl = colorPorCumplimiento(compliance, meta);
-    const abiertas = anomalies.filter(a => a.status !== 'Cerrada').length;
-    const detenidos = Math.max(total - alDia - pendientes - vencidos, 0);
-    const periodoTxt = $('#f-from').value
-      ? `Periodo: ${$('#f-from').value} a ${$('#f-to').value || 'hoy'}`
-      : `Periodo: todo el historial hasta ${$('#f-to').value || 'hoy'}`;
+    const colorCumpl = colorPorCumplimiento(pct ?? 0, meta);
+    const periodoTxt = `Periodo: ${$('#f-from').value || '—'} a ${$('#f-to').value || 'hoy'}`;
 
-    /* ---------- Hoja 1: Panel ejecutivo ---------- */
+    /* ---------- Hoja 1: Resumen ---------- */
     const filasResumen = [
-      ['CUMPLIMIENTO DE ENGRASE', compliance + '%', `Meta: ${meta}%`],
+      ['CUMPLIMIENTO DEL PERÍODO', pct === null ? '—' : pct + '%', `Meta: ${meta}%`],
       [],
-      ['ESTADO DE LA FLOTA', 'Equipos', '% del total'],
-      ['Al día', alDia, total ? Math.round(alDia / total * 100) + '%' : '0%'],
-      ['Próximos a vencer', pendientes, total ? Math.round(pendientes / total * 100) + '%' : '0%'],
-      ['Vencidos', vencidos, total ? Math.round(vencidos / total * 100) + '%' : '0%'],
-      ['Detenidos / sin plan', detenidos, total ? Math.round(detenidos / total * 100) + '%' : '0%'],
-      ['TOTAL', total, '100%'],
+      ['PROGRAMADOS/REALIZADOS (Día/Turno)', '', ''],
+      ['Programados', progReal ? progReal.general.programados : '—', ''],
+      ['Realizados', progReal ? progReal.general.realizados : '—', ''],
+      ['No realizados', progReal ? Math.max(progReal.general.programados - progReal.general.realizados, 0) : '—', ''],
       [],
       ['OTROS INDICADORES', '', ''],
+      ['Consumo total de grasa', `${fmt(totalQty, 1)} ${GREASE_UNIT}`, ''],
       ['Anomalías abiertas', abiertas, ''],
       ['Engrases en el periodo', records.length, ''],
-      ['Puntos no engrasados en el periodo', records.reduce((n, r) => n + (r.details || []).filter(d => !d.done).length, 0), ''],
-      [],
-      ['LECTURA RÁPIDA', '', ''],
-      [compliance >= meta
-        ? `La flota está dentro del objetivo de cumplimiento (mínimo ${meta}%).`
-        : compliance >= 80
-          ? `La flota está por debajo del objetivo (${meta}%). Revisar los equipos vencidos como prioridad.`
-          : 'Cumplimiento crítico. Se recomienda intervención inmediata sobre los equipos vencidos.', '', '']
+      ['Puntos no engrasados en el periodo', puntosNoEngrasadosDe(records).length, ''],
     ];
-
     const wsResumen = xlsHojaConFormato({
       titulo: 'CONTROL DE ENGRASE — OPEN PIT',
       subtitulo: `Informe Ejecutivo  ·  Generado: ${fmtDate(nowISO())}  ·  Por: ${App.currentUser.name}  ·  ${periodoTxt}`,
@@ -5443,57 +6901,32 @@ async function renderReportes() {
       filas: filasResumen,
       estiloPorCelda: (valor, ci, fila) => {
         const etiqueta = String(fila[0] || '');
-        // Sub-encabezados de sección
-        if (['ESTADO DE LA FLOTA', 'OTROS INDICADORES', 'LECTURA RÁPIDA'].includes(etiqueta)) {
+        if (['PROGRAMADOS/REALIZADOS (Día/Turno)', 'OTROS INDICADORES'].includes(etiqueta)) {
           return xlsEstiloCelda({ hexFondo: C.azulTitulo.hex, hexTexto: 'FFFFFF', negrita: true });
         }
-        if (etiqueta === 'CUMPLIMIENTO DE ENGRASE') {
-          return ci === 1
-            ? xlsEstiloCelda({ hexFondo: colorCumpl.hex, hexTexto: 'FFFFFF', negrita: true, centrado: true })
-            : xlsEstiloCelda({ negrita: true });
+        if (etiqueta === 'CUMPLIMIENTO DEL PERÍODO') {
+          return ci === 1 ? xlsEstiloCelda({ hexFondo: colorCumpl.hex, hexTexto: 'FFFFFF', negrita: true, centrado: true }) : xlsEstiloCelda({ negrita: true });
         }
-        if (etiqueta === 'Al día') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.verdeSuave.hex, hexTexto: REPORT_COLORS.verdeTexto.hex, centrado: true });
-        if (etiqueta === 'Próximos a vencer') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, centrado: true });
-        if (etiqueta === 'Vencidos') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.rojoSuave.hex, hexTexto: REPORT_COLORS.rojoTexto.hex, centrado: true });
-        if (etiqueta === 'TOTAL') return xlsEstiloCelda({ hexFondo: C.grisSuave.hex, negrita: true, centrado: ci > 0 });
         if (etiqueta === 'Anomalías abiertas' && ci === 1 && abiertas > 0) return xlsEstiloCelda({ hexFondo: C.rojoSuave.hex, hexTexto: REPORT_COLORS.rojoTexto.hex, negrita: true, centrado: true });
         return xlsEstiloCelda({ centrado: ci > 0 });
       }
     });
     wsResumen['!cols'] = [{ wch: 38 }, { wch: 14 }, { wch: 18 }];
-    delete wsResumen['!autofilter']; // en el panel no tiene sentido el filtro
-    XLSX.utils.book_append_sheet(wb, wsResumen, 'Panel Ejecutivo');
+    delete wsResumen['!autofilter'];
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
 
-    /* ---------- Hoja 2: Equipos ---------- */
-    const colEquipos = ['Código', 'Cód. Ahorrativo', 'Marca', 'Modelo', 'Ubicación', 'Turno', 'Horómetro (h)', 'Estado', 'Próximo engrase (h)', 'Restante/Atraso (h)'];
-    const filasEquipos = statuses.map(({ e, s }) => [
-      e.code, e.shortCode || '', e.brand, e.model,
-      (locations.find(l => l.id === e.locationId) || {}).name || '',
-      e.shiftId === 'shift_dia' ? 'Día' : 'Noche',
-      e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? ''
-    ]);
-    const wsEquipos = xlsHojaConFormato({
-      titulo: 'EQUIPOS Y ESTADO DE ENGRASE',
-      subtitulo: `${statuses.length} equipos  ·  Generado: ${fmtDate(nowISO())}`,
-      columnas: colEquipos, filas: filasEquipos,
-      estiloPorCelda: (valor, ci, fila) => ci === 7 ? xlsEstiloEstado(fila[7]) : xlsEstiloCelda({ centrado: ci >= 5 })
-    });
-    wsEquipos['!cols'] = [{ wch: 12 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }];
-    XLSX.utils.book_append_sheet(wb, wsEquipos, 'Equipos');
-
-    /* ---------- Hoja 3: Histórico de engrases ---------- */
+    /* ---------- Hoja 2: Histórico de engrases ---------- */
     const colHist = ['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro (h)', 'Grasa', `Cantidad (${GREASE_UNIT})`, 'Condición', 'Observaciones'];
     const filasHist = records.map(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       return [
         fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '',
         r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.hourmeter,
-        (lubricants.find(l => l.id === r.greaseType) || {}).name || '', r.qty, r.condition, r.notes || ''
+        (lubPorId[r.greaseType] || {}).name || '', r.qty, r.condition, r.notes || ''
       ];
     });
     const wsHist = xlsHojaConFormato({
-      titulo: 'HISTÓRICO DE ENGRASES',
-      subtitulo: `${records.length} registros  ·  ${periodoTxt}`,
+      titulo: 'HISTÓRICO DE ENGRASES', subtitulo: `${records.length} registros  ·  ${periodoTxt}`,
       columnas: colHist, filas: filasHist, hexEncabezado: C.verde.hex,
       estiloPorCelda: (valor, ci, fila) => {
         if (ci === 8 && fila[8] === 'Requiere atención') return xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true, centrado: true });
@@ -5503,15 +6936,40 @@ async function renderReportes() {
     wsHist['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 9 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 13 }, { wch: 16 }, { wch: 32 }];
     XLSX.utils.book_append_sheet(wb, wsHist, 'Histórico Engrases');
 
-    /* ---------- Hoja 4: Anomalías ---------- */
+    /* ---------- Hoja 3: Cumplimiento por equipo ---------- */
+    const filasCumpl = progReal ? progReal.porEquipo.filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct) : [];
+    const wsCumpl = xlsHojaConFormato({
+      titulo: 'CUMPLIMIENTO POR EQUIPO (Día/Turno)', subtitulo: `${filasCumpl.length} equipo(s)  ·  ${periodoTxt}  ·  menor cumplimiento primero`,
+      columnas: ['Código', 'Marca', 'Modelo', 'Realizados', 'Programados', 'Cumplimiento %'],
+      filas: filasCumpl.length ? filasCumpl.map(f => [f.e.code, f.e.brand, f.e.model, f.realizados, f.programados, f.pct + '%']) : [['—', '—', '—', '—', '—', 'Sin planes Día/Turno evaluables en el período']],
+      hexEncabezado: C.azulTitulo.hex,
+      estiloPorCelda: (valor, ci, fila) => ci >= 3 ? xlsEstiloCelda({ centrado: true }) : xlsEstiloCelda()
+    });
+    wsCumpl['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsCumpl, 'Cumplimiento');
+
+    /* ---------- Hoja 4: Puntos no engrasados ---------- */
+    const filasPtos = puntosNoEngrasadosDe(records);
+    const wsPtos = xlsHojaConFormato({
+      titulo: 'PUNTOS NO ENGRASADOS Y SUS MOTIVOS', subtitulo: `${filasPtos.length} punto(s) pendiente(s)  ·  ${periodoTxt}`,
+      columnas: ['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por'],
+      filas: filasPtos.length ? filasPtos.map(f => [fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]) : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—', '—']],
+      hexEncabezado: C.ambar.hex,
+      estiloPorCelda: (valor, ci) => ci === 4 ? xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true }) : xlsEstiloCelda()
+    });
+    wsPtos['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 28 }, { wch: 26 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsPtos, 'Puntos Pendientes');
+
+    /* ---------- Hoja 5: Anomalías ---------- */
     const colAnom = ['Fecha', 'Código', 'Componente', 'Descripción', 'Criticidad', 'Estado', 'Responsable'];
-    const filasAnom = filteredAnomalies.map(a => {
-      const eq = equipos.find(e => e.id === a.equipmentId);
+    const filasAnom = anomaliasF.map(a => {
+      const eq = equiposPorId[a.equipmentId];
       return [fmtDate(a.createdAt), eq ? eq.code : '', a.component, a.description, a.criticality, a.status, a.createdBy];
     });
     const wsAnom = xlsHojaConFormato({
-      titulo: 'ANOMALÍAS REPORTADAS',
-      subtitulo: `${filteredAnomalies.length} en total  ·  ${abiertas} abiertas`,
+      titulo: 'ANOMALÍAS REPORTADAS', subtitulo: `${anomaliasF.length} en total  ·  ${abiertas} abiertas  ·  ${periodoTxt}`,
       columnas: colAnom, filas: filasAnom, hexEncabezado: C.rojo.hex,
       estiloPorCelda: (valor, ci, fila) => {
         if (ci === 4) return xlsEstiloCriticidad(fila[4]);
@@ -5524,30 +6982,39 @@ async function renderReportes() {
     wsAnom['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 22 }, { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, wsAnom, 'Anomalías');
 
-    /* ---------- Hoja 5: Puntos no engrasados ---------- */
-    const colPtos = ['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por'];
-    const filasPtos = [];
-    records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
-      (r.details || []).filter(d => !d.done).forEach(d => {
-        filasPtos.push([fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '', d.pointName, d.reason || '(sin motivo)', r.userName]);
+    /* ---------- Hoja 6: Consumo por equipo ---------- */
+    const byEqQty = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; if (!eq) return; byEqQty[eq.id] = byEqQty[eq.id] || { e: eq, qty: 0 }; byEqQty[eq.id].qty += Number(r.qty); });
+    const filasConsumo = Object.values(byEqQty).sort((a, b) => b.qty - a.qty);
+    const wsConsumo = xlsHojaConFormato({
+      titulo: 'CONSUMO DE GRASA POR EQUIPO', subtitulo: `Total: ${fmt(totalQty, 1)} ${GREASE_UNIT}  ·  ${periodoTxt}`,
+      columnas: ['Código', 'Marca', 'Modelo', `Consumo (${GREASE_UNIT})`],
+      filas: filasConsumo.length ? filasConsumo.map(f => [f.e.code, f.e.brand, f.e.model, fmt(f.qty, 1)]) : [['—', '—', '—', 'Sin consumo en el período']],
+      hexEncabezado: C.verde.hex,
+      estiloPorCelda: (valor, ci) => ci === 3 ? xlsEstiloCelda({ centrado: true }) : xlsEstiloCelda()
+    });
+    wsConsumo['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsConsumo, 'Consumo');
+
+    /* ---------- Hoja 7: Validación (solo si el baseline ya está configurado) ---------- */
+    if (GREASE_VALIDATION_ENABLED_FROM) {
+      const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+      const filasVal = sujetos.map(r => {
+        const eq = equiposPorId[r.equipmentId];
+        const activas = findActiveValidations(r.id, validations);
+        const estado = activas.length === 0 ? 'Pendiente' : activas.length > 1 ? 'Conflicto' : (activas[0].signerRole === 'ENCARGADO' ? 'Validado · Encargado' : 'Validado · Operador');
+        return [fmtDate(r.date), eq ? eq.code : '', estado, activas.length === 1 ? activas[0].signerName : '', activas.length === 1 ? fmtDate(activas[0].signedAt) : ''];
       });
-      if (r.sinHorometro) {
-        filasPtos.push([fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '', 'Sin lectura de horómetro', r.noHourmeterReason || 'No se pudo leer', r.userName]);
-      }
-    });
-    const wsPtos = xlsHojaConFormato({
-      titulo: 'PUNTOS NO ENGRASADOS Y SUS MOTIVOS',
-      subtitulo: `${filasPtos.length} punto(s) pendiente(s)  ·  ${periodoTxt}`,
-      columnas: colPtos,
-      filas: filasPtos.length ? filasPtos : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—', '—']],
-      hexEncabezado: C.ambar.hex,
-      estiloPorCelda: (valor, ci) => ci === 4
-        ? xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true })
-        : xlsEstiloCelda()
-    });
-    wsPtos['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 28 }, { wch: 26 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, wsPtos, 'Puntos Pendientes');
+      const wsVal = xlsHojaConFormato({
+        titulo: 'VALIDACIÓN DE ENGRASES', subtitulo: `${sujetos.length} sujeto(s) a validación  ·  ${periodoTxt}`,
+        columnas: ['Fecha engrase', 'Código', 'Estado', 'Firmado por', 'Fecha validación'],
+        filas: filasVal.length ? filasVal : [['—', '—', 'Sin registros sujetos a validación', '', '']],
+        hexEncabezado: C.azulTitulo.hex,
+        estiloPorCelda: () => xlsEstiloCelda()
+      });
+      wsVal['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, wsVal, 'Validación');
+    }
 
     XLSX.writeFile(wb, `informe_ejecutivo_engrase_${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
@@ -5558,6 +7025,18 @@ async function renderReportes() {
     const pageWidth = doc.internal.pageSize.getWidth();
     let y = 0;
 
+    const records = applyFilters();
+    const anomaliasF = applyFiltersAnomalias();
+    const dias = diasDelPeriodo();
+    const eqsF = equiposFiltrados();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+    const pct = progReal && progReal.general.programados ? Math.round((progReal.general.realizados / progReal.general.programados) * 100) : null;
+    const noRealizados = progReal ? Math.max(progReal.general.programados - progReal.general.realizados, 0) : 0;
+    const { totalQty, registrosConQty } = consumoDe(records);
+    const periodoTxt = `Periodo: ${$('#f-from').value || '—'} a ${$('#f-to').value || 'hoy'}`;
+
     // Encabezado
     doc.setFillColor(...REPORT_COLORS.marca.rgb);
     doc.rect(0, 0, pageWidth, 72, 'F');
@@ -5566,98 +7045,43 @@ async function renderReportes() {
     doc.text('CONTROL DE ENGRASE — OPEN PIT', 40, 30);
     doc.setTextColor(255, 255, 255);
     doc.setFont(undefined, 'normal'); doc.setFontSize(11);
-    doc.text('Informe Ejecutivo de Cumplimiento de Engrase', 40, 48);
+    doc.text('Informe Ejecutivo — Análisis del Período', 40, 48);
     doc.setFontSize(8.5);
-    const periodoTxt = $('#f-from').value
-      ? `Periodo: ${$('#f-from').value} a ${$('#f-to').value || 'hoy'}`
-      : `Periodo: todo el historial hasta ${$('#f-to').value || 'hoy'}`;
     doc.text(`Generado: ${fmtDate(nowISO())}   ·   Por: ${esc(App.currentUser.name)}   ·   ${periodoTxt}`, 40, 62);
     y = 100;
 
-    // ============ DASHBOARD EJECUTIVO ============
     const C = REPORT_COLORS;
     const metaCumplimiento = App.generalSettings.complianceTarget;
-    const colorCumpl = colorPorCumplimiento(compliance, metaCumplimiento);
-    const detenidos = Math.max(total - alDia - pendientes - vencidos, 0);
+    const colorCumpl = colorPorCumplimiento(pct ?? 0, metaCumplimiento);
 
-    // --- Bloque 1: cifra grande de cumplimiento + anillo de estado de flota ---
+    // --- Bloque 1: cifra grande de CUMPLIMIENTO DEL PERÍODO (ya no estado
+    // actual de la flota — eso es Dashboard, no Reportes) ---
     const dashY = y;
-    const dashH = 130;
+    const dashH = 110;
     doc.setDrawColor(228); doc.setFillColor(252, 252, 251);
     doc.roundedRect(40, dashY, pageWidth - 80, dashH, 6, 6, 'FD');
-
-    // Cifra principal de cumplimiento
     doc.setTextColor(...colorCumpl.rgb);
     doc.setFont(undefined, 'bold'); doc.setFontSize(46);
-    doc.text(`${compliance}%`, 62, dashY + 56);
+    doc.text(pct === null ? '—' : `${pct}%`, 62, dashY + 56);
     doc.setTextColor(...C.textoTenue.rgb); doc.setFont(undefined, 'normal'); doc.setFontSize(9);
-    doc.text('CUMPLIMIENTO DE ENGRASE', 62, dashY + 72);
+    doc.text('CUMPLIMIENTO DEL PERÍODO (Día/Turno)', 62, dashY + 72);
     doc.setFontSize(8);
-    doc.text(`Meta establecida: ${metaCumplimiento}%`, 62, dashY + 85);
-
-    // Barra de avance contra la meta
-    const barX = 62, barW2 = 230;
-    doc.setFillColor(234, 234, 232); doc.roundedRect(barX, dashY + 95, barW2, 10, 3, 3, 'F');
-    doc.setFillColor(...colorCumpl.rgb);
-    doc.roundedRect(barX, dashY + 95, Math.max(barW2 * (compliance / 100), 3), 10, 3, 3, 'F');
-    const metaX2 = barX + barW2 * (metaCumplimiento / 100);
-    doc.setDrawColor(60); doc.setLineWidth(1.2);
-    doc.line(metaX2, dashY + 91, metaX2, dashY + 109);
-    doc.setLineWidth(0.2);
-
-    // --- Anillo (dona) con la composición de la flota ---
-    const cx = pageWidth - 170, cy = dashY + 62, rExt = 44, rInt = 26;
-    const segmentos = [
-      { v: alDia, c: C.verde, lbl: 'Al día' },
-      { v: pendientes, c: C.ambar, lbl: 'Próximos' },
-      { v: vencidos, c: C.rojo, lbl: 'Vencidos' },
-      { v: detenidos, c: C.gris, lbl: 'Detenidos/Sin plan' }
-    ].filter(s => s.v > 0);
-    const totalSeg = segmentos.reduce((a, s) => a + s.v, 0) || 1;
-
-    // Dibuja cada porción como un abanico de triángulos finos
-    let angIni = -Math.PI / 2;
-    segmentos.forEach(s => {
-      const barrido = (s.v / totalSeg) * Math.PI * 2;
-      doc.setFillColor(...s.c.rgb);
-      const pasos = Math.max(Math.ceil(barrido / 0.06), 2);
-      for (let i = 0; i < pasos; i++) {
-        const a1 = angIni + (barrido * i) / pasos;
-        const a2 = angIni + (barrido * (i + 1)) / pasos;
-        doc.triangle(
-          cx + rExt * Math.cos(a1), cy + rExt * Math.sin(a1),
-          cx + rExt * Math.cos(a2), cy + rExt * Math.sin(a2),
-          cx, cy, 'F'
-        );
-      }
-      angIni += barrido;
-    });
-    // Centro blanco para que quede como anillo, con el total al medio
-    doc.setFillColor(252, 252, 251);
-    doc.circle(cx, cy, rInt, 'F');
-    doc.setTextColor(25); doc.setFont(undefined, 'bold'); doc.setFontSize(18);
-    doc.text(String(total), cx, cy + 2, { align: 'center' });
-    doc.setTextColor(...C.textoTenue.rgb); doc.setFont(undefined, 'normal'); doc.setFontSize(6.5);
-    doc.text('EQUIPOS', cx, cy + 12, { align: 'center' });
-
-    // Leyenda del anillo
-    let ly = dashY + 22;
-    segmentos.forEach(s => {
-      doc.setFillColor(...s.c.rgb);
-      doc.roundedRect(cx + rExt + 14, ly - 6, 8, 8, 1.5, 1.5, 'F');
-      doc.setTextColor(60); doc.setFontSize(7.5); doc.setFont(undefined, 'normal');
-      doc.text(`${s.lbl}: ${s.v}`, cx + rExt + 26, ly);
-      ly += 13;
-    });
+    doc.text(`Meta establecida: ${metaCumplimiento}%  ·  Programados: ${progReal ? progReal.general.programados : '—'}  ·  Realizados: ${progReal ? progReal.general.realizados : '—'}`, 62, dashY + 85);
+    if (pct !== null) {
+      const barX = 62, barW2 = pageWidth - 62 - 80;
+      doc.setFillColor(234, 234, 232); doc.roundedRect(barX, dashY + 95, barW2, 10, 3, 3, 'F');
+      doc.setFillColor(...colorCumpl.rgb);
+      doc.roundedRect(barX, dashY + 95, Math.max(barW2 * (pct / 100), 3), 10, 3, 3, 'F');
+    }
     y = dashY + dashH + 16;
 
-    // --- Bloque 2: tarjetas KPI con franja de color ---
+    // --- Bloque 2: tarjetas KPI del período ---
     const kpis = [
-      ['Total equipos', total, C.gris],
-      ['Al día', alDia, C.verde],
-      ['Próximos a vencer', pendientes, pendientes > 0 ? C.ambar : C.gris],
-      ['Vencidos', vencidos, vencidos > 0 ? C.rojo : C.gris],
-      ['Anomalías abiertas', anomalies.filter(a => a.status !== 'Cerrada').length, anomalies.filter(a => a.status !== 'Cerrada').length > 0 ? C.rojo : C.gris]
+      ['Programados', progReal ? progReal.general.programados : '—', C.gris],
+      ['Realizados', progReal ? progReal.general.realizados : '—', C.verde],
+      ['No realizados', noRealizados, noRealizados > 0 ? C.ambar : C.gris],
+      [`Consumo (${GREASE_UNIT})`, fmt(totalQty, 1), C.gris],
+      ['Anomalías abiertas', anomaliasF.filter(a => a.status !== 'Cerrada').length, anomaliasF.filter(a => a.status !== 'Cerrada').length > 0 ? C.rojo : C.gris]
     ];
     const gap = 8;
     const boxW = (pageWidth - 80 - gap * (kpis.length - 1)) / kpis.length;
@@ -5674,42 +7098,69 @@ async function renderReportes() {
     });
     y += 66;
 
-    // Narrativa
-    const openAnom = anomalies.filter(a => a.status !== 'Cerrada').length;
-    const target = App.generalSettings.complianceTarget;
-    const narrative = `Al día de hoy, la flota registra un cumplimiento de engrase del ${compliance}%. De ${total} equipos activos, ${alDia} están al día, ${pendientes} próximos a vencer y ${vencidos} vencidos que requieren atención inmediata. Actualmente hay ${openAnom} anomalía(s) abierta(s) pendientes de resolución. ${compliance < target ? `Se recomienda priorizar el engrase de los equipos vencidos listados a continuación para volver al objetivo de cumplimiento (mínimo ${target}%).` : `La flota se mantiene dentro del objetivo de cumplimiento definido (mínimo ${target}%).`}`;
-    doc.setTextColor(20); doc.setFontSize(9.5);
-    const lines = doc.splitTextToSize(narrative, pageWidth - 80);
-    doc.text(lines, 40, y);
-    y += lines.length * 12 + 16;
+    // Cumplimiento por turno (texto compacto, sin tabla)
+    if (progReal) {
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+      doc.text('Cumplimiento por turno', 40, y); y += 16;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5);
+      [['shift_dia', 'Día'], ['shift_noche', 'Noche']].forEach(([id, label]) => {
+        const t = progReal.porTurno[id];
+        const tpct = t.programados ? Math.round((t.realizados / t.programados) * 100) : null;
+        doc.text(`${label}: ${t.realizados}/${t.programados}  (${tpct === null ? '—' : tpct + '%'})`, 40, y);
+        y += 14;
+      });
+      y += 6;
+    }
 
-    // Tabla: equipos que requieren atención
-    const attention = statuses.filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
-      .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
+    // Tabla: equipos con menor cumplimiento (reemplaza "equipos que requieren atención")
+    const equiposMenorCumpl = progReal ? progReal.porEquipo.filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct).slice(0, 15) : [];
     doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Equipos que requieren atención', 40, y); y += 6;
+    doc.text('Equipos con menor cumplimiento', 40, y); y += 6;
     doc.autoTable({
       startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.marca.rgb },
-      head: [['Estado', 'Código', 'Equipo', 'Turno', 'Horómetro', 'Restante/Atraso']],
-      body: attention.length ? attention.map(({ e, s }) => [
-        s.label, e.code, `${esc(e.brand)} ${esc(e.model)}`,
-        e.shiftId === 'shift_dia' ? 'Día' : 'Noche',
-        fmt(e.hourmeter) + ' h',
-        s.remaining != null ? (s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h') : (s.scheduleDate ? WEEKDAY_NAMES[s.scheduleDate.getDay()] : '—')
-      ]) : [['—', '—', 'Todos los equipos están al día', '—', '—', '—']],
-      // Colorea la columna Estado según sea VENCIDO (rojo) o PRÓXIMO (ámbar), para
-      // que en una hoja impresa se distingan de un vistazo sin tener que leer.
+      head: [['Código', 'Equipo', 'Realizados', 'Programados', 'Cumplimiento']],
+      body: equiposMenorCumpl.length ? equiposMenorCumpl.map(f => [f.e.code, `${esc(f.e.brand)} ${esc(f.e.model)}`, f.realizados, f.programados, f.pct + '%']) : [['—', 'Sin planes Día/Turno evaluables en el período', '—', '—', '—']],
       didParseCell: (data) => {
-        if (data.section !== 'body' || data.column.index !== 0) return;
-        const txt = String(data.cell.raw || '').toUpperCase();
-        if (txt.includes('VENCID')) { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
-        else if (txt.includes('PRÓXIM') || txt.includes('PROXIM')) { data.cell.styles.textColor = REPORT_COLORS.ambarTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
+        if (data.section !== 'body' || data.column.index !== 4) return;
+        const p = parseInt(data.cell.raw, 10);
+        if (Number.isFinite(p) && p < 80) { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
       }
     });
     y = doc.lastAutoTable.finalY + 20;
 
-    // Tabla: anomalías abiertas
-    const openAnomalies = anomalies.filter(a => a.status !== 'Cerrada');
+    // Tabla: consumo de grasa (top equipos)
+    if (y > 620) { doc.addPage(); y = 40; }
+    const byEqQtyPdf = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; if (!eq) return; byEqQtyPdf[eq.id] = byEqQtyPdf[eq.id] || { e: eq, qty: 0 }; byEqQtyPdf[eq.id].qty += Number(r.qty); });
+    const consumoTop = Object.values(byEqQtyPdf).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+    doc.text(`Consumo de grasa — total ${fmt(totalQty, 1)} ${GREASE_UNIT}`, 40, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.verde.rgb },
+      head: [['Código', 'Equipo', `Consumo (${GREASE_UNIT})`]],
+      body: consumoTop.length ? consumoTop.map(f => [f.e.code, `${esc(f.e.brand)} ${esc(f.e.model)}`, fmt(f.qty, 1)]) : [['—', 'Sin consumo en el período', '—']]
+    });
+    y = doc.lastAutoTable.finalY + 20;
+
+    // Tabla: principales motivos de no engrase
+    const puntosPendientes = puntosNoEngrasadosDe(records);
+    const porMotivoPdf = {};
+    puntosPendientes.forEach(f => { porMotivoPdf[f.motivo] = (porMotivoPdf[f.motivo] || 0) + 1; });
+    const motivosOrdenados = Object.entries(porMotivoPdf).sort((a, b) => b[1] - a[1]);
+    if (y > 620) { doc.addPage(); y = 40; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+    doc.text('Principales motivos de no engrase', 40, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
+      head: [['Motivo', 'Cantidad', '%']],
+      body: motivosOrdenados.length ? motivosOrdenados.map(([m, n]) => [m, n, Math.round(n / puntosPendientes.length * 100) + '%']) : [['—', '—', 'Sin puntos pendientes en el periodo']]
+    });
+    y = doc.lastAutoTable.finalY + 20;
+
+    // Tabla: anomalías relevantes (abiertas del período)
+    const openAnomalies = anomaliasF.filter(a => a.status !== 'Cerrada');
     if (y > 620) { doc.addPage(); y = 40; }
     doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
     doc.text('Anomalías abiertas', 40, y); y += 6;
@@ -5717,10 +7168,10 @@ async function renderReportes() {
       startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.rojo.rgb },
       head: [['Criticidad', 'Código', 'Componente', 'Descripción', 'Estado']],
       body: openAnomalies.length ? openAnomalies.map(a => {
-        const eq = equipos.find(e => e.id === a.equipmentId);
+        const eq = equiposPorId[a.equipmentId];
         return [a.criticality, eq ? eq.code : '—', a.component, a.description, a.status];
-      }) : [['—', '—', '—', 'Sin anomalías abiertas', '—']]
-          ,didParseCell: (data) => {
+      }) : [['—', '—', '—', 'Sin anomalías abiertas', '—']],
+      didParseCell: (data) => {
         if (data.section !== 'body' || data.column.index !== 0) return;
         const t = String(data.cell.raw || '');
         if (t === 'Crítica') { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
@@ -5730,42 +7181,21 @@ async function renderReportes() {
     });
     y = doc.lastAutoTable.finalY + 20;
 
-    // Tabla: puntos que quedaron sin engrasar, con su motivo
-    // (ojo: se llama puntosPendientes y no "pendientes" — ese nombre ya está usado
-    //  más arriba en esta misma función para el conteo de equipos próximos a vencer)
-    const puntosPendientes = [];
-    applyFilters().forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
-      (r.details || []).filter(d => !d.done).forEach(d => {
-        puntosPendientes.push([fmtDate(r.date), eq ? eq.code : '—', d.pointName, d.reason || '(sin motivo)', r.userName]);
+    // Tabla: validación de engrases — SOLO si el baseline ya está configurado
+    if (GREASE_VALIDATION_ENABLED_FROM) {
+      const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+      let validados = 0, pendientesVal = 0, conflictosVal = 0;
+      sujetos.forEach(r => {
+        const activas = findActiveValidations(r.id, validations);
+        if (activas.length === 0) pendientesVal++; else if (activas.length === 1) validados++; else conflictosVal++;
       });
-      if (r.sinHorometro) {
-        puntosPendientes.push([fmtDate(r.date), eq ? eq.code : '—', 'Sin lectura de horómetro', r.noHourmeterReason || 'No se pudo leer', r.userName]);
-      }
-    });
-    if (y > 620) { doc.addPage(); y = 40; }
-    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Puntos no engrasados y sus motivos', 40, y); y += 6;
-    doc.autoTable({
-      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 7.5 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
-      head: [['Fecha', 'Código', 'Punto', 'Motivo', 'Reportado por']],
-      body: puntosPendientes.length ? puntosPendientes.slice(0, 40) : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—']]
-    });
-    y = doc.lastAutoTable.finalY + 20;
-
-    // Tabla: histórico de engrases del periodo filtrado (resumen, últimos 40)
-    const records = applyFilters().slice(0, 40);
-    if (y > 620) { doc.addPage(); y = 40; }
-    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Histórico de engrases (periodo filtrado)', 40, y); y += 6;
-    doc.autoTable({
-      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 7.5 }, headStyles: { fillColor: REPORT_COLORS.verde.rgb },
-      head: [['Fecha', 'Código', 'Turno', 'Responsable', 'Horómetro', 'Condición']],
-      body: records.length ? records.map(r => {
-        const eq = equipos.find(e => e.id === r.equipmentId);
-        return [fmtDate(r.date), eq ? eq.code : '', r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, fmt(r.hourmeter) + ' h', r.condition];
-      }) : [['—', '—', '—', '—', '—', 'Sin registros en el periodo']]
-    });
+      if (y > 620) { doc.addPage(); y = 40; }
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+      doc.text('Validación de engrases', 40, y); y += 16;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5);
+      doc.text(`Sujetos: ${sujetos.length}  ·  Validados: ${validados}  ·  Pendientes: ${pendientesVal}  ·  Conflictos: ${conflictosVal}`, 40, y);
+      y += 20;
+    }
 
     // Pie de página
     const pageCount = doc.internal.getNumberOfPages();
@@ -6182,31 +7612,64 @@ async function renderAyuda() {
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
   const help = await getHelpContent();
 
+  // B: accesos compactos por familia (chip) en vez de mostrar las N tarjetas
+  // completas de una vez — la tarjeta real (familyCardHTML, sin cambios) se
+  // muestra/oculta al tocar su chip. Reutiliza el contenido existente, no
+  // inventa diagramas nuevos.
+  const familiesHTML = help.families.length ? `
+      <div class="ayuda-family-chips" style="padding:0 14px 14px">
+        ${help.families.map(f => `<button type="button" class="ayuda-family-chip" data-family-id="${f.id}">${esc(f.name)}</button>`).join('')}
+      </div>
+      ${help.families.map(f => `<div class="ayuda-family-card hidden" data-family-wrap="${f.id}">${familyCardHTML(f, canEdit)}</div>`).join('')}`
+    : `<div style="padding:0 14px 14px">
+        <div class="empty-state">No hay guías visuales configuradas todavía.</div>
+        <div class="dim" style="margin-top:8px">Los puntos reales de cada equipo están en <b>Plan de Engrase → Configurar</b>.</div>
+      </div>`;
+
   c.innerHTML = `
-    ${canEdit ? '' : `
-    <div class="panel">
-      <div class="panel-head"><h3>Apariencia</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
-        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+    <div class="ayuda-page">
+      <div class="panel">
+        <div class="panel-head"><h3>Ayuda y soporte</h3></div>
+        <div class="dim" style="padding:0 14px 14px">Consulta rápidamente cómo interpretar estados, registrar incidencias y trabajar sin conexión.</div>
       </div>
-    </div>`}
-    <div class="panel">
-      <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
-      <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
-      ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
-    </div>
-    ${help.families.map(f => familyCardHTML(f, canEdit)).join('')}
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Preguntas frecuentes</h3>
-        ${canEdit ? `<button class="btn btn-sm" id="faq-edit-btn">Editar preguntas</button>` : ''}
+
+      <div class="panel">
+        <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
+        <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
+        ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
+        ${familiesHTML}
       </div>
-      <div style="padding:4px 14px 14px">
-        ${help.faq.map(f => `<details class="faq-item"><summary>${esc(f.question)}</summary><p>${esc(f.answer)}</p></details>`).join('') || '<div class="empty-state">Sin preguntas todavía.</div>'}
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Preguntas frecuentes</h3>
+          ${canEdit ? `<button class="btn btn-sm" id="faq-edit-btn">Editar preguntas</button>` : ''}
+        </div>
+        <div class="ayuda-faq-list">
+          ${help.faq.map(f => `<details class="faq-item"><summary>${esc(f.question)}<span class="faq-chevron">›</span></summary><p>${esc(f.answer)}</p></details>`).join('') || '<div class="empty-state" style="padding:0 14px 14px">Sin preguntas todavía.</div>'}
+        </div>
       </div>
+
+      ${!canEdit ? `
+      <div class="panel ayuda-apariencia-row">
+        <div class="ayuda-apariencia-info">
+          <b>Apariencia</b>
+          <span class="dim">Color de acento y tema claro/oscuro.</span>
+        </div>
+        <button type="button" class="btn btn-sm" id="btn-theme">🎨 Cambiar colores</button>
+      </div>` : ''}
     </div>`;
   wirePhotoThumbs(c);
+
+  $$('.ayuda-family-chip', c).forEach(chip => {
+    chip.addEventListener('click', () => {
+      const wrap = c.querySelector(`.ayuda-family-card[data-family-wrap="${chip.dataset.familyId}"]`);
+      if (!wrap) return;
+      const nowOpen = wrap.classList.toggle('hidden') === false;
+      chip.classList.toggle('active', nowOpen);
+      if (nowOpen) wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  });
 
   if (!canEdit) {
     $('#btn-theme').addEventListener('click', openThemePicker);

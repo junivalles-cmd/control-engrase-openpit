@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v26'; // v26: se agregó src/core/anomaly-actions.js (Modularización JS Fase 2, decisión de anomalías) a ASSETS — subir versión fuerza a precachear el archivo nuevo en dispositivos ya instalados.
+const CACHE = 'engrase-openpit-v31'; // v31: auditoría de lifecycle del flag — la barra inferior del Lubricador (fuera de #app-content) y logout() ahora también apagan App.lubricadorGreaseFlowActive al salir del flujo (antes se quedaba en true para siempre y bloqueaba el auto-refresh de otras pantallas); misma razón que v27-v30 para subir versión.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
@@ -7,6 +7,7 @@ const ASSETS = [
   './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
+  './src/core/plan-compliance.js', './src/core/grease-validation.js',
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',

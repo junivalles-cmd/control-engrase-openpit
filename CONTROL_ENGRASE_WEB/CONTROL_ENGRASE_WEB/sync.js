@@ -126,6 +126,46 @@ const Sync = {
     return { ...row, photos: uploaded, photo: uploaded[0] || null };
   },
 
+  // Firma manuscrita de grease_validations (campo `signatureLocal`, base64 —
+  // UNA sola imagen, no un array). Mismo mecanismo que uploadPhotoIfNeeded():
+  // sube a Storage (mismo bucket, prefijo natural "<store>/" — sin bucket ni
+  // configuración nueva), y devuelve una copia del registro con
+  // `signatureUrl` en vez de base64 para el servidor; el registro local
+  // conserva `signatureLocal` completo para verla sin internet.
+  async uploadSignatureIfNeeded(store, row, cfg) {
+    const local = row.signatureLocal;
+    if (typeof local !== 'string' || !local.startsWith('data:image')) return row;
+
+    try {
+      const blob = dataURLtoBlob(local);
+      const ext = (blob.type && blob.type.includes('webp')) ? 'webp' : 'png';
+      const path = `${store}/${row.id}.${ext}`;
+      const resp = await fetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
+        method: 'POST',
+        headers: {
+          apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}`,
+          'Content-Type': blob.type || 'image/png', 'x-upsert': 'true'
+        },
+        body: blob
+      });
+      if (!resp.ok) {
+        console.warn(`No se pudo subir la firma de ${store}/${row.id}: ${resp.status}`);
+        return row; // se queda en base64; se reintenta en la próxima sincronización
+      }
+      const url = `${cfg.url}/storage/v1/object/public/${PHOTO_BUCKET}/${path}`;
+      if (!row.signatureUploaded) {
+        row.signatureUploaded = true; // marca local, no cambia updatedAt (evita reintentos infinitos)
+        await DB.put(store, row);
+      }
+      // Copia para el servidor: URL en vez de base64 (no duplicar el peso en
+      // el payload jsonb de engrase_sync); el registro local conserva la firma completa.
+      return { ...row, signatureLocal: null, signatureUrl: url };
+    } catch (e) {
+      console.warn('No se pudo subir la firma a Storage', e);
+      return row;
+    }
+  },
+
   async pushAll() {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
@@ -146,7 +186,9 @@ const Sync = {
 
         const preparedRows = [];
         for (const r of toPush) {
-          preparedRows.push(await this.uploadPhotoIfNeeded(store, r, cfg));
+          let prepared = await this.uploadPhotoIfNeeded(store, r, cfg);
+          prepared = await this.uploadSignatureIfNeeded(store, prepared, cfg);
+          preparedRows.push(prepared);
         }
 
         const body = preparedRows.map(r => ({
@@ -207,6 +249,13 @@ const Sync = {
         if (localTieneBase64 && remotoSonLinks) {
           if (existing.photos) rec.photos = existing.photos;
           if (existing.photo) rec.photo = existing.photo;
+        }
+        // Mismo criterio para la firma (grease_validations.signatureLocal):
+        // si YA tenemos la firma completa en este dispositivo (la creó aquí
+        // mismo), nunca la reemplazamos por el eco del propio push (que llega
+        // con signatureLocal:null + signatureUrl) ni por lo que suba otro dispositivo.
+        if (typeof existing.signatureLocal === 'string' && existing.signatureLocal.startsWith('data:image')) {
+          rec.signatureLocal = existing.signatureLocal;
         }
       }
       // Si lo que llega es literalmente el eco de lo que este mismo dispositivo acaba de

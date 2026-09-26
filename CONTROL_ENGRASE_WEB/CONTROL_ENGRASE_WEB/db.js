@@ -4,13 +4,19 @@
    ============================================================ */
 
 const DB_NAME = 'engrase_openpit';
-const DB_VERSION = 5;
+// v6: agrega el store 'grease_validations' (validación del engrase con
+// firma — entidad separada de lubrication_records a propósito, ver
+// docs/GREASE_VALIDATION_AUDIT.md, nunca sobrescribe el registro del
+// Lubricador). onupgradeneeded ya crea genéricamente cualquier store nuevo
+// que aparezca en STORES — no hace falta tocar esa función.
+const DB_VERSION = 6;
 
 // Almacenes que se sincronizan con el servidor remoto (todo excepto configuración local del dispositivo)
 const STORES = [
   'users', 'shifts', 'locations', 'equipment_types', 'equipment',
   'lubricants', 'lubrication_plans', 'lubrication_points',
-  'lubrication_records', 'anomalies', 'audit_log', 'settings', 'cuadrillas', 'push_tokens'
+  'lubrication_records', 'anomalies', 'audit_log', 'settings', 'cuadrillas', 'push_tokens',
+  'grease_validations'
 ];
 
 // app_config y grease_drafts viven solo en el dispositivo (credenciales de conexión,

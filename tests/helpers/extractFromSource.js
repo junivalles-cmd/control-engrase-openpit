@@ -25,7 +25,11 @@ export function readSource(filePath) {
  * corchete de cierre correspondiente, contando anidamiento.
  */
 export function extractDeclaration(source, name) {
-  const fnMatch = source.match(new RegExp(`(^|\\n)((?:async )?function ${name}\\()`));
+  // Escapa caracteres especiales de regex en `name` — necesario para nombres
+  // como "$"/"$$" (helpers reales de app.js), que si no se escapan rompen el
+  // patrón en vez de buscarse literalmente.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const fnMatch = source.match(new RegExp(`(^|\\n)((?:async )?function ${escaped}\\()`));
   if (fnMatch) {
     const startIdx = fnMatch.index + fnMatch[1].length;
     // Fase 1: cerrar la lista de parámetros "(...)".
@@ -46,7 +50,7 @@ export function extractDeclaration(source, name) {
     return source.slice(startIdx, end);
   }
 
-  const constMatch = source.match(new RegExp(`(^|\\n)(const ${name} = )`));
+  const constMatch = source.match(new RegExp(`(^|\\n)(const ${escaped} = )`));
   if (constMatch) {
     const startIdx = constMatch.index + constMatch[1].length;
     // Recorre el valor asignado (objeto, arreglo, arrow function con cuerpo de

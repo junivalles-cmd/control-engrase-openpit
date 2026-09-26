@@ -31,6 +31,7 @@ export const LUBRICATION_STATUS_JS_PATH = path.join(SRC_ROOT, 'src/core/lubricat
 export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
 export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix.js');
 export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-actions.js');
+export const PLAN_COMPLIANCE_JS_PATH = path.join(SRC_ROOT, 'src/core/plan-compliance.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -113,6 +114,47 @@ const ANOMALY_ACTIONS_SOURCES = [
 /** Devuelve las funciones reales de src/core/anomaly-actions.js. */
 export function loadAnomalyActionsLogic() {
   const body = buildBodyFromSources(ANOMALY_ACTIONS_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
+// evaluateRecordCompliance() (plan-compliance.js) usa el global WEEKDAY_NAMES,
+// igual que estadoCelda() en weekly-matrix.js.
+const PLAN_COMPLIANCE_SOURCES = [
+  [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
+  [PLAN_COMPLIANCE_JS_PATH, ['evaluateRecordCompliance', 'findPreviousRecord', 'computeFleetCompliance', 'computeProgramadoRealizadoPeriodo']],
+];
+
+/** Devuelve las funciones reales de src/core/plan-compliance.js. */
+export function loadPlanComplianceLogic() {
+  const body = buildBodyFromSources(PLAN_COMPLIANCE_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
+export const SYNC_JS_PATH = path.join(SRC_ROOT, 'sync.js');
+const SYNC_SOURCES = [[SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'Sync']]];
+
+/**
+ * Devuelve el objeto Sync REAL de sync.js (pushAll/pullAll/
+ * uploadPhotoIfNeeded/uploadSignatureIfNeeded/etc.), ligado a un `DB` y un
+ * `STORES` de prueba (Sync los lee como globales, igual que en el navegador
+ * — aquí se pasan como parámetros de la función que ejecuta el código real).
+ */
+export function loadSyncLogic(fakeDB, fakeStores) {
+  const body = buildBodyFromSources(SYNC_SOURCES);
+  const factory = new Function('DB', 'STORES', body);
+  return factory(fakeDB, fakeStores);
+}
+
+export const GREASE_VALIDATION_JS_PATH = path.join(SRC_ROOT, 'src/core/grease-validation.js');
+const GREASE_VALIDATION_SOURCES = [
+  [GREASE_VALIDATION_JS_PATH, ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'isRecordSubjectToValidation', 'statusForSignerRole', 'validateValidationForm', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation', 'isRecordInConflict']],
+];
+
+/** Devuelve las funciones/constantes reales de src/core/grease-validation.js. */
+export function loadGreaseValidationLogic() {
+  const body = buildBodyFromSources(GREASE_VALIDATION_SOURCES);
   const factory = new Function(body);
   return factory();
 }
