@@ -2009,6 +2009,7 @@ async function renderLubricadorHistorial() {
   const equipos = await DB.allActive('equipment');
   const validations = await DB.allActive('grease_validations');
   const todayStr = new Date().toDateString();
+  const ahora = new Date(); // una sola vez por render — nunca fecha de sync/apertura de pantalla
   c.innerHTML = `
     <h2 class="lub-heading">Mis últimos engrases</h2>
     <div class="lub-record-list">
@@ -2016,8 +2017,10 @@ async function renderLubricadorHistorial() {
         const eq = equipos.find(e => e.id === r.equipmentId);
         const editable = new Date(r.date).toDateString() === todayStr;
         const activasEsteRegistro = findActiveValidations(r.id, validations);
-        const valStatus = validationStatusForRecord(r, validations);
-        const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
+        const valStatus = validationStatusForRecord(r, validations, ahora, App.generalSettings);
+        // Vencida: NO se ofrece "Validar" (no crear firma retroactiva desde
+        // aquí una vez pasado el plazo, ver MAX_VALIDATION_SHIFTS).
+        const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
           activasEsteRegistro.length === 0
             ? `<button type="button" class="btn btn-sm lub-validar-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Validar</button>`
             : activasEsteRegistro.length === 1
@@ -2159,6 +2162,11 @@ async function openEditGreaseRecordForm(record) {
 /* ============================================================
    DASHBOARD
    ============================================================ */
+// Abreviaturas de día SOLO para presentación compacta en "Equipos que
+// requieren atención" (nunca se usan para calcular ni se guardan — el dato
+// real sigue siendo el nombre completo en plan.assignedDays/WEEKDAY_NAMES).
+const WEEKDAY_ABBR_DASH = { 'Domingo': 'Dom', 'Lunes': 'Lun', 'Martes': 'Mar', 'Miércoles': 'Mié', 'Jueves': 'Jue', 'Viernes': 'Vie', 'Sábado': 'Sáb' };
+
 async function renderDashboard() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -2275,9 +2283,10 @@ async function renderDashboard() {
   // "sujeto" todavía, así que ambos conteos dan 0 (ver
   // docs/GREASE_VALIDATION_AUDIT.md §14) — nunca 0 se fuerza a mano aquí,
   // sale solo de la función central.
+  const ahoraValidacion = new Date(); // una sola vez — nunca fecha de sync/apertura de pantalla
   const recordsParaValidacion = records.filter(r => equipoIdsFiltrados.has(r.equipmentId));
   const recordsPendientesValidacion = recordsParaValidacion
-    .filter(r => isRecordPendingValidation(r, validations))
+    .filter(r => isRecordPendingValidation(r, validations, ahoraValidacion, App.generalSettings))
     .sort((a, b) => new Date(a.date) - new Date(b.date)); // más antiguo pendiente primero
   const recordsConflictoValidacion = recordsParaValidacion.filter(r => isRecordInConflict(r, validations));
   const pendientesTurnoActual = recordsPendientesValidacion.filter(r => r.shiftId === currentShiftId());
@@ -2293,7 +2302,13 @@ async function renderDashboard() {
   function planLabelFor(plan) {
     if (!plan) return '—';
     if (plan.controlType === 'Horas de operación') return `Cada ${fmt(plan.frequency || 0)} h`;
-    if (plan.controlType === 'Día y turno de la semana') return `Día: ${(plan.assignedDays || []).join('/') || '—'}`;
+    // Presentación compacta (WEEKDAY_ABBR_DASH, ver drawColaAtencion): la
+    // fila ya antepone "Plan:" — aquí solo van los días, abreviados
+    // ("Lun · Jue · Sáb" en vez de "Día: Lunes/Jueves/Sábado"). El dato
+    // completo (plan.assignedDays con nombres completos) no se toca.
+    if (plan.controlType === 'Día y turno de la semana') {
+      return (plan.assignedDays || []).length ? plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ') : '—';
+    }
     return '—';
   }
   function motivoFor(x) {
@@ -2599,11 +2614,8 @@ async function renderDashboard() {
         ${rows.map(({ e, last, dias }, idx) => tiempoExcepcionRowHTML(e, last, dias, locPorId, idx === 0)).join('')}
       </div>
     `);
-    $$('.dash-exc-row', $('.modal-body')).forEach(row => {
-      row.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); });
-      row.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); closeModal(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); }
-      });
+    $$('.dash-exc-hist-btn', $('.modal-body')).forEach(btn => {
+      btn.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
     });
   }
 
@@ -2637,14 +2649,11 @@ async function renderDashboard() {
   $('#dash-tiempo-ver-todos')?.addEventListener('click', () => {
     openTiempoSinEngraseModal(tiempoSinEngrase.map(e => ({ e, last: lastRecordByEquipo[e.id], dias: daysSinceLastGrease(e.id) })));
   });
-  // Toda la fila navega a Historial (no hay otro control dentro de la fila
-  // con el que choque) — Registrar se quitó a propósito: esta lista es para
-  // priorizar, no reemplaza Registrar Engrase.
-  $$('.dash-exc-row', c).forEach(row => {
-    row.addEventListener('click', () => { App.dashJumpEquipoId = row.dataset.id; navigate('historial'); });
-    row.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); App.dashJumpEquipoId = row.dataset.id; navigate('historial'); }
-    });
+  // "Historial" es la acción PRINCIPAL visible de la fila — Registrar se
+  // quitó a propósito: esta lista es para priorizar, no reemplaza Registrar
+  // Engrase.
+  $$('.dash-exc-hist-btn', c).forEach(btn => {
+    btn.addEventListener('click', () => { App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
   });
 
   $('#dash-ubic')?.addEventListener('change', e => { App.dashUbic = e.target.value; renderDashboard(); });
@@ -2653,6 +2662,23 @@ async function renderDashboard() {
   // Cola compacta (reemplaza la tabla ancha de 9 columnas): una fila
   // horizontal en desktop, la misma información en tarjeta vertical en
   // móvil vía CSS (sin duplicar markup) — sin scroll horizontal.
+  //
+  // "Programación" compacta (SOLO presentación, misma urgencia/motivo ya
+  // calculados arriba en urgenciaFor()/motivoFor() — no se recalcula nada):
+  // un plan por horómetro ya trae la urgencia lista ("Atraso: Xh"/
+  // "Restante: Xh"); un plan Día/turno tenía 3 expresiones largas
+  // redundantes (urgencia "Día: Sábado" + motivo "Programado hoy"/"Vencido
+  // por día/turno") — se combinan en un solo texto corto ("HOY · SÁB" /
+  // "VENCIDO · SÁB") usando WEEKDAY_ABBR_DASH.
+  function progCompactaFor(item) {
+    if (item.urgencia.startsWith('Día: ')) {
+      const dia = WEEKDAY_ABBR_DASH[item.urgencia.slice(5)] || item.urgencia.slice(5);
+      const cuando = item.motivo.startsWith('Vencido') ? 'VENCIDO' : 'HOY';
+      return `${cuando} · ${dia}`;
+    }
+    return item.urgencia; // ya compacto: "Atraso: Xh" / "Restante: Xh" / "—"
+  }
+
   function drawColaAtencion() {
     const cont = $('#dash-cola-atencion');
     if (!cont) return;
@@ -2667,23 +2693,19 @@ async function renderDashboard() {
       return true;
     });
 
-    // Estructura en líneas fijas (no flex-wrap de spans sueltos): en móvil
-    // cada línea ocupa solo el alto de su texto, sin huecos por centrado
-    // vertical entre elementos de distinta altura; en desktop (styles.css)
-    // las mismas líneas se acomodan en una sola fila compacta.
+    // Filas planas (sin líneas fijas de igual flex-grow — eso era la causa
+    // de los huecos horizontales en desktop): CSS decide cuántas líneas usar
+    // según el ancho real (flex-wrap en móvil, una sola fila en desktop).
     cont.innerHTML = filtered.map(item => `
       <div class="dash-cola-row">
-        <div class="dash-op-line1">
-          <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
-          <span class="dash-cola-code mono">${esc(item.e.code)}</span>
-          <span class="dash-cola-urgencia" style="color:${item.tone === 'red' ? 'var(--red)' : item.tone === 'amber' ? 'var(--amber)' : 'var(--text-dim)'}">${esc(item.urgencia)}</span>
-        </div>
-        <div class="dash-op-line2">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</div>
-        <div class="dash-op-line3 dim">${esc(item.motivo)}</div>
-        <div class="dash-op-line4">Plan: ${esc(item.plan)}</div>
+        <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
+        <span class="dash-cola-code mono">${esc(item.e.code)}</span>
+        <span class="dash-cola-meta dim">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</span>
+        <span class="dash-cola-prog-tag" style="color:${item.tone === 'red' ? 'var(--red)' : item.tone === 'amber' ? 'var(--amber)' : 'var(--text-dim)'}">${esc(progCompactaFor(item))}</span>
+        <span class="dash-cola-plan dim">Plan: ${esc(item.plan)}</span>
         <div class="dash-cola-actions">
           <button type="button" class="btn btn-sm dash-cola-hist" data-id="${item.e.id}">Historial</button>
-          <button type="button" class="btn btn-sm dash-cola-reg" data-id="${item.e.id}">Registrar</button>
+          <button type="button" class="btn btn-sm btn-accent dash-cola-reg" data-id="${item.e.id}">Registrar</button>
         </div>
       </div>`).join('') || `<div class="empty-state">Sin equipos para este filtro.</div>`;
 
@@ -2835,21 +2857,28 @@ function pendienteValidacionRowHTML(r, eq) {
   </div>`;
 }
 
-// Lista compacta de excepciones (estilo Fiix/UpKeep/Fracttal: KPI/resumen →
-// lista → drill-down), NO ranking con números #1/#2/#3 ni tarjetas. Toda la
-// fila navega a Historial (no hay otro control dentro que choque); isMax
-// (el más urgente, ya viene primero por el sort de tiempoSinEngrase) recibe
-// solo un acento ámbar discreto vía CSS, nunca una tarjeta separada.
+// Lista/ranking operativo compacto (estilo Fiix/UpKeep/Fracttal: KPI/resumen
+// → lista → drill-down), NO ranking con números #1/#2/#3 ni tarjetas. El dato
+// clave (días) se presenta como bloque destacado (número + etiqueta corta),
+// no un texto aislado — con "Historial" como acción PRINCIPAL visible (antes
+// solo la fila entera era clickable, sin ningún control visible). isMax (el
+// más urgente, ya viene primero por el sort de tiempoSinEngrase) recibe un
+// acento ámbar discreto vía CSS (borde + número), nunca una tarjeta aparte.
 // Reutilizada también en "Ver todos" (mismo patrón visual, nunca otra tabla).
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
-  return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}" role="button" tabindex="0">
+  return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
     <div class="dash-exc-main">
       <div class="dash-exc-line1"><span class="dash-exc-code mono">${esc(e.code)}</span></div>
       <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
       <div class="dash-exc-line3 dim">Último engrase: ${last ? fmtDate(last) : 'Sin registro'}</div>
     </div>
-    <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? 'Sin registro' : `${dias} d`}</span>
-    <span class="dash-exc-chevron" aria-hidden="true">›</span>
+    <div class="dash-exc-side">
+      <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">
+        <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? '—' : dias}</span>
+        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : 'días sin engrasar'}</span>
+      </div>
+      <button type="button" class="btn btn-sm dash-exc-hist-btn" data-id="${e.id}">Historial</button>
+    </div>
   </div>`;
 }
 
@@ -4315,6 +4344,14 @@ async function renderMatrizSemanal() {
   for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
   const finSemana = new Date(dias[6]); finSemana.setHours(23, 59, 59, 999);
 
+  // Presentación compacta del rango — SOLO formato de texto, misma semana
+  // calculada arriba (nunca se recalculan los días). "21–27 Sep" o, si la
+  // semana cruza de mes, "29 Sep – 5 Oct".
+  const MESES_ABBR_MTZ = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const rangoCompacto = dias[0].getMonth() === dias[6].getMonth()
+    ? `${dias[0].getDate()}–${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]}`
+    : `${dias[0].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]} – ${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[6].getMonth()]}`;
+
   const filtroTurno = App.matrizTurno || '';
   const filtroTipo = App.matrizTipo || '';
   const filtroUbic = App.matrizUbic || '';
@@ -4340,16 +4377,31 @@ async function renderMatrizSemanal() {
   // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
   // datos ya cargados (plans, records, hoy).
 
+  // Resumen por turno (D/N) para el subtítulo del header azul — SOLO reusa
+  // estadoCelda()/la MISMA fórmula de cumplimiento ya usada arriba (hechas/
+  // (hechas+no_realizado+pendiente)), aplicada al subconjunto de ese turno.
+  // No es un cálculo nuevo, es el mismo agregado con un `lista` distinto.
+  function resumenTurno(lista) {
+    const contarT = tipo => lista.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
+    const hechasT = contarT('hecho');
+    const yaVencidasT = hechasT + contarT('no_realizado') + contarT('pendiente');
+    return { equipos: lista.length, pct: yaVencidasT ? Math.round((hechasT / yaVencidasT) * 100) : 100 };
+  }
+
   const tablaTurno = (titulo, lista) => {
     if (!lista.length) return '';
+    const r = resumenTurno(lista);
     return `
       <div class="matriz-wrap">
         <table class="matriz">
           <thead>
-            <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}</th></tr>
+            <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}<div class="matriz-titulo-resumen">${r.equipos} equipo${r.equipos === 1 ? '' : 's'} · ${r.pct}%</div></th></tr>
             <tr>
               <th class="matriz-eq">Equipo / No.</th>
-              ${dias.map(d => `<th>${WEEKDAY_NAMES[d.getDay()]}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
+              ${dias.map(d => {
+                const esHoy = d.toDateString() === hoy.toDateString();
+                return `<th${esHoy ? ' class="is-today"' : ''}>${WEEKDAY_NAMES[d.getDay()]}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div>${esHoy ? '<div class="matriz-hoy-tag">HOY</div>' : ''}</th>`;
+              }).join('')}
             </tr>
           </thead>
           <tbody>
@@ -4357,13 +4409,15 @@ async function renderMatrizSemanal() {
               <tr>
                 <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
                 ${dias.map(d => {
+                  const esHoy = d.toDateString() === hoy.toDateString();
+                  const hoyCls = esHoy ? ' is-today' : '';
                   const s = estadoCelda(eq, d, plans, records, hoy);
-                  if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
-                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
-                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
-                  if (s.tipo === 'pausado') return `<td class="celda-pausado" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
-                  if (s.tipo === 'futuro') return `<td class="celda-futuro" title="Programado para este día"></td>`;
-                  return '<td></td>';
+                  if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
+                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
+                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
+                  if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
+                  if (s.tipo === 'futuro') return `<td class="celda-futuro${hoyCls}" title="Programado para este día"></td>`;
+                  return `<td class="${hoyCls.trim()}"></td>`;
                 }).join('')}
               </tr>`).join('')}
           </tbody>
@@ -4390,16 +4444,19 @@ async function renderMatrizSemanal() {
 
   c.innerHTML = `
     <div class="layout-wide">
-    <div class="toolbar">
-      <button class="btn btn-sm" id="mtz-prev">← Semana anterior</button>
-      <span class="matriz-rango">${dias[0].getDate()}/${dias[0].getMonth() + 1} — ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}${App.matrizOffset === 0 ? ' (semana actual)' : ''}</span>
-      <button class="btn btn-sm" id="mtz-next">Semana siguiente →</button>
+    <div class="toolbar mtz-nav-row">
+      <button class="btn btn-sm mtz-nav-btn" id="mtz-prev" aria-label="Semana anterior" title="Semana anterior">‹<span class="mtz-nav-label"> Semana anterior</span></button>
+      <span class="matriz-rango">${rangoCompacto}${App.matrizOffset === 0 ? ' · Semana actual' : ''}</span>
+      <button class="btn btn-sm mtz-nav-btn" id="mtz-next" aria-label="Semana siguiente" title="Semana siguiente"><span class="mtz-nav-label">Semana siguiente </span>›</button>
       ${App.matrizOffset !== 0 ? `<button class="btn btn-sm" id="mtz-hoy">Ir a hoy</button>` : ''}
       <button class="btn btn-sm btn-accent" id="mtz-print">${ic("print")}Imprimir</button>
       <button class="btn btn-sm" id="mtz-excel">${ic("download")}Descargar Excel</button>
     </div>
 
-    <div class="toolbar">
+    <div class="mtz-filters-toggle-row">
+      <button type="button" class="btn btn-sm" id="mtz-filters-toggle" aria-expanded="false" aria-controls="mtz-filters-panel">Filtros <span class="mtz-toggle-chevron">▾</span></button>
+    </div>
+    <div class="toolbar mtz-filters-row mtz-collapsible-mobile mtz-collapsed-mobile" id="mtz-filters-panel">
       <label class="filter-label">Turno
         <select id="mtz-turno" class="input input-sm">
           <option value="">Ambos</option>
@@ -4438,7 +4495,10 @@ async function renderMatrizSemanal() {
     ${visibles.length ? `
       ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
       ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
-      <div class="color-legend">
+      <div class="mtz-legend-toggle-row">
+        <button type="button" class="btn btn-sm" id="mtz-legend-toggle" aria-expanded="false" aria-controls="mtz-legend">Ver leyenda <span class="mtz-toggle-chevron">▾</span></button>
+      </div>
+      <div class="color-legend mtz-collapsible-mobile mtz-collapsed-mobile" id="mtz-legend">
         <span class="color-legend-item"><span class="dot" style="background:#00B050"></span>Realizado</span>
         <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado (día ya pasado)</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente hoy</span>
@@ -4451,6 +4511,14 @@ async function renderMatrizSemanal() {
   `;
 
   $('#mtz-sin-plan-btn')?.addEventListener('click', () => openSinPlanModal(sinPlan, types, locations));
+  $('#mtz-filters-toggle')?.addEventListener('click', (e) => {
+    const abierto = $('#mtz-filters-panel').classList.toggle('mtz-collapsed-mobile') === false;
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+  });
+  $('#mtz-legend-toggle')?.addEventListener('click', (e) => {
+    const abierto = $('#mtz-legend').classList.toggle('mtz-collapsed-mobile') === false;
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+  });
   $('#mtz-prev').addEventListener('click', () => { App.matrizOffset--; renderMatrizSemanal(); });
   $('#mtz-next').addEventListener('click', () => { App.matrizOffset++; renderMatrizSemanal(); });
   $('#mtz-hoy')?.addEventListener('click', () => { App.matrizOffset = 0; renderMatrizSemanal(); });
@@ -4474,7 +4542,10 @@ async function renderMatrizSemanal() {
       table.matriz{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
       table.matriz th,table.matriz td{border:1px solid #333;padding:5px 6px;text-align:center;font-size:10px}
       .matriz-titulo{background:#1F3864 !important;color:#fff !important;font-size:12px;padding:7px;letter-spacing:.5px}
+      .matriz-titulo-resumen{font-weight:normal;font-size:9px;letter-spacing:normal;text-transform:none;opacity:.85;margin-top:2px}
       table.matriz thead tr:nth-child(2) th{background:#F2F2F2 !important;font-weight:bold}
+      table.matriz thead tr:nth-child(2) th.is-today{background:#FCEBC9 !important}
+      .matriz-hoy-tag{font-size:7.5px;color:#C55A11;font-weight:bold}
       .matriz-eq{text-align:left !important;font-weight:bold;white-space:nowrap;background:#F2F2F2 !important}
       .matriz-fecha{font-weight:normal;font-size:8.5px;color:#666}
       /* Doble seguro: además del color de fondo, cada celda lleva un símbolo y un borde
@@ -6046,6 +6117,7 @@ async function drawHistory(equipmentId) {
     // fechas activas; histórico total del equipo cuando no las hay. El
     // horómetro actual es el valor EN VIVO del equipo — no es un dato de
     // período, así que nunca cambia con este filtro.
+    const ahoraValHist = new Date(); // una sola vez — nunca fecha de sync/apertura de pantalla
     $('#hist-eq-content').innerHTML = `
       <div class="kpi-grid hist-kpi-grid">
         <div class="kpi-card"><div class="kpi-value mono">${fmt(equipment.hourmeter)} h</div><div class="kpi-label">Horómetro actual</div></div>
@@ -6061,11 +6133,13 @@ async function drawHistory(equipmentId) {
             ${records.map(r => {
               const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
               const activasEsteRegistro = findActiveValidations(r.id, validations);
-              const valStatus = validationStatusForRecord(r, validations);
+              const valStatus = validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings);
               // Histórico (anterior a GREASE_VALIDATION_ENABLED_FROM): nunca exige
               // firma — ni siquiera muestra el botón "Validar" — ver
-              // docs/GREASE_VALIDATION_AUDIT.md §14.
-              const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
+              // docs/GREASE_VALIDATION_AUDIT.md §14. Vencida (ya pasó el plazo de
+              // MAX_VALIDATION_SHIFTS turnos): tampoco se ofrece "Validar" — no se
+              // crea firma retroactiva normal desde Historial.
+              const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
                 activasEsteRegistro.length === 0
                 ? `<button type="button" class="btn btn-sm hist-validar-btn" data-rec="${r.id}">Validar</button>`
                 : activasEsteRegistro.length === 1
@@ -6316,7 +6390,6 @@ async function renderReportes() {
 
     <div class="panel">
       <div class="panel-head"><h3>Actividad por responsable</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Carga de trabajo registrada — NO es una medición de cumplimiento ni de desempeño laboral.</div>
       <div id="rep-actividad-resp-area"></div>
     </div>
 
@@ -6694,35 +6767,66 @@ async function renderReportes() {
         : '<div class="empty-state">Validación pendiente de activación — todavía no se definió la fecha/hora desde la cual un engrase queda sujeto a validación (GREASE_VALIDATION_ENABLED_FROM). Ver docs/GREASE_VALIDATION_AUDIT.md.</div>';
       return;
     }
-    let validados = 0, pendientes = 0, conflictos = 0, porOperador = 0, porEncargado = 0;
+    // Mismas funciones centrales que Dashboard/Historial/Mis Engrases (no se
+    // reimplementa el conteo 0/1/2+ ni el plazo de MAX_VALIDATION_SHIFTS
+    // turnos aquí — isRecordPendingValidation()/isRecordValidationExpired()/
+    // isRecordInConflict() son la única fuente).
+    const ahoraVal = new Date();
+    let validados = 0, pendientes = 0, conflictos = 0, vencidos = 0, porOperador = 0, porEncargado = 0;
     sujetos.forEach(r => {
       const activas = findActiveValidations(r.id, validations);
-      if (activas.length === 0) pendientes++;
-      else if (activas.length === 1) { validados++; if (activas[0].signerRole === 'OPERADOR') porOperador++; else porEncargado++; }
-      else conflictos++;
+      if (activas.length > 1) { conflictos++; return; }
+      if (activas.length === 1) { validados++; if (activas[0].signerRole === 'OPERADOR') porOperador++; else porEncargado++; return; }
+      if (isRecordValidationExpired(r, validations, ahoraVal, App.generalSettings)) vencidos++;
+      else pendientes++;
     });
     const pctValidado = Math.round(validados / sujetos.length * 100);
     area.innerHTML = `<div class="kpi-grid">
         ${kpiCard('Sujetos a validación', sujetos.length, 'neutral')}
         ${kpiCard('Validados', validados, 'green')}
         ${kpiCard('Pendientes', pendientes, pendientes > 0 ? 'amber' : 'neutral')}
+        ${kpiCard('Vencidos', vencidos, vencidos > 0 ? 'red' : 'neutral')}
         ${kpiCard('Conflictos', conflictos, conflictos > 0 ? 'red' : 'neutral')}
         ${kpiCard('Por Operador', porOperador, 'neutral')}
         ${kpiCard('Por Encargado', porEncargado, 'neutral')}
       </div>
-      <div class="dim rep-resumen-note">% validado: ${pctValidado}%. Los registros anteriores a la activación no entran en este cálculo.</div>`;
+      <div class="dim rep-resumen-note">% validado: ${pctValidado}%. Los registros anteriores a la activación no entran en este cálculo. "Vencidos" superó el plazo de ${MAX_VALIDATION_SHIFTS} turnos sin firma.</div>`;
   }
 
-  // Ranking compacto (no un gráfico grande) — es secundario, solo carga de
-  // trabajo registrada, NUNCA se interpreta como desempeño.
+  // Ranking compacto (tabla + barra, no un gráfico grande) — es secundario,
+  // solo carga de trabajo registrada, NUNCA se interpreta como desempeño
+  // (sin colores de aprobado/reprobado). % calculado sobre los registros del
+  // período ya filtrado (records.length, el mismo conjunto que reciben el
+  // resto de las secciones de Reportes). Barra: columna propia, proporcional
+  // al responsable con MÁS engrases (compara carga entre personas, no contra
+  // el total del período). Mini-resumen arriba (responsables activos/mayor
+  // actividad) + nota de "no es desempeño" abajo con menor peso visual.
   function drawActividadResponsable(records) {
     const area = $('#rep-actividad-resp-area');
     const byResp = {};
     records.forEach(r => { byResp[r.userName] = (byResp[r.userName] || 0) + 1; });
     const entries = Object.entries(byResp).sort((a, b) => b[1] - a[1]);
-    area.innerHTML = entries.length
-      ? entries.map(([nombre, n]) => `<div class="rep-consumo-row"><span>${esc(nombre)}</span><span class="mono">${n} engrase(s)</span></div>`).join('')
-      : '<div class="empty-state">Sin actividad registrada en este período.</div>';
+    if (!entries.length) { area.innerHTML = '<div class="empty-state">Sin actividad registrada en este período.</div>'; return; }
+    const total = records.length;
+    const maxN = entries[0][1];
+    area.innerHTML = `
+      <div class="rep-actividad-sub">
+        <span>Responsables activos: <span class="mono">${entries.length}</span></span>
+        <span>Mayor actividad: <span class="mono">${esc(entries[0][0])}</span></span>
+      </div>
+      <div class="rep-actividad-table">
+        <div class="rep-actividad-row rep-actividad-head">
+          <span>Responsable</span><span>Engrases</span><span>%</span><span>Carga</span>
+        </div>
+        ${entries.map(([nombre, n]) => `
+          <div class="rep-actividad-row">
+            <span class="rep-actividad-nombre">${esc(nombre)}</span>
+            <span class="rep-actividad-count mono">${n}</span>
+            <span class="rep-actividad-pct mono">${Math.round(n / total * 100)}%</span>
+            <span class="rep-actividad-bar-track"><span class="rep-actividad-bar-fill" style="width:${Math.round(n / maxN * 100)}%"></span></span>
+          </div>`).join('')}
+      </div>
+      <div class="dim rep-actividad-nota">Carga de trabajo registrada — no es una medición de cumplimiento ni de desempeño laboral.</div>`;
   }
 
   function drawPhotoReport(records) {
@@ -6998,11 +7102,17 @@ async function renderReportes() {
 
     /* ---------- Hoja 7: Validación (solo si el baseline ya está configurado) ---------- */
     if (GREASE_VALIDATION_ENABLED_FROM) {
+      const ahoraValXls = new Date();
       const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
       const filasVal = sujetos.map(r => {
         const eq = equiposPorId[r.equipmentId];
         const activas = findActiveValidations(r.id, validations);
-        const estado = activas.length === 0 ? 'Pendiente' : activas.length > 1 ? 'Conflicto' : (activas[0].signerRole === 'ENCARGADO' ? 'Validado · Encargado' : 'Validado · Operador');
+        // Mismo criterio central que Dashboard/Historial (validationStatusForRecord):
+        // conflicto tiene prioridad, 1 activa = validado, 0 activas = pendiente
+        // o vencida según el plazo de MAX_VALIDATION_SHIFTS turnos.
+        const estado = activas.length > 1 ? 'Conflicto'
+          : activas.length === 1 ? (activas[0].signerRole === 'ENCARGADO' ? 'Validado · Encargado' : 'Validado · Operador')
+          : isRecordValidationExpired(r, validations, ahoraValXls, App.generalSettings) ? 'Vencida' : 'Pendiente';
         return [fmtDate(r.date), eq ? eq.code : '', estado, activas.length === 1 ? activas[0].signerName : '', activas.length === 1 ? fmtDate(activas[0].signedAt) : ''];
       });
       const wsVal = xlsHojaConFormato({
@@ -7183,17 +7293,20 @@ async function renderReportes() {
 
     // Tabla: validación de engrases — SOLO si el baseline ya está configurado
     if (GREASE_VALIDATION_ENABLED_FROM) {
+      const ahoraValPdf = new Date();
       const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
-      let validados = 0, pendientesVal = 0, conflictosVal = 0;
+      let validados = 0, pendientesVal = 0, conflictosVal = 0, vencidosVal = 0;
       sujetos.forEach(r => {
         const activas = findActiveValidations(r.id, validations);
-        if (activas.length === 0) pendientesVal++; else if (activas.length === 1) validados++; else conflictosVal++;
+        if (activas.length > 1) { conflictosVal++; return; }
+        if (activas.length === 1) { validados++; return; }
+        if (isRecordValidationExpired(r, validations, ahoraValPdf, App.generalSettings)) vencidosVal++; else pendientesVal++;
       });
       if (y > 620) { doc.addPage(); y = 40; }
       doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
       doc.text('Validación de engrases', 40, y); y += 16;
       doc.setFont(undefined, 'normal'); doc.setFontSize(9.5);
-      doc.text(`Sujetos: ${sujetos.length}  ·  Validados: ${validados}  ·  Pendientes: ${pendientesVal}  ·  Conflictos: ${conflictosVal}`, 40, y);
+      doc.text(`Sujetos: ${sujetos.length}  ·  Validados: ${validados}  ·  Pendientes: ${pendientesVal}  ·  Vencidos: ${vencidosVal}  ·  Conflictos: ${conflictosVal}`, 40, y);
       y += 20;
     }
 

@@ -305,16 +305,44 @@ describe('Actividad por responsable — bajó de prioridad, ya NO se llama "dese
     expect(src).toContain('Actividad por responsable');
   });
 
-  it('aclara explícitamente que NO es cumplimiento ni desempeño laboral', () => {
-    expect(src).toContain('NO es una medición de cumplimiento ni de desempeño laboral');
+  it('aclara explícitamente que no es cumplimiento ni desempeño laboral (nota conservada, ahora con MENOR peso visual — .rep-actividad-nota, sin mayúsculas de énfasis)', () => {
+    expect(src).toContain('no es una medición de cumplimiento ni de desempeño laboral');
+    expect(src).toContain('class="dim rep-actividad-nota"');
+  });
+
+  it('REDISEÑO: mini-resumen (responsables activos + mayor actividad) arriba de la tabla', () => {
+    const iFn = src.indexOf('function drawActividadResponsable');
+    const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
+    expect(fnSrc).toContain('rep-actividad-sub');
+    expect(fnSrc).toContain('Responsables activos:');
+    expect(fnSrc).toContain('Mayor actividad:');
+    expect(fnSrc).toContain('entries.length');
+    expect(fnSrc).toContain('entries[0][0]');
+  });
+
+  it('REDISEÑO: barra horizontal es su propia columna visual (track + fill), ya no escondida detrás del conteo', () => {
+    const iFn = src.indexOf('function drawActividadResponsable');
+    const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
+    expect(fnSrc).toContain('rep-actividad-bar-track');
+    expect(fnSrc).toContain('rep-actividad-bar-fill');
+    expect(fnSrc).not.toContain('rep-actividad-count-wrap'); // diseño anterior (barra detrás del número) reemplazado
   });
 
   it('PULIDO densidad — ya NO es un gráfico grande (Chart.js): es una lista/ranking compacto', () => {
     const iFn = src.indexOf('function drawActividadResponsable');
     const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
     expect(fnSrc).not.toContain('new Chart(');
-    expect(fnSrc).toContain('rep-consumo-row');
+    expect(fnSrc).toContain('rep-actividad-table');
     expect(src).not.toContain('chart-actividad-resp-box');
+  });
+
+  it('ranking: % calculado sobre records.length (el período ya filtrado), ordenado de mayor a menor, con microbarra proporcional al máximo (nunca colores de aprobado/reprobado)', () => {
+    const iFn = src.indexOf('function drawActividadResponsable');
+    const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
+    expect(fnSrc).toContain('.sort((a, b) => b[1] - a[1])');
+    expect(fnSrc).toContain('n / total * 100');
+    expect(fnSrc).toContain('n / maxN * 100');
+    expect(fnSrc).not.toMatch(/tone-(green|red)/);
   });
 });
 

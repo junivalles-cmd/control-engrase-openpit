@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v31'; // v31: auditoría de lifecycle del flag — la barra inferior del Lubricador (fuera de #app-content) y logout() ahora también apagan App.lubricadorGreaseFlowActive al salir del flujo (antes se quedaba en true para siempre y bloqueaba el auto-refresh de otras pantallas); misma razón que v27-v30 para subir versión.
+const CACHE = 'engrase-openpit-v33'; // v33: cierre de lote UX — Matriz Semanal (sticky header/columna, día HOY, navegación compacta, filtros/leyenda plegables móvil, resumen Día/Noche) + pulido visual Mayor tiempo sin engrasar/Equipos que requieren atención/Actividad por responsable — styles.css/app.js; misma razón que v27-v32 para subir versión (stale-first).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

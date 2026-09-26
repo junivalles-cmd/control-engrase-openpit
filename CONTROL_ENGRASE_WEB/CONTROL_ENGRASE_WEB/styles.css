@@ -473,34 +473,61 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-op-line3 { font-size: 12.5px; }
 .dash-op-line4 { font-size: 12.5px; color: var(--text-dim); }
 
-/* "Mayor tiempo sin engrasar": lista compacta de EXCEPCIONES (patrón
+/* "Mayor tiempo sin engrasar": lista/ranking operativo compacto (patrón
    KPI/resumen → lista → drill-down tipo Fiix/UpKeep/Fracttal), NUNCA grid de
-   cards, ranking #1/#2/#3, botones grandes repetidos ni tabla pesada. Toda
-   la fila es clickable a Historial (único "control" de la fila, sin botón
-   visible) — la fila con más días (is-max) recibe solo un acento ámbar muy
-   discreto, no una tarjeta separada ni un tamaño distinto de fila. */
+   cards, ranking #1/#2/#3 ni tabla pesada. REDISEÑO: el dato clave (días) ya
+   no es un texto aislado a la derecha — es un bloque destacado (número +
+   etiqueta corta) con "Historial" como acción PRINCIPAL visible debajo
+   (antes solo la fila entera era clickable, sin ningún control visible). La
+   fila con más días (is-max) recibe un acento ámbar discreto (borde + fondo
+   muy sutil en el bloque de días), nunca una tarjeta separada. */
 .link-btn {
   background: none; border: none; padding: 4px; color: var(--accent); font-size: 12.5px; font-weight: 700;
   cursor: pointer; text-decoration: underline; min-height: var(--tap, 44px);
 }
-.dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 8px; font-size: 12.5px; }
+/* "Ver todos" del header: mismo .link-btn de siempre, pero con más peso
+   visual SOLO en este panel (pill discreta) para integrarse mejor junto al
+   título — no se toca .link-btn en general (lo usan otras pantallas). */
+.dash-exc-head .link-btn {
+  text-decoration: none; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 6px 12px;
+}
+.dash-exc-head .link-btn:hover { background: var(--surface); border-color: var(--accent); }
+.dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
 .dash-exc-summary { color: var(--text-dim); white-space: nowrap; }
 .dash-exc-summary .mono { color: var(--text); font-weight: 700; }
-.dash-exc-list { display: flex; flex-direction: column; padding: 0 14px 10px; }
+.dash-exc-list { display: flex; flex-direction: column; padding: 0 14px 6px; }
 .dash-exc-row {
-  display: flex; align-items: center; gap: 10px; padding: 6px 8px; min-height: 44px;
-  border-bottom: 1px solid var(--border); cursor: pointer; border-left: 3px solid transparent;
+  display: flex; align-items: center; gap: 14px; padding: 9px 10px; min-height: 44px;
+  border-bottom: 1px solid var(--border); border-left: 3px solid transparent;
 }
 .dash-exc-list .dash-exc-row:last-child { border-bottom: none; }
-.dash-exc-row:hover, .dash-exc-row:focus-visible { background: var(--surface-2); }
-.dash-exc-row.is-max { border-left-color: var(--amber); }
+.dash-exc-row.is-max { border-left-color: var(--amber); background: rgba(232,163,61,0.05); }
 .dash-exc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0; }
-.dash-exc-line1, .dash-exc-line2, .dash-exc-line3 { line-height: 1.25; }
-.dash-exc-code { font-weight: 700; }
+.dash-exc-line1, .dash-exc-line2, .dash-exc-line3 { line-height: 1.2; }
+.dash-exc-code { font-weight: 700; font-size: 14.5px; }
 .dash-exc-line2, .dash-exc-line3 { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dash-exc-days { flex: none; font-family: var(--font-mono); font-weight: 700; font-size: 13px; }
-.dash-exc-days.is-max { color: var(--amber); font-size: 15px; }
-.dash-exc-chevron { flex: none; color: var(--text-dim); font-size: 18px; line-height: 1; }
+/* Bloque de días: el dato fuerte de la fila — número grande, etiqueta corta
+   debajo, nunca "flotando" solo contra el borde derecho. */
+.dash-exc-side { flex: none; display: flex; align-items: center; gap: 10px; }
+.dash-exc-days-wrap {
+  display: flex; flex-direction: column; align-items: center; line-height: 1.05;
+  min-width: 52px; padding: 4px 8px; border-radius: 8px;
+}
+.dash-exc-days-wrap.is-max { background: rgba(232,163,61,0.12); }
+.dash-exc-days { font-family: var(--font-mono); font-weight: 700; font-size: 19px; }
+.dash-exc-days.is-max { color: var(--amber); font-size: 21px; }
+.dash-exc-days-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.dash-exc-hist-btn { flex: none; }
+
+@media (max-width: 480px) {
+  /* Móvil: misma jerarquía, apilado limpio — el bloque de días+botón pasa a
+     una fila propia debajo del texto principal, en vez de comprimirse contra
+     el borde. */
+  .dash-exc-row { flex-wrap: wrap; }
+  .dash-exc-main { flex: 1 1 100%; }
+  .dash-exc-side { flex: 1 1 100%; justify-content: space-between; margin-top: 4px; }
+}
 
 .dash-list-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .dash-list-actions.compact { flex-wrap: nowrap; gap: 6px; }
@@ -514,39 +541,52 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-tiempo-modal-sub { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
 
 /* ---------------- "Equipos que requieren atención": cola operativa
-   compacta (reemplaza la tabla ancha de 9 columnas). Mobile: card corta,
-   sin huecos (ver .dash-op-line* arriba). Desktop (≥769px): las mismas 4
-   líneas se acomodan en una sola fila compacta, sin tabla. Sin scroll
-   horizontal en ningún ancho. ---- */
+   compacta (reemplaza la tabla ancha de 9 columnas). REDISEÑO: antes cada
+   "línea" (.dash-op-line2/3/4) tenía el MISMO flex-grow en desktop
+   (flex:1 1 0) sin importar cuán corto fuera su texto ("Programado hoy",
+   "Día: Sábado"), dejando franjas de espacio vacío enormes entre columnas
+   angostas — la causa real del desperdicio horizontal reportado. Ahora es
+   una fila plana con flex-wrap: en móvil el texto decide sus propias líneas
+   (máx. 3 antes de acciones), en desktop (≥769px) cabe en 1 sola fila con
+   anchos ajustados al contenido real de cada campo (código más grande que
+   el resto — jerarquía visual — meta con ellipsis si no cabe, "programación"
+   y "plan" ya combinados/abreviados en textos cortos, ver
+   progCompactaFor()/WEEKDAY_ABBR_DASH en app.js). Sin scroll horizontal en
+   ningún ancho. ---- */
 .dash-cola-atencion { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px; }
 .dash-cola-row {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 4px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
 }
 .dash-cola-badge {
-  flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 3px 9px; border-radius: 20px; white-space: nowrap;
 }
 .dash-cola-badge.tone-red { background: rgba(229,72,77,0.12); color: var(--red); }
 .dash-cola-badge.tone-amber { background: rgba(232,163,61,0.12); color: var(--amber); }
 .dash-cola-badge.tone-neutral { background: var(--surface); color: var(--text-dim); }
-.dash-cola-code { font-weight: 700; }
-.dash-cola-urgencia { flex: none; font-family: var(--font-mono); font-weight: 700; font-size: 13px; margin-left: auto; }
-.dash-cola-actions { display: flex; gap: 6px; margin-top: 2px; }
+/* Código del equipo: más importante visualmente que modelo/ubicación
+   (jerarquía pedida) — un poco más grande, siempre en negrita. */
+.dash-cola-code { flex: 0 0 auto; font-weight: 700; font-size: 14px; }
+.dash-cola-meta { flex: 1 1 100%; font-size: 12.5px; color: var(--text-dim); }
+.dash-cola-prog-tag { flex: 0 0 auto; font-family: var(--font-mono); font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+.dash-cola-plan { flex: 1 1 auto; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.dash-cola-actions { flex: 1 1 100%; display: flex; gap: 6px; margin-top: 2px; }
 .dash-cola-actions .btn { flex: 1; min-height: var(--tap, 44px); }
+/* Registrar: un poco más de jerarquía que Historial (acento), sin volverlo
+   un botón gigante — mismo tamaño que Historial, solo tono distinto. */
+.dash-cola-actions .dash-cola-reg { font-weight: 700; }
 
 @media (min-width: 769px) {
-  /* "Equipos que requieren atención": fila única compacta en desktop — línea
-     1 (badge+código+urgencia) fija a la izquierda, líneas 2-3-4 como
-     columnas flexibles con elipsis (no se apilan), acciones a la derecha —
-     "lista compacta", nunca una tabla ni una tarjeta estirada.
-     ".dash-exc-row" ("Mayor tiempo sin engrasar") NO necesita override aquí:
-     su layout fila+chevron ya es el mismo a cualquier ancho. */
-  .dash-cola-row { flex-direction: row; align-items: center; gap: 14px; flex-wrap: nowrap; }
-  .dash-cola-row .dash-op-line1 { flex: 0 0 auto; min-width: 130px; }
-  .dash-cola-row .dash-op-line2, .dash-cola-row .dash-op-line3, .dash-cola-row .dash-op-line4 {
-    flex: 1 1 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Una sola fila compacta: columnas ajustadas al contenido real, nunca
+     flex-grow igual para todo — "equipo" (código+meta) es la única que
+     realmente necesita espacio flexible; el resto son textos ya cortos. */
+  .dash-cola-row { flex-wrap: nowrap; gap: 14px; min-height: 48px; padding: 8px 14px; }
+  .dash-cola-meta {
+    flex: 1 1 220px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .dash-cola-prog-tag { flex: 0 1 90px; text-align: right; }
+  .dash-cola-plan { flex: 0 1 180px; overflow: hidden; text-overflow: ellipsis; }
   .dash-cola-actions { flex: 0 0 auto; margin-top: 0; }
   .dash-cola-actions .btn { flex: none; min-height: 32px; }
 }
@@ -1040,6 +1080,45 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .rep-turno-bar { margin: 8px 0 0; }
 .rep-consumo-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .rep-consumo-row:last-child { border-bottom: none; }
+
+/* Actividad por responsable: ranking compacto (tabla + barra propia, no el
+   layout anterior de nombre-a-la-izquierda/conteo-al-extremo-derecho con
+   hueco enorme en medio, ni una microbarra escondida detrás del número).
+   Carga de trabajo, NUNCA desempeño — sin colores de aprobado/reprobado,
+   tono neutro fijo para la barra. En desktop no se estira a todo el ancho
+   del panel si son pocas filas; en móvil ocupa el 100%. */
+.rep-actividad-sub { display: flex; gap: 14px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; color: var(--text-dim); }
+.rep-actividad-sub .mono { color: var(--text); font-weight: 700; }
+.rep-actividad-table { padding: 0 14px 4px; display: flex; flex-direction: column; }
+.rep-actividad-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(34px, auto) minmax(40px, auto) minmax(90px, 1fr);
+  align-items: center; gap: 12px; min-height: 40px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.rep-actividad-row:last-child { border-bottom: none; }
+.rep-actividad-head { min-height: 26px; font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
+.rep-actividad-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.rep-actividad-count { text-align: right; font-weight: 700; }
+/* % más visible: un poco más grande que el resto de la fila, color de texto
+   normal (no dim) — es el dato de comparación rápida entre responsables. */
+.rep-actividad-pct { text-align: right; font-size: 13.5px; font-weight: 700; }
+.rep-actividad-bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.rep-actividad-bar-fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); opacity: 0.55; }
+/* Nota "no es desempeño": se conserva pero con menor peso (más chica que el
+   resto del texto del panel, sin negrita, tono apagado). */
+.rep-actividad-nota { padding: 4px 14px 14px; font-size: 11.5px; line-height: 1.4; }
+@media (min-width: 1000px) {
+  /* ~50-65% del ancho del panel — no lo estira artificialmente si son pocas filas. */
+  .rep-actividad-table, .rep-actividad-sub { max-width: 640px; }
+}
+@media (max-width: 480px) {
+  /* Fila apilada en 2 líneas: nombre+cifras arriba, barra completa debajo —
+     así la barra conserva ancho útil en vez de comprimirse a unos pixeles. */
+  .rep-actividad-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; }
+  .rep-actividad-row.rep-actividad-head { display: none; } /* encabezado de tabla no aporta en 1 columna angosta */
+  .rep-actividad-nombre { flex: 1 1 auto; }
+  .rep-actividad-count, .rep-actividad-pct { flex: 0 0 auto; }
+  .rep-actividad-bar-track { flex: 1 1 100%; }
+}
 
 /* Cumplimiento por equipo: filas ligeramente más altas/legibles que el
    .data-table genérico, sin pintar la fila completa (el % ya es un badge
@@ -1555,16 +1634,35 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .fam-img-preview img { max-width: 100%; max-height: 170px; object-fit: contain; border-radius: 6px; }
 .fam-img-preview svg { width: 100%; max-height: 150px; }
 
-/* ---------------- Matriz semanal (formato de la planilla en papel) ---------------- */
+/* ---------------- Matriz semanal (formato de la planilla en papel) ----------------
+   REDISEÑO: navegación de semana compacta (‹/›, rango "21–27 Sep"), filtros y
+   leyenda colapsables en móvil (botón toggle, "mantiene el comportamiento
+   actual" en desktop: siempre visibles), columna del día actual destacada
+   (borde/fondo discreto, NUNCA toca el color semántico de la celda), sticky
+   real (columna Equipo + encabezado de días) DENTRO de cada matriz (scroll
+   propio, nunca de la página), y celdas ligeramente más compactas. */
+.mtz-nav-row { flex-wrap: wrap; }
 .matriz-rango { font-weight: 700; font-size: 13px; padding: 0 8px; letter-spacing: 0.01em; }
+/* Filtros/leyenda: botón toggle SOLO existe visualmente en móvil (≤600px);
+   en desktop el panel de siempre queda visible y el botón se oculta —
+   "mantener comportamiento actual" ahí. */
+.mtz-filters-toggle-row, .mtz-legend-toggle-row { display: none; }
+.mtz-toggle-chevron { display: inline-block; transition: transform 0.15s ease; }
+@media (max-width: 600px) {
+  .mtz-filters-toggle-row, .mtz-legend-toggle-row { display: flex; margin-bottom: 8px; }
+  .mtz-collapsible-mobile.mtz-collapsed-mobile { display: none; }
+  #mtz-filters-toggle[aria-expanded="true"] .mtz-toggle-chevron,
+  #mtz-legend-toggle[aria-expanded="true"] .mtz-toggle-chevron { transform: rotate(180deg); }
+}
+
 .matriz-wrap {
-  overflow-x: auto; margin-bottom: 20px; border-radius: 12px;
+  overflow: auto; max-height: 68vh; margin-bottom: 20px; border-radius: 12px;
   border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
 }
 table.matriz { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 680px; }
 table.matriz th, table.matriz td {
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  padding: 9px 10px; text-align: center; font-size: 12px; white-space: nowrap;
+  padding: 7px 9px; text-align: center; font-size: 12px; white-space: nowrap;
 }
 table.matriz tr td:last-child, table.matriz tr th:last-child { border-right: none; }
 table.matriz tbody tr:last-child td { border-bottom: none; }
@@ -1572,21 +1670,46 @@ table.matriz tbody tr:last-child td { border-bottom: none; }
 .matriz-titulo {
   background: linear-gradient(180deg, #26457A 0%, #1F3864 100%);
   color: #fff; font-size: 13px; letter-spacing: 0.06em;
-  font-family: var(--font-display); text-transform: uppercase; padding: 11px !important;
+  font-family: var(--font-display); text-transform: uppercase; padding: 9px 11px !important;
   border-right: none !important;
 }
+/* Resumen "N equipos · XX%" — mismo dato ya calculado (resumenTurno(), misma
+   fórmula que el KPI de Cumplimiento), nunca un cálculo nuevo. */
+.matriz-titulo-resumen {
+  font-family: var(--font-body); text-transform: none; letter-spacing: normal;
+  font-size: 11px; font-weight: 400; opacity: 0.85; margin-top: 2px;
+}
+/* Encabezado de días: sticky DENTRO de .matriz-wrap (que ahora sí tiene su
+   propio scroll vertical vía max-height) — nunca sticky contra la página. */
 table.matriz thead tr:nth-child(2) th {
   background: var(--surface-2); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
   padding-top: 8px; padding-bottom: 8px;
+  position: sticky; top: 0; z-index: 2;
 }
 .matriz-fecha { font-weight: 400; font-size: 10px; color: var(--text-dim); margin-top: 2px; opacity: 0.75; }
+/* Día actual: acento MUY discreto (fondo tenue + borde superior), nunca toca
+   el color de estado de la celda — se ve igual "REALIZADO"/"NO REALIZADO"/
+   etc. que en cualquier otro día, solo la columna queda trazada. */
+table.matriz thead tr:nth-child(2) th.is-today {
+  background: rgba(242,169,0,0.14); color: var(--text); border-top: 2px solid var(--accent);
+}
+.matriz-hoy-tag {
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent);
+  margin-top: 1px;
+}
+table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 rgba(242,169,0,0.5), inset -2px 0 0 rgba(242,169,0,0.5); }
 
+/* Columna "Equipo/No.": sticky a la izquierda (siempre visible al deslizar
+   horizontalmente en móvil) Y, en el encabezado, sticky también hacia
+   arriba — la esquina superior-izquierda queda fija en ambos ejes, por
+   encima del resto de celdas sticky (z-index más alto). */
 .matriz-eq {
   text-align: left !important; font-weight: 700; background: var(--surface-2);
   position: sticky; left: 0; z-index: 1; font-size: 12.5px;
   box-shadow: 1px 0 0 var(--border);
 }
+table.matriz thead tr:nth-child(2) th.matriz-eq { z-index: 3; }
 /* Filas alternas para seguir la línea con la vista en tablas largas */
 table.matriz tbody tr:nth-child(even) .matriz-eq { background: var(--surface); }
 table.matriz tbody tr:hover td { background: rgba(255,255,255,0.03); }
@@ -1610,7 +1733,13 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   table.matriz th, table.matriz td { padding: 6px 7px; font-size: 11px; }
   .celda-hecho { font-size: 9px; }
   .matriz-eq { font-size: 11px; }
-  .matriz-rango { font-size: 12px; display: block; width: 100%; text-align: center; padding: 4px 0; }
+}
+@media (max-width: 600px) {
+  /* Navegación compacta: "‹ 21–27 SEP ›" — se ocultan las etiquetas largas,
+     quedan los símbolos + controles accesibles (44px, ya heredado de .btn). */
+  .mtz-nav-label { display: none; }
+  .matriz-rango { font-size: 12px; text-transform: uppercase; order: -1; flex: 1 1 100%; text-align: center; padding: 2px 0 6px; }
+  .mtz-nav-row { justify-content: center; }
 }
 
 /* ---------------- Panel de notificaciones por tipo ---------------- */

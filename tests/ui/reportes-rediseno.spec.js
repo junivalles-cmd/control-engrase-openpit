@@ -117,8 +117,16 @@ function reportesFixture() {
         <div class="panel">
           <div class="panel-head"><h3>Actividad por responsable</h3></div>
           <div id="rep-actividad-resp-area">
-            <div class="rep-consumo-row"><span>Juan Pérez</span><span class="mono">12 engrase(s)</span></div>
-            <div class="rep-consumo-row"><span>Ana Gómez</span><span class="mono">9 engrase(s)</span></div>
+            <div class="rep-actividad-sub">
+              <span>Responsables activos: <span class="mono">2</span></span>
+              <span>Mayor actividad: <span class="mono">Juan Pérez</span></span>
+            </div>
+            <div class="rep-actividad-table">
+              <div class="rep-actividad-row rep-actividad-head"><span>Responsable</span><span>Engrases</span><span>%</span><span>Carga</span></div>
+              <div class="rep-actividad-row"><span class="rep-actividad-nombre">Juan Pérez</span><span class="rep-actividad-count mono">12</span><span class="rep-actividad-pct mono">57%</span><span class="rep-actividad-bar-track"><span class="rep-actividad-bar-fill" style="width:100%"></span></span></div>
+              <div class="rep-actividad-row"><span class="rep-actividad-nombre">Ana Gómez</span><span class="rep-actividad-count mono">9</span><span class="rep-actividad-pct mono">43%</span><span class="rep-actividad-bar-track"><span class="rep-actividad-bar-fill" style="width:75%"></span></span></div>
+            </div>
+            <div class="dim rep-actividad-nota">Carga de trabajo registrada — no es una medición de cumplimiento ni de desempeño laboral.</div>
           </div>
         </div>
 
@@ -322,10 +330,57 @@ test('Detalle de puntos no engrasados: panel propio separado del resumen Pareto'
   await expect(page.locator('#rep-motivos-pareto')).toBeVisible();
 });
 
-test('Actividad por responsable: lista compacta (rep-consumo-row), sin chart-box', async ({ page }) => {
+test('Actividad por responsable: ranking compacto (tabla), sin chart-box, sin scroll horizontal en 390/1366', async ({ page }) => {
   await bootFixture(page, 1366);
-  await expect(page.locator('#rep-actividad-resp-area .rep-consumo-row')).toHaveCount(2);
+  await expect(page.locator('#rep-actividad-resp-area .rep-actividad-row')).toHaveCount(3); // 1 encabezado + 2 filas
   await expect(page.locator('#rep-actividad-resp-area .chart-box')).toHaveCount(0);
+  const noScroll1366 = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  expect(noScroll1366).toBe(true);
+
+  await bootFixture(page, 390);
+  const noScroll390 = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  expect(noScroll390).toBe(true);
+  await expect(page.locator('#rep-actividad-resp-area .rep-actividad-nombre').first()).toBeVisible();
+  await expect(page.locator('#rep-actividad-resp-area .rep-actividad-pct').first()).toBeVisible();
+});
+
+test('Actividad por responsable: en desktop ancho (1920px) NO se estira a todo el panel (max-width propio, no full-width artificial)', async ({ page }) => {
+  await bootFixture(page, 1920);
+  const tableBox = await page.locator('#rep-actividad-resp-area .rep-actividad-table').boundingBox();
+  const panelBox = await page.locator('#rep-actividad-resp-area').evaluate(el => el.closest('.panel').getBoundingClientRect());
+  expect(tableBox.width).toBeLessThan(panelBox.width * 0.8);
+});
+
+test('Actividad por responsable: mini-resumen arriba (Responsables activos/Mayor actividad), barra visual propia y nota con menor peso visual', async ({ page }) => {
+  await bootFixture(page, 1366);
+  const sub = page.locator('#rep-actividad-resp-area .rep-actividad-sub');
+  await expect(sub).toBeVisible();
+  await expect(sub).toContainText('Responsables activos:');
+  await expect(sub).toContainText('Mayor actividad:');
+
+  const fill = page.locator('#rep-actividad-resp-area .rep-actividad-bar-fill').first();
+  await expect(fill).toBeVisible();
+  const trackBox = await page.locator('#rep-actividad-resp-area .rep-actividad-bar-track').first().boundingBox();
+  expect(trackBox.width).toBeGreaterThan(40); // ancho útil, no una línea decorativa
+
+  const nota = page.locator('#rep-actividad-resp-area .rep-actividad-nota');
+  await expect(nota).toContainText('no es una medición de cumplimiento');
+  const notaSize = await nota.evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+  const nombreSize = await page.locator('.rep-actividad-nombre').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+  expect(notaSize).toBeLessThan(nombreSize); // menor peso visual que el resto de la sección
+});
+
+test('Actividad por responsable @ 390px: fila apilada legible (nombre+cifras arriba, barra completa debajo), sin encabezado de tabla angosto, sin scroll horizontal', async ({ page }) => {
+  await bootFixture(page, 390);
+  await expect(page.locator('#rep-actividad-resp-area .rep-actividad-head')).not.toBeVisible();
+  const track = page.locator('#rep-actividad-resp-area .rep-actividad-bar-track').first();
+  const trackBox = await track.boundingBox();
+  // .rep-actividad-head sigue en el DOM (display:none) — se excluye para no
+  // tomar su boundingBox (null, por estar oculta) como si fuera una fila real.
+  const rowBox = await page.locator('#rep-actividad-resp-area .rep-actividad-row:not(.rep-actividad-head)').first().boundingBox();
+  expect(trackBox.width).toBeGreaterThan(rowBox.width * 0.5); // barra con ancho útil, no comprimida
+  const noScroll = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  expect(noScroll).toBe(true);
 });
 
 test('Evidencia fotográfica: arranca colapsada (hidden) — "Ver fotos" la despliega, "Ocultar fotos" la vuelve a colapsar', async ({ page }) => {

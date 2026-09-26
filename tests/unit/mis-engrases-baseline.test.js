@@ -66,15 +66,15 @@ describe('"Mis Engrases" (renderLubricadorHistorial) — reutiliza la vista de t
   });
 
   it('estado de validación real vía validationStatusForRecord() (respeta el baseline histórico), nunca validationStatusFor() directo', () => {
-    expect(misEngrasesSrc).toContain('validationStatusForRecord(r, validations)');
+    expect(misEngrasesSrc).toContain('validationStatusForRecord(r, validations, ahora, App.generalSettings)');
     expect(misEngrasesSrc).not.toContain('validationStatusFor(r.id, validations)');
   });
 
-  it('acción por estado: Pendiente→Validar, 1 activa→Ver validación, 2+→Ver conflicto, Histórico→SIN botón', () => {
+  it('acción por estado: Pendiente→Validar, 1 activa→Ver validación, 2+→Ver conflicto, Histórico/Vencida→SIN botón', () => {
     expect(misEngrasesSrc).toContain('lub-validar-btn');
     expect(misEngrasesSrc).toContain('lub-ver-validacion-btn');
     expect(misEngrasesSrc).toContain('lub-ver-conflicto-btn');
-    expect(misEngrasesSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
+    expect(misEngrasesSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA \? '' :/);
   });
 
   it('"Validar ahora" desde Mis Engrases reutiliza openValidationModal() real (mismo modal que Historial/Dashboard)', () => {
@@ -83,13 +83,13 @@ describe('"Mis Engrases" (renderLubricadorHistorial) — reutiliza la vista de t
 });
 
 describe('Historial (drawHistory) y Dashboard respetan el baseline histórico — nunca exigen firma a un engrase antiguo', () => {
-  it('drawHistory() usa validationStatusForRecord() y NO muestra ningún botón cuando el estado es HISTORICO', () => {
-    expect(historialTableSrc).toContain('validationStatusForRecord(r, validations)');
-    expect(historialTableSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
+  it('drawHistory() usa validationStatusForRecord() y NO muestra ningún botón cuando el estado es HISTORICO o VENCIDA', () => {
+    expect(historialTableSrc).toContain('validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings)');
+    expect(historialTableSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA \? '' :/);
   });
 
-  it('Dashboard "Pendientes de validación" usa isRecordPendingValidation() (excluye histórico), no un filtro manual de 0 activas', () => {
-    expect(dashSrc).toContain('isRecordPendingValidation(r, validations)');
+  it('Dashboard "Pendientes de validación" usa isRecordPendingValidation() (excluye histórico y vencidas), no un filtro manual de 0 activas', () => {
+    expect(dashSrc).toContain('isRecordPendingValidation(r, validations, ahoraValidacion, App.generalSettings)');
     expect(dashSrc).not.toContain('findActiveValidations(r.id, validations).length === 0');
   });
 });

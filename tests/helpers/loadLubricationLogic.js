@@ -149,7 +149,7 @@ export function loadSyncLogic(fakeDB, fakeStores) {
 
 export const GREASE_VALIDATION_JS_PATH = path.join(SRC_ROOT, 'src/core/grease-validation.js');
 const GREASE_VALIDATION_SOURCES = [
-  [GREASE_VALIDATION_JS_PATH, ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'isRecordSubjectToValidation', 'statusForSignerRole', 'validateValidationForm', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation', 'isRecordInConflict']],
+  [GREASE_VALIDATION_JS_PATH, ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS', 'isRecordSubjectToValidation', 'statusForSignerRole', 'validateValidationForm', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation', 'isRecordInConflict', 'isRecordValidationExpired', 'shiftKindAt', 'shiftDurationHours', 'shiftWindowStart', 'validationDeadline', 'isValidationExpired']],
 ];
 
 /** Devuelve las funciones/constantes reales de src/core/grease-validation.js. */

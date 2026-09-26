@@ -11,25 +11,42 @@
 // exactamente una, de su `signerRole`.
 
 import { describe, it, expect } from 'vitest';
-import { loadGreaseValidationLogic, GREASE_VALIDATION_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { loadGreaseValidationLogic, GREASE_VALIDATION_JS_PATH, APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 
 const {
-  VALIDATION_STATUS, VALIDATION_BADGE, GREASE_VALIDATION_ENABLED_FROM, isRecordSubjectToValidation,
-  statusForSignerRole, validateValidationForm, findActiveValidations, hasValidationConflict,
-  findActiveValidation, validationStatusFor, validationStatusForRecord, isRecordPendingValidation,
-  isRecordInConflict,
+  VALIDATION_STATUS, VALIDATION_BADGE, GREASE_VALIDATION_ENABLED_FROM, MAX_VALIDATION_SHIFTS,
+  isRecordSubjectToValidation, statusForSignerRole, validateValidationForm, findActiveValidations,
+  hasValidationConflict, findActiveValidation, validationStatusFor, validationStatusForRecord,
+  isRecordPendingValidation, isRecordInConflict, isRecordValidationExpired,
+  shiftWindowStart, validationDeadline, isValidationExpired,
 } = loadGreaseValidationLogic();
 
-describe('Estados y badges — 5 estados (incluye HISTORICO_SIN_VALIDACION y CONFLICTO_VALIDACION), sin OBSERVADO (auditado, no implementado)', () => {
-  it('5 estados exactos: HISTORICO_SIN_VALIDACION / PENDIENTE_VALIDACION / VALIDADO_OPERADOR / VALIDADO_ENCARGADO / CONFLICTO_VALIDACION', () => {
+// Turnos reales por defecto en este sistema (App.generalSettings, ver
+// src/core/shifts.js) — mismos horarios que usan las pantallas reales,
+// nunca horarios inventados a propósito para la prueba.
+const SHIFTS = { shiftDayStart: 6, shiftNightStart: 18 };
+
+describe('Estados y badges — 6 estados (incluye HISTORICO_SIN_VALIDACION, CONFLICTO_VALIDACION y VALIDACION_VENCIDA), sin OBSERVADO (auditado, no implementado)', () => {
+  it('6 estados exactos: HISTORICO_SIN_VALIDACION / PENDIENTE_VALIDACION / VALIDADO_OPERADOR / VALIDADO_ENCARGADO / CONFLICTO_VALIDACION / VALIDACION_VENCIDA', () => {
     expect(VALIDATION_STATUS).toEqual({
       HISTORICO: 'HISTORICO_SIN_VALIDACION',
       PENDIENTE: 'PENDIENTE_VALIDACION',
       OPERADOR: 'VALIDADO_OPERADOR',
       ENCARGADO: 'VALIDADO_ENCARGADO',
       CONFLICTO: 'CONFLICTO_VALIDACION',
+      VENCIDA: 'VALIDACION_VENCIDA',
     });
+  });
+
+  it('MAX_VALIDATION_SHIFTS = 2 — constante central única', () => {
+    expect(MAX_VALIDATION_SHIFTS).toBe(2);
+  });
+
+  it('badge VENCIDA es el texto exacto pedido, distinto de Conflicto en el label', () => {
+    const badge = VALIDATION_BADGE['VALIDACION_VENCIDA'];
+    expect(badge.label).toBe('Validación vencida');
+    expect(badge.label).not.toBe(VALIDATION_BADGE['CONFLICTO_VALIDACION'].label);
   });
 
   it('badge HISTORICO es neutro y el texto NUNCA dice "Pendiente"', () => {
@@ -243,19 +260,20 @@ describe('CORRECCIÓN CENTRAL — baseline null → funcionalidad de validación
     expect(srcFn).toContain('if (!GREASE_VALIDATION_ENABLED_FROM) return false;');
   });
 
-  it('validationStatusForRecord() antepone el chequeo de histórico ANTES de delegar en validationStatusFor()', () => {
+  it('validationStatusForRecord() antepone el chequeo de histórico ANTES de evaluar conflicto/vencida (isRecordSubjectToValidation primero)', () => {
     const srcFn = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'validationStatusForRecord');
     const iHistorico = srcFn.indexOf('VALIDATION_STATUS.HISTORICO');
-    const iDelega = srcFn.indexOf('validationStatusFor(record.id');
+    const iConflicto = srcFn.indexOf('VALIDATION_STATUS.CONFLICTO');
     expect(iHistorico).toBeGreaterThan(-1);
-    expect(iDelega).toBeGreaterThan(-1);
-    expect(iHistorico).toBeLessThan(iDelega);
+    expect(iConflicto).toBeGreaterThan(-1);
+    expect(iHistorico).toBeLessThan(iConflicto);
   });
 
   it('isRecordPendingValidation()/isRecordInConflict() nunca leen un campo guardado en el record — derivan de isRecordSubjectToValidation() (única fuente central)', () => {
     const pendSrc = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'isRecordPendingValidation');
     expect(pendSrc).toContain('isRecordSubjectToValidation(record.date)');
-    expect(pendSrc).toContain('findActiveValidations(record.id, validations).length === 0');
+    expect(pendSrc).toContain('findActiveValidations(record.id, validations).length !== 0');
+    expect(pendSrc).toContain('isValidationExpired(record.date, now, shiftBoundaries)');
     const conflictSrc = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'isRecordInConflict');
     expect(conflictSrc).toContain('isRecordSubjectToValidation(record.date)');
     expect(conflictSrc).toContain('hasValidationConflict(record.id, validations)');
@@ -269,5 +287,193 @@ describe('CORRECCIÓN CENTRAL — baseline null → funcionalidad de validación
       expect(fnSrc).toContain('isRecordSubjectToValidation(record.date)');
       expect(fnSrc).not.toMatch(/new Date\(record\.date\)\.getTime\(\)\s*>=/); // no repite la comparación a mano
     });
+  });
+});
+
+// Formatea en hora LOCAL (nunca .toISOString(), que convierte a UTC y
+// rompe la comparación si la máquina que corre la prueba no está en UTC —
+// shiftWindowStart()/validationDeadline() trabajan con Date en hora local,
+// igual que new Date(hour) en el resto del código real).
+function fmtLocal(date) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}`;
+}
+
+describe('PLAZO DE VALIDACIÓN — MAX_VALIDATION_SHIFTS turnos, referencia SIEMPRE lubrication_record.date (nunca sync/apertura de pantalla)', () => {
+  it('shiftWindowStart(): un engrase a las 09:00 (turno Día) inicia su turno a las 06:00 del mismo día', () => {
+    const { start, kind } = shiftWindowStart('2026-09-24T09:00:00', SHIFTS);
+    expect(kind).toBe('shift_dia');
+    expect(fmtLocal(start)).toBe('2026-09-24T06:00');
+  });
+
+  it('shiftWindowStart(): un engrase a las 02:00 (turno Noche que cruza medianoche) inicia AYER a las 18:00', () => {
+    const { start, kind } = shiftWindowStart('2026-09-24T02:00:00', SHIFTS);
+    expect(kind).toBe('shift_noche');
+    expect(fmtLocal(start)).toBe('2026-09-23T18:00');
+  });
+
+  it('validationDeadline(): 2 turnos desde un engrase de Día (06:00) = 24h después → mañana 06:00 (fin del turno Noche siguiente)', () => {
+    const deadline = validationDeadline('2026-09-24T09:00:00', SHIFTS);
+    expect(fmtLocal(deadline)).toBe('2026-09-25T06:00');
+  });
+
+  it('validationDeadline(): 2 turnos desde un engrase de Noche = 24h después, sin importar la asimetría de los turnos', () => {
+    const deadline = validationDeadline('2026-09-24T20:00:00', SHIFTS);
+    expect(fmtLocal(deadline)).toBe('2026-09-25T18:00');
+  });
+
+  it('A) engrase turno Día, valida DENTRO del mismo turno → ventana sigue abierta (no vencida)', () => {
+    const recordDate = '2026-09-24T09:00:00'; // Día
+    const now = '2026-09-24T11:00:00'; // mismo turno Día
+    expect(isValidationExpired(recordDate, now, SHIFTS)).toBe(false);
+  });
+
+  it('B) engrase turno Día, valida en el turno Noche SIGUIENTE (2º turno permitido) → sigue válido, no vencida', () => {
+    const recordDate = '2026-09-24T09:00:00'; // Día
+    const now = '2026-09-24T20:00:00'; // Noche del mismo día (2º turno)
+    expect(isValidationExpired(recordDate, now, SHIFTS)).toBe(false);
+  });
+
+  it('C) se supera el 2º turno permitido (ya empezó el 3er turno) → Validación vencida', () => {
+    const recordDate = '2026-09-24T09:00:00'; // Día
+    const now = '2026-09-25T07:00:00'; // Día del día siguiente = 3er turno
+    expect(isValidationExpired(recordDate, now, SHIFTS)).toBe(true);
+  });
+
+  it('justo en el instante límite (exactamente el deadline) todavía NO está vencida — el vencimiento es estrictamente posterior', () => {
+    const recordDate = '2026-09-24T09:00:00';
+    const deadline = validationDeadline(recordDate, SHIFTS).toISOString();
+    expect(isValidationExpired(recordDate, deadline, SHIFTS)).toBe(false);
+    expect(isValidationExpired(recordDate, new Date(new Date(deadline).getTime() + 1).toISOString(), SHIFTS)).toBe(true);
+  });
+
+  it('D/status: 0 activas + dentro del plazo → PENDIENTE_VALIDACION; 0 activas + vencido → VALIDACION_VENCIDA (con baseline de fixture activo)', () => {
+    // baseline de fixture: se simula pasando un record cuya fecha es posterior
+    // a un ENABLED_FROM ficticio — como GREASE_VALIDATION_ENABLED_FROM real es
+    // null, para probar el estado "activado" se usa la función de más bajo
+    // nivel que SÍ recibe el resultado de isRecordSubjectToValidation ya
+    // resuelto: se prueba isValidationExpired()/validationDeadline() (arriba,
+    // sin baseline) y, para el estado completo, ver el describe siguiente que
+    // carga el módulo con un ENABLED_FROM de prueba propio.
+    expect(isValidationExpired('2026-09-24T09:00:00', '2026-09-24T11:00:00', SHIFTS)).toBe(false);
+    expect(isValidationExpired('2026-09-24T09:00:00', '2026-09-25T07:00:00', SHIFTS)).toBe(true);
+  });
+
+  it('G) conflicto (2+ activas) tiene PRIORIDAD sobre "vencida" en validationStatusFor() — nunca se pisa un conflicto real con un plazo vencido', () => {
+    const validations = [
+      { id: 'val_a', lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true },
+      { id: 'val_b', lubricationRecordId: 'greg_1', signerRole: 'ENCARGADO', active: true },
+    ];
+    // A nivel de validationStatusForRecord con baseline null, esto sigue
+    // dando HISTORICO (correcto) — el orden de prioridad conflicto>vencida se
+    // prueba end-to-end en el describe con baseline de fixture, abajo.
+    expect(hasValidationConflict('greg_1', validations)).toBe(true);
+  });
+});
+
+describe('PLAZO DE VALIDACIÓN con baseline de fixture ACTIVO (módulo cargado con ENABLED_FROM propio de la prueba)', () => {
+  // Nunca se cambia GREASE_VALIDATION_ENABLED_FROM real — se carga una copia
+  // del módulo reemplazando esa constante por un valor explícito de fixture,
+  // igual que ya hacían otras pruebas de este mismo repo para probar el
+  // flujo Pendiente→Validado (ver docs/GREASE_VALIDATION_AUDIT.md).
+  function loadWithBaseline(enabledFrom) {
+    const src = readSource(GREASE_VALIDATION_JS_PATH).replace(
+      'const GREASE_VALIDATION_ENABLED_FROM = null;',
+      `const GREASE_VALIDATION_ENABLED_FROM = ${JSON.stringify(enabledFrom)};`
+    );
+    const factory = new Function(`${src}\nreturn { VALIDATION_STATUS, validationStatusForRecord, isRecordPendingValidation, isRecordInConflict, isRecordValidationExpired };`);
+    return factory();
+  }
+
+  const ENABLED_FROM = '2026-09-01T00:00:00.000Z';
+  const mod = loadWithBaseline(ENABLED_FROM);
+
+  it('A) valida en el mismo turno → VALIDADO_OPERADOR (no pendiente, no vencida)', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const validations = [{ lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true }];
+    const now = new Date('2026-09-24T11:00:00');
+    expect(mod.validationStatusForRecord(record, validations, now, SHIFTS)).toBe('VALIDADO_OPERADOR');
+  });
+
+  it('B) valida en el turno siguiente (2º turno) → VALIDADO_ENCARGADO', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const validations = [{ lubricationRecordId: 'greg_1', signerRole: 'ENCARGADO', active: true }];
+    const now = new Date('2026-09-24T20:00:00');
+    expect(mod.validationStatusForRecord(record, validations, now, SHIFTS)).toBe('VALIDADO_ENCARGADO');
+  });
+
+  it('C) 0 firmas + deadline superado → VALIDACION_VENCIDA', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const now = new Date('2026-09-25T07:00:00');
+    expect(mod.validationStatusForRecord(record, [], now, SHIFTS)).toBe('VALIDACION_VENCIDA');
+  });
+
+  it('D) vencida → isRecordPendingValidation() es false e isRecordValidationExpired() es true (la UI usa esto para ocultar "Validar")', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const now = new Date('2026-09-25T07:00:00');
+    expect(mod.isRecordPendingValidation(record, [], now, SHIFTS)).toBe(false);
+    expect(mod.isRecordValidationExpired(record, [], now, SHIFTS)).toBe(true);
+  });
+
+  it('E) firma hecha a tiempo pero "sincronizada" después (now muy posterior) sigue VALIDADA, nunca se vuelve vencida', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    // La firma llega al array `validations` como si hubiera sincronizado
+    // mucho después (now está muy por delante del deadline) — signedAt real
+    // no importa aquí porque la SOLA existencia de la firma activa ya excluye
+    // "vencida" (ver validationStatusForRecord): sync tardío nunca invalida
+    // una firma real.
+    const validations = [{ lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true, signedAt: '2026-09-24T11:00:00.000Z' }];
+    const nowMuchoDespues = new Date('2026-10-01T00:00:00');
+    expect(mod.validationStatusForRecord(record, validations, nowMuchoDespues, SHIFTS)).toBe('VALIDADO_OPERADOR');
+    expect(mod.isRecordValidationExpired(record, validations, nowMuchoDespues, SHIFTS)).toBe(false);
+  });
+
+  it('F) baseline null (constante productiva, no la de este describe) → siempre HISTORICO, sin importar el plazo', () => {
+    // Usa el módulo REAL (loadGreaseValidationLogic(), constante productiva
+    // en null), no el de fixture de este describe.
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const now = new Date('2026-09-25T07:00:00'); // sería "vencida" si estuviera activado
+    expect(validationStatusForRecord(record, [], now, SHIFTS)).toBe('HISTORICO_SIN_VALIDACION');
+  });
+
+  it('G) 2+ firmas activas tiene PRIORIDAD sobre "vencida" — sigue CONFLICTO aunque el plazo ya haya pasado', () => {
+    const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
+    const validations = [
+      { id: 'val_a', lubricationRecordId: 'greg_1', signerRole: 'OPERADOR', active: true },
+      { id: 'val_b', lubricationRecordId: 'greg_1', signerRole: 'ENCARGADO', active: true },
+    ];
+    const now = new Date('2026-10-01T00:00:00'); // muy pasado el plazo
+    expect(mod.validationStatusForRecord(record, validations, now, SHIFTS)).toBe('CONFLICTO_VALIDACION');
+    expect(mod.isRecordInConflict(record, validations)).toBe(true);
+  });
+
+  it('un registro ANTERIOR al baseline de fixture sigue HISTÓRICO sin importar el plazo (baseline y deadline nunca se mezclan)', () => {
+    const record = { id: 'greg_0', date: '2026-08-01T09:00:00' }; // antes de ENABLED_FROM
+    const now = new Date('2026-10-01T00:00:00');
+    expect(mod.validationStatusForRecord(record, [], now, SHIFTS)).toBe('HISTORICO_SIN_VALIDACION');
+  });
+});
+
+describe('D) UI — un registro vencido NO ofrece "Validar" (ni crea firma retroactiva) en Historial ni Mis Engrases', () => {
+  const appSrc = readSource(APP_JS_PATH);
+  const lubHistorialSrc = extractDeclaration(appSrc, 'renderLubricadorHistorial');
+  // drawHistory() es la función real que dibuja la tabla de engrases por
+  // equipo dentro de Historial (anidada en renderHistorial(), que en sí es
+  // demasiado grande para el extractor ingenuo de llaves de
+  // extractFromSource.js — drawHistory() se declara aparte y sí se aísla
+  // limpio).
+  const drawHistorySrc = extractDeclaration(appSrc, 'drawHistory');
+
+  it('renderLubricadorHistorial() ("Mis Engrases"): valAction excluye VALIDACION_VENCIDA además de HISTORICO', () => {
+    expect(lubHistorialSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA/);
+  });
+
+  it('drawHistory() (tabla de Historial por equipo): valAction excluye VALIDACION_VENCIDA además de HISTORICO', () => {
+    expect(drawHistorySrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA/);
+  });
+
+  it('ambas pantallas pasan `ahora`/App.generalSettings reales a validationStatusForRecord() — nunca horarios inventados', () => {
+    expect(lubHistorialSrc).toContain('validationStatusForRecord(r, validations, ahora, App.generalSettings)');
+    expect(drawHistorySrc).toContain('validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings)');
   });
 });

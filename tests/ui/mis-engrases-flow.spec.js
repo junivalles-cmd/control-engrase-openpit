@@ -30,9 +30,11 @@ const APP_NAMES = [
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
 const validationRealSrc = [
-  'VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'isRecordSubjectToValidation',
-  'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation',
-  'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation',
+  'VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS',
+  'isRecordSubjectToValidation', 'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict',
+  'findActiveValidation', 'shiftKindAt', 'shiftDurationHours', 'shiftWindowStart', 'validationDeadline',
+  'isValidationExpired', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation',
+  'isRecordValidationExpired',
 ].map(n => extractDeclaration(validationSource, n)).join('\n\n');
 
 const EQUIPOS = [
@@ -40,15 +42,23 @@ const EQUIPOS = [
   { id: 'e2', code: 'T-06', brand: 'Caterpillar', model: 'D8T' },
   { id: 'e3', code: 'EXC-02', brand: 'Komatsu', model: 'PC200' },
 ];
+// Fechas RELATIVAS al momento de correr la prueba (nunca fijas): greg_1 (0
+// activas) debe seguir "Pendiente" (dentro del plazo de MAX_VALIDATION_SHIFTS
+// turnos) sin importar cuándo se ejecute la suite — con fechas fijas del
+// pasado, el plazo real ya las vencía y greg_1 pasaba a "Validación vencida"
+// en vez de "Pendiente". El orden relativo (greg_1 > greg_2 > greg_3) se
+// conserva para el test de "más reciente primero".
+function hace(horas) { return new Date(Date.now() - horas * 3600000).toISOString().slice(0, 19); }
+const GREG3_DATE = hace(2);
 const RECORDS = [
-  { id: 'greg_1', equipmentId: 'e1', date: '2026-09-25T10:00:00', shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 5200, qty: 1.5, condition: 'Normal' },
-  { id: 'greg_2', equipmentId: 'e2', date: '2026-09-24T08:00:00', shiftId: 'shift_noche', userId: 'u1', userName: 'Juan Pérez', hourmeter: 12000, qty: 1.2, condition: 'Normal' },
-  { id: 'greg_3', equipmentId: 'e3', date: '2026-09-23T08:00:00', shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 8900, qty: 2.0, condition: 'Con desgaste' },
+  { id: 'greg_1', equipmentId: 'e1', date: hace(1), shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 5200, qty: 1.5, condition: 'Normal' },
+  { id: 'greg_2', equipmentId: 'e2', date: hace(1.5), shiftId: 'shift_noche', userId: 'u1', userName: 'Juan Pérez', hourmeter: 12000, qty: 1.2, condition: 'Normal' },
+  { id: 'greg_3', equipmentId: 'e3', date: GREG3_DATE, shiftId: 'shift_dia', userId: 'u1', userName: 'Juan Pérez', hourmeter: 8900, qty: 2.0, condition: 'Con desgaste' },
 ];
 const VALIDATIONS = [
-  { id: 'val_1', lubricationRecordId: 'greg_2', signerName: 'Op A', signerRole: 'OPERADOR', signedAt: '2026-09-24T09:00:00', active: true },
-  { id: 'val_2', lubricationRecordId: 'greg_3', signerName: 'Op B', signerRole: 'OPERADOR', signedAt: '2026-09-23T09:00:00', active: true },
-  { id: 'val_3', lubricationRecordId: 'greg_3', signerName: 'Enc C', signerRole: 'ENCARGADO', reason: 'Op no disponible', signedAt: '2026-09-23T09:30:00', active: true },
+  { id: 'val_1', lubricationRecordId: 'greg_2', signerName: 'Op A', signerRole: 'OPERADOR', signedAt: hace(1.4), active: true },
+  { id: 'val_2', lubricationRecordId: 'greg_3', signerName: 'Op B', signerRole: 'OPERADOR', signedAt: hace(1.9), active: true },
+  { id: 'val_3', lubricationRecordId: 'greg_3', signerName: 'Enc C', signerRole: 'ENCARGADO', reason: 'Op no disponible', signedAt: hace(1.8), active: true },
 ];
 
 async function bootPage(page, { lubShell = true } = {}) {
@@ -63,7 +73,7 @@ async function bootPage(page, { lubShell = true } = {}) {
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
-      window.App = { route: 'turno', currentUser: { id: 'u1', name: 'Juan Pérez' } };
+      window.App = { route: 'turno', currentUser: { id: 'u1', name: 'Juan Pérez' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
       window.__navigateCalls = 0;
       window.navigate = (route) => { window.__navigateCalls++; window.App.route = route; };
       window.DB = {
@@ -214,9 +224,9 @@ test('Baseline histórico (simulado): un registro anterior al rollout muestra "H
   // docs/GREASE_VALIDATION_AUDIT.md §14). Solo se sustituye la función pura
   // en esta página de prueba, igual que se stubean DB/openModal en el resto
   // de la suite — NO es un cambio de la lógica real.
-  await page.evaluate(() => {
-    window.isRecordSubjectToValidation = (date) => date !== '2026-09-23T08:00:00';
-  });
+  await page.evaluate((greg3Date) => {
+    window.isRecordSubjectToValidation = (date) => date !== greg3Date;
+  }, GREG3_DATE);
   await page.evaluate(() => window.renderLubricadorHistorial());
 
   const cards = page.locator('.lub-record-card');

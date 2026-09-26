@@ -171,7 +171,7 @@ describe('Validar después — el pendiente sobrevive el cierre del flujo, se pu
   });
 
   it('sigue derivando el estado SOLO de grease_validations (isRecordPendingValidation → findActiveValidations), nunca de un campo guardado en el record', () => {
-    expect(dashSrc).toContain('isRecordPendingValidation(r, validations)');
+    expect(dashSrc).toContain('isRecordPendingValidation(r, validations, ahoraValidacion, App.generalSettings)');
   });
 
   it('ordena por más antiguo pendiente primero', () => {

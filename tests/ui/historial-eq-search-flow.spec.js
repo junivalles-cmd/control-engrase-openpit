@@ -34,7 +34,7 @@ const complianceSrc = ['evaluateRecordCompliance', 'findPreviousRecord'].map(n =
 // drawHistory() ya tiene su columna "Validación" (openValidationModal se
 // deja SIN cargar aquí a propósito: este spec no prueba ese flujo, ver
 // tests/ui/grease-validation.spec.js — solo necesita que la columna renderice).
-const validationSrc = ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'isRecordSubjectToValidation', 'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation'].map(n => extractDeclaration(validationSource, n)).join('\n\n');
+const validationSrc = ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS', 'isRecordSubjectToValidation', 'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'shiftKindAt', 'shiftDurationHours', 'shiftWindowStart', 'validationDeadline', 'isValidationExpired', 'validationStatusFor', 'validationStatusForRecord', 'isRecordPendingValidation', 'isRecordValidationExpired'].map(n => extractDeclaration(validationSource, n)).join('\n\n');
 
 const EQUIPOS = [
   { id: 'e1', code: '45-77', shortCode: '45-77', brand: 'Caterpillar', model: '740B', typeId: 't1', locationId: 'l1', status: 'Operativo', hourmeter: 5200.5 },
@@ -68,7 +68,7 @@ async function bootPage(page, plans = [], validations = []) {
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
-      window.App = { currentUser: { name: 'Test', role: 'PLANIFICADOR' }, generalSettings: {} };
+      window.App = { currentUser: { name: 'Test', role: 'PLANIFICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
       window.DB = {
         allActive: async (store) => ({
           equipment: ${JSON.stringify(EQUIPOS)},
@@ -402,7 +402,17 @@ test.describe('Validación del engrase — columna en la tabla de Engrases (lect
   // real, se define uno EXPLÍCITO solo en esta página de prueba — nunca se
   // toca la constante productiva para esto.
   async function activarBaselineDePrueba(page) {
-    await page.evaluate(() => { window.isRecordSubjectToValidation = () => true; });
+    // Estas pruebas cubren las transiciones 0/1/active:false — no el plazo de
+    // MAX_VALIDATION_SHIFTS turnos (eso se prueba aparte, con fechas
+    // deterministas, en tests/unit/grease-validation.test.js). Los registros
+    // aquí usan fechas fijas de calendario (2026-09-25) reutilizadas por
+    // otras pruebas de este archivo (filtros de rango/día de la semana), así
+    // que en vez de fechas dinámicas se aísla el plazo con un stub explícito
+    // (mismo patrón que isRecordSubjectToValidation de abajo).
+    await page.evaluate(() => {
+      window.isRecordSubjectToValidation = () => true;
+      window.isValidationExpired = () => false;
+    });
   }
 
   test('sin ninguna validación activa: badge "Pendiente" + botón "Validar" en cada fila', async ({ page }) => {

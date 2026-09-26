@@ -190,12 +190,11 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
     expect(rowSrc).not.toContain('is-worst');
   });
 
-  it('acción ÚNICA y discreta: chevron "›" (NO botón grande, NO "Historial" como botón) — toda la fila es clickable/focuseable a Historial', () => {
-    expect(rowSrc).toContain('class="dash-exc-chevron"');
-    expect(rowSrc).not.toContain('<button');
-    expect(rowSrc).toContain('role="button" tabindex="0"');
-    expect(src).toContain("$$('.dash-exc-row', c).forEach(row => {");
-    expect(src).toContain("App.dashJumpEquipoId = row.dataset.id; navigate('historial')");
+  it('REDISEÑO: acción PRINCIPAL visible — botón "Historial" pequeño (btn-sm), ya no chevron+fila-clickable-sin-control-visible', () => {
+    expect(rowSrc).toContain('class="btn btn-sm dash-exc-hist-btn"');
+    expect(rowSrc).not.toContain('dash-exc-chevron');
+    expect(src).toContain("$$('.dash-exc-hist-btn', c).forEach(btn => {");
+    expect(src).toContain("App.dashJumpEquipoId = btn.dataset.id; navigate('historial')");
   });
 
   it('texto explicativo corto pedido, sin la explicación técnica larga', () => {
@@ -214,10 +213,25 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
 
   it('grid/ranking eliminados: la lista es vertical (flex-column) de filas bajas con divisores sutiles, no un grid de cards', () => {
     const cssSource = readSource(STYLES_CSS_PATH);
-    expect(cssSource).toContain('.dash-exc-list { display: flex; flex-direction: column; padding: 0 14px 10px; }');
+    expect(cssSource).toMatch(/\.dash-exc-list\s*\{\s*display:\s*flex;\s*flex-direction:\s*column;/);
     expect(cssSource).toContain('border-bottom: 1px solid var(--border)'); // divisor sutil, no whitespace grande
     expect(cssSource).not.toMatch(/\.dash-exc-(list|row)\s*\{[^}]*display:\s*grid/);
     expect(cssSource).not.toContain('.dash-tiempo-ranking');
+  });
+
+  it('REDISEÑO: el dato de días es un bloque destacado (número + etiqueta), no un texto aislado — con acento ámbar discreto en el top1', () => {
+    const cssSource = readSource(STYLES_CSS_PATH);
+    expect(cssSource).toContain('.dash-exc-days-wrap');
+    expect(cssSource).toContain('.dash-exc-days-label');
+    expect(cssSource).toMatch(/\.dash-exc-days-wrap\.is-max\s*\{\s*background:/);
+  });
+
+  it('REDISEÑO: "Historial" es ahora la acción PRINCIPAL visible (botón), ya no solo la fila entera clickable sin control visible', () => {
+    expect(rowSrc).toContain('class="btn btn-sm dash-exc-hist-btn"');
+    expect(rowSrc).toContain('>Historial<');
+    expect(rowSrc).not.toContain('role="button" tabindex="0"');
+    expect(src).toContain("$$('.dash-exc-hist-btn', c).forEach(btn => {");
+    expect(src).toContain("App.dashJumpEquipoId = btn.dataset.id; navigate('historial')");
   });
 });
 
@@ -253,31 +267,52 @@ describe('Rediseño — "Equipos que requieren atención" como cola operativa (r
     expect(iSinPlan).toBeLessThan(iPausados);
   });
 
-  it('cada fila trae Estado/Código/Marca-modelo/Ubicación/Motivo/Plan aplicable/Urgencia, sin columnas que no aporten decisión', () => {
+  it('cada fila trae Estado/Código/Marca-modelo·Ubicación/Programación compacta/Plan aplicable, sin columnas que no aporten decisión', () => {
     expect(src).toContain('class="dash-cola-badge tone-${item.tone}">${item.estado}');
-    expect(src).toContain('class="dash-op-line3 dim">${esc(item.motivo)}');
+    expect(src).toContain('class="dash-cola-code mono">${esc(item.e.code)}');
+    expect(src).toContain('class="dash-cola-meta dim">');
     expect(src).toContain("Plan: ${esc(item.plan)}");
-    expect(src).toContain('class="dash-cola-urgencia"');
+    expect(src).toContain('class="dash-cola-prog-tag"');
     expect(src).not.toContain('Días sin engrase'); // columna descartada: no aporta decisión inmediata aquí
   });
 
-  it('estructura en líneas fijas (jerarquía: badge+código+urgencia / modelo·ubicación / motivo / plan / acciones), sin min-height/flex-wrap que generen huecos en móvil', () => {
+  it('REDISEÑO densidad: ya NO hay "líneas" con el mismo flex-grow (dash-op-line2/3/4, causa real de los huecos horizontales) — fila plana con flex-wrap, badge/código/meta/programación/plan/acciones en orden', () => {
     const iCola = src.indexOf('function drawColaAtencion');
     const iFin = src.indexOf('drawColaAtencion();', iCola);
     const fnSrc = src.slice(iCola, iFin);
-    expect(fnSrc).toContain('class="dash-op-line1"');
-    expect(fnSrc).toContain('class="dash-op-line2"');
-    expect(fnSrc).toContain('class="dash-op-line4"');
-    // El orden en el HTML sigue exactamente la jerarquía pedida.
-    const iL1 = fnSrc.indexOf('dash-op-line1');
-    const iL2 = fnSrc.indexOf('dash-op-line2');
-    const iL3 = fnSrc.indexOf('dash-op-line3');
-    const iL4 = fnSrc.indexOf('dash-op-line4');
+    expect(fnSrc).not.toContain('dash-op-line');
+    // El orden en el HTML sigue la jerarquía pedida: estado, código, meta, programación, plan, acciones.
+    const iBadge = fnSrc.indexOf('dash-cola-badge');
+    const iCode = fnSrc.indexOf('dash-cola-code');
+    const iMeta = fnSrc.indexOf('dash-cola-meta');
+    const iProg = fnSrc.indexOf('dash-cola-prog-tag');
+    const iPlan = fnSrc.indexOf('dash-cola-plan');
     const iActions = fnSrc.indexOf('dash-cola-actions');
-    expect(iL1).toBeLessThan(iL2);
-    expect(iL2).toBeLessThan(iL3);
-    expect(iL3).toBeLessThan(iL4);
-    expect(iL4).toBeLessThan(iActions);
+    expect(iBadge).toBeLessThan(iCode);
+    expect(iCode).toBeLessThan(iMeta);
+    expect(iMeta).toBeLessThan(iProg);
+    expect(iProg).toBeLessThan(iPlan);
+    expect(iPlan).toBeLessThan(iActions);
+  });
+
+  it('progCompactaFor(): combina motivo+urgencia en un solo texto corto ("HOY · Sáb"/"VENCIDO · Sáb") para planes Día/turno; deja intacta la urgencia ya compacta de planes por horómetro ("Atraso"/"Restante")', () => {
+    const iFn = src.indexOf('function progCompactaFor');
+    const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
+    expect(fnSrc).toContain("item.urgencia.startsWith('Día: ')");
+    expect(fnSrc).toContain("WEEKDAY_ABBR_DASH[item.urgencia.slice(5)]");
+    expect(fnSrc).toContain("item.motivo.startsWith('Vencido')");
+    expect(fnSrc).toContain('return item.urgencia;'); // horómetro: ya compacto, sin recalcular
+  });
+
+  it('planLabelFor(): Plan Día/turno usa días ABREVIADOS unidos por " · " (presentación) — plan.assignedDays (dato real) no se toca', () => {
+    const iFn = src.indexOf('function planLabelFor');
+    const fnSrc = src.slice(iFn, src.indexOf('\n  }', iFn));
+    expect(fnSrc).toContain("plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ')");
+    expect(fnSrc).not.toContain('Día: ${'); // ya no antepone "Día:" (la fila ya dice "Plan:")
+  });
+
+  it('WEEKDAY_ABBR_DASH cubre los 7 días con las abreviaturas pedidas, sin alterar WEEKDAY_NAMES (dato completo real)', () => {
+    expect(appSource).toContain("const WEEKDAY_ABBR_DASH = { 'Domingo': 'Dom', 'Lunes': 'Lun', 'Martes': 'Mar', 'Miércoles': 'Mié', 'Jueves': 'Jue', 'Viernes': 'Vie', 'Sábado': 'Sáb' };");
   });
 
   it('acción contextual por fila: Historial (deep-link) y Registrar (mismo flujo real, sin abrir OT)', () => {

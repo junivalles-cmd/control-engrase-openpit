@@ -22,34 +22,44 @@ import path from 'node:path';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 
-function colaRow({ id, badge, tone, code, urgencia, linea2, motivo, plan }) {
+function colaRow({ id, badge, tone, code, urgencia, linea2, plan }) {
+  // Estructura REAL post-rediseño (fila plana, sin "líneas" de igual
+  // flex-grow — ver app.js drawColaAtencion()/styles.css .dash-cola-row):
+  // badge, código, meta (marca/modelo·ubicación), programación compacta
+  // (progCompactaFor: ya trae "Atraso"/"Restante" o "HOY · Día"/"VENCIDO ·
+  // Día"), plan (ya abreviado), acciones.
   return `
     <div class="dash-cola-row">
-      <div class="dash-op-line1">
-        <span class="dash-cola-badge tone-${tone}">${badge}</span>
-        <span class="dash-cola-code mono">${code}</span>
-        <span class="dash-cola-urgencia" style="color:var(--${tone === 'red' ? 'red' : tone === 'amber' ? 'amber' : 'text-dim'})">${urgencia}</span>
-      </div>
-      <div class="dash-op-line2">${linea2}</div>
-      <div class="dash-op-line3 dim">${motivo}</div>
-      <div class="dash-op-line4">Plan: ${plan}</div>
+      <span class="dash-cola-badge tone-${tone}">${badge}</span>
+      <span class="dash-cola-code mono">${code}</span>
+      <span class="dash-cola-meta dim">${linea2}</span>
+      <span class="dash-cola-prog-tag" style="color:var(--${tone === 'red' ? 'red' : tone === 'amber' ? 'amber' : 'text-dim'})">${urgencia}</span>
+      <span class="dash-cola-plan dim">Plan: ${plan}</span>
       <div class="dash-cola-actions">
         <button type="button" class="btn btn-sm dash-cola-hist" data-id="${id}">Historial</button>
-        <button type="button" class="btn btn-sm dash-cola-reg" data-id="${id}">Registrar</button>
+        <button type="button" class="btn btn-sm btn-accent dash-cola-reg" data-id="${id}">Registrar</button>
       </div>
     </div>`;
 }
 
 function excRow({ id, code, dias, isMax, brandModel, ubicacion, ultimo }) {
+  // Estructura REAL post-rediseño (ver app.js tiempoExcepcionRowHTML()): el
+  // bloque de días es un "stat" propio (número + etiqueta), con "Historial"
+  // como acción principal visible — ya no chevron + fila-clickable-sin-control.
   return `
-    <div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${id}" role="button" tabindex="0">
+    <div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${id}">
       <div class="dash-exc-main">
         <div class="dash-exc-line1"><span class="dash-exc-code mono">${code}</span></div>
         <div class="dash-exc-line2">${brandModel} · ${ubicacion}</div>
         <div class="dash-exc-line3 dim">Último engrase: ${ultimo}</div>
       </div>
-      <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias}</span>
-      <span class="dash-exc-chevron" aria-hidden="true">›</span>
+      <div class="dash-exc-side">
+        <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">
+          <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias}</span>
+          <span class="dash-exc-days-label dim">días sin engrasar</span>
+        </div>
+        <button type="button" class="btn btn-sm dash-exc-hist-btn" data-id="${id}">Historial</button>
+      </div>
     </div>`;
 }
 
@@ -142,9 +152,9 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
             <label class="filter-label">Día asignado<select id="att-dia" class="input input-sm"><option value="">Todos</option></select></label>
           </div>
           <div class="dash-cola-atencion" id="dash-cola-atencion">
-            ${colaRow({ id: 'e1', badge: 'Vencido', tone: 'red', code: '45-77', urgencia: 'Atraso: 43 h', linea2: 'CAT 740B · Volcán', motivo: 'Vencido por horómetro', plan: 'Cada 250 h' })}
-            ${colaRow({ id: 'e2', badge: 'Próximo', tone: 'amber', code: 'T-06', urgencia: 'Restante: 15 h', linea2: 'Caterpillar D8T · Rajo Principal', motivo: 'Próximo por horómetro', plan: 'Cada 250 h' })}
-            ${colaRow({ id: 'e3', badge: 'Sin plan', tone: 'red', code: 'CIS-03', urgencia: '—', linea2: 'Cisterna 5000gal · Botadero Norte', motivo: 'Sin plan de engrase configurado', plan: '—' })}
+            ${colaRow({ id: 'e1', badge: 'Vencido', tone: 'red', code: '45-77', urgencia: 'Atraso: 43 h', linea2: 'CAT 740B · Volcán', plan: 'Cada 250 h' })}
+            ${colaRow({ id: 'e2', badge: 'Próximo', tone: 'amber', code: 'T-06', urgencia: 'Restante: 15 h', linea2: 'Caterpillar D8T · Rajo Principal', plan: 'Cada 250 h' })}
+            ${colaRow({ id: 'e3', badge: 'Sin plan', tone: 'red', code: 'CIS-03', urgencia: '—', linea2: 'Cisterna 5000gal · Botadero Norte', plan: '—' })}
           </div>
         </div>
       </main>
@@ -212,7 +222,7 @@ for (const width of WIDTHS) {
     await expect(note).not.toContainText('no hay forma de saber');
   });
 
-  test(`Dashboard @ ${width}px — "Mayor tiempo sin engrasar" es una LISTA COMPACTA de excepciones (sin ranking #1/#2), con chevron como única acción`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Mayor tiempo sin engrasar" es una LISTA/RANKING COMPACTO de excepciones (sin ranking #1/#2), con "Historial" como acción principal visible`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
@@ -225,8 +235,11 @@ for (const width of WIDTHS) {
     await expect(page.locator('#dash-tiempo-sin-engrase-panel .dash-tiempo-rank')).toHaveCount(0); // sin número de ranking
     await expect(rows.first()).toContainText('T-06');
 
-    await expect(rows.first().locator('.dash-exc-chevron')).toBeVisible();
-    await expect(rows.first().locator('button')).toHaveCount(0); // ninguna acción es un botón dentro de la fila
+    // REDISEÑO: el dato de días es un bloque destacado (número + etiqueta) y
+    // "Historial" es un botón visible — ya no chevron + fila-clickable-oculta.
+    await expect(rows.first().locator('.dash-exc-days-wrap')).toBeVisible();
+    await expect(rows.first().locator('.dash-exc-hist-btn')).toBeVisible();
+    await expect(rows.first().locator('.dash-exc-hist-btn')).toHaveText('Historial');
 
     const verTodos = page.locator('#dash-tiempo-ver-todos');
     await expect(verTodos).toBeVisible();
@@ -380,22 +393,33 @@ test('Dashboard @ 412px — cola de atención SIN altura fija forzada (el alto l
   expect(['0px', 'auto', 'none']).toContain(minHeight);
 });
 
-test('Dashboard @ 412px — cola de atención se apila en tarjeta vertical (mismo markup, solo cambia flex-direction)', async ({ page }) => {
+test('Dashboard @ 412px — cola de atención se apila en tarjeta vertical (mismo markup, flex-wrap sin flex-grow parejo — REDISEÑO)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const flexDirection = await page.locator('.dash-cola-row').first().evaluate(el => getComputedStyle(el).flexDirection);
-  expect(flexDirection).toBe('column');
+  const row = page.locator('.dash-cola-row').first();
+  const flexWrap = await row.evaluate(el => getComputedStyle(el).flexWrap);
+  expect(flexWrap).toBe('wrap');
+  // La meta (marca/modelo·ubicación) cae en una línea propia, debajo del
+  // código — ya no hay franjas de columnas angostas con el mismo flex-grow.
+  const codeBox = await row.locator('.dash-cola-code').boundingBox();
+  const metaBox = await row.locator('.dash-cola-meta').boundingBox();
+  expect(metaBox.y).toBeGreaterThan(codeBox.y);
 });
 
-test('Dashboard @ 1366px — cola de atención es una fila compacta en desktop (no tabla)', async ({ page }) => {
+test('Dashboard @ 1366px — cola de atención es una fila compacta en desktop (no tabla, sin huecos de flex-grow parejo)', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const flexDirection = await page.locator('.dash-cola-row').first().evaluate(el => getComputedStyle(el).flexDirection);
-  expect(flexDirection).toBe('row');
+  const row = page.locator('.dash-cola-row').first();
+  const flexWrap = await row.evaluate(el => getComputedStyle(el).flexWrap);
+  expect(flexWrap).toBe('nowrap');
+  // Todo cabe en la misma línea vertical (una sola fila real, no apilado).
+  const codeBox = await row.locator('.dash-cola-code').boundingBox();
+  const planBox = await row.locator('.dash-cola-plan').boundingBox();
+  expect(Math.abs(planBox.y - codeBox.y)).toBeLessThan(4);
 });
 
 test('Dashboard @ 412px — la fila de "Mayor tiempo sin engrasar" ya es fila (código/modelo/último apilados a la izquierda, días+chevron a la derecha) sin necesitar un breakpoint aparte', async ({ page }) => {
@@ -418,7 +442,10 @@ test('Dashboard @ 1366px — la fila de "Mayor tiempo sin engrasar" mantiene el 
   const row = page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-row').first();
   expect(await row.evaluate(el => getComputedStyle(el).flexDirection)).toBe('row');
   const box = await row.boundingBox();
-  expect(box.height).toBeLessThanOrEqual(64); // meta de alto de fila 50-64px, nunca una card grande
+  // REDISEÑO: 3 líneas de texto + bloque de días destacado + botón Historial
+  // (antes solo chevron) — un poco más alto que la versión ultra-mínima
+  // anterior, pero sigue siendo una fila compacta, no una card.
+  expect(box.height).toBeLessThanOrEqual(70);
 });
 
 test('Dashboard @ 1366px — hover en tarjeta destacada solo aplica en dispositivos con hover real (no queda "pegado" en touch)', async ({ page, browserName }) => {

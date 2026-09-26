@@ -7,15 +7,19 @@
 // `signerRole` (statusForSignerRole()), para no duplicar la misma regla en
 // dos lugares que podrían desincronizarse.
 //
-// 5 estados (OBSERVADO auditado pero NO implementado a propósito, ver
+// 6 estados (OBSERVADO auditado pero NO implementado a propósito, ver
 // docs/GREASE_VALIDATION_AUDIT.md — no agregar complejidad sin necesidad):
 //   HISTORICO_SIN_VALIDACION — record.date es ANTERIOR a
 //                           GREASE_VALIDATION_ENABLED_FROM: la funcionalidad
 //                           no existía cuando se creó, así que NUNCA se le
 //                           exige firma ni cuenta como pendiente, sin
-//                           importar cuántas grease_validations tenga.
+//                           importar cuántas grease_validations tenga. Esto
+//                           es el BASELINE (¿existía la función?) — no se
+//                           mezcla con el DEADLINE (¿ya se venció el plazo?)
+//                           de abajo, son dos preguntas independientes.
 //   PENDIENTE_VALIDACION  — engrasado, sujeto a validación, sin firma
-//                           todavía (0 activas).
+//                           todavía (0 activas) Y todavía dentro del plazo
+//                           (ver MAX_VALIDATION_SHIFTS).
 //   VALIDADO_OPERADOR     — firmó el Operador del equipo (1 activa).
 //   VALIDADO_ENCARGADO    — firmó un Encargado, requiere motivo (1 activa).
 //   CONFLICTO_VALIDACION  — 2+ validaciones activas para el mismo registro
@@ -23,12 +27,22 @@
 //                           docs/GREASE_VALIDATION_AUDIT.md §10) — nunca se
 //                           elige una en silencio, se resuelve a mano
 //                           (resolución NO implementada todavía, ver §13).
+//                           Tiene PRIORIDAD sobre "vencida": si ya hay 2+
+//                           firmas activas, el registro nunca se muestra
+//                           como vencido, sin importar el plazo.
+//   VALIDACION_VENCIDA    — sujeto a validación, 0 activas, y ya pasó el
+//                           plazo (MAX_VALIDATION_SHIFTS turnos desde el
+//                           turno en que se hizo el engrase). Una vez que
+//                           SÍ existe una firma activa, el registro deja de
+//                           poder volverse "vencido" nunca más — ver
+//                           validationStatusForRecord().
 const VALIDATION_STATUS = {
   HISTORICO: 'HISTORICO_SIN_VALIDACION',
   PENDIENTE: 'PENDIENTE_VALIDACION',
   OPERADOR: 'VALIDADO_OPERADOR',
   ENCARGADO: 'VALIDADO_ENCARGADO',
   CONFLICTO: 'CONFLICTO_VALIDACION',
+  VENCIDA: 'VALIDACION_VENCIDA',
 };
 
 const VALIDATION_BADGE = {
@@ -37,7 +51,13 @@ const VALIDATION_BADGE = {
   [VALIDATION_STATUS.OPERADOR]: { label: 'Validado · Operador', tone: 'green' },
   [VALIDATION_STATUS.ENCARGADO]: { label: 'Validado · Encargado', tone: 'teal' },
   [VALIDATION_STATUS.CONFLICTO]: { label: 'Conflicto de validación', tone: 'red' },
+  [VALIDATION_STATUS.VENCIDA]: { label: 'Validación vencida', tone: 'red' },
 };
+
+// Plazo máximo para validar un engrase: el turno en que se hizo Y como
+// máximo el turno siguiente — nunca queda pendiente indefinidamente. Único
+// punto central de este número; no repartir "2" por pantallas.
+const MAX_VALIDATION_SHIFTS = 2;
 
 // Punto CENTRAL único de la fecha/hora (ISO) desde la cual un
 // lubrication_record queda SUJETO a validación — nunca se repite este valor
@@ -69,6 +89,73 @@ const GREASE_VALIDATION_ENABLED_FROM = null;
 function isRecordSubjectToValidation(recordDate) {
   if (!GREASE_VALIDATION_ENABLED_FROM) return false;
   return new Date(recordDate).getTime() >= new Date(GREASE_VALIDATION_ENABLED_FROM).getTime();
+}
+
+/* ============================================================
+   PLAZO DE VALIDACIÓN (MAX_VALIDATION_SHIFTS turnos) — funciones PURAS,
+   funcionan offline: solo dependen de `date`/`now` (Date/ISO) y de los
+   límites de turno YA configurados (shiftBoundaries = { shiftDayStart,
+   shiftNightStart }, las mismas horas que usa currentShiftId() en
+   src/core/shifts.js vía App.generalSettings — nunca se inventan horarios
+   aquí, el llamador siempre debe pasar la configuración real). La
+   referencia de tiempo es SIEMPRE `date` (lubrication_record.date, la hora
+   REAL del engrase) — nunca fecha de sync/subida/apertura de pantalla.
+   ============================================================ */
+
+// 'shift_dia' o 'shift_noche' según la hora, con el mismo criterio que
+// currentShiftId() (src/core/shifts.js) — no se duplica esa regla, se
+// reimplementa aquí en forma pura porque ese archivo depende del global App.
+function shiftKindAt(hour, shiftBoundaries) {
+  return (hour >= shiftBoundaries.shiftDayStart && hour < shiftBoundaries.shiftNightStart) ? 'shift_dia' : 'shift_noche';
+}
+
+// Duración en horas de un turno dado — Día+Noche SIEMPRE suman 24h exactas
+// (son los únicos 2 turnos del ciclo diario), aunque sus horarios
+// individuales sean asimétricos (ej. Día 8h/Noche 16h).
+function shiftDurationHours(kind, shiftBoundaries) {
+  const diaHoras = ((shiftBoundaries.shiftNightStart - shiftBoundaries.shiftDayStart) + 24) % 24;
+  return kind === 'shift_dia' ? diaHoras : (24 - diaHoras);
+}
+
+// Instante exacto (Date) en que EMPIEZA el turno al que pertenece `date`,
+// junto con qué turno es — base para calcular el plazo.
+function shiftWindowStart(date, shiftBoundaries) {
+  const d = new Date(date);
+  const h = d.getHours();
+  const kind = shiftKindAt(h, shiftBoundaries);
+  const start = new Date(d);
+  start.setMinutes(0, 0, 0);
+  if (kind === 'shift_dia') {
+    start.setHours(shiftBoundaries.shiftDayStart);
+  } else if (h >= shiftBoundaries.shiftNightStart) {
+    start.setHours(shiftBoundaries.shiftNightStart);
+  } else {
+    // Pasada la medianoche: el turno noche en curso empezó AYER.
+    start.setDate(start.getDate() - 1);
+    start.setHours(shiftBoundaries.shiftNightStart);
+  }
+  return { start, kind };
+}
+
+// Fin del plazo de validación: el turno en que se hizo el engrase +
+// (MAX_VALIDATION_SHIFTS - 1) turnos más — "2 turnos" = el propio + el
+// siguiente. Avanza turno por turno (nunca asume 12h fijas) para que
+// funcione igual con horarios de turno asimétricos.
+function validationDeadline(recordDate, shiftBoundaries) {
+  let { start, kind } = shiftWindowStart(recordDate, shiftBoundaries);
+  let t = start.getTime();
+  for (let i = 0; i < MAX_VALIDATION_SHIFTS; i++) {
+    t += shiftDurationHours(kind, shiftBoundaries) * 3600000;
+    kind = kind === 'shift_dia' ? 'shift_noche' : 'shift_dia';
+  }
+  return new Date(t);
+}
+
+// true si `now` ya superó el plazo de `recordDate`. `now` se recibe como
+// parámetro (nunca Date.now() interno) para que sea 100% determinista en
+// pruebas y para dejar claro que NUNCA se usa una fecha de sincronización.
+function isValidationExpired(recordDate, now, shiftBoundaries) {
+  return new Date(now).getTime() > validationDeadline(recordDate, shiftBoundaries).getTime();
 }
 
 // signerRole tal como lo elige el formulario ('OPERADOR' | 'ENCARGADO') →
@@ -131,23 +218,50 @@ function validationStatusFor(lubricationRecordId, validations) {
   return VALIDATION_STATUS.CONFLICTO;
 }
 
-// Estado derivado consciente del baseline: si el record es anterior a
-// GREASE_VALIDATION_ENABLED_FROM, SIEMPRE es HISTÓRICO (sin importar
-// cuántas grease_validations tenga) — de lo contrario, delega en
-// validationStatusFor(). Usar esta función (no validationStatusFor
-// directo) en cualquier UI que tenga el `record` completo disponible.
-function validationStatusForRecord(record, validations) {
+// Estado derivado consciente del baseline (¿existía la función?) Y del
+// plazo (¿ya se venció?) — dos preguntas independientes, nunca mezcladas:
+//   1) anterior a GREASE_VALIDATION_ENABLED_FROM → SIEMPRE HISTÓRICO, sin
+//      importar cuántas grease_validations tenga ni cuánto tiempo pasó.
+//   2) 2+ activas → CONFLICTO (prioridad sobre "vencida": una vez que hay
+//      conflicto, NUNCA se muestra como vencido).
+//   3) 1 activa → validado (OPERADOR/ENCARGADO) — una firma ya registrada
+//      dentro del plazo NUNCA se vuelve "vencida" después, sin importar
+//      cuándo se sincronizó (signedAt manda, no uploadedAt/syncedAt).
+//   4) 0 activas → PENDIENTE si `now` todavía está dentro del plazo
+//      (MAX_VALIDATION_SHIFTS turnos desde record.date), VENCIDA si ya lo
+//      superó.
+// `now`/`shiftBoundaries` son obligatorios a propósito (nunca un default
+// oculto): el llamador SIEMPRE debe pasar la hora real y los turnos
+// REALMENTE configurados (App.generalSettings), nunca inventados aquí.
+function validationStatusForRecord(record, validations, now, shiftBoundaries) {
   if (!isRecordSubjectToValidation(record.date)) return VALIDATION_STATUS.HISTORICO;
-  return validationStatusFor(record.id, validations);
+  const activas = findActiveValidations(record.id, validations);
+  if (activas.length > 1) return VALIDATION_STATUS.CONFLICTO;
+  if (activas.length === 1) return statusForSignerRole(activas[0].signerRole);
+  return isValidationExpired(record.date, now, shiftBoundaries) ? VALIDATION_STATUS.VENCIDA : VALIDATION_STATUS.PENDIENTE;
 }
 
-// true solo cuando el record SÍ está sujeto a validación (no es histórico)
-// Y tiene 0 activas — la definición exacta de "Pendientes de validación"
-// para KPIs/listas (excluye histórico, excluye validado, excluye conflicto:
-// un conflicto NO es "pendiente", ver docs/GREASE_VALIDATION_AUDIT.md §10).
-function isRecordPendingValidation(record, validations) {
+// true solo cuando el record SÍ está sujeto a validación (no es histórico),
+// tiene 0 activas Y todavía está DENTRO del plazo — la definición exacta de
+// "Pendientes de validación" para KPIs/listas (excluye histórico, excluye
+// validado, excluye conflicto Y excluye vencido: ver
+// docs/GREASE_VALIDATION_AUDIT.md §10).
+function isRecordPendingValidation(record, validations, now, shiftBoundaries) {
   if (!isRecordSubjectToValidation(record.date)) return false;
-  return findActiveValidations(record.id, validations).length === 0;
+  if (findActiveValidations(record.id, validations).length !== 0) return false;
+  return !isValidationExpired(record.date, now, shiftBoundaries);
+}
+
+// true solo cuando el record SÍ está sujeto a validación, tiene 0 activas Y
+// ya superó el plazo — usar esta función (no isValidationExpired directo)
+// en cualquier UI que tenga el `record` completo, para ocultar el botón
+// "Validar" y mostrar el badge "Validación vencida" en vez de "Pendiente".
+// Una vez que existe 1+ firma activa, esto SIEMPRE devuelve false (ver
+// comentario de validationStatusForRecord — nunca se "revierte" a vencida).
+function isRecordValidationExpired(record, validations, now, shiftBoundaries) {
+  if (!isRecordSubjectToValidation(record.date)) return false;
+  if (findActiveValidations(record.id, validations).length !== 0) return false;
+  return isValidationExpired(record.date, now, shiftBoundaries);
 }
 
 // true solo cuando el record SÍ está sujeto a validación Y tiene 2+
