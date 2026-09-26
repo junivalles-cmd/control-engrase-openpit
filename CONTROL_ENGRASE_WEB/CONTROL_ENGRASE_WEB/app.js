@@ -7725,19 +7725,14 @@ async function renderAyuda() {
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
   const help = await getHelpContent();
 
-  // B: accesos compactos por familia (chip) en vez de mostrar las N tarjetas
-  // completas de una vez — la tarjeta real (familyCardHTML, sin cambios) se
-  // muestra/oculta al tocar su chip. Reutiliza el contenido existente, no
-  // inventa diagramas nuevos.
+  // Accesos compactos por familia (chip) en vez de mostrar las N tarjetas completas de
+  // una vez — la tarjeta real (familyCardHTML) se muestra/oculta al tocar su chip.
   const familiesHTML = help.families.length ? `
-      <div class="ayuda-family-chips" style="padding:0 14px 14px">
+      <div class="ayuda-family-chips">
         ${help.families.map(f => `<button type="button" class="ayuda-family-chip" data-family-id="${f.id}">${esc(f.name)}</button>`).join('')}
       </div>
       ${help.families.map(f => `<div class="ayuda-family-card hidden" data-family-wrap="${f.id}">${familyCardHTML(f, canEdit)}</div>`).join('')}`
-    : `<div style="padding:0 14px 14px">
-        <div class="empty-state">No hay guías visuales configuradas todavía.</div>
-        <div class="dim" style="margin-top:8px">Los puntos reales de cada equipo están en <b>Plan de Engrase → Configurar</b>.</div>
-      </div>`;
+    : `<div class="empty-state">No hay guías visuales configuradas todavía.</div>`;
 
   c.innerHTML = `
     <div class="ayuda-page">
@@ -7748,8 +7743,8 @@ async function renderAyuda() {
 
       <div class="panel">
         <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
-        <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
-        ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
+        <div class="dim ayuda-guia-sub">Referencia visual por categoría de equipo — imagen y puntos de engrase. Para el detalle exacto de un equipo específico, usa "Plan de Engrase → Configurar".</div>
+        ${canEdit ? `<div class="toolbar ayuda-guia-toolbar"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
         ${familiesHTML}
       </div>
 
@@ -7981,7 +7976,6 @@ function openFamilyEditForm(help, existing) {
   });
 }
 
-/* ---------- Edición de preguntas frecuentes (solo Administrador) ---------- */
 function openFaqEditForm(help) {
   function bodyHTML() {
     return `
