@@ -520,3 +520,31 @@
   domingo debe incluirse (y si `estadoCelda()`, ya extraída a
   `src/core/weekly-matrix.js`, necesitaría el séptimo día) o si es
   intencional (algunos ciclos de trabajo minero no operan los domingos).
+
+## DATA-PENDING-A02 — Equipo A-02 pendiente de validación de locationId/typeId en runtime
+
+- **Fecha:** 2026-09-25
+- **Prioridad:** P3 (un solo equipo reportado, sin evidencia de que sea un
+  problema general)
+- **Estado:** PENDIENTE DE VALIDACIÓN DE DATOS — NO es un bug de código
+- **Origen:** reportado por el usuario durante la revisión visual del
+  rediseño del Dashboard — el panel "Mayor tiempo sin engrasar" mostraba
+  "—" en Ubicación (y aparentemente Familia) para el equipo A-02, cuando
+  antes mostraba "Botadero Norte".
+- **Auditoría realizada (código, sin tocar datos):** se confirmó que
+  `app.js` no tiene ningún equipo "A-02" hardcodeado — `equipment` y
+  `locations` viven en IndexedDB/Supabase (runtime), fuera del repositorio.
+  Se comparó el lookup nuevo (`locPorId[e.locationId]`, un mapa `id → objeto`
+  construido desde `locations`) contra el lookup anterior
+  (`locations.find(l => l.id === e.locationId)`) usado en la misma pantalla
+  antes del rediseño: son equivalentes — ambos resuelven el nombre por
+  `equipment.locationId` contra el mismo catálogo `locations`, sin cambio de
+  campo ni de fuente de datos. Mismo análisis para `typeId`/Familia.
+  **No se encontró error de campo en el render.**
+- **Acción actual:** NO se investigó más allá del código (no se usó
+  automatización de navegador ni acceso a Supabase, sin autorización
+  explícita para eso). NO se inventó ni se completó ningún valor de
+  ubicación/familia. Queda pendiente que alguien con acceso a la base real
+  confirme si el registro de A-02 en `equipment` tiene `locationId`/`typeId`
+  vacíos, o si esos ids ya no existen en `locations`/`equipment_types`
+  (por ejemplo, por un registro renombrado o eliminado).

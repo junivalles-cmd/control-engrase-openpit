@@ -8,6 +8,18 @@ ya cerrada). El criterio aquí no es "no hay scroll horizontal = PASS": un
 layout de 1920px con 420px de contenido centrado y cero scroll está marcado
 como problema (desperdicio de espacio / layout de móvil en desktop).
 
+> **ACTUALIZACIÓN (2026-09-25):** la Causa raíz #1 (`.app-content` sin
+> `width:100%`, §3 abajo) **YA ESTÁ RESUELTA**, commit `6f9e59c` ("fix:
+> improve desktop lubricator and sidebar layout") — posterior a esta
+> auditoría. `styles.css` línea 919 ya declara
+> `.app-content { max-width: 1500px; width: 100%; margin: 0 auto; }`. Las
+> filas y hallazgos de este documento que citan "Causa raíz #1" (UI-VIS-001,
+> 002, 004, 101, 102, 104, 107, 201, 202, 205, 304) quedan **RESUELTOS en
+> código**; los porcentajes/regresiones medidos en la tabla de §1 son el
+> estado ANTES del fix, no se volvieron a medir con Playwright tras
+> `6f9e59c` — pendiente una repetición de las capturas si se necesita
+> confirmar el % de utilización actual.
+
 Método: fragmentos estáticos con la estructura/clases REALES de las funciones
 `render*()` de `app.js` (nunca la app real, nunca red/Supabase — ver
 `docs/AUTOMATED_TESTS.md`), renderizados con `page.setContent()` +
