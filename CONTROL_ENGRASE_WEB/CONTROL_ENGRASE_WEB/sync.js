@@ -225,12 +225,31 @@ const Sync = {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
     const since = cfg.lastPull || '1970-01-01T00:00:00.000Z';
-    const resp = await fetch(
-      `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
-      { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
-    );
-    if (!resp.ok) throw new Error(`Error al descargar cambios: ${resp.status}`);
-    const rows = await resp.json();
+
+    // Supabase/PostgREST limita cada respuesta a ~1000 filas sin importar el "limit"
+    // pedido (confirmado en producción: limit=2000 devolvía como máximo 1000). Sin
+    // paginar, un historial más grande que eso quedaba truncado en silencio — el
+    // cursor (lastPull) avanzaba solo hasta la última fila de esa primera página, así
+    // que el resto se iba recuperando de a poco en sincronizaciones futuras, pero
+    // mientras tanto el dispositivo trabajaba con datos incompletos. Se pagina con
+    // order+offset determinista (updated_at, luego store/id como desempate estable
+    // para filas con el mismo updated_at) hasta recibir una página más corta que
+    // PAGE_SIZE — así no hay huecos ni duplicados entre páginas.
+    const PAGE_SIZE = 1000;
+    let rows = [];
+    let offset = 0;
+    while (true) {
+      const resp = await fetch(
+        `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc,store.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`,
+        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+      );
+      if (!resp.ok) throw new Error(`Error al descargar cambios: ${resp.status}`);
+      const page = await resp.json();
+      rows = rows.concat(page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+
     let maxUpdated = since;
     const newAnomalies = [];
     for (const row of rows) {
@@ -258,12 +277,15 @@ const Sync = {
           rec.signatureLocal = existing.signatureLocal;
         }
       }
-      // Si lo que llega es literalmente el eco de lo que este mismo dispositivo acaba de
-      // subir (mismo updatedAt), conserva la marca local de "ya confirmado" — si no, se
-      // volvería a subir en cada sincronización para siempre, sin necesidad.
-      if (existing && existing._pushedVersion === rec.updatedAt) {
-        rec._pushedVersion = existing._pushedVersion;
-      }
+      // Toda fila que llega aquí viene confirmada por el servidor (es su versión
+      // vigente para ese id), así que queda marcada como YA SINCRONIZADA de una vez:
+      // pushAll() compara _pushedVersion contra updatedAt para decidir qué subir, y
+      // antes esta marca solo se ponía cuando era literalmente el eco del propio push
+      // (existing._pushedVersion === rec.updatedAt). Cualquier fila nueva o traída de
+      // OTRO dispositivo se quedaba sin _pushedVersion definido, así que pushAll() la
+      // interpretaba como "cambio local pendiente" y la volvía a subir de inmediato —
+      // ese era el bug (pull → push involuntario de vuelta al servidor).
+      rec._pushedVersion = rec.updatedAt;
       await DB.put(row.store, rec);
       if (row.store === 'anomalies' && !row.deleted) newAnomalies.push(rec);
       if (row.updated_at > maxUpdated) maxUpdated = row.updated_at;

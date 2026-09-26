@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v33'; // v33: cierre de lote UX — Matriz Semanal (sticky header/columna, día HOY, navegación compacta, filtros/leyenda plegables móvil, resumen Día/Noche) + pulido visual Mayor tiempo sin engrasar/Equipos que requieren atención/Actividad por responsable — styles.css/app.js; misma razón que v27-v32 para subir versión (stale-first).
+const CACHE = 'engrase-openpit-v34'; // v34: fix crítico de sincronización (SYNC-PULL-ECHO-001) — pullAll() ya marca cada fila bajada como sincronizada (_pushedVersion=updatedAt) y pagina de 1000 en 1000 con orden determinista — sync.js; misma razón que v27-v33 para subir versión (stale-first).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

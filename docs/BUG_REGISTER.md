@@ -548,3 +548,63 @@
   confirme si el registro de A-02 en `equipment` tiene `locationId`/`typeId`
   vacíos, o si esos ids ya no existen en `locations`/`equipment_types`
   (por ejemplo, por un registro renombrado o eliminado).
+
+## SYNC-PULL-ECHO-001 — `fullSync()` volvía a subir a Supabase las filas que acababa de descargar
+
+- **Fecha:** 2026-09-26
+- **Prioridad:** P1 (tráfico/escrituras innecesarias a producción en cada
+  sincronización; con datos suficientes podía degradar el rendimiento del
+  sync y, en el peor caso, pisar por error un cambio remoto concurrente con
+  el eco de otro dispositivo)
+- **Estado:** CORREGIDO — PROBADO AUTOMÁTICAMENTE (8/8, ver
+  `tests/unit/sync-pull-push.test.js`) y verificado una vez en producción
+  (solo lectura)
+- **Descubierto durante:** la auditoría real de datos para la guía de
+  puntos de engrase por modelo (CAT 745C / Komatsu HM400-3M0)
+- **Problema:** `CONTROL_ENGRASE_WEB\CONTROL_ENGRASE_WEB\sync.js`,
+  `pullAll()` guardaba cada fila remota localmente sin fijar
+  `_pushedVersion`, salvo en el caso exacto de "eco de mi propio push"
+  (`existing._pushedVersion === rec.updatedAt`). Cualquier fila **nueva** o
+  traída de **otro dispositivo** quedaba con `_pushedVersion` indefinido, y
+  `pushAll()` (que decide qué subir comparando `_pushedVersion !== updatedAt`)
+  la interpretaba como un cambio local pendiente y la volvía a subir de
+  inmediato a Supabase.
+- **Riesgo:** un simple login (que dispara `fullSync()`) podía re-subir a
+  producción todo lo que se acababa de descargar — confirmado en producción:
+  un dispositivo de prueba recién sincronizado generó 5 POST de subida
+  (`users`, `locations`, `lubrication_points`, `lubrication_records`,
+  `audit_log`) inmediatamente después de un pull limpio, sin ningún cambio
+  local real.
+- **Fix:** toda fila aceptada desde el pull queda marcada de una vez como
+  sincronizada — `rec._pushedVersion = rec.updatedAt` — sin excepción, para
+  las 15 STORES por igual (no es un parche específico de un store). No se
+  tocó `pushAll()`: su regla de decisión ya era correcta, solo dependía de
+  que `pullAll()` marcara bien.
+- **Además (mismo commit):** `pullAll()` no paginaba. Supabase/PostgREST
+  limita cada respuesta a ~1000 filas sin importar el `limit` pedido
+  (confirmado: pedir `limit=2000` devolvía como máximo 1000) — un historial
+  más grande quedaba truncado en silencio. Ahora pagina con `offset` en
+  pasos de 1000 y orden determinista (`updated_at,store,id`) hasta recibir
+  una página más corta que el tamaño de página.
+- **Incidente relacionado, ya resuelto:** durante la verificación de la
+  guía por modelo, este mismo bug hizo que un dispositivo de prueba creara
+  involuntariamente un registro `settings/help_content` en producción
+  (`createdAt=2026-09-26T15:30:40.535Z`, `createdBy="sistema"`, sin datos
+  reales de OEM — solo el contenido genérico por defecto). Se confirmó por
+  lectura que era el único registro con ese id, que no existía antes, y que
+  nada más dependía de él; se eliminó exactamente ese registro (borrado
+  físico — un soft-delete no habría bastado, porque la app lee `settings`
+  con `DB.get()`, que no filtra por `active`). El registro `settings/notifications`
+  (preexistente, no relacionado) quedó intacto.
+- **Pruebas:** `tests/unit/sync-pull-push.test.js` (8 casos, DB y "remoto"
+  100% en memoria, nunca contra producción): pull sin cambios locales → 0
+  push; pull de 1500 y de 2500+ filas sin pérdidas ni duplicados; cambio
+  local real → sube 1 versión; alta offline nueva → sube; soft delete →
+  sube con `deleted:true`; `grease_validations` con firma → comportamiento
+  preservado; secuencia push→pull sin cambios → 0 escrituras. Confirmado
+  que estas pruebas fallan (4/8) contra el `sync.js` anterior al fix.
+- **Validación en producción (única, autorizada, solo lectura):** login
+  real con escrituras bloqueadas a nivel de red como red de seguridad →
+  pull histórico completo (equipment:11, lubrication_points:1031,
+  lubrication_plans:7, users:7 — coincide con los totales reales) → **0
+  intentos de escritura**.
