@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v39'; // v39: P0-2 Pre-flight — auth.js/sync.js/db.js cambiaron de nuevo (namespaces separados auth_tokens/auth_profile_snapshot en vez de auth_state, isAuthenticated() ahora exige expiresAt vigente, fullSync() refresca sesión antes de sync) después de v38 — mismo motivo de siempre para subir versión (stale-first, ver v27-v38).
+const CACHE = 'engrase-openpit-v40'; // v40: P0-2 — db.js cambió de nuevo (AUTH_MODE='supabase' ya NO siembra u_admin/PIN default ni el catálogo de 4 usuarios de ejemplo; isSupabaseAuthMode() central, guard de re-seed por flag en vez de por users.length) después de v39 — mismo motivo de siempre para subir versión (stale-first, ver v27-v39).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

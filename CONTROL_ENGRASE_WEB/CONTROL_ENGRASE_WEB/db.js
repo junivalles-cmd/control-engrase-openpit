@@ -226,15 +226,43 @@ async function logAudit(action, detail, user) {
 
 /* ---------------- SEED DATA ---------------- */
 
+// Única fuente de verdad del modo de autenticación: Auth.isSupabaseMode()
+// (src/core/auth.js, constante AUTH_MODE) — db.js NUNCA repite ni
+// reinterpreta ese valor, solo lo consulta de forma defensiva (nunca
+// revienta si Auth no está cargado, ej. tests que cargan db.js aislado,
+// o un orden de carga distinto). Mismo patrón defensivo que ya usa
+// sync.js (`typeof Auth !== 'undefined' && Auth.isSupabaseMode()`). Sin
+// Auth cargado, se comporta como 'legacy' — el default más seguro, nunca
+// al revés (nunca asume 'supabase' por omisión).
+function isSupabaseAuthMode() {
+  return typeof Auth !== 'undefined' && typeof Auth.isSupabaseMode === 'function' && Auth.isSupabaseMode();
+}
+
 /* Pregunta al servidor si el sistema ya está en uso. Solo siembra el catálogo base
    cuando NO hay nada allá y tampoco aquí: es decir, en la primerísima instalación.
    Si no hay internet, siembra igual para que la app sirva desde el primer momento,
-   pero marca los registros para que no pisen lo que ya exista al sincronizar. */
+   pero marca los registros para que no pisen lo que ya exista al sincronizar.
+
+   AUTH_MODE='supabase' (ver isSupabaseAuthMode arriba): NUNCA crea ningún
+   usuario local (ni el catálogo de 4 usuarios de ejemplo, ni el admin
+   temporal con PIN 1111) — la identidad/rol vienen de Supabase Auth +
+   app_profiles, nunca de un PIN semilla. `users` puede quedar vacío
+   localmente hasta que la sync real (ya autenticada) traiga lo que
+   corresponda. El resto del catálogo (turnos, ubicaciones, categorías,
+   cuadrillas, lubricantes, settings) se sigue sembrando igual — no tiene
+   nada que ver con identidad/autenticación. */
 async function seedSoloSiElSistemaEstaVacio() {
   const usuariosLocales = await DB.all('users');
-  if (usuariosLocales.length) {
-    // Ya hay datos en este dispositivo: nada que sembrar
+  // OR con el flag: en AUTH_MODE='supabase', `users` se deja vacío a
+  // propósito, así que `usuariosLocales.length` solo, por sí solo, ya NO
+  // alcanza como señal de "este dispositivo ya decidió qué sembrar" — sin
+  // el flag, este chequeo volvería a sembrar el catálogo completo en cada
+  // boot. El flag es la señal principal; `usuariosLocales.length` se
+  // conserva además por compatibilidad con dispositivos que ya tenían
+  // datos de antes de que este flag existiera.
+  if (usuariosLocales.length || localStorage.getItem('engrase_seed_hecho')) {
     await seedCuadrillasSoloSiNuncaSeSembraron();
+    localStorage.setItem('engrase_seed_hecho', '1');
     return;
   }
 
@@ -256,9 +284,13 @@ async function seedSoloSiElSistemaEstaVacio() {
   }
 
   if (servidorTieneDatos) {
-    // El sistema ya existe: este dispositivo solo necesita el usuario administrador
-    // para poder entrar mientras baja el resto. Lo demás llega por sincronización.
-    await seedSoloUsuarioInicial();
+    // El sistema ya existe: en AUTH_MODE='legacy', este dispositivo solo
+    // necesita el usuario administrador temporal para poder entrar
+    // mientras baja el resto. En AUTH_MODE='supabase' NO se crea — la
+    // identidad ya viene de Auth + app_profiles, sin PIN alguno.
+    if (!isSupabaseAuthMode()) {
+      await seedSoloUsuarioInicial();
+    }
     localStorage.setItem('engrase_seed_hecho', '1');
     return;
   }
@@ -280,8 +312,12 @@ async function seedCuadrillasSoloSiNuncaSeSembraron() {
 }
 
 /* Usuario mínimo para poder entrar en un dispositivo que se suma a un sistema ya
-   existente. Se marca como temporal: al sincronizar llegan los usuarios de verdad. */
+   existente. Se marca como temporal: al sincronizar llegan los usuarios de verdad.
+   AUTH_MODE='supabase': NUNCA crea este usuario ni ningún PIN — guard
+   defensivo además del que ya hace el llamador (seedSoloSiElSistemaEstaVacio),
+   por si esta función se invoca alguna vez desde otro lugar. */
 async function seedSoloUsuarioInicial() {
+  if (isSupabaseAuthMode()) return;
   const users = await DB.all('users');
   if (users.length) return;
   await DB.put('users', stamp({
@@ -322,13 +358,20 @@ async function seedIfEmpty() {
   ];
   for (const cq of cuadrillas_seed) await DB.put('cuadrillas', stamp(cq, 'sistema'));
 
-  const users_seed = [
-    { id: 'u_admin', name: 'Administrador General', username: 'admin', role: 'ADMINISTRADOR', pin: '1111', active: true },
-    { id: 'u_plan', name: 'Ana Planificadora', username: 'planificador', role: 'PLANIFICADOR', pin: '2222', active: true },
-    { id: 'u_sup', name: 'Carlos Supervisor', username: 'supervisor', role: 'SUPERVISOR', pin: '3333', active: true },
-    { id: 'u_lub1', name: 'Junior Lubricador', username: 'lubricador', role: 'LUBRICADOR', pin: '4444', active: true, cuadrillaId: 'cuad_a' }
-  ];
-  for (const u of users_seed) await DB.put('users', stamp(u, 'sistema'));
+  // AUTH_MODE='supabase': NUNCA se crean estos 4 usuarios ni sus PIN
+  // (1111/2222/3333/4444) — `users` queda vacío localmente a propósito;
+  // la identidad/rol vienen de Supabase Auth + app_profiles, nunca de un
+  // usuario/PIN semilla. El resto del catálogo (arriba/abajo de este
+  // bloque) no tiene relación con identidad y se siembra siempre igual.
+  if (!isSupabaseAuthMode()) {
+    const users_seed = [
+      { id: 'u_admin', name: 'Administrador General', username: 'admin', role: 'ADMINISTRADOR', pin: '1111', active: true },
+      { id: 'u_plan', name: 'Ana Planificadora', username: 'planificador', role: 'PLANIFICADOR', pin: '2222', active: true },
+      { id: 'u_sup', name: 'Carlos Supervisor', username: 'supervisor', role: 'SUPERVISOR', pin: '3333', active: true },
+      { id: 'u_lub1', name: 'Junior Lubricador', username: 'lubricador', role: 'LUBRICADOR', pin: '4444', active: true, cuadrillaId: 'cuad_a' }
+    ];
+    for (const u of users_seed) await DB.put('users', stamp(u, 'sistema'));
+  }
 
   // 'lb': mismo valor que GREASE_UNIT en app.js — db.js carga antes que app.js
   // (scripts planos en index.html, sin módulos), así que no puede referenciar

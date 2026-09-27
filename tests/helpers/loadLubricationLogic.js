@@ -86,6 +86,31 @@ export function loadDbLogic() {
   return factory();
 }
 
+const DB_SEED_SOURCES = [
+  [DB_JS_PATH, [
+    'uid', 'nowISO', 'stamp', 'logAudit', 'isSupabaseAuthMode',
+    'seedSoloUsuarioInicial', 'seedIfEmpty',
+    'seedCuadrillasIfMissing', 'seedCuadrillasSoloSiNuncaSeSembraron',
+    'seedSoloSiElSistemaEstaVacio',
+  ]],
+];
+
+/**
+ * Devuelve la lógica REAL de seed/bootstrap de db.js
+ * (seedSoloSiElSistemaEstaVacio/seedIfEmpty/seedSoloUsuarioInicial/
+ * isSupabaseAuthMode/etc.), ligada a un `DB` y un `Auth` de prueba. Estas
+ * funciones solo llaman a `DB.*` (nunca a indexedDB/openDB/tx
+ * directamente), así que un `DB` fake alcanza — igual que loadSyncLogic().
+ * `localStorage`/`navigator`/`fetch` se resuelven como globales normales
+ * dentro del cuerpo (mismo mecanismo que ya usan los tests de sync.js) —
+ * el test los stubea con `vi.stubGlobal()` antes de llamar.
+ */
+export function loadDbSeedLogic(fakeDB, fakeAuth) {
+  const body = buildBodyFromSources(DB_SEED_SOURCES);
+  const factory = new Function('DB', 'Auth', body);
+  return factory(fakeDB, fakeAuth);
+}
+
 // estadoCelda() (weekly-matrix.js) usa el global WEEKDAY_NAMES, exactamente
 // como en el navegador (scripts clásicos, scope compartido) — por eso se
 // extrae junto con él en el mismo cuerpo, igual que hace APP_LOGIC_SOURCES
