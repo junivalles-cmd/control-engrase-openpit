@@ -175,6 +175,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   margin: 0; font-family: var(--font-display); font-weight: 700;
   letter-spacing: 0.03em; text-transform: uppercase; font-size: 18px;
 }
+/* Móvil: títulos largos ("SINCRONIZACIÓN CON BASE DE DATOS REMOTA",
+   "PAPELERA — RECUPERAR LO ELIMINADO"…) envolvían a 2-3 líneas y, sumado al
+   padding vertical de escritorio, el encabezado dominaba la pantalla antes
+   de mostrar nada del contenido. Menos padding reduce ese bloque sin perder
+   jerarquía ni el acento industrial amarillo (border-image de .panel-head,
+   sin cambios). El font-size de h3 se ajusta más abajo, junto a
+   `.panel-head h3 { font-size: var(--fs-lg) }` — misma convención ya usada
+   en este archivo para ganarle en cascada (ver comentario ahí). Desktop
+   intacto. */
+@media (max-width: 600px) {
+  .panel-head { padding: 9px 14px; margin-bottom: 2px; }
+  .panel-head h4 { font-size: 23px; line-height: 1.15; }
+}
 
 /* ---------------- Login ---------------- */
 .login-screen {
@@ -345,19 +358,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
      cuatro controles de ~44px de alto (mínimo táctil, no se toca) hacía que
      la barra se viera excesivamente alta. Aquí solo se reduce el "aire"
      alrededor (padding, gaps, texto), nunca el tamaño de toque. */
-  .topbar { padding: 7px 10px; gap: 8px; }
+  .topbar { padding: 7px 8px; gap: 6px; }
+  /* El logo cede su espacio al título en el topbar móvil (el hamburguesa ya
+     transmite "menú/marca" — el logo no aporta nada que perder aquí; sigue
+     intacto en el sidebar y en el shell del Lubricador, sin cambios). */
+  .topbar .brand-mark.small.only-mobile { display: none; }
   .topbar-title {
-    font-size: 15px; max-width: 40vw; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
+    font-size: 18px; flex: 1 1 auto; min-width: 0; max-width: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .topbar-right { gap: 8px; }
+  .topbar-right { gap: 6px; }
   /* Solo el ícono de turno en móvil (☀/☾) — el texto completo queda en el
      title del badge (se puede tocar/mantener presionado para verlo) y se
      recupera en escritorio. Ahorra ancho para que todo quepa en una línea. */
-  .topbar-shift { padding: 3px 8px; font-size: 13px; }
+  .topbar-shift { padding: 3px 7px; font-size: 13px; }
   .topbar-shift-label { display: none; }
   .conn-badge {
-    padding: 3px 8px; font-size: 10px; max-width: 120px;
+    padding: 3px 7px; font-size: 10px; max-width: 86px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .kpi-grid { gap: 8px; }
@@ -959,6 +976,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .simple-list-row:last-child { border-bottom: none; }
 .simple-list-name { font-weight: 600; font-size: 13.5px; }
+/* Móvil: el nombre nunca debe quedar tapado/cortado por los botones —
+   pasa a ocupar toda la fila arriba, con Renombrar/Eliminar debajo
+   (comparten la fila cuando caben; en pantallas muy angostas los botones
+   se aprietan con flex:1 en vez de desbordar, ver .row-actions). Desktop
+   conserva el layout de una sola fila (sin cambios). */
+@media (max-width: 600px) {
+  .simple-list-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .simple-list-name { width: 100%; white-space: normal; overflow-wrap: break-word; }
+  .simple-list-row .row-actions { width: 100%; }
+  .simple-list-row .row-actions .btn { flex: 1; }
+}
 
 /* ---------------- Aviso en pantalla (toast) de anomalías nuevas ---------------- */
 #toast-box {
@@ -1226,6 +1254,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-eq-model { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .lub-eq-location { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
 .lub-eq-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+/* Móvil: menos "aire" vertical entre tarjetas y dentro de cada una — se ven
+   más equipos sin desplazarse tanto, sin quitar ningún dato (Estado/Código/
+   Equipo/Ubicación/Horómetro/Último/Próximo/Restante siguen todos) ni tocar
+   tipografía (legibilidad intacta) ni el botón "Realizar engrase". */
+@media (max-width: 600px) {
+  .lub-eq-list { gap: 8px; }
+  .lub-eq-btn { padding: 11px var(--sp-3); }
+  .lub-eq-top { margin-bottom: 3px; }
+  .lub-eq-model { margin-bottom: 2px; }
+  .lub-eq-location { margin-bottom: 4px; }
+}
 
 .lub-anomaly-fab {
   display: block; width: 100%; margin-top: 18px; padding: 16px var(--sp-3); border-radius: 12px;
@@ -1413,6 +1452,13 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
      esta regla generaliza esa lógica sin tocar la de arriba (que sigue cubriendo las
      tablas .data-table que no usan .col-secondary). */
   .data-table tr td:not(.col-secondary, :has(~ td:not(.col-secondary))) { border-bottom: none; }
+
+  /* "Engrase del Turno" (renderTurno()) — mismas tarjetas apiladas de
+     arriba, solo un poco más compactas para ver más equipos por pantalla
+     sin ocultar ningún dato (Estado/Código/Equipo/Ubicación/Horómetro/
+     Último/Próximo/Restante) ni tocar el botón "Realizar engrase". */
+  .turno-table tr { margin-bottom: 8px; padding: 2px 10px; }
+  .turno-table td { padding: 5px 0; font-size: 12.5px; }
 }
 
 /* ---------------- Íconos reemplazados por el set real de Lucide (lucide.dev, código abierto) ----------------
@@ -1550,6 +1596,14 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
   margin-bottom: 6px; background: var(--surface-2); font-size: 13px;
+}
+/* Móvil: nombre/fecha en su propia línea, "Restaurar" debajo a todo el
+   ancho — antes el botón podía apretar/cortar nombres largos contra el
+   borde de la tarjeta. */
+@media (max-width: 600px) {
+  .trash-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .trash-row .trash-restore { width: 100%; }
+  .trash-block h4 { font-size: 12px; }
 }
 
 /* ---------------- Engrase atrasado (capturado retroactivamente) ----------------
@@ -1744,7 +1798,19 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 @media (max-width: 640px) {
   table.matriz th, table.matriz td { padding: 6px 7px; font-size: 11px; }
   .celda-hecho { font-size: 9px; }
-  .matriz-eq { font-size: 11px; }
+  .matriz-eq { font-size: 11px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+  /* Las celdas de estado ("NO REALIZADO", "PENDIENTE HOY"…) ya no fuerzan el
+     ancho de columna al de su palabra más larga en una sola línea — al
+     envolver en 2 líneas, cada columna de día puede ser bastante más
+     angosta, lo que reduce el ancho total de la tabla y con él el scroll
+     horizontal necesario (evita que un estado quede "cortado" a la mitad al
+     borde de la pantalla). La columna Equipo NUNCA envuelve (los códigos
+     deben leerse en una sola línea) — de ahí el :not(.matriz-eq). */
+  table.matriz td:not(.matriz-eq) { white-space: normal; overflow-wrap: break-word; line-height: 1.15; }
+}
+@media (max-width: 420px) {
+  table.matriz th, table.matriz td { padding: 5px 5px; font-size: 10px; }
+  .matriz-eq { font-size: 10px; max-width: 74px; }
 }
 @media (max-width: 600px) {
   /* Navegación compacta: "‹ 21–27 SEP ›" — se ocultan las etiquetas largas,
@@ -1895,6 +1961,13 @@ input[type="checkbox"], input[type="radio"] {
    Se normalizan los tamaños al sistema de escalas, respetando la intención original. */
 .kpi-value { font-size: var(--fs-xl); }
 .panel-head h3 { font-size: var(--fs-lg); }
+/* Móvil (pulido pre-cutover): ver el comentario junto a `.panel-head` más
+   arriba — títulos largos dominaban la pantalla en 390/412px. Declarada
+   aquí, después de la regla de arriba, para ganarle en cascada (misma
+   especificidad, misma convención ya usada en este archivo). */
+@media (max-width: 600px) {
+  .panel-head h3 { font-size: 23px; line-height: 1.15; }
+}
 .dim, .field-hint { font-size: var(--fs-sm); }
 .data-table th { font-size: var(--fs-xs); }
 .data-table td { font-size: var(--fs-base); }

@@ -4759,6 +4759,16 @@ async function renderMatrizSemanal() {
   $('#mtz-tipo').addEventListener('change', e => { App.matrizTipo = e.target.value; renderMatrizSemanal(); });
   $('#mtz-ubic').addEventListener('change', e => { App.matrizUbic = e.target.value; renderMatrizSemanal(); });
 
+  // Al entrar (o cambiar de semana/filtro), desliza cada tabla hasta la
+  // columna HOY si está dentro de la semana mostrada — sin esto quedaba
+  // fuera de vista a la derecha del scroll horizontal en móvil, obligando a
+  // deslizar a ciegas para encontrarla. Nunca toca el layout de la tabla
+  // (sigue siendo tabla, sigue siendo scroll horizontal).
+  $$('.matriz-wrap').forEach((wrap) => {
+    const hoyTh = wrap.querySelector('th.is-today');
+    if (hoyTh) hoyTh.scrollIntoView({ block: 'nearest', inline: 'center' });
+  });
+
   $('#mtz-print').addEventListener('click', () => {
     const win = window.open('', '_blank');
     if (!win) { alert('El navegador bloqueó la ventana de impresión. Permite las ventanas emergentes e intenta de nuevo.'); return; }
@@ -4940,7 +4950,7 @@ async function renderTurno() {
         <h3>Plan de engrase del turno — ${shift === 'shift_dia' ? 'Día' : 'Noche'}</h3>
         <span class="pill">${equiposTurno.length} equipos</span>
       </div>
-      <table class="data-table">
+      <table class="data-table turno-table">
         <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Ubicación</th><th>Horómetro</th><th>Último</th><th>Próximo</th><th>Restante</th><th></th></tr></thead>
         <tbody>
           ${statuses.map(({ e, s }) => `
@@ -8954,7 +8964,8 @@ async function renderConfig() {
     <div class="panel">
       <div class="panel-head"><h3>Notificaciones push (llegan aunque la app esté cerrada)</h3></div>
       <div style="padding:14px">
-        <p class="dim">Usan OneSignal (más simple que conectar Firebase a mano — ver GUIA_NOTIFICACIONES_PUSH.md). Necesitas pegar tu "App ID" de OneSignal en el código antes de que esto funcione.</p>
+        ${ONESIGNAL_APP_ID ? `
+        <p class="dim">Recibe avisos aunque tengas la app cerrada.</p>
         <div id="push-status" class="dim" style="margin-bottom:10px">
           ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
             ? 'Este dispositivo puede recibir notificaciones aunque la app esté cerrada.'
@@ -8963,6 +8974,11 @@ async function renderConfig() {
         ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
           ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
         <div id="push-tokens-list" style="margin-top:14px"></div>
+        ` : `
+        <p class="dim"><b>Notificaciones push no configuradas</b></p>
+        <p class="dim">Esta función todavía no está disponible.</p>
+        <button class="btn" disabled>Activar en este dispositivo</button>
+        `}
       </div>
     </div>
     <div class="panel">
@@ -9109,20 +9125,24 @@ async function renderConfig() {
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
   $('#btn-enable-push')?.addEventListener('click', async () => {
-    if (!ONESIGNAL_APP_ID) { alert('Falta pegar el App ID de OneSignal en el código (ver GUIA_NOTIFICACIONES_PUSH.md). Sin eso las notificaciones no pueden activarse.'); return; }
     if (!confirm('Se te va a pedir permiso para mostrar notificaciones. ¿Continuar?')) return;
     await initPushNotifications();
     alert('Listo. Si OneSignal está bien configurado, este dispositivo debería aparecer en la lista de abajo en unos segundos (puede que tengas que volver a entrar a esta pantalla).');
     renderConfig();
   });
 
-  const pushTokens = (await DB.allActive('push_tokens'));
-  $('#push-tokens-list').innerHTML = pushTokens.length ? `
-    <table class="data-table">
-      <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th></tr></thead>
-      <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
-    </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
-  makeTablesResponsive($('#push-tokens-list'));
+  // Solo existe cuando ONESIGNAL_APP_ID está configurado (ver markup arriba)
+  // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
+  const pushTokensListEl = $('#push-tokens-list');
+  if (pushTokensListEl) {
+    const pushTokens = (await DB.allActive('push_tokens'));
+    pushTokensListEl.innerHTML = pushTokens.length ? `
+      <table class="data-table">
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th></tr></thead>
+        <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
+      </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
+    makeTablesResponsive($('#push-tokens-list'));
+  }
   // UI-FULL-103: navigate() ya aplica makeTablesResponsive() en la primera entrada a
   // Configuración, pero renderConfig() se vuelve a llamar directamente (sin pasar por
   // navigate()) después de casi cualquier acción de esta pantalla (guardar ajustes,
