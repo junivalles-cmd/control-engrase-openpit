@@ -77,15 +77,21 @@ create policy "app_profiles: leer el propio perfil"
 -- Usuarios). No se combina con la policy anterior — Postgres evalúa todas
 -- las policies del mismo comando por OR, así que un admin sigue pudiendo
 -- leer también su propio perfil por la policy de arriba.
+--
+-- CORRECCIÓN (2026-09-26, encontrado y corregido en producción al probar
+-- RLS real para Junior Valles, ver docs/PROD_PRECUTOVER_AUTH_2026-09-26.md
+-- y 0002_auth_profiles_rls_PREPARED.sql): la versión original de esta
+-- policy (y de las 2 siguientes) usaba `EXISTS (SELECT 1 FROM
+-- app_profiles me WHERE ...)` — una subconsulta CRUDA contra la misma
+-- tabla, que dispara RLS sobre app_profiles otra vez al evaluarla, que
+-- vuelve a evaluar esta misma policy → infinite recursion (42P17) para
+-- CUALQUIER acceso autenticado real. current_app_role()/
+-- current_app_active() existen justo para evitar esto (SECURITY
+-- DEFINER, bypasean RLS) — corregido para usarlas también aquí.
 drop policy if exists "app_profiles: admin lee todos" on app_profiles;
 create policy "app_profiles: admin lee todos"
   on app_profiles for select
-  using (
-    exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
-  );
+  using (current_app_role() = 'ADMINISTRADOR' and current_app_active());
 
 -- INSERT: reservado para el flujo de alta de usuarios (Etapa B/D del
 -- rollout) — por ahora, solo un ADMINISTRADOR activo puede crear un
@@ -94,12 +100,7 @@ create policy "app_profiles: admin lee todos"
 drop policy if exists "app_profiles: admin crea perfiles" on app_profiles;
 create policy "app_profiles: admin crea perfiles"
   on app_profiles for insert
-  with check (
-    exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
-  );
+  with check (current_app_role() = 'ADMINISTRADOR' and current_app_active());
 
 -- UPDATE: la regla central de la Sección 8 del pedido —
 --   - NADIE (ni un admin) puede modificar su PROPIA fila en role/active.
@@ -115,10 +116,7 @@ create policy "app_profiles: admin edita otros"
   on app_profiles for update
   using (
     auth.uid() <> auth_user_id
-    and exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
+    and current_app_role() = 'ADMINISTRADOR' and current_app_active()
   )
   with check (
     auth.uid() <> auth_user_id

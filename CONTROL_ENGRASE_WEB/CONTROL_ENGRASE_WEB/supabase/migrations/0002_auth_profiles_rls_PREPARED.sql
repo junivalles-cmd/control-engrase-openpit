@@ -64,27 +64,30 @@ create policy "app_profiles: leer el propio perfil"
   using (auth.uid() = auth_user_id);
 
 -- Solo un ADMINISTRADOR activo puede leer perfiles de OTROS.
+--
+-- CORRECCIÓN (2026-09-26, verificado en producción al probar RLS real
+-- para Junior Valles): la versión original de esta policy (y de las 2
+-- siguientes) usaba `EXISTS (SELECT 1 FROM app_profiles me WHERE ...)`
+-- — una subconsulta CRUDA contra la misma tabla. Eso dispara RLS sobre
+-- app_profiles de nuevo al evaluar la subconsulta, que vuelve a evaluar
+-- esta misma policy → "ERROR 42P17: infinite recursion detected in
+-- policy for relation app_profiles" para CUALQUIER acceso autenticado
+-- real (incluso leyendo el propio perfil, porque Postgres evalúa TODAS
+-- las policies permisivas del comando, no solo la que matchea). Las
+-- funciones current_app_role()/current_app_active() existen exactamente
+-- para evitar esto (SECURITY DEFINER, bypasean RLS al ejecutarse con el
+-- owner) — el error fue no usarlas también aquí. Corregido para usarlas.
 drop policy if exists "app_profiles: admin lee todos" on app_profiles;
 create policy "app_profiles: admin lee todos"
   on app_profiles for select
-  using (
-    exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
-  );
+  using (current_app_role() = 'ADMINISTRADOR' and current_app_active());
 
 -- INSERT: solo un ADMINISTRADOR activo puede crear un perfil (alta de
 -- personas reales, mecanismo server-side futuro — ver §11 del plan).
 drop policy if exists "app_profiles: admin crea perfiles" on app_profiles;
 create policy "app_profiles: admin crea perfiles"
   on app_profiles for insert
-  with check (
-    exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
-  );
+  with check (current_app_role() = 'ADMINISTRADOR' and current_app_active());
 
 -- UPDATE: NADIE (ni un admin) puede modificar su PROPIA fila — evita
 -- auto-ascenso y auto-sabotaje. Un ADMINISTRADOR activo sí puede
@@ -95,10 +98,7 @@ create policy "app_profiles: admin edita otros"
   on app_profiles for update
   using (
     auth.uid() <> auth_user_id
-    and exists (
-      select 1 from app_profiles me
-      where me.auth_user_id = auth.uid() and me.role = 'ADMINISTRADOR' and me.active
-    )
+    and current_app_role() = 'ADMINISTRADOR' and current_app_active()
   )
   with check (
     auth.uid() <> auth_user_id
