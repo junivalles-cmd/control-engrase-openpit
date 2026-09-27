@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v36'; // v36: activación oficial del rollout de validación de engrase — GREASE_VALIDATION_ENABLED_FROM pasa de null al inicio del próximo Turno Día (2026-09-27T12:00:00.000Z) — src/core/grease-validation.js; misma razón que v27-v35 para subir versión (stale-first).
+const CACHE = 'engrase-openpit-v37'; // v37: SYNC-CONCURRENCY-001 — pushAll()/pullAll() reescritos en sync.js (CAS atómico contra sobrescrituras concurrentes) y nuevos métodos de conflicto en db.js; ambos ya estaban en v36 (activación del rollout de validación), pero cambiaron DE NUEVO después de esa versión — sync.js/db.js siguen precacheados por nombre exacto (ver ASSETS abajo), así que hace falta subir la versión para que los dispositivos no sigan sirviendo el sync.js/db.js viejos desde caché (stale-first, misma razón que v27-v36).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

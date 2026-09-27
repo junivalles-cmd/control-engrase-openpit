@@ -133,13 +133,21 @@ export function loadPlanComplianceLogic() {
 }
 
 export const SYNC_JS_PATH = path.join(SRC_ROOT, 'sync.js');
-const SYNC_SOURCES = [[SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'Sync']]];
+const SYNC_SOURCES = [
+  [DB_JS_PATH, ['nowISO']],
+  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'Sync']],
+];
 
 /**
  * Devuelve el objeto Sync REAL de sync.js (pushAll/pullAll/
- * uploadPhotoIfNeeded/uploadSignatureIfNeeded/etc.), ligado a un `DB` y un
- * `STORES` de prueba (Sync los lee como globales, igual que en el navegador
- * — aquí se pasan como parámetros de la función que ejecuta el código real).
+ * uploadPhotoIfNeeded/uploadSignatureIfNeeded/fetchRemoteUpdatedAt/etc.,
+ * incluyendo el CAS atómico de pushAll: INSERT ignore-duplicates para
+ * filas nuevas, PATCH condicionado a `_pushedVersion` para el resto),
+ * ligado a un `DB` y un `STORES` de prueba (Sync los lee como globales,
+ * igual que en el navegador — aquí se pasan como parámetros de la función
+ * que ejecuta el código real). `nowISO` se extrae de db.js porque sync.js
+ * lo usa como global compartido (mismo scope de <script> en el navegador,
+ * db.js carga antes que sync.js — ver index.html).
  */
 export function loadSyncLogic(fakeDB, fakeStores) {
   const body = buildBodyFromSources(SYNC_SOURCES);

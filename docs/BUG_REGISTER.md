@@ -608,3 +608,81 @@
   pull histórico completo (equipment:11, lubrication_points:1031,
   lubrication_plans:7, users:7 — coincide con los totales reales) → **0
   intentos de escritura**.
+
+## SYNC-CONCURRENCY-001 — `pushAll()` podía sobrescribir en silencio un cambio concurrente de otro dispositivo
+
+- **Fecha:** 2026-09-26
+- **Prioridad:** P0 (pérdida/sobrescritura silenciosa de datos entre
+  dispositivos — no rompe ni depende del fix de `SYNC-PULL-ECHO-001`, es un
+  riesgo distinto sobre las mismas funciones)
+- **Estado:** CORREGIDO — PROBADO AUTOMÁTICAMENTE (unit completo 504/504,
+  incluye `tests/unit/sync-multidevice.test.js` con el caso de carrera real
+  A/B; Playwright completo 1393/1393; `npm run build:web` y
+  `npm run verify:dist` OK)
+- **Antes:** `pushAll()` hacía upsert remoto (`POST
+  ?on_conflict=store,id`, `Prefer: resolution=merge-duplicates`) sin
+  comprobar si el servidor ya tenía una versión más nueva que la base
+  conocida por el dispositivo. `pullAll()` tampoco distinguía si había un
+  cambio local sin confirmar antes de sobrescribir con lo que llegaba del
+  servidor. En ambos casos, el primer dispositivo en sincronizar ganaba en
+  silencio (last-writer-wins ciego), sin importar si el otro dispositivo
+  también había cambiado el mismo registro desde la misma base.
+- **Intento intermedio insuficiente:** una primera corrección agregó un GET
+  de la versión remota antes del upsert (`checkPushAllowed()`). Eso deja una
+  ventana real entre leer y escribir: dos dispositivos pueden leer la misma
+  base casi al mismo tiempo, los dos recibir luz verde, y el segundo en
+  escribir pisa al primero de todos modos — GET+UPSERT nunca es una
+  garantía de concurrencia. Se descartó antes de llegar a producción.
+- **Fix (optimistic concurrency, sin cambiar schema de `engrase_sync`):**
+  - **UPDATE** (fila con base remota conocida, `_pushedVersion` definido):
+    un solo `PATCH .../engrase_sync?store=eq.<store>&id=eq.<id>&updated_at=eq.<_pushedVersion>`
+    con `Prefer: return=representation` — Postgres compara el `WHERE` y
+    escribe en la MISMA sentencia; si el servidor ya se movió desde esa
+    base, el `WHERE` no matchea ninguna fila (0 filas devueltas) y
+    PostgREST lo confirma sin ambigüedad. Nunca se reintenta como upsert
+    ciego.
+  - **CREATE** (fila nunca antes confirmada por el servidor,
+    `_pushedVersion` indefinido): `POST ?on_conflict=store,id` con
+    `Prefer: resolution=ignore-duplicates,return=representation` —
+    protegido por la PK real `(store, id)`. Si otro dispositivo ya creó el
+    mismo id, esa fila queda afuera de la respuesta y nunca se convierte en
+    overwrite.
+  - **Soft-delete:** usa el mismo CAS que un UPDATE normal — `deleted` es
+    solo otro campo cubierto por la misma condición `updated_at=eq.<base>`,
+    sin caso especial.
+  - **Pull:** `decidePullAction()` distingue ACCEPT (local sin cambios
+    pendientes) / KEEP_LOCAL (local pendiente y remoto sigue en la base
+    conocida) / CONFLICT (los dos lados cambiaron desde la misma base) —
+    nunca sobrescribe un cambio local pendiente a ciegas.
+  - **Conflictos:** se registran como metadata local mínima (`store`, `id`,
+    `localVersion`, `remoteVersion`, `detectedAt` — nunca firmas/fotos/
+    base64) en `app_config` (clave `sync_conflicts`), el mismo patrón ya
+    usado para la config de sync. `app_config` está en `LOCAL_STORES`, no
+    en `STORES`, así que `sync_conflicts` **nunca viaja por
+    pushAll()/pullAll()** — es puramente local, confirmado por prueba
+    dedicada.
+  - `grease_validations` (2+ firmas activas = conflicto funcional, ver
+    `docs/GREASE_VALIDATION_AUDIT.md`) y `signatureLocal`/`signatureUrl` no
+    se tocaron — el CAS es genérico por fila, sin excepciones por store.
+- **Pruebas:** `tests/unit/sync-multidevice.test.js` — reglas puras de
+  pull (`isRowDirty`/`decidePullAction`) más escenarios A–L de extremo a
+  extremo contra un servidor falso en memoria (DB y red 100% mockeadas,
+  nunca contra producción): A y B en sincronización normal, conflicto de
+  edición concurrente, aceptar remoto sin cambios propios, push permitido
+  con base intacta, conflicto de soft-delete en ambas direcciones, creación
+  de ids distintos, creación del MISMO id por dos dispositivos (conflicto,
+  nunca overwrite), 0 escrituras sin cambios, paginación 2500+ filas
+  mezclada con una fila local pendiente, `grease_validations` con firma
+  intacta en conflicto, y una carrera real (`Promise.all` de dos
+  `pushAll()` simultáneos sobre la misma base): exactamente uno gana,
+  el otro recibe conflicto atómico, el servidor nunca queda en un estado
+  pisado ni mixto.
+- **Archivos:** `sync.js` (CAS + eliminación de `checkPushAllowed`), `db.js`
+  (`getSyncConflicts`/`recordConflicts`/`clearSyncConflict`), `sw.js`
+  (`CACHE` v36→v37, `sync.js`/`db.js` ya estaban en `ASSETS`),
+  `tests/unit/sync-multidevice.test.js` (nuevo),
+  `tests/unit/sync-pull-push.test.js` y
+  `tests/unit/grease-validation-persistence.test.js` (fakes de red
+  actualizados al nuevo mecanismo PATCH/POST atómico),
+  `tests/helpers/loadLubricationLogic.js` (extracción de las nuevas
+  funciones puras).

@@ -18,6 +18,72 @@ function dataURLtoBlob(dataURL) {
   return new Blob([bytes], { type: mime });
 }
 
+/* ============================================================
+   RESOLUCIÓN SEGURA DE CONFLICTOS MULTIDISPOSITIVO (P0-1)
+   ============================================================
+   No hay columna `version` en engrase_sync (ver schema.sql) ni en los
+   registros locales — lo único confiable para saber "¿coinciden todavía
+   local y remoto?" es comparar updatedAt/updated_at contra `_pushedVersion`
+   (la última versión que este dispositivo confirmó que el SERVIDOR tiene).
+   `_pushedVersion` hace doble función a propósito, y es la base de todo lo
+   de abajo:
+     - lo pone pushAll() al confirmar una subida (ya documentado, fix
+       original de _pushedVersion).
+     - lo pone pullAll() al ACEPTAR una fila remota (ver decidePullAction) —
+       es decir, también es "la última versión en que este dispositivo y el
+       servidor estuvieron de acuerdo" (la BASE para detectar conflictos).
+   Fila "dirty" (cambio local sin confirmar por el servidor) sigue siendo
+   exactamente la misma comparación que ya usaba pushAll():
+   `_pushedVersion !== updatedAt`. `createdAt` no participa en nada de esto
+   (no es una versión, es un dato del registro); `active`/`deleted` tampoco
+   son un caso especial — son un campo más cubierto por `updatedAt`, igual
+   que cualquier otro cambio. */
+
+// ¿Esta fila local tiene un cambio SIN confirmar por el servidor?
+function isRowDirty(localRow) {
+  return !!localRow && localRow._pushedVersion !== localRow.updatedAt;
+}
+
+// Qué hacer con UNA fila que llega del servidor en pullAll(), sin tocar DB
+// ni red — solo mirando el estado local ya conocido:
+//   - local SIN cambios pendientes -> ACCEPT (comportamiento de siempre:
+//     guardar lo que trae el servidor, es la fuente de verdad).
+//   - local con cambio pendiente Y remote sigue exactamente en la base que
+//     ese cambio local conocía (localRow._pushedVersion) -> KEEP_LOCAL: no
+//     pisar nada, el cambio local todavía puede subirse después con
+//     pushAll() sin pisar a nadie.
+//   - local con cambio pendiente Y remote se movió desde esa base (otro
+//     dispositivo cambió el mismo registro después de la última vez que
+//     este dispositivo estuvo de acuerdo con el servidor) -> CONFLICT real:
+//     los dos lados cambiaron desde la misma base, ninguno gana en
+//     silencio (NO es LWW ciego).
+function decidePullAction(localRow, remoteUpdatedAt) {
+  if (!isRowDirty(localRow)) return { action: 'ACCEPT' };
+  if (localRow._pushedVersion === remoteUpdatedAt) return { action: 'KEEP_LOCAL' };
+  return { action: 'CONFLICT', localVersion: localRow.updatedAt, remoteVersion: remoteUpdatedAt };
+}
+
+// P0-1 (endurecimiento): la primera versión de este archivo comprobaba la
+// versión remota con un GET separado ANTES del upsert (checkPushAllowed(),
+// ya eliminada) — eso deja una ventana real entre "leer" y "escribir": dos
+// dispositivos pueden leer T0, los dos ver luz verde, y el segundo en
+// escribir pisa al primero de todos modos. GET+UPSERT nunca es una garantía
+// de concurrencia, sin importar qué tan rápido se haga la comprobación.
+// pushAll() ya NO comprueba y después escribe: hace UNA sola operación
+// atómica por fila (ver más abajo):
+//   - fila nueva (_pushedVersion undefined, nunca confirmada por el
+//     servidor) -> INSERT protegido por la PK real (store, id) con
+//     `Prefer: resolution=ignore-duplicates` — si otro dispositivo ya creó
+//     ese mismo id, esta fila queda afuera de la respuesta y nunca lo pisa.
+//   - fila con base conocida (_pushedVersion definido) -> UPDATE (PATCH)
+//     condicionado con `updated_at=eq.<_pushedVersion>` en el WHERE — la
+//     misma sentencia SQL compara y escribe: si el servidor ya se movió
+//     desde esa base, la condición no matchea NINGUNA fila (0 filas
+//     afectadas) y PostgREST lo confirma en la respuesta, sin ambigüedad.
+// Ambas usan columnas/constraints que YA existen en engrase_sync (ver
+// schema.sql: `primary key (store, id)`, columna `updated_at` filtrable) —
+// no hizo falta ningún cambio de schema para lograr esto.
+
 const Sync = {
   syncing: false,
   listeners: [],
@@ -166,11 +232,32 @@ const Sync = {
     }
   },
 
+  // SOLO para completar la metadata de un conflicto YA DETECTADO de forma
+  // atómica (ver pushAll) — nunca se usa para DECIDIR si se puede escribir,
+  // así que no reintroduce la ventana de carrera del GET+UPSERT original.
+  // Si esta consulta falla, el conflicto igual queda registrado (con
+  // remoteVersion en null) — nunca bloquea el resultado por un problema al
+  // buscar el dato de diagnóstico.
+  async fetchRemoteUpdatedAt(store, id, cfg) {
+    try {
+      const resp = await fetch(
+        `${cfg.url}/rest/v1/engrase_sync?select=updated_at&store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(id)}`,
+        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+      );
+      if (!resp.ok) return null;
+      const rows = await resp.json();
+      return rows.length ? rows[0].updated_at : null;
+    } catch (e) {
+      return null;
+    }
+  },
+
   async pushAll() {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
     let pushed = 0;
     const errors = [];
+    const conflicts = [];
 
     for (const store of STORES) {
       try {
@@ -184,32 +271,87 @@ const Sync = {
         const toPush = rows.filter(r => r._pushedVersion !== r.updatedAt);
         if (!toPush.length) continue;
 
-        const preparedRows = [];
-        for (const r of toPush) {
-          let prepared = await this.uploadPhotoIfNeeded(store, r, cfg);
-          prepared = await this.uploadSignatureIfNeeded(store, prepared, cfg);
-          preparedRows.push(prepared);
+        // CREATE: nunca antes confirmadas por el servidor. INSERT protegido
+        // por la PK real (store,id) con ignore-duplicates — atómico: si otro
+        // dispositivo ya creó el mismo id, esa fila queda afuera de la
+        // respuesta y jamás se convierte en overwrite.
+        const newRows = toPush.filter(r => r._pushedVersion === undefined);
+        // UPDATE (incluye soft-delete): ya tienen una base remota conocida.
+        // CAS atómico vía PATCH condicionado a esa base exacta.
+        const updateRows = toPush.filter(r => r._pushedVersion !== undefined);
+
+        if (newRows.length) {
+          const prepared = [];
+          for (const r of newRows) {
+            let p = await this.uploadPhotoIfNeeded(store, r, cfg);
+            p = await this.uploadSignatureIfNeeded(store, p, cfg);
+            prepared.push(p);
+          }
+          const body = prepared.map(r => ({
+            store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
+          }));
+          const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: cfg.anonKey,
+              Authorization: `Bearer ${cfg.anonKey}`,
+              // ignore-duplicates (NO merge-duplicates): si el id ya existe en
+              // el servidor, esa fila se omite de la respuesta en vez de
+              // pisarla — así se puede distinguir "se creó" de "ya existía
+              // (conflicto de creación)" leyendo qué ids vinieron de vuelta.
+              Prefer: 'resolution=ignore-duplicates,return=representation'
+            },
+            body: JSON.stringify(body)
+          });
+          if (!resp.ok) throw new Error(`${resp.status}`);
+          const insertedIds = new Set((await resp.json()).map(r => r.id));
+          for (const r of newRows) {
+            if (insertedIds.has(r.id)) {
+              r._pushedVersion = r.updatedAt;
+              await DB.put(store, r);
+              pushed++;
+            } else {
+              const remoteVersion = await this.fetchRemoteUpdatedAt(store, r.id, cfg);
+              conflicts.push({ store, id: r.id, localVersion: r.updatedAt, remoteVersion, detectedAt: nowISO() });
+            }
+          }
         }
 
-        const body = preparedRows.map(r => ({
-          store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
-        }));
-        const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: cfg.anonKey,
-            Authorization: `Bearer ${cfg.anonKey}`,
-            Prefer: 'resolution=merge-duplicates,return=minimal'
-          },
-          body: JSON.stringify(body)
-        });
-        if (!resp.ok) throw new Error(`${resp.status}`);
-        pushed += toPush.length;
-        // Confirma cada registro por separado — solo AHORA que el servidor lo aceptó.
-        for (const r of toPush) {
-          r._pushedVersion = r.updatedAt;
-          await DB.put(store, r);
+        for (const r of updateRows) {
+          let prepared = await this.uploadPhotoIfNeeded(store, r, cfg);
+          prepared = await this.uploadSignatureIfNeeded(store, prepared, cfg);
+          // UNA sola sentencia UPDATE con el WHERE incluyendo la base
+          // esperada (updated_at=eq.<_pushedVersion>) — Postgres evalúa la
+          // condición y escribe en la MISMA operación atómica: no hay
+          // ventana entre "leer" y "escribir" donde otro dispositivo pueda
+          // meterse (a diferencia de un GET seguido de un POST separado).
+          const resp = await fetch(
+            `${cfg.url}/rest/v1/engrase_sync?store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(r.id)}&updated_at=eq.${encodeURIComponent(r._pushedVersion)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                apikey: cfg.anonKey,
+                Authorization: `Bearer ${cfg.anonKey}`,
+                Prefer: 'return=representation'
+              },
+              body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
+            }
+          );
+          if (!resp.ok) throw new Error(`${resp.status}`);
+          const updatedRows = await resp.json();
+          if (updatedRows.length === 1) {
+            r._pushedVersion = r.updatedAt;
+            await DB.put(store, r);
+            pushed++;
+          } else {
+            // 0 filas afectadas: el WHERE no matcheó porque el servidor ya
+            // no está en la base esperada — NUNCA se reintenta como upsert
+            // ciego, se marca conflicto y la fila local sigue pendiente.
+            const remoteVersion = await this.fetchRemoteUpdatedAt(store, r.id, cfg);
+            conflicts.push({ store, id: r.id, localVersion: r.updatedAt, remoteVersion, detectedAt: nowISO() });
+          }
         }
       } catch (err) {
         // Un problema en UN store (ej. una foto que no subió, un error de red puntual) ya
@@ -218,7 +360,8 @@ const Sync = {
         errors.push(store);
       }
     }
-    return { ok: errors.length === 0, pushed, errors };
+    if (conflicts.length) await DB.recordConflicts(conflicts);
+    return { ok: errors.length === 0, pushed, errors, conflicts: conflicts.length };
   },
 
   async pullAll() {
@@ -252,11 +395,30 @@ const Sync = {
 
     let maxUpdated = since;
     const newAnomalies = [];
+    const conflicts = [];
     for (const row of rows) {
       if (!STORES.includes(row.store)) continue;
       const rec = row.payload;
       rec.active = !row.deleted;
       const existing = await DB.get(row.store, rec.id).catch(() => null);
+
+      // P0-1: si este dispositivo tiene un cambio local SIN confirmar por el
+      // servidor para este mismo id, NO lo pisamos a ciegas con lo que llega
+      // acá — antes cualquier fila remota se guardaba siempre, sin mirar si
+      // había un cambio local pendiente (ese era el riesgo exacto de esta
+      // tarea). decidePullAction() decide ACCEPT/KEEP_LOCAL/CONFLICT (ver
+      // arriba); el cursor (maxUpdated) SIEMPRE avanza con lo que ya vimos,
+      // aunque no lo hayamos aplicado localmente — así la próxima
+      // sincronización no vuelve a traer la misma fila en un loop.
+      const decision = decidePullAction(existing, row.updated_at);
+      if (decision.action !== 'ACCEPT') {
+        if (decision.action === 'CONFLICT') {
+          conflicts.push({ store: row.store, id: rec.id, localVersion: decision.localVersion, remoteVersion: decision.remoteVersion, detectedAt: nowISO() });
+        }
+        if (row.updated_at > maxUpdated) maxUpdated = row.updated_at;
+        continue; // KEEP_LOCAL o CONFLICT: el cambio local pendiente queda intacto
+      }
+
       // Si ya tenemos localmente las fotos completas (base64, funcionan sin internet) y lo
       // que llega del servidor son solo links (porque este mismo dispositivo ya las subió),
       // NO las reemplazamos — conservamos las copias completas para verlas sin conexión.
@@ -292,7 +454,8 @@ const Sync = {
     }
     cfg.lastPull = maxUpdated;
     await DB.setConfig(cfg);
-    return { ok: true, pulled: rows.length, newAnomalies };
+    if (conflicts.length) await DB.recordConflicts(conflicts);
+    return { ok: true, pulled: rows.length, newAnomalies, conflicts: conflicts.length };
   },
 
   async fullSync() {
@@ -321,7 +484,8 @@ const Sync = {
       this.notify({
         status: hasErrors ? 'partial' : 'ok',
         pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0,
-        errors: pushRes.errors || [], newAnomalies: pullRes.newAnomalies || [], at: nowISO()
+        errors: pushRes.errors || [], newAnomalies: pullRes.newAnomalies || [],
+        conflicts: (pushRes.conflicts || 0) + (pullRes.conflicts || 0), at: nowISO()
       });
     } catch (err) {
       console.error('Sync error', err);

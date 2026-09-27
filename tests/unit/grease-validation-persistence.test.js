@@ -131,7 +131,15 @@ describe('Sync.pushAll() — payload exacto que llega a engrase_sync para grease
     let posted = null;
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
       if (String(url).includes('/storage/v1/object/')) return { ok: true };
-      if (String(url).includes('/rest/v1/engrase_sync')) { posted = JSON.parse(opts.body); return { ok: true }; }
+      if (String(url).includes('/rest/v1/engrase_sync')) {
+        // val_1 nunca tuvo _pushedVersion -> pushAll la trata como CREATE:
+        // INSERT con ignore-duplicates+return=representation. Como el
+        // servidor fake no tiene nada todavía, se "inserta" y se devuelve.
+        const method = (opts && opts.method || 'GET').toUpperCase();
+        if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
+        posted = JSON.parse(opts.body);
+        return { ok: true, json: async () => posted.map(r => ({ id: r.id })) };
+      }
       throw new Error('unexpected fetch: ' + url);
     }));
 
@@ -155,7 +163,12 @@ describe('Sync.pushAll() — payload exacto que llega a engrase_sync para grease
 
     let posted = null;
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
-      if (String(url).includes('/rest/v1/engrase_sync')) { posted = JSON.parse(opts.body); return { ok: true }; }
+      if (String(url).includes('/rest/v1/engrase_sync')) {
+        const method = (opts && opts.method || 'GET').toUpperCase();
+        if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
+        posted = JSON.parse(opts.body);
+        return { ok: true, json: async () => posted.map(r => ({ id: r.id })) };
+      }
       throw new Error('unexpected fetch: ' + url);
     }));
 
@@ -171,7 +184,12 @@ describe('Sync.pushAll() — payload exacto que llega a engrase_sync para grease
     const db = makeFakeDB({ grease_validations: [validation] });
     db.getConfig = async () => CFG;
     const { Sync } = loadSyncLogic(db, ['grease_validations']);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method || 'GET').toUpperCase();
+      if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
+      const body = JSON.parse(opts.body);
+      return { ok: true, json: async () => body.map(r => ({ id: r.id })) };
+    }));
 
     await Sync.pushAll();
     const stored = await db.get('grease_validations', 'val_1');

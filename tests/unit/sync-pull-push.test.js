@@ -41,31 +41,67 @@ function makeFakeDB() {
 // "Servidor" en memoria: misma forma que la tabla real engrase_sync
 // (store, id, payload, updated_at, deleted), y el mismo comportamiento de
 // paginación (tope duro de PAGE_SIZE filas por página, como Supabase real).
+//
+// P0-1 (endurecimiento CAS): pushAll() ya NO hace GET+POST — hace UNA
+// operación atómica por fila. Este fake modela las 2 formas reales que usa:
+//   - POST .../engrase_sync?on_conflict=store,id con
+//     Prefer: resolution=ignore-duplicates,return=representation -> INSERT
+//     protegido por la PK real (store,id): filas nuevas se insertan y se
+//     devuelven, una fila cuyo id YA existe se omite de la respuesta (nunca
+//     la pisa).
+//   - PATCH .../engrase_sync?store=eq.X&id=eq.Y&updated_at=eq.<base> con
+//     Prefer: return=representation -> UPDATE condicionado: si el WHERE no
+//     matchea (el updated_at remoto ya cambió), devuelve 0 filas.
 function makeFakeRemote(pageSizeCap = 1000) {
   let rows = [];
   const sortKey = r => `${r.updated_at}|${r.store}|${r.id}`;
   const post = vi.fn();
+  const patch = vi.fn();
   async function handleFetch(url, init = {}) {
     const u = new URL(url);
     const method = (init.method || 'GET').toUpperCase();
     if (method === 'GET') {
+      const storeEq = u.searchParams.get('store');
+      const idEq = u.searchParams.get('id');
+      if (storeEq && idEq && idEq.startsWith('eq.')) {
+        // Diagnóstico puntual (fetchRemoteUpdatedAt) — nunca decide nada,
+        // solo completa metadata de un conflicto ya detectado atómicamente.
+        const storeVal = storeEq.replace(/^eq\./, '');
+        const idVal = idEq.replace(/^eq\./, '');
+        const match = rows.find(r => r.store === storeVal && r.id === idVal);
+        const result = match ? [{ updated_at: match.updated_at }] : [];
+        return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(result)) };
+      }
       const sinceParam = u.searchParams.get('updated_at') || 'gt.1970-01-01T00:00:00.000Z';
       const since = sinceParam.replace(/^gt\./, '');
       const limit = parseInt(u.searchParams.get('limit') || '1000', 10);
       const offset = parseInt(u.searchParams.get('offset') || '0', 10);
       const filtered = rows.filter(r => r.updated_at > since).sort((a, b) => sortKey(a) < sortKey(b) ? -1 : 1);
       const page = filtered.slice(offset, offset + Math.min(limit, pageSizeCap));
-      return { ok: true, status: 200, json: async () => page };
+      return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(page)) };
     }
     if (method === 'POST') {
       post(url, init);
       const body = JSON.parse(init.body);
+      const inserted = [];
       body.forEach(item => {
-        const idx = rows.findIndex(r => r.store === item.store && r.id === item.id);
+        const exists = rows.some(r => r.store === item.store && r.id === item.id);
+        if (exists) return; // ignore-duplicates: nunca pisa una fila que ya existe
         const entry = { store: item.store, id: item.id, payload: item.payload, updated_at: item.updated_at, deleted: item.deleted };
-        if (idx >= 0) rows[idx] = entry; else rows.push(entry);
+        rows.push(entry);
+        inserted.push(entry);
       });
-      return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(inserted)) };
+    }
+    if (method === 'PATCH') {
+      patch(url, init);
+      const storeVal = (u.searchParams.get('store') || '').replace(/^eq\./, '');
+      const idVal = (u.searchParams.get('id') || '').replace(/^eq\./, '');
+      const expected = (u.searchParams.get('updated_at') || '').replace(/^eq\./, '');
+      const idx = rows.findIndex(r => r.store === storeVal && r.id === idVal && r.updated_at === expected);
+      if (idx === -1) return { ok: true, status: 200, json: async () => [] }; // CAS falló: 0 filas
+      rows[idx] = { ...rows[idx], ...JSON.parse(init.body) };
+      return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify([rows[idx]])) };
     }
     throw new Error(`método no soportado en el remoto falso: ${method}`);
   }
@@ -73,7 +109,8 @@ function makeFakeRemote(pageSizeCap = 1000) {
     get rows() { return rows; },
     seed(list) { rows = rows.concat(list); },
     handleFetch,
-    postCalls: post
+    postCalls: post,
+    patchCalls: patch
   };
 }
 
@@ -156,7 +193,11 @@ describe('D) cambio local real después del pull', () => {
 
     const pushRes = await Sync.pushAll();
     expect(pushRes.pushed).toBe(1);
-    expect(remote.postCalls).toHaveBeenCalledTimes(1);
+    // s1 ya tenía _pushedVersion (viene de un pull previo) -> UPDATE vía
+    // PATCH condicionado, no POST (ese solo se usa para filas nunca antes
+    // confirmadas por el servidor).
+    expect(remote.patchCalls).toHaveBeenCalledTimes(1);
+    expect(remote.postCalls).not.toHaveBeenCalled();
     const remoteRow = remote.rows.find(r => r.store === 'shifts' && r.id === 's1');
     expect(remoteRow.payload.name).toBe('Turno Día (editado)');
 

@@ -113,6 +113,44 @@ const DB = {
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+
+  // Conflictos de sincronización multidispositivo (P0-1, ver sync.js
+  // decidePullAction/checkPushAllowed): mismo registro cambiado en este
+  // dispositivo Y en el servidor desde la última base en que ambos
+  // coincidían. Se guardan en app_config (mismo patrón ya usado para la
+  // config de sync: un blob bajo una key fija) — NO requiere un store
+  // nuevo ni subir DB_VERSION. Nunca se acumulan copias viejas: cada
+  // conflicto nuevo para el mismo store+id reemplaza al anterior (versión
+  // más reciente conocida), nunca se borra ninguna versión de datos real.
+  async getSyncConflicts() {
+    return new Promise((res, rej) => {
+      const r = tx('app_config').get('sync_conflicts');
+      r.onsuccess = () => res(r.result ? r.result.value : []);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  async recordConflicts(newConflicts) {
+    if (!newConflicts || !newConflicts.length) return;
+    const existing = await this.getSyncConflicts();
+    const byKey = new Map(existing.map(c => [`${c.store}:${c.id}`, c]));
+    for (const c of newConflicts) byKey.set(`${c.store}:${c.id}`, c);
+    return new Promise((res, rej) => {
+      const r = tx('app_config', 'readwrite').put({ key: 'sync_conflicts', value: Array.from(byKey.values()) });
+      r.onsuccess = () => res(true);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  // Se llama SOLO cuando un humano resuelve el conflicto a mano (fuera del
+  // alcance de esta tarea) — nunca automáticamente al sincronizar.
+  async clearSyncConflict(store, id) {
+    const existing = await this.getSyncConflicts();
+    const filtered = existing.filter(c => !(c.store === store && c.id === id));
+    return new Promise((res, rej) => {
+      const r = tx('app_config', 'readwrite').put({ key: 'sync_conflicts', value: filtered });
+      r.onsuccess = () => res(true);
+      r.onerror = (e) => rej(e.target.error);
+    });
   }
 };
 
