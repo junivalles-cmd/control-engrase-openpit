@@ -25,6 +25,10 @@
 <body>
 <div class="loading">Cargando Control de Engrase…</div>
 <script src="db.js"></script>
+<!-- src/core/auth.js va ANTES de sync.js: sync.js consulta Auth.getMode()/
+     Auth.isAuthenticated() (P0-2 Etapa B1, inerte mientras AUTH_MODE sea
+     'legacy' — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md). -->
+<script src="src/core/auth.js"></script>
 <script src="sync.js"></script>
 <!-- Núcleo de lógica extraído de app.js (turnos, horómetro, estado de
      engrase, criticidad de anomalías) — ver docs/MODULARIZATION.md.

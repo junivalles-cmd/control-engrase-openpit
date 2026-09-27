@@ -133,8 +133,10 @@ export function loadPlanComplianceLogic() {
 }
 
 export const SYNC_JS_PATH = path.join(SRC_ROOT, 'sync.js');
+export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
   [DB_JS_PATH, ['nowISO']],
+  [AUTH_JS_PATH, ['classifyAuthStatus']],
   [SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'Sync']],
 ];
 
@@ -142,17 +144,41 @@ const SYNC_SOURCES = [
  * Devuelve el objeto Sync REAL de sync.js (pushAll/pullAll/
  * uploadPhotoIfNeeded/uploadSignatureIfNeeded/fetchRemoteUpdatedAt/etc.,
  * incluyendo el CAS atómico de pushAll: INSERT ignore-duplicates para
- * filas nuevas, PATCH condicionado a `_pushedVersion` para el resto),
- * ligado a un `DB` y un `STORES` de prueba (Sync los lee como globales,
- * igual que en el navegador — aquí se pasan como parámetros de la función
- * que ejecuta el código real). `nowISO` se extrae de db.js porque sync.js
- * lo usa como global compartido (mismo scope de <script> en el navegador,
- * db.js carga antes que sync.js — ver index.html).
+ * filas nuevas, PATCH condicionado a `_pushedVersion` para el resto, y el
+ * gate de Auth de P0-2 Etapa B1), ligado a un `DB`/`STORES` de prueba y,
+ * opcionalmente, un `Auth` de prueba (Sync los lee como globales, igual
+ * que en el navegador — aquí se pasan como parámetros de la función que
+ * ejecuta el código real). Si se omite `fakeAuth`, `Auth` queda
+ * `undefined` dentro del cuerpo — exactamente como en cualquier test que
+ * no lo necesite, el gate de Auth nunca se activa (mismo comportamiento
+ * que hoy). `nowISO`/`classifyAuthStatus` se extraen de db.js/auth.js
+ * porque sync.js los usa como globales compartidos (mismo scope de
+ * <script> en el navegador — ver index.html).
  */
-export function loadSyncLogic(fakeDB, fakeStores) {
+export function loadSyncLogic(fakeDB, fakeStores, fakeAuth) {
   const body = buildBodyFromSources(SYNC_SOURCES);
-  const factory = new Function('DB', 'STORES', body);
-  return factory(fakeDB, fakeStores);
+  const factory = new Function('DB', 'STORES', 'Auth', body);
+  return factory(fakeDB, fakeStores, fakeAuth);
+}
+
+const AUTH_SOURCES = [
+  [DB_JS_PATH, ['nowISO']],
+  [AUTH_JS_PATH, [
+    'AUTH_MODE', 'AUTH_VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
+    'usernameToAuthIdentifier', 'classifyAuthStatus', 'isValidProfile', 'Auth',
+  ]],
+];
+
+/**
+ * Devuelve las funciones/objeto reales de src/core/auth.js
+ * (usernameToAuthIdentifier/classifyAuthStatus/isValidProfile/Auth),
+ * ligado a un `DB` de prueba (Auth lee `DB`/`fetch`/`navigator`/`nowISO`
+ * como globales, igual que en el navegador).
+ */
+export function loadAuthLogic(fakeDB) {
+  const body = buildBodyFromSources(AUTH_SOURCES);
+  const factory = new Function('DB', body);
+  return factory(fakeDB);
 }
 
 export const GREASE_VALIDATION_JS_PATH = path.join(SRC_ROOT, 'src/core/grease-validation.js');

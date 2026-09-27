@@ -151,6 +151,29 @@ const DB = {
       r.onsuccess = () => res(true);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+
+  // Estado de Supabase Auth (P0-2 Etapa B1, ver src/core/auth.js) —
+  // { session, profile, lastVerifiedAt } o null. Mismo patrón que
+  // getSyncConflicts()/recordConflicts(): un blob bajo una key fija de
+  // app_config (LOCAL_STORES, NUNCA sincroniza — este store nunca viaja
+  // por pushAll()/pullAll(), ver STORES arriba). NO guarda PIN ni
+  // password — solo tokens de sesión Auth y el perfil ya validado contra
+  // app_profiles. Mientras AUTH_MODE sea 'legacy' (default), nada llama
+  // a estos métodos.
+  async getAuthState() {
+    return new Promise((res, rej) => {
+      const r = tx('app_config').get('auth_state');
+      r.onsuccess = () => res(r.result ? r.result.value : null);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  async setAuthState(value) {
+    return new Promise((res, rej) => {
+      const r = tx('app_config', 'readwrite').put({ key: 'auth_state', value });
+      r.onsuccess = () => res(value);
+      r.onerror = (e) => rej(e.target.error);
+    });
   }
 };
 

@@ -1,10 +1,10 @@
-const CACHE = 'engrase-openpit-v37'; // v37: SYNC-CONCURRENCY-001 — pushAll()/pullAll() reescritos en sync.js (CAS atómico contra sobrescrituras concurrentes) y nuevos métodos de conflicto en db.js; ambos ya estaban en v36 (activación del rollout de validación), pero cambiaron DE NUEVO después de esa versión — sync.js/db.js siguen precacheados por nombre exacto (ver ASSETS abajo), así que hace falta subir la versión para que los dispositivos no sigan sirviendo el sync.js/db.js viejos desde caché (stale-first, misma razón que v27-v36).
+const CACHE = 'engrase-openpit-v38'; // v38: P0-2 Etapa B1 — nuevo src/core/auth.js (capa cliente de Supabase Auth, inerte mientras AUTH_MODE='legacy') + sync.js/db.js cambiaron de nuevo (gate de Auth en pushAll/pullAll, DB.getAuthState/setAuthState) después de v37 — mismo motivo de siempre para subir versión (stale-first, ver v27-v37).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline
   // siga funcionando.
-  './src/core/shifts.js', './src/core/hourmeter.js',
+  './src/core/auth.js', './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',

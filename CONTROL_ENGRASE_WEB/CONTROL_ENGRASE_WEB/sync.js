@@ -255,9 +255,19 @@ const Sync = {
   async pushAll() {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
+    // P0-2 Etapa B1: mientras Auth.getMode() sea 'legacy' (default) esta
+    // rama nunca corre — `typeof Auth === 'undefined'` también es válido
+    // (tests/fixtures que no cargan auth.js), así que el comportamiento
+    // de hoy queda intacto. Solo cuando se active AUTH_MODE='supabase' se
+    // exige sesión válida ANTES de tocar la red — nunca fallback a anon.
+    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) {
+      return { ok: false, reason: 'AUTH_REQUIRED' };
+    }
     let pushed = 0;
     const errors = [];
     const conflicts = [];
+    const authErrors = [];
+    let authRequired = false;
 
     for (const store of STORES) {
       try {
@@ -304,6 +314,14 @@ const Sync = {
             },
             body: JSON.stringify(body)
           });
+          const authIssueCreate = classifyAuthStatus(resp.status);
+          if (authIssueCreate === 'AUTH_REQUIRED') { authRequired = true; break; }
+          if (authIssueCreate === 'AUTH_FORBIDDEN') {
+            // Rechazo de autorización (RLS), NUNCA un conflicto de versión
+            // CAS — la fila sigue dirty tal cual, no se marca en `conflicts`.
+            newRows.forEach(r => authErrors.push({ store, id: r.id, status: 403 }));
+            continue;
+          }
           if (!resp.ok) throw new Error(`${resp.status}`);
           const insertedIds = new Set((await resp.json()).map(r => r.id));
           for (const r of newRows) {
@@ -339,6 +357,15 @@ const Sync = {
               body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
             }
           );
+          const authIssueUpdate = classifyAuthStatus(resp.status);
+          if (authIssueUpdate === 'AUTH_REQUIRED') { authRequired = true; break; }
+          if (authIssueUpdate === 'AUTH_FORBIDDEN') {
+            // Igual que arriba: rechazo de autorización, NUNCA conflicto
+            // CAS — la fila sigue dirty, se reintenta sola cuando cambie
+            // la sesión/perfil, nunca en un loop de reintentos inmediato.
+            authErrors.push({ store, id: r.id, status: 403 });
+            continue;
+          }
           if (!resp.ok) throw new Error(`${resp.status}`);
           const updatedRows = await resp.json();
           if (updatedRows.length === 1) {
@@ -353,6 +380,10 @@ const Sync = {
             conflicts.push({ store, id: r.id, localVersion: r.updatedAt, remoteVersion, detectedAt: nowISO() });
           }
         }
+        // El `break` de arriba (dentro del for de updateRows) solo sale de
+        // ESE loop — hace falta este segundo chequeo para que un
+        // AUTH_REQUIRED detectado ahí también corte el loop de stores.
+        if (authRequired) break;
       } catch (err) {
         // Un problema en UN store (ej. una foto que no subió, un error de red puntual) ya
         // no frena a los demás — seguimos con el resto y avisamos al final cuáles fallaron.
@@ -361,12 +392,18 @@ const Sync = {
       }
     }
     if (conflicts.length) await DB.recordConflicts(conflicts);
-    return { ok: errors.length === 0, pushed, errors, conflicts: conflicts.length };
+    if (authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length };
+    return { ok: errors.length === 0 && authErrors.length === 0, pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length };
   },
 
   async pullAll() {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
+    // P0-2 Etapa B1: mismo gate que pushAll() — inerte mientras
+    // AUTH_MODE sea 'legacy' o Auth no esté cargado (ver nota en pushAll).
+    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) {
+      return { ok: false, reason: 'AUTH_REQUIRED' };
+    }
     const since = cfg.lastPull || '1970-01-01T00:00:00.000Z';
 
     // Supabase/PostgREST limita cada respuesta a ~1000 filas sin importar el "limit"
@@ -386,6 +423,11 @@ const Sync = {
         `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc,store.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`,
         { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
       );
+      const authIssuePull = classifyAuthStatus(resp.status);
+      // 401/403 en la lectura NUNCA es el CAS de P0-1 (que solo vive en
+      // pushAll, siempre 200) — se corta el pull entero, sin tocar nada
+      // local, en vez de seguir el camino genérico de `throw` de abajo.
+      if (authIssuePull) return { ok: false, reason: authIssuePull, pulled: 0, newAnomalies: [] };
       if (!resp.ok) throw new Error(`Error al descargar cambios: ${resp.status}`);
       const page = await resp.json();
       rows = rows.concat(page);
@@ -475,17 +517,34 @@ const Sync = {
       let pushRes, pullRes;
       if (esPrimeraVez) {
         pullRes = await this.pullAll();
+        // P0-2 Etapa B1: si el pull inicial ya no tiene sesión válida
+        // (solo posible con AUTH_MODE='supabase'), no tiene sentido
+        // intentar el push detrás — se corta acá, nada local se toca.
+        if (pullRes.reason === 'AUTH_REQUIRED' || pullRes.reason === 'AUTH_FORBIDDEN') {
+          this.notify({ status: pullRes.reason, at: nowISO() });
+          return;
+        }
         pushRes = await this.pushAll();
       } else {
         pushRes = await this.pushAll();
         pullRes = await this.pullAll();
       }
+      // AUTH_REQUIRED/AUTH_FORBIDDEN son distintos de un conflicto CAS —
+      // nunca se reportan como 'ok'/'partial' (ver docs/
+      // AUTH_RLS_IMPLEMENTATION_PLAN.md §11). Con AUTH_MODE='legacy'
+      // (default) ninguno de los dos `reason` puede ocurrir nunca.
+      if (pushRes.reason === 'AUTH_REQUIRED' || pullRes.reason === 'AUTH_REQUIRED') {
+        this.notify({ status: 'AUTH_REQUIRED', at: nowISO() });
+        return;
+      }
+      const hasAuthForbidden = (pushRes.authErrors || 0) > 0 || pullRes.reason === 'AUTH_FORBIDDEN';
       const hasErrors = pushRes.errors && pushRes.errors.length;
       this.notify({
-        status: hasErrors ? 'partial' : 'ok',
+        status: hasAuthForbidden ? 'AUTH_FORBIDDEN' : (hasErrors ? 'partial' : 'ok'),
         pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0,
         errors: pushRes.errors || [], newAnomalies: pullRes.newAnomalies || [],
-        conflicts: (pushRes.conflicts || 0) + (pullRes.conflicts || 0), at: nowISO()
+        conflicts: (pushRes.conflicts || 0) + (pullRes.conflicts || 0),
+        authErrors: pushRes.authErrors || 0, at: nowISO()
       });
     } catch (err) {
       console.error('Sync error', err);
