@@ -7397,6 +7397,14 @@ function downloadCSV(rows, filename) {
 async function renderUsuarios() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
+  // AUTH_MODE='supabase': pantalla completamente distinta (administra
+  // personas reales vía la Edge Function manage-users, nunca el store
+  // "users" legacy) — ver renderUsuariosSupabase() más abajo. Con
+  // AUTH_MODE='legacy' (default), esta rama nunca se toma y todo lo de
+  // abajo sigue exactamente igual que siempre.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    return renderUsuariosSupabase(c);
+  }
   const isSupervisor = App.currentUser.role === 'SUPERVISOR';
   // Un supervisor solo administra cuentas de lubricadores; el administrador ve y crea todos los roles.
   const allUsers = await DB.allActive('users');
@@ -7489,6 +7497,141 @@ async function renderUsuarios() {
     showInAppToast('✓ Usuario desactivado');
     renderUsuarios();
   }));
+}
+
+/* ============================================================
+   USUARIOS — AUTH_MODE='supabase' (P0-2, personas reales vía
+   supabase/functions/manage-users). Nunca toca el store "users" legacy
+   (esos 7 registros no son cuentas Auth, ver docs/
+   AUTH_RLS_IMPLEMENTATION_PLAN.md §17) — todo pasa por Auth.manageUsers(),
+   que a su vez exige una sesión ya autenticada y reenvía el JWT propio;
+   la autorización real (¿este caller es ADMINISTRADOR activo?) la decide
+   siempre la Edge Function server-side, nunca este archivo.
+   ============================================================ */
+async function renderUsuariosSupabase(c) {
+  const offline = !navigator.onLine;
+  c.innerHTML = `
+    <div class="toolbar">
+      <button class="btn btn-accent" id="btn-new-user-sb" ${offline ? 'disabled title="Requiere conexión"' : ''}>${ic('plus')}Nuevo usuario</button>
+      ${offline ? '<span class="dim">Sin conexión — la administración de usuarios requiere Internet.</span>' : ''}
+    </div>
+    <div class="panel">
+      <table class="data-table">
+        <thead><tr><th>Nombre</th><th>Rol</th><th>Activo</th><th></th></tr></thead>
+        <tbody id="usuarios-sb-tbody">
+          <tr><td colspan="4" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  // Offline: la administración de usuarios exige Internet siempre — no
+  // hay snapshot local de la lista completa que mostrar, y los botones
+  // de acción quedan deshabilitados (arriba). Nada de esto se guarda para
+  // sincronizar después: no es un cambio operativo diferible, es una
+  // operación de seguridad que solo tiene sentido hecha en el momento,
+  // contra el servidor real.
+  if (offline) return;
+
+  let users = [];
+  try {
+    const res = await Auth.manageUsers('LIST_USERS');
+    users = res.users || [];
+  } catch (e) {
+    const tbody = $('#usuarios-sb-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(e.message)}</td></tr>`;
+    return;
+  }
+
+  const tbody = $('#usuarios-sb-tbody');
+  if (!tbody) return; // la pantalla cambió mientras esperábamos la respuesta
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td>${esc(u.display_name)}</td>
+      <td>${esc(u.role)}</td>
+      <td>${u.active ? 'Sí' : 'No'}</td>
+      <td class="row-actions">
+        <button class="btn btn-sm" data-role="${esc(u.app_user_id)}">${ic('edit')}Rol</button>
+        <button class="btn btn-sm ${u.active ? 'btn-danger' : ''}" data-toggle="${esc(u.app_user_id)}" data-active="${u.active ? 'true' : 'false'}">
+          ${u.active ? ic('trash') + 'Desactivar' : ic('check') + 'Activar'}
+        </button>
+        <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">Reset password</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
+
+  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase());
+  $$('button[data-role]', c).forEach(b => b.addEventListener('click', () => {
+    const u = users.find(x => x.app_user_id === b.dataset.role);
+    if (u) roleFormSupabase(u);
+  }));
+  $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', async () => {
+    const activeNow = b.dataset.active === 'true';
+    try {
+      await Auth.manageUsers('SET_ACTIVE', { app_user_id: b.dataset.toggle, active: !activeNow });
+      showInAppToast(activeNow ? '✓ Usuario desactivado' : '✓ Usuario activado');
+      renderUsuariosSupabase(c);
+    } catch (e) { showInAppToast('✗ ' + e.message); }
+  }));
+  $$('button[data-reset]', c).forEach(b => b.addEventListener('click', () => resetPasswordFormSupabase(b.dataset.reset)));
+}
+
+function userFormSupabase() {
+  openModal('Nuevo usuario', `
+    <form id="user-form-sb" class="form-grid">
+      <label>Nombre completo<input required name="display_name"/></label>
+      <label>Usuario<input required name="username" pattern="[a-zA-Z0-9._-]+"/>
+        <span class="field-hint">Sin espacios ni "@" — se usa para generar el acceso interno, nunca se muestra completo.</span>
+      </label>
+      <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option>${r}</option>`).join('')}</select></label>
+      <label>Contraseña temporal (mínimo 8 caracteres)<input required minlength="8" type="password" name="temp_password" autocomplete="new-password"/>
+        <span class="field-hint">La persona debería cambiarla apenas entre. Nunca queda guardada en este dispositivo.</span>
+      </label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Crear usuario</button></div>
+    </form>`);
+  $('#user-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await Auth.manageUsers('CREATE_USER', fd);
+      showInAppToast('✓ Usuario creado');
+      closeModal();
+      navigate('usuarios');
+    } catch (e) { showInAppToast('✗ ' + e.message); }
+  });
+}
+
+function roleFormSupabase(u) {
+  openModal(`Cambiar rol · ${esc(u.display_name)}`, `
+    <form id="role-form-sb" class="form-grid">
+      <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+    </form>`);
+  $('#role-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role });
+      showInAppToast('✓ Rol actualizado');
+      closeModal();
+      navigate('usuarios');
+    } catch (e) { showInAppToast('✗ ' + e.message); }
+  });
+}
+
+function resetPasswordFormSupabase(appUserId) {
+  openModal('Restablecer contraseña', `
+    <form id="reset-form-sb" class="form-grid">
+      <label>Contraseña temporal nueva (mínimo 8 caracteres)<input required minlength="8" type="password" name="new_password" autocomplete="new-password"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Restablecer</button></div>
+    </form>`);
+  $('#reset-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await Auth.manageUsers('RESET_PASSWORD', { app_user_id: appUserId, new_password: fd.new_password });
+      showInAppToast('✓ Contraseña restablecida');
+      closeModal();
+    } catch (e) { showInAppToast('✗ ' + e.message); }
+  });
 }
 
 /* ============================================================

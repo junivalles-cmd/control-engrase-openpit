@@ -221,6 +221,36 @@ const Auth = {
     return this._profile;
   },
 
+  // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge
+  // Function server-side (supabase/functions/manage-users), nunca habla
+  // directo con auth.admin.* ni con service_role desde el cliente (esa
+  // llave NUNCA existe en app.js/Android/IndexedDB). Solo envía el JWT
+  // propio de la sesión ya autenticada — la Edge Function es quien vuelve
+  // a validar server-side que quien llama es ADMINISTRADOR activo, nunca
+  // se confía en el rol local. Requiere red: sin sesión autenticada
+  // (offline o sesión no vigente) lanza sin intentar la llamada.
+  async manageUsers(action, payload = {}) {
+    if (!this.isAuthenticated()) {
+      throw new Error('Requiere conexión y una sesión válida para administrar usuarios.');
+    }
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
+    const resp = await fetch(`${cfg.url}/functions/v1/manage-users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: cfg.anonKey,
+        Authorization: `Bearer ${this._session.accessToken}`
+      },
+      body: JSON.stringify({ action, ...payload })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error((data && data.error) || `manage-users respondió ${resp.status}`);
+    }
+    return data;
+  },
+
   async _fetchProfile(cfg) {
     if (!this._session || !this._session.accessToken) return null;
     try {

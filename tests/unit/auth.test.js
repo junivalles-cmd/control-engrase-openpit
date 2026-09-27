@@ -312,3 +312,27 @@ describe('refreshProfile() — rol/estado cambiado en otro dispositivo toma efec
     expect(Auth.isAuthenticated()).toBe(false);
   });
 });
+
+describe('O) Auth.manageUsers() — offline/sin sesión bloquea la administración, sin intentar red', () => {
+  it('sin sesión autenticada, rechaza antes de llamar a fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.manageUsers('LIST_USERS')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('con sesión autenticada, reenvía el JWT propio a la Edge Function (nunca service_role, nunca la anon key sola)', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(true);
+
+    let sentAuthHeader = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      sentAuthHeader = opts.headers.Authorization;
+      return { ok: true, status: 200, json: async () => ({ users: [] }) };
+    }));
+    await Auth.manageUsers('LIST_USERS');
+    expect(sentAuthHeader).toBe(`Bearer ${SESSION_VIGENTE.accessToken}`);
+  });
+});

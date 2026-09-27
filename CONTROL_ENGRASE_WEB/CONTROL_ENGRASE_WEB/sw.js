@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v40'; // v40: P0-2 — db.js cambió de nuevo (AUTH_MODE='supabase' ya NO siembra u_admin/PIN default ni el catálogo de 4 usuarios de ejemplo; isSupabaseAuthMode() central, guard de re-seed por flag en vez de por users.length) después de v39 — mismo motivo de siempre para subir versión (stale-first, ver v27-v39).
+const CACHE = 'engrase-openpit-v41'; // v41: P0-2 — administración segura de usuarios: auth.js gana Auth.manageUsers() (proxy hacia la Edge Function manage-users, nunca usa service_role) y app.js gana la pantalla de Usuarios en modo Supabase (renderUsuariosSupabase/userFormSupabase/roleFormSupabase/resetPasswordFormSupabase); ambos son runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v40).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

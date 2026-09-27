@@ -217,3 +217,33 @@ export function loadGreaseValidationLogic() {
   const factory = new Function(body);
   return factory();
 }
+
+// P0-2 — administración de usuarios. El archivo se guarda como .ts (misma
+// convención que notify-push/notify-vencidos) pero su código es JS válido
+// a propósito (sin anotaciones de tipo reales) — así se puede extraer y
+// probar sin el runtime de Deno, igual que sync.js/auth.js/db.js. El
+// `import { serve } ...` de la cabecera nunca se extrae (extractDeclaration
+// solo saca las declaraciones nombradas de abajo).
+export const MANAGE_USERS_TS_PATH = path.join(SRC_ROOT, 'supabase/functions/manage-users/index.ts');
+const MANAGE_USERS_SOURCES = [
+  [MANAGE_USERS_TS_PATH, [
+    'VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
+    'isValidRoleValue', 'usernameToAuthIdentifier', 'appUserIdFromUsername',
+    'isValidTempPassword', 'decideCallerAuthorization', 'wouldLeaveZeroActiveAdmins',
+    'svHeaders', 'getCallerProfile', 'countOtherActiveAdmins', 'getProfileByAppUserId',
+    'handleListUsers', 'handleCreateUser', 'handleUpdateRole', 'handleSetActive',
+    'handleResetPassword', 'dispatchAction',
+  ]],
+];
+
+/**
+ * Devuelve la lógica REAL de supabase/functions/manage-users/index.ts
+ * (validaciones puras + las 5 operaciones completas, cada una recibiendo
+ * `env` explícito en vez de leer Deno.env). Usa el `fetch` global — el
+ * test lo stubea con vi.stubGlobal('fetch', ...), igual que sync.js/auth.js.
+ */
+export function loadManageUsersLogic() {
+  const body = buildBodyFromSources(MANAGE_USERS_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
