@@ -92,11 +92,22 @@ const Auth = {
   onAuthStateChange(fn) { this.listeners.push(fn); },
   _notify(state) { this.listeners.forEach(fn => { try { fn(state); } catch (e) {} }); },
 
-  // Autenticado de verdad = sesión con token Y perfil válido (§6) — una
-  // sesión Auth sin perfil usable NUNCA cuenta como autenticado para el
-  // resto de la app, aunque el JWT en sí sea válido.
+  // Autenticado de verdad = sesión con token VIGENTE (no expirado) Y
+  // perfil válido (§6). Dos cosas que a propósito NUNCA se confunden:
+  //   - un snapshot de perfil cacheado (getProfile()) es solo UX offline
+  //     — nunca alcanza por sí solo para que esto devuelva true.
+  //   - un access_token presente pero YA EXPIRADO tampoco alcanza: sin
+  //     esta comprobación de `expiresAt`, sync.js podría creer que puede
+  //     escribir y solo enterarse del 401 después de gastar una llamada
+  //     de red. Con la comprobación, el gate de sync.js corta ANTES de
+  //     tocar la red — "captura local permitida, sync bloqueado" (ver
+  //     restoreSession()) se cumple exactamente por esto.
   isAuthenticated() {
-    return !!(this._session && this._session.accessToken && isValidProfile(this._profile));
+    return !!(
+      this._session && this._session.accessToken &&
+      this._session.expiresAt && Date.now() < this._session.expiresAt &&
+      isValidProfile(this._profile)
+    );
   },
 
   getSession() { return this._session; },
@@ -143,7 +154,11 @@ const Auth = {
   async signOut() {
     this._session = null;
     this._profile = null;
-    await DB.setAuthState(null);
+    // Borra los DOS namespaces — nunca alcanza con limpiar uno solo:
+    // dejar el snapshot de perfil vivo tras un logout mostraría "sigo
+    // siendo Junior Valles" en pantalla sin ninguna sesión real detrás.
+    await DB.setAuthTokens(null);
+    await DB.setAuthProfileSnapshot(null);
     this._notify({ status: 'signed_out' });
   },
 
@@ -158,10 +173,10 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
-    const state = await DB.getAuthState();
-    if (!state || !state.session) return null;
-    this._session = state.session;
-    this._profile = state.profile || null;
+    const session = await DB.getAuthTokens();
+    if (!session) return null;
+    this._session = session;
+    this._profile = await DB.getAuthProfileSnapshot();
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
@@ -170,6 +185,12 @@ const Auth = {
     }
 
     if (!navigator.onLine) {
+      // Token cacheado ya expirado y sin red: isAuthenticated() ya da
+      // false por la comprobación de expiresAt (arriba) — esto NO
+      // bloquea que la persona siga registrando trabajo localmente
+      // (getProfile() sigue devolviendo el snapshot para mostrar "quién
+      // es"), solo bloquea que sync.js intente escribir con un token que
+      // el servidor va a rechazar.
       this._notify({ status: 'pending_validation', profile: this._profile });
       return { user: this._profile, session: this._session };
     }
@@ -240,21 +261,21 @@ const Auth = {
   },
 
   // Persistencia local — equivalente a persistSession:true sin SDK (ver
-  // cabecera del archivo): se guarda en app_config (LOCAL_STORES, NUNCA
-  // sincroniza — DB.getAuthState()/setAuthState() son nuevos en db.js,
-  // mismo patrón que getSyncConflicts()/recordConflicts() de P0-1).
-  // `lastVerifiedAt` es el snapshot mínimo de UX offline pedido: permite
-  // mostrar "trabajando como <nombre>" sin red, pero NUNCA es autoridad
-  // de servidor por sí solo — isAuthenticated() sigue exigiendo un
-  // perfil válido, y sync.js decide aparte si con eso alcanza para
-  // escribir (ver Auth.getMode()/isAuthenticated() en sync.js).
+  // cabecera del archivo): DOS namespaces SEPARADOS en app_config
+  // (LOCAL_STORES, NUNCA sincroniza — nunca viaja por pushAll()/
+  // pullAll()), nunca mezclados en el mismo blob:
+  //   - auth_tokens: SOLO credenciales (access/refresh token, expiry).
+  //   - auth_profile_snapshot: SOLO datos de UX offline (nombre/rol/
+  //     estado + lastVerifiedAt) — NUNCA es autoridad de servidor por sí
+  //     solo, isAuthenticated() exige además un token vigente (arriba).
+  // Ninguno de los dos contiene jamás la password (esa nunca sale de
+  // signIn(), no se guarda en ningún lado del cliente) ni PIN alguno.
   // detectSessionInUrl no aplica: esta app nunca usa magic links, no hay
   // tokens en la URL que detectar.
   async _persistState() {
-    await DB.setAuthState({
-      session: this._session,
-      profile: this._profile,
-      lastVerifiedAt: nowISO()
-    });
+    await DB.setAuthTokens(this._session);
+    await DB.setAuthProfileSnapshot(
+      this._profile ? { ...this._profile, lastVerifiedAt: nowISO() } : null
+    );
   }
 };

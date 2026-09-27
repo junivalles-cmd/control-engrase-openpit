@@ -367,8 +367,19 @@ reintentos infinitos e inútiles cada 20 segundos para el caso 403.
 - `docs/AUTH_USERS_ROLLOUT_TEMPLATE.md` (plantilla vacía para altas
   futuras de personas reales, ver §20).
 
-`schema.sql` productivo **no se modificó**. Ningún archivo `.js` del
-cliente se tocó.
+**Sesión posterior (Pre-flight, ver §21/§22) agregó además:**
+
+- `CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/auth.js` (nuevo —
+  implementación real del adapter, detrás de `AUTH_MODE='legacy'`).
+- `CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0002_auth_profiles_rls_PREPARED.sql`
+  (encabezado `-- PRE-CUTOVER: legacy policy remains intentionally
+  active` — versión lista para producción de la fase 1/2 de `0001`, sin
+  la sección CUTOVER; tampoco se ejecutó contra ningún Supabase).
+- `tests/unit/auth.test.js`, `tests/unit/sync-auth-gate.test.js` (mocks,
+  nunca contra producción).
+
+`schema.sql` productivo **no se modificó**. Ningún dato ni Auth user real
+se creó — todo quedó en código/tests/migraciones sin ejecutar.
 
 ## 15. Gates de cutover (todos deben estar en PASS antes de correr la Sección "CUTOVER" del SQL draft)
 
@@ -512,3 +523,101 @@ Para `lubrication_records`/`grease_validations` nuevos, una vez migrado:
 (archivo nuevo, tabla vacía, sin nombres inventados) — columnas
 `app_user_id, display_name, username/login_alias, role, active,
 auth_identifier, auth_user_id`, sin ningún campo de password.
+
+## 21. Sesión Auth persistida — auditoría y diseño final (Pre-flight)
+
+**Auditoría de `src/core/auth.js` (implementado, no solo diseñado):**
+
+- **`access_token`/`refresh_token`/`expires_at`:** viven SOLO en
+  `DB.getAuthTokens()`/`setAuthTokens()` — un blob nuevo,
+  namespace **separado** del perfil (ver abajo), bajo `app_config` (key
+  `auth_tokens`, `LOCAL_STORES`, nunca sincroniza — nunca viaja por
+  `pushAll()`/`pullAll()`, confirmado por auditoría de código: `STORES`
+  no incluye `app_config`).
+- **`restoreSession()`:** lee `DB.getAuthTokens()` primero. Si el token
+  sigue vigente (`Date.now() < expiresAt`), restaura sin ninguna llamada
+  de red — **sobrevive cerrar/reabrir el navegador o la app Android**,
+  porque `app_config` es IndexedDB real (persiste entre reinicios, a
+  diferencia de `sessionStorage`/memoria). Si expiró: con red, refresca
+  sesión Y perfil ANTES de devolver nada usable; sin red, deja el
+  snapshot de perfil disponible para UX pero `isAuthenticated()` da
+  `false` (ver siguiente punto).
+- **`signOut()`:** borra los DOS namespaces (`setAuthTokens(null)` +
+  `setAuthProfileSnapshot(null)`) — nunca deja un snapshot de perfil vivo
+  sin sesión detrás.
+- **Refresh de token:** `_refreshSession()` hace
+  `POST /auth/v1/token?grant_type=refresh_token`. Si falla, `restoreSession()`
+  hace `signOut()` (limpia todo) y devuelve `null` — nunca fallback a
+  anon, nunca inventa una sesión. `Sync.fullSync()` ahora llama
+  `Auth.restoreSession()` **antes** de `pushAll()`/`pullAll()` cuando
+  `Auth.isSupabaseMode()` es cierto (inerte en `AUTH_MODE='legacy'`); si
+  tras eso `Auth.isAuthenticated()` sigue en `false`, `fullSync()` corta
+  con `status:'AUTH_REQUIRED'` sin tocar la red de sync en absoluto.
+- **`onAuthStateChange()`:** notifica `signed_in`/`signed_out`/
+  `restored`/`pending_validation` — mismo patrón que `Sync.onChange()`.
+- **Corrección de esta vuelta:** `isAuthenticated()` ahora exige además
+  `Date.now() < expiresAt` (antes solo miraba que hubiera un
+  `accessToken` presente, sin importar si ya había vencido). Sin este
+  fix, un token vencido en caché habría dejado creer que `sync.js` podía
+  escribir, y el 401 real solo se habría descubierto después de gastar
+  una llamada de red — con el fix, el gate de `sync.js` corta ANTES de
+  tocar la red. Esto es exactamente lo que separa "captura local
+  permitida" (`getProfile()` sigue disponible) de "sync bloqueado"
+  (`isAuthenticated()` da `false`).
+- **Password:** nunca se persiste en ningún lado — `signIn(username,
+  password)` la usa solo dentro del `body` del `POST /auth/v1/token`, no
+  queda en ningún campo de `_session`/`_profile` ni en storage. Confirmado
+  con test dedicado (`tests/unit/auth.test.js`, B).
+- **Requisitos del pedido, todos confirmados por auditoría + tests:**
+  password nunca persistida; tokens nunca dentro de `users`/`engrase_sync`
+  (estructuralmente imposible: solo `app_config` los toca, y ese store no
+  está en `STORES`); tokens nunca en logs (ningún `console.*` de
+  `auth.js` imprime `_session`/tokens, solo status codes); tokens solo en
+  storage LOCAL no sincronizado; logout borra tokens; snapshot de perfil
+  offline NO equivale a token válido (namespaces separados +
+  `isAuthenticated()` exige ambos); sesión expirada offline permite
+  captura local pero no sync.
+
+**Storage local — namespace separado (Sección 3 del pedido):**
+
+| Key en `app_config` | Contenido | Sensibilidad |
+|---|---|---|
+| `sync` (ya existía) | URL/anon key/cursores de sync | anon key pública |
+| `sync_conflicts` (P0-1) | metadata de conflictos, sin payload | baja |
+| **`auth_tokens`** (nuevo) | `accessToken`/`refreshToken`/`expiresAt`/`authUserId` | **alta — credenciales** |
+| **`auth_profile_snapshot`** (nuevo) | `displayName`/`role`/`active`/`lastVerifiedAt` | baja — solo UX offline |
+
+**`DB_VERSION` no cambió (sigue 6)** — mismo patrón que
+`sync_conflicts` en P0-1: son keys nuevas dentro del store `app_config`
+ya existente, no un store nuevo ni un cambio de schema de IndexedDB. No
+hizo falta detenerse a pedir DB_VERSION 7.
+
+## 22. Junior Valles — piloto (pasos manuales, NO ejecutados por Claude)
+
+Documentado para cuando el usuario decida avanzar — nada de esto se
+ejecutó en este cierre:
+
+| Campo | Valor |
+|---|---|
+| Nombre | Junior Valles |
+| Username | `jvalles` |
+| Rol | `ADMINISTRADOR` |
+| Auth identifier interno | `jvalles@engrase.internal` |
+| Estado | **PENDIENTE DE CREACIÓN** |
+
+**Pasos manuales futuros (fuera de este chat):**
+
+1. El usuario crea la cuenta en el Dashboard de Supabase (Authentication →
+   Users → Add user), con email `jvalles@engrase.internal` — **el
+   password lo define el propio usuario directamente ahí, nunca se
+   comparte con Claude, nunca queda en el repo ni en ningún archivo**.
+2. El usuario copia el `auth.uid()` (UUID) que Supabase genera para esa
+   cuenta.
+3. Con ese UUID, se crea manualmente (o Claude prepara el `INSERT` exacto
+   cuando el usuario lo pida, en un turno posterior) la fila en
+   `app_profiles`: `auth_user_id=<ese UUID>`, `app_user_id='u_jvalles'`
+   (nuevo, no reutiliza ningún id legacy — ver §17),
+   `display_name='Junior Valles'`, `role='ADMINISTRADOR'`, `active=true`.
+4. Nada de esto activa `AUTH_MODE='supabase'` por sí solo — ese cambio de
+   flag es una decisión aparte, posterior, y sigue sin tocarse en este
+   cierre.

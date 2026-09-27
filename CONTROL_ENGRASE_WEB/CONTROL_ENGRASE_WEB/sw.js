@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v38'; // v38: P0-2 Etapa B1 — nuevo src/core/auth.js (capa cliente de Supabase Auth, inerte mientras AUTH_MODE='legacy') + sync.js/db.js cambiaron de nuevo (gate de Auth en pushAll/pullAll, DB.getAuthState/setAuthState) después de v37 — mismo motivo de siempre para subir versión (stale-first, ver v27-v37).
+const CACHE = 'engrase-openpit-v39'; // v39: P0-2 Pre-flight — auth.js/sync.js/db.js cambiaron de nuevo (namespaces separados auth_tokens/auth_profile_snapshot en vez de auth_state, isAuthenticated() ahora exige expiresAt vigente, fullSync() refresca sesión antes de sync) después de v38 — mismo motivo de siempre para subir versión (stale-first, ver v27-v38).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

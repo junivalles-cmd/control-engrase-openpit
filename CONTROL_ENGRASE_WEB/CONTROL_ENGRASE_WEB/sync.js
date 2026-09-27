@@ -507,6 +507,18 @@ const Sync = {
     this.syncing = true;
     this.notify({ status: 'syncing' });
     try {
+      // P0-2: al reconectar, refresca sesión Y perfil ANTES de tocar la
+      // red de sync — nunca se sincroniza con una sesión que no se
+      // intentó refrescar primero (ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md
+      // §12 y Auth.restoreSession()). Inerte mientras AUTH_MODE sea
+      // 'legacy' o Auth no esté cargado — no cambia nada del flujo actual.
+      if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+        await Auth.restoreSession();
+        if (!Auth.isAuthenticated()) {
+          this.notify({ status: 'AUTH_REQUIRED', at: nowISO() });
+          return;
+        }
+      }
       // En la PRIMERA sincronización de un dispositivo se baja antes de subir. Si no,
       // el catálogo base que la app crea al instalarse (turnos, lubricantes, cuadrillas)
       // se sube como "nuevo" y revive lo que el administrador ya había borrado en el

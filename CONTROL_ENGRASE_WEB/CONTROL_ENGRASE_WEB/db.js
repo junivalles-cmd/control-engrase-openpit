@@ -153,24 +153,49 @@ const DB = {
     });
   },
 
-  // Estado de Supabase Auth (P0-2 Etapa B1, ver src/core/auth.js) —
-  // { session, profile, lastVerifiedAt } o null. Mismo patrón que
+  // Sesión de Supabase Auth (P0-2, ver src/core/auth.js) — SOLO
+  // credenciales: { accessToken, refreshToken, expiresAt, authUserId } o
+  // null. Namespace SEPARADO del snapshot de perfil (abajo) a propósito
+  // — nunca se guardan juntos en la misma key, para que cualquier lectura
+  // de "quién es el último usuario verificado en pantalla" no tenga que
+  // tocar el blob que sí contiene tokens. Mismo patrón de
   // getSyncConflicts()/recordConflicts(): un blob bajo una key fija de
-  // app_config (LOCAL_STORES, NUNCA sincroniza — este store nunca viaja
-  // por pushAll()/pullAll(), ver STORES arriba). NO guarda PIN ni
-  // password — solo tokens de sesión Auth y el perfil ya validado contra
-  // app_profiles. Mientras AUTH_MODE sea 'legacy' (default), nada llama
-  // a estos métodos.
-  async getAuthState() {
+  // app_config (LOCAL_STORES, NUNCA sincroniza — nunca viaja por
+  // pushAll()/pullAll(), ver STORES arriba). NUNCA contiene PIN ni
+  // password — eso vive únicamente en auth.users, gestionado por
+  // Supabase Auth, jamás en el cliente. Mientras AUTH_MODE sea 'legacy'
+  // (default), nada llama a estos métodos.
+  async getAuthTokens() {
     return new Promise((res, rej) => {
-      const r = tx('app_config').get('auth_state');
+      const r = tx('app_config').get('auth_tokens');
       r.onsuccess = () => res(r.result ? r.result.value : null);
       r.onerror = (e) => rej(e.target.error);
     });
   },
-  async setAuthState(value) {
+  async setAuthTokens(value) {
     return new Promise((res, rej) => {
-      const r = tx('app_config', 'readwrite').put({ key: 'auth_state', value });
+      const r = tx('app_config', 'readwrite').put({ key: 'auth_tokens', value });
+      r.onsuccess = () => res(value);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+
+  // Snapshot LOCAL de perfil ya validado — { authUserId, appUserId,
+  // displayName, role, active, lastVerifiedAt } o null. Es UX offline
+  // pura ("trabajando como <nombre>" sin red): jamás sustituye a un
+  // token vigente como autoridad de servidor (ver
+  // Auth.isAuthenticated(), que exige AMBAS cosas por separado). Vive en
+  // su propia key, separada de auth_tokens — nunca en el mismo objeto.
+  async getAuthProfileSnapshot() {
+    return new Promise((res, rej) => {
+      const r = tx('app_config').get('auth_profile_snapshot');
+      r.onsuccess = () => res(r.result ? r.result.value : null);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  async setAuthProfileSnapshot(value) {
+    return new Promise((res, rej) => {
+      const r = tx('app_config', 'readwrite').put({ key: 'auth_profile_snapshot', value });
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });

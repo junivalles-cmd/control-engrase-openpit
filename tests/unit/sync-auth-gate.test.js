@@ -7,7 +7,7 @@
 // exacto de antes. Todo con mocks — nunca contra producción.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadSyncLogic } from '../helpers/loadLubricationLogic.js';
+import { loadSyncLogic, loadAuthLogic } from '../helpers/loadLubricationLogic.js';
 
 const STORES_TEST = ['equipment'];
 const T0 = '2026-03-01T00:00:00.000Z';
@@ -17,6 +17,8 @@ function makeFakeDB() {
   const stores = {};
   let config = null;
   let conflicts = [];
+  let authTokens = null;
+  let authProfileSnapshot = null;
   return {
     async getConfig() { return config; },
     async setConfig(v) { config = v; return v; },
@@ -30,6 +32,10 @@ function makeFakeDB() {
       for (const c of list) byKey.set(`${c.store}:${c.id}`, c);
       conflicts = Array.from(byKey.values());
     },
+    async getAuthTokens() { return authTokens; },
+    async setAuthTokens(v) { authTokens = v; return v; },
+    async getAuthProfileSnapshot() { return authProfileSnapshot; },
+    async setAuthProfileSnapshot(v) { authProfileSnapshot = v; return v; },
   };
 }
 
@@ -175,5 +181,36 @@ describe('L) el CAS de concurrencia de P0-1 sigue intacto (regresión rápida)',
     expect(res.conflicts).toBe(1); // SIGUE siendo conflicto CAS
     expect(res.authErrors).toBe(0); // NO es un problema de autorización
     expect(res.reason).toBeUndefined();
+  });
+});
+
+describe('G) refresh inválido en reconexión -> fullSync() corta con AUTH_REQUIRED, dirty intacto (integración real Auth+Sync)', () => {
+  it('fullSync() llama Auth.restoreSession() ANTES de tocar la red de sync; si falla, ni pushAll ni pullAll llegan a ejecutarse', async () => {
+    await db.setAuthTokens({ accessToken: 'OLD', refreshToken: 'RT-MALO', expiresAt: Date.now() - 1000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.put('equipment', { id: 'eq1', code: 'PENDIENTE', active: true, updatedAt: T0 }); // cambio local dirty
+
+    const { Auth } = loadAuthLogic(db);
+    // AUTH_MODE real sigue en 'legacy' en el código fuente — se fuerza
+    // 'supabase' SOLO en esta instancia de prueba ya cargada, para poder
+    // probar la integración sin tocar el feature flag de producción.
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      if (String(url).includes('grant_type=refresh_token')) return { ok: false, status: 401, json: async () => ({}) };
+      throw new Error('no debería tocar la red de sync sin sesión válida: ' + method + ' ' + url);
+    }));
+
+    let notified = null;
+    Sync.onChange(state => { notified = state; });
+    await Sync.fullSync();
+
+    expect(notified.status).toBe('AUTH_REQUIRED');
+    const localAfter = await db.get('equipment', 'eq1');
+    expect(localAfter.code).toBe('PENDIENTE'); // el cambio local NUNCA se tocó
+    expect(localAfter._pushedVersion).not.toBe(localAfter.updatedAt); // sigue dirty
   });
 });
