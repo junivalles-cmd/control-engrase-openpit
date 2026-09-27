@@ -1315,12 +1315,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   Sync.startAuto();
   updateConnBadge();
 
-  const saved = sessionStorage.getItem('engrase_user');
-  if (saved) {
-    App.currentUser = JSON.parse(saved);
-    boot();
+  // AUTH_MODE='supabase': flujo de login/PIN completamente separado (ver
+  // renderAuthGateSupabase() más abajo) — nunca toca sessionStorage
+  // 'engrase_user' (eso es exclusivamente del login PIN legacy). Con
+  // AUTH_MODE='legacy' (default) este branch nunca se toma.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    renderAuthGateSupabase();
   } else {
-    renderLogin();
+    const saved = sessionStorage.getItem('engrase_user');
+    if (saved) {
+      App.currentUser = JSON.parse(saved);
+      boot();
+    } else {
+      renderLogin();
+    }
   }
 });
 
@@ -1653,10 +1661,210 @@ function logout() {
   clearAppBadge();
   disablePushForCurrentUser();
   stopInactivityTimer();
-  sessionStorage.removeItem('engrase_user');
   App.currentUser = null;
   App.lubricadorGreaseFlowActive = false; // salida explícita — no debe sobrevivir a la sesión siguiente
+  // AUTH_MODE='supabase': CERRAR SESIÓN real — distinto de "Bloquear"
+  // (lockApp() más abajo). Borra auth_tokens + profile snapshot + PIN
+  // rápido configurado (P0-2): la próxima vez exige Usuario + Contraseña
+  // de nuevo, nunca queda un PIN "huérfano" de una sesión ya cerrada.
+  // NUNCA toca IndexedDB operativo (engrases pendientes, anomalías,
+  // catálogos siguen intactos — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §25).
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    Auth.signOut().then(() => QuickUnlock.disable()).then(() => renderAuthGateSupabase());
+    return;
+  }
+  sessionStorage.removeItem('engrase_user');
   renderLogin();
+}
+
+// "Bloquear" — a propósito NUNCA llama a Auth.signOut() ni
+// QuickUnlock.disable(): la sesión Auth y el PIN configurado siguen
+// intactos, listos para desbloquear de nuevo (ver renderAuthGateSupabase(),
+// que se llama exactamente igual al arrancar la app y al bloquear — nunca
+// reingresa en silencio). Solo existe en AUTH_MODE='supabase' — el login
+// PIN legacy no distingue "bloquear" de "cerrar sesión".
+function lockApp() {
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
+  clearAppBadge();
+  stopInactivityTimer();
+  App.currentUser = null;
+  App.lubricadorGreaseFlowActive = false;
+  renderAuthGateSupabase();
+}
+
+/* ============================================================
+   LOGIN / DESBLOQUEO — AUTH_MODE='supabase' (P0-2). Módulo de pantallas
+   separado del login PIN legacy de arriba — mientras AUTH_MODE sea
+   'legacy' (default), nada de esto se ejecuta (ver el branch del listener
+   de DOMContentLoaded). La identidad real SIEMPRE viene de Auth (Supabase
+   Auth + app_profiles, ver src/core/auth.js) — este bloque solo decide qué
+   pantalla mostrar y traduce Auth.getProfile()/el snapshot al shape
+   mínimo que ya usa el resto de app.js.
+   ============================================================ */
+
+// Mismo patrón que doLogin() (legacy) al armar App.currentUser — sin
+// inventar campos que Auth/app_profiles no tiene (shiftId/cuadrillaId/
+// locationId: fuera de alcance de P0-2, las personas Auth reales no están
+// ligadas al store "users" legacy, ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §17).
+function currentUserFromAuthProfile(profile) {
+  return { id: profile.appUserId, name: profile.displayName, role: profile.role, username: profile.appUserId };
+}
+
+function enterAppAsProfile(profile) {
+  App.currentUser = currentUserFromAuthProfile(profile);
+  boot();
+}
+
+// Punto de entrada único para AUTH_MODE='supabase': se llama al arrancar Y
+// cada vez que se bloquea (lockApp()) — SIEMPRE vuelve a pedir PIN o
+// contraseña, nunca reingresa en silencio (ese es el punto del "quick
+// unlock": nunca queda una sesión abierta indefinidamente en pantalla,
+// aunque el token siga vigente). Auth.restoreSession() ya refresca/valida
+// la sesión real en segundo plano; sync.js decide aparte, con su propio
+// gate (sin cambios de esta tarea), si eso alcanza para sincronizar — esta
+// pantalla NUNCA decide sync, solo qué pantalla mostrar.
+async function renderAuthGateSupabase() {
+  await Auth.restoreSession();
+  const snapshot = await DB.getAuthProfileSnapshot();
+  if (snapshot && isValidProfile(snapshot)) {
+    const configured = await QuickUnlock.isConfigured(snapshot.appUserId);
+    if (configured) return renderQuickUnlockScreen(snapshot);
+  }
+  return renderSupabaseLoginForm();
+}
+
+function renderSupabaseLoginForm() {
+  const online = navigator.onLine;
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        ${!online ? '<p class="login-hint">Sin conexión — se necesita Internet para iniciar sesión la primera vez. Si ya configuraste un PIN rápido antes, vuelve a intentarlo con señal.</p>' : ''}
+        <form id="supabase-login-form" class="form-grid">
+          <label>Usuario<input required name="username" autocomplete="username" ${online ? '' : 'disabled'}/></label>
+          <label>Contraseña<input required type="password" name="password" autocomplete="current-password" ${online ? '' : 'disabled'}/></label>
+          <div id="supabase-login-error" class="login-error"></div>
+          <button type="submit" class="btn btn-accent" ${online ? '' : 'disabled'}>Entrar</button>
+        </form>
+      </div>
+    </div>`;
+  $('#supabase-login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    $('#supabase-login-error').textContent = '';
+    try {
+      const { user: profile } = await Auth.signIn(fd.username, fd.password);
+      const configured = await QuickUnlock.isConfigured(profile.appUserId);
+      if (!configured) return offerQuickUnlockSetup(profile);
+      enterAppAsProfile(profile);
+    } catch (e) {
+      $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+    }
+  });
+}
+
+function renderQuickUnlockScreen(snapshot) {
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        <p class="login-hint">${esc(snapshot.displayName)}</p>
+        <div id="quick-unlock-area" class="form-grid">
+          <input id="quick-unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="PIN" maxlength="6"/>
+          <button type="button" id="quick-unlock-submit" class="btn btn-accent">Entrar</button>
+        </div>
+        <div id="quick-unlock-error" class="login-error"></div>
+        <button type="button" id="quick-unlock-use-password" class="btn">Usar contraseña</button>
+      </div>
+    </div>`;
+
+  $('#quick-unlock-use-password').addEventListener('click', () => renderSupabaseLoginForm());
+
+  const doUnlock = async () => {
+    const pin = $('#quick-unlock-pin').value.trim();
+    const res = await QuickUnlock.attemptUnlock(snapshot.appUserId, pin);
+    if (res.ok) { enterAppAsProfile(snapshot); return; }
+    if (res.reason === 'LOCKED') {
+      const mins = Math.ceil(res.remainingMs / 60000);
+      $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
+    } else {
+      $('#quick-unlock-error').textContent = res.attemptsLeft != null
+        ? `PIN incorrecto. Te quedan ${res.attemptsLeft} intento(s).`
+        : 'PIN incorrecto.';
+    }
+    $('#quick-unlock-pin').value = '';
+    $('#quick-unlock-pin').focus();
+  };
+  $('#quick-unlock-submit').addEventListener('click', doUnlock);
+  $('#quick-unlock-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doUnlock(); });
+
+  // Si ya estaba bloqueado desde antes (recarga de página durante el
+  // bloqueo), avisar de una vez en vez de esperar el primer intento.
+  QuickUnlock.isLockedOut(snapshot.appUserId).then(async (locked) => {
+    if (!locked) return;
+    const remainingMs = await QuickUnlock.getLockRemainingMs(snapshot.appUserId);
+    const mins = Math.ceil(remainingMs / 60000);
+    $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
+  });
+}
+
+// Se ofrece UNA vez, justo después de un login real exitoso (online,
+// perfil activo) — nunca antes (ver principio de seguridad en
+// src/core/quick-unlock.js). "Ahora no" entra normalmente sin configurar
+// nada; puede configurarse/cambiarse/desactivarse después desde
+// Configuración (ver renderConfig()).
+function offerQuickUnlockSetup(profile) {
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        <p class="login-hint">¿Configurar un PIN rápido (4 o 6 dígitos) para entrar sin escribir tu contraseña cada vez, incluso sin Internet?</p>
+        <form id="quick-unlock-setup-form" class="form-grid">
+          <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+          <div id="quick-unlock-setup-error" class="login-error"></div>
+          <button type="submit" class="btn btn-accent">Configurar PIN</button>
+        </form>
+        <button type="button" id="quick-unlock-setup-skip" class="btn">Ahora no</button>
+      </div>
+    </div>`;
+  $('#quick-unlock-setup-skip').addEventListener('click', () => enterAppAsProfile(profile));
+  $('#quick-unlock-setup-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await QuickUnlock.configure(profile.appUserId, fd.pin);
+      enterAppAsProfile(profile);
+    } catch (e) {
+      $('#quick-unlock-setup-error').textContent = e.message;
+    }
+  });
+}
+
+// Configurar/Cambiar desde Configuración (ver renderConfig()) — ya dentro
+// de la app, con sesión activa confirmada por Auth.isAuthenticated()
+// (nunca se ofrece esto sin eso, ver quickUnlockAvailable en renderConfig()).
+// changePin() reutiliza exactamente las mismas reglas de configure()
+// (formato, PIN trivial) — nunca duplica esa validación.
+function quickUnlockConfigureModal(mode) {
+  openModal(mode === 'change' ? 'Cambiar PIN rápido' : 'Configurar PIN rápido', `
+    <form id="quick-unlock-modal-form" class="form-grid">
+      <label>PIN (4 o 6 dígitos)<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+    </form>`);
+  $('#quick-unlock-modal-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      const appUserId = Auth.getProfile().appUserId;
+      await QuickUnlock.changePin(appUserId, fd.pin);
+      await logAudit(mode === 'change' ? 'QUICK_UNLOCK_CAMBIADO' : 'QUICK_UNLOCK_CONFIGURADO', App.currentUser.name, App.currentUser.name);
+      showInAppToast('✓ PIN rápido guardado');
+      closeModal();
+      renderConfig();
+    } catch (e) {
+      showInAppToast('✗ ' + e.message);
+    }
+  });
 }
 
 /* ---------- Cierre de sesión por inactividad ----------
@@ -1772,6 +1980,7 @@ function boot() {
             }).join('');
           })()}
         </nav>
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span>Bloquear</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
         </button>
@@ -1813,6 +2022,7 @@ function boot() {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
   $('#btn-logout').addEventListener('click', logout);
+  $('#btn-lock-app')?.addEventListener('click', lockApp);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
@@ -1887,6 +2097,7 @@ function bootLubricador() {
         </div>
         <div class="lub-topbar-right">
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
           <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
@@ -1906,6 +2117,7 @@ function bootLubricador() {
   setInterval(shiftLabel, 60000);
 
   $('#btn-logout').addEventListener('click', logout);
+  $('#btn-lock-app')?.addEventListener('click', lockApp);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
     // La barra inferior vive FUERA de #app-content (nunca se borra al entrar a
     // Registrar Engrase) — tocar cualquiera de estas 4 secciones es una salida
@@ -8636,6 +8848,13 @@ async function renderConfig() {
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
   const timeVal = (h, m) => `${pad(h)}:${pad(m)}`;
+  // PIN rápido (P0-2): SOLO en AUTH_MODE='supabase' con sesión real ya
+  // autenticada — nunca aparece en modo legacy ni sin login, ver
+  // src/core/quick-unlock.js. Auth.getProfile() es la misma identidad que
+  // Auth.isAuthenticated() ya validó, nunca App.currentUser.id a ciegas
+  // (evita depender del shape armado en currentUserFromAuthProfile()).
+  const quickUnlockAvailable = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
+  const quickUnlockConfigured = quickUnlockAvailable && await QuickUnlock.isConfigured(Auth.getProfile().appUserId);
 
   c.innerHTML = `
     <div class="panel">
@@ -8645,6 +8864,16 @@ async function renderConfig() {
         <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
       </div>
     </div>
+    ${quickUnlockAvailable ? `
+    <div class="panel">
+      <div class="panel-head"><h3>PIN rápido (desbloqueo sin Internet)</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Permite volver a entrar en este dispositivo con un PIN de 4 o 6 dígitos, sin escribir tu contraseña cada vez — incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol: solo desbloquea la pantalla.</p>
+        ${quickUnlockConfigured
+          ? `<button type="button" class="btn" id="btn-quick-unlock-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="btn-quick-unlock-disable">Desactivar PIN rápido</button>`
+          : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
+      </div>
+    </div>` : ''}
     <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
@@ -8781,6 +9010,15 @@ async function renderConfig() {
   });
 
   $('#btn-theme').addEventListener('click', openThemePicker);
+
+  $('#btn-quick-unlock-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure'));
+  $('#btn-quick-unlock-change')?.addEventListener('click', () => quickUnlockConfigureModal('change'));
+  $('#btn-quick-unlock-disable')?.addEventListener('click', async () => {
+    await QuickUnlock.disable();
+    await logAudit('QUICK_UNLOCK_DESACTIVADO', App.currentUser.name, App.currentUser.name);
+    showInAppToast('✓ PIN rápido desactivado');
+    renderConfig();
+  });
 
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();

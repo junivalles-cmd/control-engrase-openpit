@@ -1,10 +1,10 @@
-const CACHE = 'engrase-openpit-v42'; // v42: P0-2 — sync.js gana syncAuthHeaders(): en AUTH_MODE='supabase' con sesión válida, pushAll()/pullAll()/fetchRemoteUpdatedAt() usan el access_token real de la persona autenticada contra engrase_sync (nunca el anon key); en 'legacy' (o sin sesión) sigue igual que antes. sync.js es runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v41).
+const CACHE = 'engrase-openpit-v43'; // v43: P0-2 — quick unlock offline: nuevo src/core/quick-unlock.js (PIN local con PBKDF2, solo AUTH_MODE='supabase'), db.js gana DB.getQuickUnlock()/setQuickUnlock(), app.js gana el flujo de login/PIN/bloqueo para modo Supabase. Todo inerte en 'legacy' (default). Runtime nuevo/cambiado precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v42).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline
   // siga funcionando.
-  './src/core/auth.js', './src/core/shifts.js', './src/core/hourmeter.js',
+  './src/core/auth.js', './src/core/quick-unlock.js', './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',

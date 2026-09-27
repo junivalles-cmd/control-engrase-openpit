@@ -199,6 +199,28 @@ const DB = {
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+
+  // Quick unlock local (P0-2, ver src/core/quick-unlock.js) — { appUserId,
+  // salt, hash, iterations, createdAt, failedAttempts, lockedUntil } o null.
+  // NUNCA contiene el PIN en texto plano, solo su hash PBKDF2. Mismo
+  // patrón que auth_tokens/auth_profile_snapshot: un blob en app_config
+  // (LOCAL_STORES, nunca sincroniza). Vive en su PROPIA key, separada de
+  // auth_tokens y auth_profile_snapshot — el PIN nunca sustituye ni toca
+  // esos dos namespaces.
+  async getQuickUnlock() {
+    return new Promise((res, rej) => {
+      const r = tx('app_config').get('auth_quick_unlock');
+      r.onsuccess = () => res(r.result ? r.result.value : null);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  async setQuickUnlock(value) {
+    return new Promise((res, rej) => {
+      const r = tx('app_config', 'readwrite').put({ key: 'auth_quick_unlock', value });
+      r.onsuccess = () => res(value);
+      r.onerror = (e) => rej(e.target.error);
+    });
   }
 };
 

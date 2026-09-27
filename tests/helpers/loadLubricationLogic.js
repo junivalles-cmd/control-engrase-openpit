@@ -247,3 +247,27 @@ export function loadManageUsersLogic() {
   const factory = new Function(body);
   return factory();
 }
+
+// P0-2 — PIN rápido offline. Usa `DB` (global, igual que auth.js/sync.js) y
+// `nowISO` (de db.js) como globales compartidos; `crypto`/`TextEncoder` son
+// globales nativos de Node/navegador, no hace falta inyectarlos.
+export const QUICK_UNLOCK_JS_PATH = path.join(SRC_ROOT, 'src/core/quick-unlock.js');
+const QUICK_UNLOCK_SOURCES = [
+  [DB_JS_PATH, ['nowISO']],
+  [QUICK_UNLOCK_JS_PATH, [
+    'QUICK_UNLOCK_SALT_BYTES', 'QUICK_UNLOCK_ITERATIONS', 'QUICK_UNLOCK_MAX_ATTEMPTS', 'QUICK_UNLOCK_LOCKOUT_MS',
+    'isValidPinFormat', 'isTrivialPin', 'bytesToHex', 'hexToBytes', 'randomSaltHex', 'pbkdf2HashHex', 'QuickUnlock',
+  ]],
+];
+
+/**
+ * Devuelve las funciones/constantes reales de src/core/quick-unlock.js
+ * (isValidPinFormat/isTrivialPin/pbkdf2HashHex/QuickUnlock, etc.), ligadas
+ * a un `DB` de prueba (QuickUnlock lee `DB`/`crypto`/`nowISO` como
+ * globales, igual que en el navegador).
+ */
+export function loadQuickUnlockLogic(fakeDB) {
+  const body = buildBodyFromSources(QUICK_UNLOCK_SOURCES);
+  const factory = new Function('DB', body);
+  return factory(fakeDB);
+}

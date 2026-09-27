@@ -754,3 +754,70 @@ de `v41` a `v42` (runtime cambiado: `sync.js`).
 código committeado; este fix solo asegura que, el día que se active, el sync
 ya use el JWT real en vez de romperse contra las RLS nuevas al cerrarse la
 policy legacy.
+
+## 25. PIN rápido offline (sesión 2026-09-27, autorizado explícitamente)
+
+Nuevo módulo `src/core/quick-unlock.js`, activo SOLO en `AUTH_MODE='supabase'`
+(sigue en `'legacy'` en el código committeado — todo esto es inerte hoy).
+No toca producción, no toca RLS, no cierra la policy legacy, no crea
+usuarios reales.
+
+**Principio de seguridad (sin excepción):** Supabase Auth sigue siendo la
+ÚNICA identidad real. El PIN local NUNCA autentica contra Supabase, NUNCA da
+permisos de servidor, NUNCA define el rol — solo decide si ESTE dispositivo
+vuelve a mostrar la UI de una identidad que YA se validó antes con una
+sesión Auth real. El gate de sync (§23/§24) es exactamente el mismo de
+antes, sin ningún cambio — el PIN nunca participa en esa decisión.
+
+**Almacenamiento:** PBKDF2-SHA256 (100.000 iteraciones), salt aleatorio de
+16 bytes por dispositivo (Web Crypto, `crypto.subtle`/`crypto.getRandomValues`
+— sin librería externa). Persistido en `auth_quick_unlock`
+(`app_config`/`LOCAL_STORES`, nunca sincroniza — mismo patrón que
+`auth_tokens`/`auth_profile_snapshot`, namespace propio, sin subir
+`DB_VERSION`). Campos: `appUserId, salt, hash, iterations, createdAt,
+failedAttempts, lockedUntil`. **Nunca** un campo `pin`/`password`/JWT.
+
+**Reglas de PIN:** 4 o 6 dígitos exactos (`isValidPinFormat`); rechaza
+`0000`/`1111`/…, `1234`/`4321`, `123456`/`654321` y equivalentes
+(`isTrivialPin`). Bloqueo local tras 5 intentos fallidos, 5 minutos, contado
+y persistido en DB (nunca en memoria) — sobrevive cerrar/reabrir la app. Un
+PIN correcto reinicia el contador; un bloqueo nunca borra el PIN configurado.
+
+**Flujo (`app.js`, todo detrás de `Auth.isSupabaseMode()`):**
+- `renderAuthGateSupabase()` — punto de entrada único, se llama al arrancar
+  Y al "Bloquear" (nunca reingresa en silencio): `Auth.restoreSession()`,
+  luego si hay snapshot válido (`isValidProfile`) Y PIN configurado para esa
+  identidad → `renderQuickUnlockScreen()`; si no → `renderSupabaseLoginForm()`
+  (Usuario + Contraseña real, deshabilitado sin conexión).
+- Login real exitoso sin PIN configurado → `offerQuickUnlockSetup()`
+  ("Ahora no" entra igual sin configurar).
+- `logout()` (CERRAR SESIÓN): en modo supabase, `Auth.signOut()` +
+  `QuickUnlock.disable()` — borra sesión Y PIN, exige credenciales
+  completas la próxima vez. Nunca toca IndexedDB operativo.
+- `lockApp()` (BLOQUEAR, botón nuevo junto a "Cerrar sesión"/en el shell del
+  Lubricador, solo visible en modo supabase): re-muestra
+  `renderAuthGateSupabase()` sin llamar `signOut()`/`disable()` — sesión y
+  PIN quedan intactos.
+- Configurar/Cambiar/Desactivar PIN también disponible desde Configuración
+  (`renderConfig()`), solo cuando `Auth.isAuthenticated()` ya es `true`.
+- Login PIN legacy (`renderLogin()`/`doLogin()`) **sin ningún cambio** —
+  módulo completamente separado, nunca se ejecuta si `AUTH_MODE='supabase'`.
+
+**Tests nuevos:** `tests/unit/quick-unlock.test.js` (18 tests, letras A-L del
+pedido de cierre — PIN nunca en texto plano, salts distintos, unlock
+correcto/incorrecto, lockout y su persistencia tras "reload", desacople
+total de `Auth.isAuthenticated()`, refresh inválido deja sin snapshot,
+perfil inactivo nunca ofrece PIN, logout borra el PIN vs. bloquear lo
+conserva) + extractor actualizado
+(`tests/helpers/loadLubricationLogic.js`, `loadQuickUnlockLogic()`). M
+(legacy intacto) y N (JWT de §24 sigue en PASS) se confirman con la suite
+completa + `tests/ui/login-responsive.spec.js` (Playwright, sin cambios).
+
+**Validación completa:** unit 605/605 (35 archivos, +18 sobre el cierre
+anterior), Playwright relevante (`login-responsive`, `dashboard-operativo`,
+`lubricador-mi-turno`, 287/287) — no se corrió el suite completo de
+Playwright porque el cambio nuevo vive detrás de `AUTH_MODE='supabase'`,
+inerte en todo lo demás. `typecheck` limpio, `lint:css` limpio (mismo
+baseline, 0 errores), `build:web`+`verify:dist` OK (`src/core/quick-unlock.js`
+detectado como el 10º módulo). SW `v42` → `v43` (runtime nuevo/cambiado:
+`quick-unlock.js`, `db.js`, `app.js`, `index.html`).
