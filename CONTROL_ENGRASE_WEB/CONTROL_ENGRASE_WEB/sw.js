@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v43'; // v43: P0-2 — quick unlock offline: nuevo src/core/quick-unlock.js (PIN local con PBKDF2, solo AUTH_MODE='supabase'), db.js gana DB.getQuickUnlock()/setQuickUnlock(), app.js gana el flujo de login/PIN/bloqueo para modo Supabase. Todo inerte en 'legacy' (default). Runtime nuevo/cambiado precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v42).
+const CACHE = 'engrase-openpit-v44'; // v44: mejora — intervalo de auto-sync configurable por el Administrador (Configuración → Sincronización, 30s/1/2/5/10min, default 2min). sync.js gana Sync.setAutoInterval()/_restartAutoTimer() (nunca más de 1 timer activo); app.js aplica el intervalo guardado en settings/general (syncIntervalSeconds, sincronizado entre dispositivos) y agrega Sync.fullSync() inmediato tras guardar engrase/horómetro. sync.js y app.js son runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v43).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

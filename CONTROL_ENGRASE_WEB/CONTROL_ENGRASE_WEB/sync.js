@@ -108,6 +108,12 @@ function syncAuthHeaders(cfg) {
 const Sync = {
   syncing: false,
   listeners: [],
+  // Mejora: intervalo de auto-sync configurable por el Administrador (ver
+  // app.js renderConfig() → "Sincronización"). Guardan el ID del timer
+  // activo y el intervalo vigente para poder cambiarlo en caliente sin
+  // duplicar timers — ver _restartAutoTimer()/setAutoInterval() abajo.
+  _autoTimerId: null,
+  _autoIntervalSeconds: null,
 
   onChange(fn) { this.listeners.push(fn); },
   notify(state) { this.listeners.forEach(fn => { try { fn(state); } catch (e) {} }); },
@@ -585,13 +591,15 @@ const Sync = {
     }
   },
 
-  startAuto() {
+  // `intervalSeconds`: lo decide el Administrador desde Configuración (ver
+  // app.js App.generalSettings.syncIntervalSeconds, ya sincronizado y
+  // validado — antes era un fijo de 20s). Los listeners de
+  // 'online'/'visibilitychange' se agregan UNA sola vez aquí; el timer
+  // periódico en sí vive en _restartAutoTimer(), para poder cambiarlo en
+  // caliente (setAutoInterval()) sin duplicar listeners ni crear un
+  // segundo timer.
+  startAuto(intervalSeconds = 120) {
     window.addEventListener('online', () => this.fullSync());
-
-    // Cada 20 segundos (antes 45): así un cambio hecho por el administrador —cerrar o
-    // borrar una anomalía, por ejemplo— llega al resto del equipo en segundos y no en
-    // casi un minuto. Cada ciclo mueve solo lo que cambió, así que el costo es mínimo.
-    setInterval(() => { if (navigator.onLine) this.fullSync(); }, 20000);
 
     // Al volver a la app después de tenerla en segundo plano, sincroniza enseguida en
     // vez de esperar el siguiente ciclo. Es el momento en que la persona mira la
@@ -600,6 +608,24 @@ const Sync = {
       if (!document.hidden && navigator.onLine) this.fullSync();
     });
 
+    this._restartAutoTimer(intervalSeconds);
     if (navigator.onLine) this.fullSync();
+  },
+
+  // Cambia el intervalo del auto-sync EN CALIENTE (el Administrador lo
+  // ajusta desde Configuración) — nunca requiere reiniciar la app. Siempre
+  // apaga el timer anterior antes de crear el nuevo: en cualquier momento
+  // existe como máximo 1 timer de auto-sync activo.
+  setAutoInterval(intervalSeconds) {
+    this._restartAutoTimer(intervalSeconds);
+  },
+
+  _restartAutoTimer(intervalSeconds) {
+    if (this._autoTimerId) clearInterval(this._autoTimerId);
+    this._autoIntervalSeconds = intervalSeconds;
+    // Cada ciclo mueve solo lo que cambió (ver pushAll/pullAll), así que el
+    // costo de un intervalo corto es mínimo — el valor en sí ahora lo
+    // decide el Administrador, ya no un fijo de 20s.
+    this._autoTimerId = setInterval(() => { if (navigator.onLine) this.fullSync(); }, intervalSeconds * 1000);
   }
 };

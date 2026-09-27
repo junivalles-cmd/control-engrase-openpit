@@ -1047,13 +1047,34 @@ const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
    global, ver docs/MODULARIZATION.md). */
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+// Mejora: intervalo de auto-sync configurable por el Administrador desde
+// Configuración → Sincronización. Opciones FIJAS (nunca texto libre, nunca
+// menor a 30s) — cualquier otro valor (sin configurar, corrupto, de una
+// versión futura con más opciones) cae al default. Vive en el mismo
+// documento `settings/general` que ya sincroniza entre TODOS los
+// dispositivos (nunca solo en app_config, que es local a este teléfono) —
+// no requiere store nuevo ni subir DB_VERSION.
+const SYNC_INTERVAL_OPTIONS = [30, 60, 120, 300, 600];
+const SYNC_INTERVAL_DEFAULT = 120;
+function normalizeSyncInterval(value) {
+  return SYNC_INTERVAL_OPTIONS.includes(value) ? value : SYNC_INTERVAL_DEFAULT;
+}
+function syncIntervalLabel(seconds) {
+  if (seconds < 60) return `Cada ${seconds} segundos`;
+  const mins = seconds / 60;
+  return `Cada ${mins} minuto${mins === 1 ? '' : 's'}`;
+}
+
 // Configuración general editable por el Administrador (horarios de turno, umbrales, etc.)
 // Se carga en memoria al arrancar y se puede recargar cuando el admin la cambia.
-App.generalSettings = { shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95 };
+App.generalSettings = { shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95, syncIntervalSeconds: SYNC_INTERVAL_DEFAULT };
 
 async function loadGeneralSettings() {
   const s = await DB.get('settings', 'general');
   if (s) Object.assign(App.generalSettings, s);
+  // Normaliza SIEMPRE, incluso si `s` no traía el campo (documento viejo,
+  // nunca configurado) o traía un valor fuera de las opciones válidas.
+  App.generalSettings.syncIntervalSeconds = normalizeSyncInterval(App.generalSettings.syncIntervalSeconds);
 }
 
 /* currentShiftId() se movió a src/core/shifts.js (sigue disponible como
@@ -1312,7 +1333,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   wirePushListeners();
   wireLocalNotificationTaps();
-  Sync.startAuto();
+  Sync.startAuto(App.generalSettings.syncIntervalSeconds);
   updateConnBadge();
 
   // AUTH_MODE='supabase': flujo de login/PIN completamente separado (ver
@@ -5429,6 +5450,12 @@ async function startGreaseFlow(equipmentId, target) {
       await discardDraft();
       await refreshLocalNotifications();
       await refreshAppBadge();
+      // Sube el engrase ya, para que el resto del equipo lo vea en segundos
+      // en vez de esperar el siguiente ciclo del timer. No await: no debe
+      // bloquear la pantalla de "Validar ahora/después" que sigue abajo. El
+      // guard de onSyncStateChange() (ver más arriba en este archivo) sigue
+      // intacto tal cual — este fullSync() NUNCA desmonta esta pantalla.
+      Sync.fullSync();
 
       // La validación NO es obligatoria en el momento: el lubrication_record
       // ya quedó guardado arriba pase lo que pase acá. "Validar ahora" abre
@@ -5503,6 +5530,7 @@ async function renderHorometros() {
       await DB.put('equipment', stamp(eq, App.currentUser.name));
       await logAudit('HOROMETRO_ACTUALIZADO', `${esc(eq.code)} → ${fmt(newVal)} h`, App.currentUser.name);
       showInAppToast(`✓ Horómetro de ${esc(eq.code)} actualizado`);
+      Sync.fullSync(); // sube el cambio ya, en vez de esperar el siguiente ciclo del timer
       renderHorometros();
     });
   });
@@ -5570,6 +5598,7 @@ async function handleHourmeterExcelImport(file, equipos) {
     }
     await logAudit('HOROMETROS_IMPORTADOS', `${applied} equipos actualizados desde Excel`, App.currentUser.name);
     showInAppToast(`✓ Horómetros importados: ${applied} equipos`);
+    Sync.fullSync(); // sube el lote ya, en vez de esperar el siguiente ciclo del timer
     closeModal();
     navigate('horometros');
   });
@@ -8949,6 +8978,18 @@ async function renderConfig() {
             <button type="button" class="btn" id="btn-sync-now">Sincronizar ahora</button>
           </div>
         </form>
+        <form id="sync-interval-form" class="form-grid" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px">
+          <label>Sincronización automática
+            <select name="syncIntervalSeconds" ${App.currentUser.role !== 'ADMINISTRADOR' ? 'disabled' : ''}>
+              ${SYNC_INTERVAL_OPTIONS.map(s => `<option value="${s}" ${App.generalSettings.syncIntervalSeconds === s ? 'selected' : ''}>${syncIntervalLabel(s)}</option>`).join('')}
+            </select>
+            <span class="field-hint">También se sincroniza al recuperar conexión y después de operaciones importantes.</span>
+          </label>
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `
+          <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
+            <button type="submit" class="btn btn-accent">Guardar intervalo</button>
+          </div>` : ''}
+        </form>
         <div id="sync-status" class="dim" style="margin-top:10px">
           ${cfg.url ? `Servidor conectado. Última descarga: ${cfg.lastPull ? fmtDate(cfg.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
         </div>
@@ -9025,8 +9066,13 @@ async function renderConfig() {
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     const [dayH] = fd.shiftDayStart.split(':').map(Number);
     const [nightH] = fd.shiftNightStart.split(':').map(Number);
+    // ...(current): el documento `settings/general` guarda MÁS campos que
+    // este formulario conoce (syncIntervalSeconds, ver #sync-interval-form
+    // más abajo) — nunca se reconstruye desde cero, o guardar esto
+    // borraría en silencio lo que el otro formulario acababa de guardar.
+    const current = (await DB.get('settings', 'general')) || {};
     const updated = {
-      id: 'general', shiftDayStart: dayH, shiftNightStart: nightH,
+      ...current, id: 'general', shiftDayStart: dayH, shiftNightStart: nightH,
       defaultAlertYellowHours: parseFloat(fd.defaultAlertYellowHours),
       complianceTarget: parseFloat(fd.complianceTarget)
     };
@@ -9035,6 +9081,26 @@ async function renderConfig() {
     showInAppToast('✓ Configuración general guardada');
     await loadGeneralSettings();
     await refreshLocalNotifications();
+    renderConfig();
+  });
+
+  $('#sync-interval-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    // Defensa además de deshabilitar/ocultar el control (ver markup
+    // arriba): aunque alguien forzara el <select> por DevTools, esto
+    // sigue sin permitir el cambio si no es ADMINISTRADOR.
+    if (App.currentUser.role !== 'ADMINISTRADOR') return;
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const seconds = normalizeSyncInterval(parseInt(fd.syncIntervalSeconds, 10));
+    const current = (await DB.get('settings', 'general')) || {};
+    const updated = { ...current, id: 'general', syncIntervalSeconds: seconds };
+    await DB.put('settings', stamp(updated, App.currentUser.name));
+    await logAudit('SYNC_INTERVALO_ACTUALIZADO', syncIntervalLabel(seconds), App.currentUser.name);
+    await loadGeneralSettings();
+    // Aplica YA, sin reiniciar la app — Sync.setAutoInterval() apaga el
+    // timer anterior antes de crear el nuevo (nunca quedan dos activos).
+    Sync.setAutoInterval(App.generalSettings.syncIntervalSeconds);
+    showInAppToast('✓ Intervalo de sincronización actualizado');
     renderConfig();
   });
 

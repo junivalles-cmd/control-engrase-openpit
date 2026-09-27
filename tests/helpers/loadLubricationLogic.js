@@ -49,6 +49,10 @@ const APP_LOGIC_SOURCES = [
     'horaAjustadaAlTurno',
     'esc',
     'colorPorCumplimiento',
+    'SYNC_INTERVAL_OPTIONS',
+    'SYNC_INTERVAL_DEFAULT',
+    'normalizeSyncInterval',
+    'syncIntervalLabel',
   ]],
 ];
 
