@@ -164,7 +164,7 @@ export function loadPlanComplianceLogic() {
 export const SYNC_JS_PATH = path.join(SRC_ROOT, 'sync.js');
 export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
-  [DB_JS_PATH, ['nowISO']],
+  [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, ['classifyAuthStatus']],
   [SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'Sync']],
 ];
@@ -191,7 +191,7 @@ export function loadSyncLogic(fakeDB, fakeStores, fakeAuth) {
 }
 
 const AUTH_SOURCES = [
-  [DB_JS_PATH, ['nowISO']],
+  [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, [
     'AUTH_MODE', 'AUTH_VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
     'usernameToAuthIdentifier', 'classifyAuthStatus', 'isValidProfile', 'Auth',

@@ -121,7 +121,7 @@ const Auth = {
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
 
-    const resp = await fetch(`${cfg.url}/auth/v1/token?grant_type=password`, {
+    const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
       body: JSON.stringify({ email: identifier, password })
@@ -201,8 +201,21 @@ const Auth = {
       this._notify({ status: 'restored', profile: this._profile });
       return { user: this._profile, session: this._session };
     } catch (e) {
-      // Refresh token inválido/expirado -> ya no hay sesión confiable;
-      // se limpia y se exige login real de nuevo (nunca fallback a anon).
+      if (!e.authRejected && isNetworkFailure(e)) {
+        // Backend no disponible ahora mismo (navigator.onLine=true no lo
+        // garantiza — ver Bloque B, hallazgo real del piloto Android).
+        // NUNCA se trata como refresh token inválido: no se cierra sesión,
+        // no se borran tokens/snapshot. El snapshot cacheado sigue
+        // disponible para UX offline (mismo criterio que la rama "sin red"
+        // de arriba); sync.js decide aparte (vía isAuthenticated(), que
+        // sigue dando false con el token sin refrescar) si eso alcanza
+        // para sincronizar — nunca sincroniza "a medias".
+        this._notify({ status: 'pending_validation', profile: this._profile });
+        return { user: this._profile, session: this._session };
+      }
+      // Rechazo REAL del servidor (refresh token inválido/revocado) -> ya
+      // no hay sesión confiable; se limpia y se exige login real de nuevo
+      // (nunca fallback a anon).
       await this.signOut();
       return null;
     }
@@ -215,10 +228,19 @@ const Auth = {
   // vez de seguir confiando en el snapshot local viejo.
   async refreshProfile() {
     const cfg = await DB.getConfig();
-    const profile = await this._fetchProfile(cfg);
-    this._profile = profile; // puede quedar null/inactivo -> isAuthenticated() pasa a false
-    await this._persistState();
-    return this._profile;
+    try {
+      const profile = await this._fetchProfile(cfg);
+      this._profile = profile; // puede quedar null/inactivo -> isAuthenticated() pasa a false
+      await this._persistState();
+      return this._profile;
+    } catch (e) {
+      // Backend no disponible (ver _fetchProfile() más abajo) — se
+      // conserva el perfil YA cacheado tal cual, en memoria y en DB: un
+      // problema de red nunca debe leerse como "esta persona perdió su
+      // perfil" (Bloque B, pre-cutover).
+      if (isNetworkFailure(e)) return this._profile;
+      throw e;
+    }
   },
 
   // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge
@@ -235,7 +257,7 @@ const Auth = {
     }
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
-    const resp = await fetch(`${cfg.url}/functions/v1/manage-users`, {
+    const resp = await fetchWithTimeout(`${cfg.url}/functions/v1/manage-users`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -254,7 +276,7 @@ const Auth = {
   async _fetchProfile(cfg) {
     if (!this._session || !this._session.accessToken) return null;
     try {
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active`,
         { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${this._session.accessToken}` } }
       );
@@ -267,6 +289,12 @@ const Auth = {
         displayName: p.display_name, role: p.role, active: p.active === true
       };
     } catch (e) {
+      // Backend no disponible ahora mismo (red/timeout, ver Bloque B
+      // pre-cutover) — NUNCA se confunde con "no tiene perfil" (§6): se
+      // re-lanza para que refreshProfile() conserve el último perfil ya
+      // confirmado en vez de reemplazarlo por null. Cualquier otra
+      // excepción sí devuelve null (comportamiento de siempre).
+      if (isNetworkFailure(e)) throw e;
       return null;
     }
   },
@@ -274,12 +302,19 @@ const Auth = {
   async _refreshSession() {
     const cfg = await DB.getConfig();
     if (!this._session || !this._session.refreshToken) throw new Error('Sin refresh token.');
-    const resp = await fetch(`${cfg.url}/auth/v1/token?grant_type=refresh_token`, {
+    const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
       body: JSON.stringify({ refresh_token: this._session.refreshToken })
     });
-    if (!resp.ok) throw new Error(`No se pudo refrescar la sesión: ${resp.status}`);
+    if (!resp.ok) {
+      // Rechazo REAL del servidor (401 típico: refresh token inválido o
+      // revocado) — nunca una falla de red, esas nunca llegan a tener
+      // `resp` (ver restoreSession(), que distingue por este flag).
+      const err = new Error(`No se pudo refrescar la sesión: ${resp.status}`);
+      err.authRejected = true;
+      throw err;
+    }
     const data = await resp.json();
     this._session = {
       accessToken: data.access_token,

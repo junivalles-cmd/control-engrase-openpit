@@ -130,7 +130,7 @@ const Sync = {
     }
     let resp;
     try {
-      resp = await fetch(`${clean}/rest/v1/engrase_sync?select=store&limit=1`, {
+      resp = await fetchWithTimeout(`${clean}/rest/v1/engrase_sync?select=store&limit=1`, {
         headers: { apikey: anonKey.trim(), Authorization: `Bearer ${anonKey.trim()}` }
       });
     } catch (networkErr) {
@@ -267,7 +267,7 @@ const Sync = {
   // buscar el dato de diagnóstico.
   async fetchRemoteUpdatedAt(store, id, cfg) {
     try {
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `${cfg.url}/rest/v1/engrase_sync?select=updated_at&store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(id)}`,
         { headers: syncAuthHeaders(cfg) }
       );
@@ -327,7 +327,7 @@ const Sync = {
           const body = prepared.map(r => ({
             store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
           }));
-          const resp = await fetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
+          const resp = await fetchWithTimeout(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -370,7 +370,7 @@ const Sync = {
           // condición y escribe en la MISMA operación atómica: no hay
           // ventana entre "leer" y "escribir" donde otro dispositivo pueda
           // meterse (a diferencia de un GET seguido de un POST separado).
-          const resp = await fetch(
+          const resp = await fetchWithTimeout(
             `${cfg.url}/rest/v1/engrase_sync?store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(r.id)}&updated_at=eq.${encodeURIComponent(r._pushedVersion)}`,
             {
               method: 'PATCH',
@@ -444,7 +444,7 @@ const Sync = {
     let rows = [];
     let offset = 0;
     while (true) {
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc,store.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`,
         { headers: syncAuthHeaders(cfg) }
       );
@@ -584,8 +584,15 @@ const Sync = {
         authErrors: pushRes.authErrors || 0, at: nowISO()
       });
     } catch (err) {
+      // navigator.onLine=true no garantiza que el backend responda (ver
+      // Bloque B, hallazgo real del piloto Android) — una falla de red/
+      // timeout aquí (nunca un 401/403 real, esos ya se manejan aparte) se
+      // reporta como 'backend_unreachable', NUNCA como si hubiera
+      // sincronizado. No se toca sesión/tokens/snapshot ni se genera
+      // conflicto CAS — el catch nunca los tocó, esto solo afina el status.
+      const status = isNetworkFailure(err) ? 'backend_unreachable' : 'error';
       console.error('Sync error', err);
-      this.notify({ status: 'error', message: err.message });
+      this.notify({ status, message: err.message });
     } finally {
       this.syncing = false;
     }

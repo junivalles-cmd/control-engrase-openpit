@@ -230,6 +230,35 @@ function uid(prefix) {
 
 function nowISO() { return new Date().toISOString(); }
 
+// Mejora pre-cutover — Bloque B (conectividad real): timeout central para
+// las llamadas de red CRÍTICAS (Auth, app_profiles, engrase_sync,
+// manage-users — ver auth.js/sync.js). Sin esto, un backend que nunca
+// responde (ni 200 ni error, solo se queda callado) podía dejar un fetch
+// colgado para siempre y, con él, `Sync.syncing` atascado en `true`,
+// bloqueando cualquier sync futuro. `navigator.onLine` sigue decidiendo si
+// SIQUIERA se intenta (ver sync.js fullSync()) — esto solo protege el
+// intento en sí una vez que ya se decidió intentarlo. Deliberadamente NO se
+// aplica a las subidas de Storage (fotos/firma): son payloads más grandes
+// en redes lentas, fuera del alcance explícito de este cierre.
+const NETWORK_TIMEOUT_MS = 10000;
+function fetchWithTimeout(url, options = {}) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS) });
+}
+
+// Clasifica una excepción de fetch como "el backend no está disponible
+// ahora mismo" (red inaccesible, DNS, timeout) — NUNCA un 401/403 (esas son
+// respuestas HTTP reales con `resp.ok`, no excepciones) ni un bug de la
+// app. `navigator.onLine === true` NO garantiza que esto no pase — hallazgo
+// real confirmado en el piloto Android (el WebView reportaba online con la
+// red realmente caída); la única señal confiable es que la request en sí
+// falló a nivel de red/transporte.
+function isNetworkFailure(err) {
+  if (!err) return false;
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') return true; // AbortSignal.timeout()
+  if (err instanceof TypeError) return true; // "Failed to fetch" / DNS / sin red real
+  return false;
+}
+
 function stamp(obj, user) {
   const t = nowISO();
   if (!obj.id) obj.id = uid('rec');
