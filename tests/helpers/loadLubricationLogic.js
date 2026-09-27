@@ -53,6 +53,7 @@ const APP_LOGIC_SOURCES = [
     'SYNC_INTERVAL_DEFAULT',
     'normalizeSyncInterval',
     'syncIntervalLabel',
+    'currentUserFromAuthProfile',
   ]],
 ];
 

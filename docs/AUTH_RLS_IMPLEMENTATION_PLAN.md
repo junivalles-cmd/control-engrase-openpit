@@ -821,3 +821,89 @@ inerte en todo lo demás. `typecheck` limpio, `lint:css` limpio (mismo
 baseline, 0 errores), `build:web`+`verify:dist` OK (`src/core/quick-unlock.js`
 detectado como el 10º módulo). SW `v42` → `v43` (runtime nuevo/cambiado:
 `quick-unlock.js`, `db.js`, `app.js`, `index.html`).
+
+## 26. Auditoría pre-cutover (sesión 2026-09-27) — todo confirmado contra producción, solo lectura
+
+Antes de preparar el cutover, se confirmó por consulta directa (`supabase db
+query --linked`, solo `SELECT`, nunca escritura) que el estado real de
+producción coincide exactamente con lo documentado:
+
+| Ítem auditado | Resultado confirmado |
+|---|---|
+| `AUTH_MODE` en el código (antes de este cierre) | `'legacy'` |
+| Policy legacy en `engrase_sync` | `"acceso interno con anon key"` (`FOR ALL USING(true) WITH CHECK(true)`) — **sigue activa** |
+| Policies `authenticated` en `engrase_sync` | `"engrase_sync: leer/crear/actualizar según matriz"` (las 3 de 0002) — existen, coexistiendo con la legacy |
+| Policies de `app_profiles` | Las 4 de 0002 (`leer el propio perfil`, `admin lee todos`, `admin crea perfiles`, `admin edita otros`) — existen |
+| `app_store_permissions` | 75 filas (15 stores × 5 roles), exactamente el INSERT de 0002 |
+| `manage-users` | `ACTIVE` |
+| `app_profiles` (filas reales) | **Exactamente 1**: `u_jvalles` / Junior Valles / `ADMINISTRADOR` / `active:true` |
+| Bootstrap legacy en `AUTH_MODE='supabase'` | Ya deshabilitado (`db.js`, `isSupabaseAuthMode()` gate en `seedIfEmpty()`/`seedSoloUsuarioInicial()` — commit `4e44089`, sesión previa) |
+| Sync usa JWT real en modo supabase | Confirmado (commit `4645e31`, verificado en Android real) |
+
+**Hallazgo crítico de la auditoría, no un problema de código — una
+consecuencia operativa real:** `app_profiles` tiene una sola fila. Ningún
+rol de campo (SUPERVISOR/PLANIFICADOR/LUBRICADOR/VISOR) tiene todavía una
+cuenta Auth real. Ver §27 para cómo esto condiciona el orden de despliegue.
+
+## 27. Cutover preparado (sesión 2026-09-27) — código listo, NADA desplegado ni ejecutado
+
+**Cambio de código real, committeado, pero SIN publicar/instalar/ejecutar
+todavía:**
+
+- `src/core/auth.js`: `AUTH_MODE` pasa de `'legacy'` a `'supabase'` como
+  default DEFINITIVO (ya no un flip temporal para pruebas, como en las
+  sesiones anteriores del piloto Android). El comentario junto a la
+  constante documenta explícitamente que el código y lo que corre hoy en
+  producción son dos cosas distintas hasta que se ejecute el orden de abajo.
+- **Nada más cambió de código** — se auditó explícitamente §13/§3 de este
+  documento (bootstrap deshabilitado, comparación PIN inalcanzable, rol
+  nunca viene de `users` local) y **ya estaba todo resuelto** de sesiones
+  previas; el cutover de código es, literalmente, este único cambio de
+  constante.
+- `supabase/migrations/0003_auth_rls_CUTOVER_PREPARED.sql` — **NO
+  ejecutado**. Una sola sentencia real: `drop policy "acceso interno con
+  anon key" on engrase_sync;`. Las 3 policies `authenticated` de 0002 (ya
+  en producción) pasan a ser la única autoridad automáticamente — no hace
+  falta recrearlas ni tocar `app_store_permissions`. anon queda `DENIED`
+  por el comportamiento por defecto de RLS (sin ninguna policy permisiva
+  que lo acepte), sin necesidad de una regla explícita nueva.
+- `supabase/migrations/0003_auth_rls_CUTOVER_ROLLBACK.sql` — **NO
+  ejecutado**. Restaura ÚNICAMENTE la policy legacy, sin tocar datos, Auth
+  users, `app_profiles` ni Storage.
+- Tests nuevos: `tests/unit/cutover-security.test.js` (6 tests, letras A/E
+  del pedido) + `tests/unit/auth.test.js` bloque M actualizado (el default
+  real ahora es `'supabase'`, no `'legacy'`).
+
+### ⚠️ Advertencia operativa — NO desplegar sin resolver esto primero
+
+Con `AUTH_MODE='supabase'`, el login PIN legacy queda **inaccesible** (por
+diseño — ver §3 del pedido de cierre, ya implementado en sesiones previas).
+Con **una sola cuenta Auth real** (Junior Valles, ADMINISTRADOR), publicar
+este código tal cual dejaría a **todo el resto del personal de campo sin
+poder entrar a la app**. Antes de ejecutar el paso A del orden de abajo en
+producción real, deben existir cuentas Auth reales para los roles que
+efectivamente operan la app a diario (mínimo: los LUBRICADOR/SUPERVISOR que
+usan el teléfono en el pit) — vía `manage-users` `CREATE_USER`, ya
+`ACTIVE` en producción, con autorización explícita en el momento para cada
+alta.
+
+### Orden de despliegue documentado (NO ejecutado — para cuando se autorice)
+
+Cada paso incluye su propio rollback, para no bloquear a nadie a mitad de camino:
+
+| Paso | Acción | Rollback si falla |
+|---|---|---|
+| A | Build final con `AUTH_MODE='supabase'` (`npm run build:web`) | No publicar; el repo local no afecta producción |
+| B | Instalar APK actualizado en Android (`adb install -r`, preservando datos) | `adb install -r` del APK anterior (AUTH_MODE='legacy'), datos intactos |
+| C | Validar login/Quick Unlock de Junior en ese dispositivo real | Si falla: no continuar a D; quedarse en el APK anterior |
+| D | Publicar la Web nueva (GitHub Pages u otro hosting) | Revertir al build anterior publicado (mismo repo, commit previo) |
+| E | Validar Auth real en la Web publicada | Si falla: revertir D |
+| F | **Aplicar `0003_auth_rls_CUTOVER_PREPARED.sql`** (el paso real de RLS) | Aplicar `0003_..._ROLLBACK.sql` de inmediato — restaura la policy legacy, sin tocar datos |
+| G | Probar `anon` → `DENIED` (SELECT/INSERT/UPDATE sin JWT) | Si no da `DENIED`: revisar antes de continuar, no avanzar a H |
+| H | Probar Junior (ADMIN) → `ALLOWED` según `app_store_permissions` | Si falla: `ROLLBACK` de F |
+| I | Probar sync JWT real + CAS de P0-1 con datos reales | Si falla: `ROLLBACK` de F |
+| J | Smoke test final (Dashboard, Registrar Engrase, Matriz, Reportes) | Si falla: `ROLLBACK` de F, y evaluar si B/D también necesitan revertirse |
+
+**Ninguno de estos 10 pasos se ejecutó en esta sesión** — quedan
+documentados para cuando el usuario autorice explícitamente, paso por
+paso, en el momento.

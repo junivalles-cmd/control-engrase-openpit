@@ -1,0 +1,55 @@
+-- CUTOVER — DO NOT APPLY WITHOUT EXPLICIT AUTHORIZATION
+--
+-- P0-2 — cutover real de Auth/RLS. Preparado y revisado, NUNCA ejecutado
+-- por Claude contra producción. Requiere autorización explícita y
+-- específica del usuario, en el momento, después de que TODOS los gates
+-- de docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §15 estén en PASS (16 ítems,
+-- incluye el fix del JWT real de sync — commit 4645e31 — y el login
+-- Auth/Quick Unlock reales en Android, ya verificados en sesiones previas).
+--
+-- Qué hace este archivo — UNA sola cosa, nada más:
+--   Elimina la policy legacy "acceso interno con anon key" de
+--   engrase_sync (schema.sql, FOR ALL USING(true) WITH CHECK(true)).
+--
+-- Por qué esto basta para cerrar el cutover (sin tocar nada más):
+--   0002_auth_profiles_rls_PREPARED.sql YA fue aplicado a producción
+--   (sesión previa, autorizado explícitamente) — app_profiles,
+--   current_app_role()/current_app_active(), app_store_permissions y las
+--   3 policies nuevas de engrase_sync ("leer/crear/actualizar según
+--   matriz") YA EXISTEN y funcionan, pero son inertes en términos de
+--   seguridad efectiva mientras la policy legacy siga activa: Postgres
+--   combina policies PERMISIVAS del mismo comando con OR, así que
+--   "using(true)" de la legacy siempre gana. Retirar SOLO esa policy
+--   activa de inmediato, sin ningún cambio adicional, las 3 policies
+--   nuevas como la única autoridad real:
+--     - SELECT/INSERT/UPDATE quedan gobernados por app_store_permissions
+--       (current_app_role()/current_app_active()), exactamente como ya
+--       están definidas en 0002 — no se tocan aquí.
+--     - anon queda DENIED automáticamente: auth.uid() es NULL para una
+--       request sin JWT, así que current_app_role()/current_app_active()
+--       resuelven a null/false, y las 3 policies nuevas evalúan a false
+--       para cualquier request anónima — RLS deniega por defecto sin
+--       ninguna policy permisiva que la acepte. No hace falta ningún
+--       DENY explícito nuevo.
+--     - El CAS de P0-1 (PATCH condicionado a updated_at=eq.<versión>,
+--       ver sync.js pushAll()) sigue funcionando igual: la policy de
+--       UPDATE de 0002 ya evalúa can_update/can_delete vía JWT, el WHERE
+--       de la CAS lo agrega el cliente aparte — nada de esto cambia.
+--     - No se borra ni modifica ninguna fila de engrase_sync,
+--       app_profiles, auth.users ni storage.objects.
+--
+-- Qué NO hace este archivo (a propósito, fuera de alcance):
+--   - No toca Storage (bucket engrase-photos) — sigue siendo P0-3, fuera
+--     de alcance de este cutover (ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md
+--     §15, ítem ya marcado como diferido).
+--   - No crea ni modifica ningún usuario de Auth ni fila de app_profiles.
+--   - No cambia app_store_permissions ni las 3 policies de 0002 — se usan
+--     tal cual ya están.
+--   - No sube DB_VERSION del cliente (IndexedDB) — esto es SOLO Postgres.
+--
+-- Rollback preparado en 0003_auth_rls_CUTOVER_ROLLBACK.sql (mismo
+-- directorio) — restaura ÚNICAMENTE esta policy legacy, sin tocar nada más.
+
+drop policy if exists "acceso interno con anon key" on engrase_sync;
+
+-- FIN — una sola sentencia real. Todo lo de arriba es documentación.

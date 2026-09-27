@@ -82,10 +82,10 @@ describe('D/E/F) isValidProfile() — único criterio de "puede usar la app"', (
   });
 });
 
-describe('M) AUTH_MODE por defecto', () => {
-  it('Auth.getMode() === "legacy" y Auth.isSupabaseMode() === false', () => {
-    expect(Auth.getMode()).toBe('legacy');
-    expect(Auth.isSupabaseMode()).toBe(false);
+describe('M) AUTH_MODE por defecto — cutover preparado (docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §26)', () => {
+  it('Auth.getMode() === "supabase" y Auth.isSupabaseMode() === true — default definitivo, AÚN NO desplegado', () => {
+    expect(Auth.getMode()).toBe('supabase');
+    expect(Auth.isSupabaseMode()).toBe(true);
   });
   it('sin sesión restaurada, isAuthenticated() es false', () => {
     expect(Auth.isAuthenticated()).toBe(false);

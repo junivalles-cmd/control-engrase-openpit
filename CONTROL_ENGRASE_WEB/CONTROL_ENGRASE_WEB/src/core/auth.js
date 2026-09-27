@@ -21,9 +21,27 @@
 // Feature flag central — único punto de la app que decide el modo de
 // autenticación, mismo patrón que GREASE_VALIDATION_ENABLED_FROM
 // (src/core/grease-validation.js): una sola constante, nadie más la
-// repite. 'legacy' = comportamiento actual (PIN, sin Auth, sin cambios).
-// 'supabase' = Auth real — NO se activa en este cierre.
-const AUTH_MODE = 'legacy';
+// repite. 'legacy' = comportamiento anterior (PIN, sin Auth).
+//
+// CUTOVER PREPARADO (docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §26-§27) — este
+// commit deja 'supabase' como el default DEFINITIVO del código, pero SIGUE
+// SIN DESPLEGARSE: no se ha hecho `npm run build:web` para publicar, no se
+// instaló en ningún dispositivo real desde este cambio, no se hizo push, y
+// la policy legacy de `engrase_sync` (RLS) SIGUE ABIERTA en producción —
+// ver 0003_auth_rls_CUTOVER_PREPARED.sql (NO ejecutado). El código de este
+// repositorio y lo que corre hoy en producción son DOS COSAS DISTINTAS
+// hasta que alguien ejecute el orden de despliegue documentado en §27.
+//
+// ADVERTENCIA OPERATIVA REAL (verificada por consulta a producción el
+// mismo día de este commit): app_profiles tiene EXACTAMENTE 1 fila real
+// (Junior Valles, ADMINISTRADOR). Ningún otro rol (SUPERVISOR/
+// PLANIFICADOR/LUBRICADOR/VISOR) tiene todavía una cuenta Auth real. En
+// AUTH_MODE='supabase' el login PIN legacy queda INACCESIBLE (ver
+// app.js, branch de Auth.isSupabaseMode() en el listener de
+// DOMContentLoaded) — publicar/instalar este código TAL CUAL, antes de
+// crear cuentas Auth reales para el resto del personal, los dejaría sin
+// poder entrar a la app. NO desplegar sin resolver esto primero.
+const AUTH_MODE = 'supabase';
 
 const AUTH_VALID_ROLES = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'LUBRICADOR', 'VISOR'];
 
