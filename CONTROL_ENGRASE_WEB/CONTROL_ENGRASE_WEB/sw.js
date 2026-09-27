@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v41'; // v41: P0-2 — administración segura de usuarios: auth.js gana Auth.manageUsers() (proxy hacia la Edge Function manage-users, nunca usa service_role) y app.js gana la pantalla de Usuarios en modo Supabase (renderUsuariosSupabase/userFormSupabase/roleFormSupabase/resetPasswordFormSupabase); ambos son runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v40).
+const CACHE = 'engrase-openpit-v42'; // v42: P0-2 — sync.js gana syncAuthHeaders(): en AUTH_MODE='supabase' con sesión válida, pushAll()/pullAll()/fetchRemoteUpdatedAt() usan el access_token real de la persona autenticada contra engrase_sync (nunca el anon key); en 'legacy' (o sin sesión) sigue igual que antes. sync.js es runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v41).
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

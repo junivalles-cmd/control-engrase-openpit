@@ -39,11 +39,12 @@ function makeFakeDB() {
   };
 }
 
-function makeFakeAuth({ mode = 'legacy', authenticated = true } = {}) {
+function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FAKE-USER-JWT' } = {}) {
   return {
     getMode() { return mode; },
     isSupabaseMode() { return mode === 'supabase'; },
     isAuthenticated() { return authenticated; },
+    getSession() { return { accessToken }; },
   };
 }
 
@@ -212,5 +213,192 @@ describe('G) refresh inválido en reconexión -> fullSync() corta con AUTH_REQUI
     const localAfter = await db.get('equipment', 'eq1');
     expect(localAfter.code).toBe('PENDIENTE'); // el cambio local NUNCA se tocó
     expect(localAfter._pushedVersion).not.toBe(localAfter.updatedAt); // sigue dirty
+  });
+});
+
+describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase" (A/B/C/D del pedido de cierre)', () => {
+  it('A) app nueva, nunca hubo sesión -> 0 requests de sync, incluso tras varios ciclos del timer', async () => {
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    let notified = null;
+    Sync.onChange((state) => { notified = state; });
+    for (let ciclo = 0; ciclo < 3; ciclo++) {
+      await Sync.fullSync();
+      expect(notified.status).toBe('AUTH_REQUIRED');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('B) sin conexión (con snapshot de sesión ya vencida) -> 0 requests, corta antes de mirar Auth', async () => {
+    await db.setAuthTokens({ accessToken: 'X', refreshToken: 'RT', expiresAt: Date.now() - 1000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: false });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    let notified = null;
+    Sync.onChange((state) => { notified = state; });
+    await Sync.fullSync();
+    expect(notified.status).toBe('offline');
+    expect(fetchMock).not.toHaveBeenCalled(); // trabajo local sigue permitido, red de sync en 0
+  });
+
+  it('C) sesión y perfil válidos (Junior, ADMINISTRADOR activo) -> pull/push permitidos, sync normal', async () => {
+    await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // ya no es "primera vez"
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      if (method === 'GET') return { ok: true, status: 200, json: async () => [] }; // pull: nada nuevo
+      throw new Error('unexpected ' + method + ' ' + url);
+    }));
+
+    let notified = null;
+    Sync.onChange((state) => { notified = state; });
+    await Sync.fullSync();
+    expect(notified.status).toBe('ok');
+    expect(notified.pushed).toBe(0);
+    expect(notified.pulled).toBe(0);
+  });
+
+  it('D) logout -> 0 requests de sync en los ciclos siguientes, aunque siga online', async () => {
+    await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(true);
+    await Auth.signOut();
+    expect(Auth.isAuthenticated()).toBe(false);
+
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    let notified = null;
+    Sync.onChange((state) => { notified = state; });
+    for (let ciclo = 0; ciclo < 3; ciclo++) {
+      await Sync.fullSync();
+      expect(notified.status).toBe('AUTH_REQUIRED');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, NUNCA el anon key (fix P0-2)', () => {
+  it('A) legacy mode: Authorization sigue siendo el anon key (comportamiento actual, sin cambios)', async () => {
+    await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, makeFakeAuth({ mode: 'legacy' }));
+    let seenHeaders = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      seenHeaders = opts.headers;
+      return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
+    }));
+    await Sync.pushAll();
+    expect(seenHeaders.apikey).toBe('anon-test');
+    expect(seenHeaders.Authorization).toBe('Bearer anon-test');
+  });
+
+  it('B/C) supabase + sesión Junior: apikey=anonKey, Authorization=Bearer USER_JWT, NUNCA Bearer anonKey', async () => {
+    await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 });
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    let seenHeaders = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      seenHeaders = opts.headers;
+      return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
+    }));
+    await Sync.pushAll();
+    expect(seenHeaders.apikey).toBe('anon-test');
+    expect(seenHeaders.Authorization).toBe('Bearer REAL-USER-JWT-XYZ');
+    expect(seenHeaders.Authorization).not.toBe('Bearer anon-test'); // NUNCA el anon key
+  });
+
+  it('D) pull usa el JWT del usuario, no el anon key', async () => {
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    let seenAuth = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      seenAuth = opts && opts.headers && opts.headers.Authorization;
+      return { ok: true, status: 200, json: async () => [] };
+    }));
+    await Sync.pullAll();
+    expect(seenAuth).toBe('Bearer REAL-USER-JWT-XYZ');
+  });
+
+  it('E) POST create usa el JWT del usuario', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 }); // sin _pushedVersion -> POST
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    let seenAuth = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (opts.method === 'POST') seenAuth = opts.headers.Authorization;
+      return { ok: true, status: 200, json: async () => [{ id: 'eqNew' }] };
+    }));
+    await Sync.pushAll();
+    expect(seenAuth).toBe('Bearer REAL-USER-JWT-XYZ');
+  });
+
+  it('F) PATCH CAS usa el JWT del usuario', async () => {
+    await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0, _pushedVersion: T0 });
+    const localA = await db.get('equipment', 'eq1');
+    localA.code = 'EDITADO'; localA.updatedAt = T1;
+    await db.put('equipment', localA);
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    let seenAuth = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (opts.method === 'PATCH') seenAuth = opts.headers.Authorization;
+      return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
+    }));
+    await Sync.pushAll();
+    expect(seenAuth).toBe('Bearer REAL-USER-JWT-XYZ');
+  });
+
+  it('G) sesión refrescada durante fullSync() -> la request de sync usa el JWT NUEVO, nunca el expirado (integración real Auth+Sync)', async () => {
+    await db.setAuthTokens({ accessToken: 'OLD-EXPIRED', refreshToken: 'RT-BUENO', expiresAt: Date.now() - 1000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.put('equipment', { id: 'eq1', code: 'PENDIENTE', active: true, updatedAt: T0 }); // fila nueva, dispara POST en pushAll
+
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+
+    vi.stubGlobal('navigator', { onLine: true });
+    let seenAuth = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      const u = String(url);
+      if (u.includes('grant_type=refresh_token')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'NEW-JWT', refresh_token: 'RT2', expires_in: 3600, user: { id: 'u1' } }) };
+      }
+      if (u.includes('/rest/v1/app_profiles')) {
+        return { ok: true, status: 200, json: async () => ([{ auth_user_id: 'u1', app_user_id: 'u_jvalles', display_name: 'Junior Valles', role: 'ADMINISTRADOR', active: true }]) };
+      }
+      if (u.includes('engrase_sync') && method === 'POST') {
+        seenAuth = opts.headers.Authorization;
+        return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
+      }
+      if (u.includes('engrase_sync') && method === 'GET') {
+        return { ok: true, status: 200, json: async () => [] }; // pull inicial (esPrimeraVez), sin filas
+      }
+      throw new Error('unexpected ' + method + ' ' + url);
+    }));
+
+    await Sync.fullSync();
+    expect(seenAuth).toBe('Bearer NEW-JWT'); // NUNCA 'Bearer OLD-EXPIRED'
   });
 });

@@ -63,6 +63,27 @@ function decidePullAction(localRow, remoteUpdatedAt) {
   return { action: 'CONFLICT', localVersion: localRow.updatedAt, remoteVersion: remoteUpdatedAt };
 }
 
+// P0-2 — fuente ÚNICA del Authorization real de TODA request a
+// `engrase_sync` (pull paginado, POST create, PATCH CAS, fetchRemoteUpdatedAt).
+// En AUTH_MODE='supabase' con sesión autenticada, el access_token de la
+// PERSONA (nunca el anon key) — así las políticas RLS nuevas pueden
+// resolver auth.uid() de verdad; en 'legacy' (o sin Auth cargado, o sin
+// sesión) sigue siendo el anon key compartido, comportamiento actual sin
+// cambios. Nunca duplica lógica de refresh aquí: fullSync() ya llamó
+// Auth.restoreSession() (refresca si hace falta) ANTES de tocar la red de
+// sync — esto solo LEE el resultado ya vigente vía Auth.getSession(), en
+// cada llamada, así que un token recién refrescado se usa de inmediato en
+// la siguiente request. Storage (fotos/firmas) queda fuera a propósito —
+// ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §15 (P0-3, fuera de alcance de
+// P0-2) — y testConnection() también queda fuera: prueba una anon key que
+// el administrador acaba de escribir en el formulario, antes de que exista
+// ninguna sesión que usar.
+function syncAuthHeaders(cfg) {
+  const useUserJwt = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
+  const bearer = useUserJwt ? Auth.getSession().accessToken : cfg.anonKey;
+  return { apikey: cfg.anonKey, Authorization: `Bearer ${bearer}` };
+}
+
 // P0-1 (endurecimiento): la primera versión de este archivo comprobaba la
 // versión remota con un GET separado ANTES del upsert (checkPushAllowed(),
 // ya eliminada) — eso deja una ventana real entre "leer" y "escribir": dos
@@ -242,7 +263,7 @@ const Sync = {
     try {
       const resp = await fetch(
         `${cfg.url}/rest/v1/engrase_sync?select=updated_at&store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(id)}`,
-        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+        { headers: syncAuthHeaders(cfg) }
       );
       if (!resp.ok) return null;
       const rows = await resp.json();
@@ -304,8 +325,7 @@ const Sync = {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              apikey: cfg.anonKey,
-              Authorization: `Bearer ${cfg.anonKey}`,
+              ...syncAuthHeaders(cfg),
               // ignore-duplicates (NO merge-duplicates): si el id ya existe en
               // el servidor, esa fila se omite de la respuesta en vez de
               // pisarla — así se puede distinguir "se creó" de "ya existía
@@ -350,8 +370,7 @@ const Sync = {
               method: 'PATCH',
               headers: {
                 'Content-Type': 'application/json',
-                apikey: cfg.anonKey,
-                Authorization: `Bearer ${cfg.anonKey}`,
+                ...syncAuthHeaders(cfg),
                 Prefer: 'return=representation'
               },
               body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
@@ -421,7 +440,7 @@ const Sync = {
     while (true) {
       const resp = await fetch(
         `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc,store.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`,
-        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
+        { headers: syncAuthHeaders(cfg) }
       );
       const authIssuePull = classifyAuthStatus(resp.status);
       // 401/403 en la lectura NUNCA es el CAS de P0-1 (que solo vive en

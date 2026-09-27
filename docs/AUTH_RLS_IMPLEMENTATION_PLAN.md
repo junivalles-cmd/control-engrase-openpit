@@ -410,8 +410,13 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
 - [ ] **Ninguna de las 7 cuentas legacy productivas recibió login Auth**
   (§17) — confirmado antes del cutover, no solo antes de crear
   `app_profiles`.
+- [x] **`pushAll()`/`pullAll()` usan el `accessToken` real de la sesión (no
+  `cfg.anonKey`) cuando `Auth.isSupabaseMode()` es `true`** — detectado en
+  §23 (sesión 2026-09-27), **corregido el mismo día** (§24): `syncAuthHeaders()`
+  en `sync.js` es ahora la única fuente del header `Authorization` de toda
+  request a `engrase_sync`. En `'legacy'` sigue igual que antes (sin cambios).
 
-Sin los 14 ítems en PASS, no se ejecuta la Sección "CUTOVER" del SQL
+Sin los 15 ítems en PASS, no se ejecuta la Sección "CUTOVER" del SQL
 draft bajo ninguna circunstancia.
 
 ## 16. Regla de identidad — AUTH USER = persona real
@@ -621,3 +626,131 @@ ejecutó en este cierre:
 4. Nada de esto activa `AUTH_MODE='supabase'` por sí solo — ese cambio de
    flag es una decisión aparte, posterior, y sigue sin tocarse en este
    cierre.
+
+## 23. Auditoría del gate de sync sin login — cierre P0-2 (sesión 2026-09-27)
+
+Junior Valles ya existe como cuenta real (§22 completado en sesión posterior),
+`manage-users` ya está desplegada y `LIST_USERS` verificado en vivo (ver
+`docs/SESSION_HANDOFF.md`). Esta sección responde a una pregunta distinta:
+**¿por qué `fullSync()` puede escribir en `engrase_sync` sin que nadie haya
+hecho login, y ese comportamiento cambia con `AUTH_MODE='supabase'`?**
+
+**Causa exacta del sync sin login en `AUTH_MODE='legacy'` (comportamiento
+actual, productivo):**
+- `Sync.startAuto()` (`app.js` ~L1315) se llama de forma incondicional en el
+  arranque de la app, ANTES de comprobar si hay una sesión PIN guardada
+  (`sessionStorage.getItem('engrase_user')`, L1318-1324). No depende de
+  `App.currentUser`.
+- `startAuto()` llama `fullSync()` de inmediato y luego cada 20s
+  (`setInterval`), además de en cada reconexión y `visibilitychange`.
+- `fullSync()`/`pushAll()`/`pullAll()` (`sync.js`) solo activan el gate de
+  Auth cuando `Auth.isSupabaseMode()` es `true` (líneas ~263, ~404, ~515).
+  En `'legacy'` esa condición es siempre `false`, así que el gate ni se
+  evalúa — el flujo sigue exactamente igual que antes de que existiera P0-2.
+- Las requests a `/rest/v1/engrase_sync` siempre usan `cfg.anonKey` como
+  `apikey`/`Authorization: Bearer` (la misma clave para toda la app,
+  guardada una vez en `DB.getConfig()`), nunca un token por-persona. Como la
+  policy legacy de Postgres es `using(true)/with check(true)` (totalmente
+  permisiva para cualquiera con esa key), la request siempre se acepta.
+- **Conclusión:** el login PIN nunca fue una frontera de autenticación real
+  de red — es un gate puramente local/cosmético (qué pantallas se muestran,
+  qué nombre queda en el log de auditoría). Esto es el diseño legacy
+  conocido, no un bug nuevo. **Es deuda temporal pre-cutover**: desaparece
+  quien la exige (la policy legacy + el anon key compartido), y desaparecerá
+  formalmente cuando se ejecute el CUTOVER (§15) y se cierre esa policy —
+  hasta entonces, sync anónimo con la anon key sigue siendo, por diseño, el
+  único camino disponible en `'legacy'`.
+
+**Comportamiento en `AUTH_MODE='supabase'` — YA implementado correctamente,
+verificado con tests nuevos, SIN cambio de código necesario:**
+El gate de `fullSync()`/`pushAll()`/`pullAll()` + `Auth.restoreSession()`/
+`isAuthenticated()` (`src/core/auth.js`, `sync.js`, construido en la sesión de
+`5f25806`/`96759ba`) ya cumple exactamente la regla pedida — "antes de
+cualquier request remoto: sesión válida → perfil válido → active=true → solo
+entonces sync; si no, `AUTH_REQUIRED`, 0 requests; nunca fallback anon".
+Verificado en `tests/unit/sync-auth-gate.test.js` (bloques `A)`-`M)`, 13 tests,
+4 nuevos en el bloque `N)` de esta sesión) + `tests/unit/auth.test.js`
+(bloques `E`-`G`, `O`):
+
+| Escenario del pedido | Resultado | Evidencia |
+|---|---|---|
+| A) app nueva, nunca hubo sesión, varios ciclos | 0 requests, `AUTH_REQUIRED` | `sync-auth-gate.test.js` N)A |
+| B) offline con snapshot vencido | 0 requests, `offline` (corta antes de mirar Auth) | `sync-auth-gate.test.js` N)B |
+| C) Junior autenticada, perfil activo | pull/push permitidos, `ok` | `sync-auth-gate.test.js` N)C |
+| D) logout, varios ciclos siguientes | 0 requests, `AUTH_REQUIRED` | `sync-auth-gate.test.js` N)D |
+| E) sesión expirada, refresh falla | 0 requests de sync, `signOut()`, dirty local intacto | `sync-auth-gate.test.js` G), `auth.test.js` G) |
+| F) sesión válida, pull completo | 0 echo-writes (P0-1 ya cubierto aparte) | `sync-auth-gate.test.js` L) |
+| G) CAS de P0-1 bajo `authenticated:true` | sigue en PASS, nunca se confunde con 401/403 | `sync-auth-gate.test.js` L) |
+
+**Sin cambio de código en este cierre** — la implementación de `AUTH_MODE=
+'supabase'` ya era correcta; el hallazgo del sync-sin-login se explica
+enteramente por el modo `'legacy'` (documentado arriba), que sigue siendo el
+modo activo por diseño mientras dure el pre-cutover.
+
+**Gap real detectado, fuera de alcance de este cierre (NO corregido, solo
+señalado):** incluso con `Auth.isSupabaseMode()` activo y una sesión válida,
+`pushAll()`/`pullAll()` siguen enviando `cfg.anonKey` como
+`Authorization: Bearer` hacia `/rest/v1/engrase_sync` — nunca el
+`accessToken` real de la sesión (`Auth.getSession().accessToken`). Hoy esto
+es inofensivo porque la policy legacy permisiva sigue abierta y acepta la
+anon key igual. Pero **una vez cerrada esa policy en el CUTOVER, este mismo
+código dejaría de poder sincronizar en absoluto** (las nuevas RLS exigen
+`auth.uid()`, que solo llega vía JWT de usuario, nunca vía anon key) — así
+que antes de ejecutar CUTOVER hace falta que `pushAll()`/`pullAll()` usen el
+`accessToken` de la sesión cuando `Auth.isSupabaseMode()` sea `true`. Añadido
+como ítem pendiente para el gate de cutover (§15), no implementado hoy por no
+estar autorizado ni pedido en este cierre.
+
+## 24. Fix del gap de §23 — sync usa el JWT real del usuario, no el anon key (sesión 2026-09-27, autorizado explícitamente)
+
+Cierra el ítem pendiente de §23/§15. Cambio real de código, autorizado y
+probado el mismo día — **no toca producción, no toca RLS, no cierra la
+policy legacy, no crea usuarios, no hace push**.
+
+**Qué cambió (`CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/sync.js`):**
+- Función nueva `syncAuthHeaders(cfg)` — única fuente de verdad del header
+  `Authorization` para TODA request a `engrase_sync`: si
+  `Auth.isSupabaseMode() && Auth.isAuthenticated()`, usa
+  `Auth.getSession().accessToken` (el JWT real de la persona); si no
+  (`'legacy'`, sin `Auth` cargado, o sin sesión — este último caso no debería
+  alcanzarse porque el gate de §11/§23 ya corta antes), usa `cfg.anonKey`
+  igual que siempre. `apikey` sigue siendo siempre `cfg.anonKey` (nunca
+  cambia — es la key del proyecto, no la identidad de la persona).
+- Reemplazado en las 4 requests reales a `engrase_sync`: `pullAll()` (GET
+  paginado), `pushAll()` POST create, `pushAll()` PATCH CAS, y
+  `fetchRemoteUpdatedAt()` (GET de diagnóstico de conflicto).
+- **Fuera de esta corrección, a propósito:** `testConnection()` (prueba una
+  anon key recién escrita en el formulario de Configuración, antes de que
+  exista ninguna sesión) y `uploadPhotoIfNeeded()`/`uploadSignatureIfNeeded()`
+  (Supabase Storage, no `engrase_sync` — explícitamente fuera de alcance de
+  P0-2 desde §15, se resuelve en P0-3). Ninguna de las tres toca la tabla
+  `engrase_sync`.
+- **Ninguna lógica de refresh duplicada en `sync.js`:** `syncAuthHeaders()`
+  solo LEE `Auth.getSession()` en el momento de cada request; el refresh ya
+  ocurrió en `Auth.restoreSession()`, llamado por `fullSync()` antes de tocar
+  la red (ver §12) — una sola fuente de verdad, tal como pedía el diseño
+  original.
+
+**Tests nuevos** (`tests/unit/sync-auth-gate.test.js`, bloque `P)`, 7 tests) +
+extractor de tests actualizado (`tests/helpers/loadLubricationLogic.js`,
+`syncAuthHeaders` agregado a `SYNC_SOURCES`) + `makeFakeAuth()` del mismo
+archivo ahora expone `getSession()`:
+
+| Verificado | Resultado |
+|---|---|
+| Legacy mode | `Authorization: Bearer <anonKey>` — sin cambios |
+| Supabase + Junior autenticada | `apikey=<anonKey>`, `Authorization: Bearer <JWT real>`, nunca `Bearer <anonKey>` |
+| `pullAll()` | usa el JWT |
+| `pushAll()` POST create | usa el JWT |
+| `pushAll()` PATCH CAS | usa el JWT |
+| Sesión refrescada a mitad de `fullSync()` | la request usa el JWT NUEVO, nunca el expirado |
+
+**Validación completa:** unit 587/587 (34 archivos, +6 sobre el cierre
+anterior), Playwright 1393/1393, `typecheck` limpio, `lint:css` limpio (mismo
+baseline de warnings, 0 errores), `build:web` + `verify:dist` OK. SW subido
+de `v41` a `v42` (runtime cambiado: `sync.js`).
+
+**Nada de esto activa `AUTH_MODE='supabase'`** — sigue en `'legacy'` en el
+código committeado; este fix solo asegura que, el día que se active, el sync
+ya use el JWT real en vez de romperse contra las RLS nuevas al cerrarse la
+policy legacy.
