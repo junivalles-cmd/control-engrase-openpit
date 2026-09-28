@@ -223,6 +223,28 @@ export function loadGreaseValidationLogic() {
   return factory();
 }
 
+// Rediseño operativo (dispositivos + cuadrillas + ubicaciones + asignación
+// manual) — 100% puro, sin DB/App/Auth, mismo patrón que grease-validation.js.
+export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
+const OPERATIONAL_SCOPE_SOURCES = [
+  [OPERATIONAL_SCOPE_JS_PATH, [
+    'ASSIGNMENT_STATUS', 'ROLES_CAN_MANAGE_ASSIGNMENTS', 'ROLES_CAN_MOVE_EQUIPMENT',
+    'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_CONFIGURE_DEVICE',
+    'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canConfigureDevice',
+    'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveOperationalScope',
+    'classifyEquipmentWork', 'findActivePendingAssignment', 'createAssignment',
+    'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
+    'canLubricadorExecuteEquipment',
+  ]],
+];
+
+/** Devuelve las funciones/constantes reales de src/core/operational-scope.js. */
+export function loadOperationalScopeLogic() {
+  const body = buildBodyFromSources(OPERATIONAL_SCOPE_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
 // P0-2 — administración de usuarios. El archivo se guarda como .ts (misma
 // convención que notify-push/notify-vencidos) pero su código es JS válido
 // a propósito (sin anotaciones de tipo reales) — así se puede extraer y

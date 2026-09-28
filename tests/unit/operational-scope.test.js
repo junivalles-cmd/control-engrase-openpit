@@ -1,0 +1,263 @@
+// tests/unit/operational-scope.test.js
+//
+// Rediseño operativo — dispositivos compartidos + cuadrillas + ubicaciones +
+// asignación manual de engrases (src/core/operational-scope.js). Todo puro,
+// con fixtures locales — NUNCA contra producción, NUNCA usuarios Auth
+// reales (solo existe u_jvalles en producción; los roles de campo se
+// prueban aquí con mocks, ver docs/OPERATIONAL_SCOPE.md).
+
+import { describe, it, expect } from 'vitest';
+import { loadOperationalScopeLogic } from '../helpers/loadLubricationLogic.js';
+
+const {
+  ASSIGNMENT_STATUS,
+  canManageAssignments, canMoveEquipment, canMoveCrew, canConfigureDevice,
+  computeOccurrenceKey, resolveDefaultCrewForLocation, resolveOperationalScope,
+  classifyEquipmentWork, findActivePendingAssignment, createAssignment,
+  reassignAssignment, cancelAssignment, completeAssignmentIfPending,
+  canLubricadorExecuteEquipment,
+} = loadOperationalScopeLogic();
+
+let uidSeq = 0;
+const uid = (p) => `${p}_test${uidSeq++}`;
+const NOW = '2026-09-28T10:00:00.000Z';
+
+describe('Permisos por rol (§AB)', () => {
+  it('canManageAssignments: ADMIN/PLANIFICADOR/SUPERVISOR sí, LUBRICADOR/VISOR no', () => {
+    expect(canManageAssignments('ADMINISTRADOR')).toBe(true);
+    expect(canManageAssignments('PLANIFICADOR')).toBe(true);
+    expect(canManageAssignments('SUPERVISOR')).toBe(true);
+    expect(canManageAssignments('LUBRICADOR')).toBe(false);
+    expect(canManageAssignments('VISOR')).toBe(false);
+  });
+  it('canMoveEquipment/canMoveCrew: solo ADMIN/PLANIFICADOR (§W/§Z)', () => {
+    for (const fn of [canMoveEquipment, canMoveCrew]) {
+      expect(fn('ADMINISTRADOR')).toBe(true);
+      expect(fn('PLANIFICADOR')).toBe(true);
+      expect(fn('SUPERVISOR')).toBe(false);
+      expect(fn('LUBRICADOR')).toBe(false);
+      expect(fn('VISOR')).toBe(false);
+    }
+  });
+  it('canConfigureDevice: ADMIN/PLANIFICADOR editan, el resto no (LUBRICADOR ve solo lectura en la UI, no aquí)', () => {
+    expect(canConfigureDevice('ADMINISTRADOR')).toBe(true);
+    expect(canConfigureDevice('PLANIFICADOR')).toBe(true);
+    expect(canConfigureDevice('SUPERVISOR')).toBe(false);
+    expect(canConfigureDevice('LUBRICADOR')).toBe(false);
+  });
+});
+
+describe('computeOccurrenceKey() — identidad de ocurrencia (§O)', () => {
+  it('plan por día/turno: clave = planId:fecha, estable', () => {
+    const plan = { id: 'plan1', controlType: 'Día y turno de la semana' };
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-09-28' })).toBe('plan1:2026-09-28');
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-09-28' })).toBe(computeOccurrenceKey(plan, { dateISO: '2026-09-28' }));
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-09-29' })).not.toBe(computeOccurrenceKey(plan, { dateISO: '2026-09-28' }));
+  });
+  it('plan por horas: clave = planId:h:lastGreaseHour — avanza sola cuando el plan se actualiza, sin colisionar con la ya completada', () => {
+    const planAntes = { id: 'plan2', controlType: 'Horas de operación', lastGreaseHour: 5000 };
+    const planDespues = { id: 'plan2', controlType: 'Horas de operación', lastGreaseHour: 5250 };
+    const keyAntes = computeOccurrenceKey(planAntes);
+    const keyDespues = computeOccurrenceKey(planDespues);
+    expect(keyAntes).not.toBe(keyDespues);
+    expect(keyAntes).toBe('plan2:h:5000');
+  });
+  it('plan por horas sin lastGreaseHour todavía (equipo nuevo) -> base 0, nunca lanza', () => {
+    expect(computeOccurrenceKey({ id: 'plan3', controlType: 'Horas de operación' })).toBe('plan3:h:0');
+  });
+  it('sin plan o sin id -> lanza (nunca genera una clave ambigua)', () => {
+    expect(() => computeOccurrenceKey(null)).toThrow();
+    expect(() => computeOccurrenceKey({ controlType: 'Horas de operación' })).toThrow();
+  });
+});
+
+describe('resolveDefaultCrewForLocation() — máximo una cuadrilla default por ubicación (§K)', () => {
+  const cuadrillas = [
+    { id: 'c1', name: 'Cuadrilla Volcán', locationId: 'loc_volcan', isDefault: true, active: true, createdAt: '2026-01-01' },
+    { id: 'c2', name: 'Cuadrilla Volcán Auxiliar', locationId: 'loc_volcan', isDefault: false, active: true, createdAt: '2026-02-01' },
+    { id: 'c3', name: 'Cuadrilla Mojón', locationId: 'loc_mojon', isDefault: true, active: true, createdAt: '2026-01-01' },
+  ];
+  it('devuelve la cuadrilla marcada isDefault de esa ubicación', () => {
+    expect(resolveDefaultCrewForLocation(cuadrillas, 'loc_volcan').id).toBe('c1');
+    expect(resolveDefaultCrewForLocation(cuadrillas, 'loc_mojon').id).toBe('c3');
+  });
+  it('sin locationId -> null; ubicación sin ninguna default -> null', () => {
+    expect(resolveDefaultCrewForLocation(cuadrillas, null)).toBeNull();
+    expect(resolveDefaultCrewForLocation(cuadrillas, 'loc_acarreo')).toBeNull();
+  });
+  it('dato mal cargado (2 defaults en la misma ubicación) -> gana la más antigua, nunca lanza', () => {
+    const conDuplicado = [
+      { id: 'x1', locationId: 'loc_taller', isDefault: true, active: true, createdAt: '2026-03-01' },
+      { id: 'x2', locationId: 'loc_taller', isDefault: true, active: true, createdAt: '2026-01-01' },
+    ];
+    expect(resolveDefaultCrewForLocation(conDuplicado, 'loc_taller').id).toBe('x2');
+  });
+});
+
+describe('resolveOperationalScope() (§I) — CASO 1/8/13 del pedido', () => {
+  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
+
+  it('jefaturas (ADMIN/PLANIFICADOR/SUPERVISOR/VISOR) -> GLOBAL, sin scope de dispositivo', () => {
+    for (const role of ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'VISOR']) {
+      const scope = resolveOperationalScope({ currentUser: { id: 'u1', role }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+      expect(scope.kind).toBe('GLOBAL');
+      expect(scope.crewId).toBeNull();
+    }
+  });
+
+  it('CASO 1 — LUBRICADOR con dispositivo MOJON-01 -> DEVICE_SCOPED, crewLocationId=Mojón', () => {
+    const scope = resolveOperationalScope({
+      currentUser: { id: 'u_lub1', role: 'LUBRICADOR' },
+      deviceAssignment: { deviceId: 'dev_mojon01', cuadrillaId: 'crew_mojon' },
+      cuadrillas, shiftId: 'shift_dia'
+    });
+    expect(scope.kind).toBe('DEVICE_SCOPED');
+    expect(scope.crewId).toBe('crew_mojon');
+    expect(scope.crewLocationId).toBe('loc_mojon');
+    expect(scope.shiftId).toBe('shift_dia');
+  });
+
+  it('CASO 8 — dispositivo SIN cuadrilla -> DEVICE_UNASSIGNED, nunca fallback global', () => {
+    const scope = resolveOperationalScope({
+      currentUser: { id: 'u_lub2', role: 'LUBRICADOR' },
+      deviceAssignment: { deviceId: 'dev_x', cuadrillaId: '' },
+      cuadrillas, shiftId: 'shift_dia'
+    });
+    expect(scope.kind).toBe('DEVICE_UNASSIGNED');
+    expect(scope.crewId).toBeNull();
+  });
+
+  it('cuadrilla asignada al dispositivo ya no existe/inactiva -> mismo tratamiento que sin cuadrilla', () => {
+    const scope = resolveOperationalScope({
+      currentUser: { id: 'u_lub3', role: 'LUBRICADOR' },
+      deviceAssignment: { deviceId: 'dev_y', cuadrillaId: 'crew_borrada' },
+      cuadrillas, shiftId: 'shift_noche'
+    });
+    expect(scope.kind).toBe('DEVICE_UNASSIGNED');
+  });
+
+  it('CASO 13 — el turno viene SIEMPRE del parámetro shiftId (hora real), nunca de deviceAssignment', () => {
+    const scope = resolveOperationalScope({
+      currentUser: { id: 'u_lub4', role: 'LUBRICADOR' },
+      deviceAssignment: { deviceId: 'dev_z', cuadrillaId: 'crew_mojon', shiftId: 'shift_noche' }, // campo legacy del dispositivo, si existiera
+      cuadrillas, shiftId: 'shift_dia' // la hora real dice Día
+    });
+    expect(scope.shiftId).toBe('shift_dia'); // nunca 'shift_noche' del dispositivo
+  });
+});
+
+describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () => {
+  const cuadrillas = [
+    { id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01' },
+    { id: 'crew_volcan_aux', locationId: 'loc_volcan', active: true, isDefault: false, createdAt: '2026-02-01' },
+    { id: 'crew_taller', locationId: 'loc_taller', active: true, isDefault: true, createdAt: '2026-01-01' },
+  ];
+  const equipos = [
+    { id: 'eq_0568', locationId: 'loc_volcan' },
+    { id: 'eq_otro', locationId: 'loc_volcan' },
+  ];
+  const occFn = (e) => `plan_${e.id}:2026-09-28`;
+
+  it('CASO 3 — equipo de Volcán asignado manualmente a Taller: sigue en Volcán, pero el trabajo aparece en Taller, no en Volcán (sin doble ejecución)', () => {
+    const assignments = [
+      { id: 'a1', occurrenceKey: occFn(equipos[0]), equipmentId: 'eq_0568', assignedCrewId: 'crew_taller', status: ASSIGNMENT_STATUS.PENDING, active: true }
+    ];
+    const scopeVolcan = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_volcan' }, cuadrillas, shiftId: 'shift_dia' });
+    const scopeTaller = resolveOperationalScope({ currentUser: { id: 'u2', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd2', cuadrillaId: 'crew_taller' }, cuadrillas, shiftId: 'shift_dia' });
+
+    const volcanWork = classifyEquipmentWork({ scope: scopeVolcan, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn: occFn });
+    expect(volcanWork.normal.find(e => e.id === 'eq_0568')).toBeUndefined(); // ya no es normal-ejecutable en Volcán
+    expect(volcanWork.normal.find(e => e.id === 'eq_otro')).toBeDefined(); // el resto de Volcán sigue normal
+
+    const tallerWork = classifyEquipmentWork({ scope: scopeTaller, equipos: [], cuadrillas, assignments, equipoOccurrenceKeyFn: occFn });
+    expect(tallerWork.assigned).toHaveLength(1);
+    expect(tallerWork.assigned[0].equipmentId).toBe('eq_0568');
+  });
+
+  it('equipo sigue con locationId=Volcán (nunca se reescribe por la asignación manual)', () => {
+    expect(equipos[0].locationId).toBe('loc_volcan');
+  });
+
+  it('CASO 7 — dos cuadrillas en Volcán: solo la default recibe trabajo NORMAL, la auxiliar no ve nada normal sin asignación', () => {
+    const scopeAux = resolveOperationalScope({ currentUser: { id: 'u3', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd3', cuadrillaId: 'crew_volcan_aux' }, cuadrillas, shiftId: 'shift_dia' });
+    const work = classifyEquipmentWork({ scope: scopeAux, equipos, cuadrillas, assignments: [], equipoOccurrenceKeyFn: occFn });
+    expect(work.normal).toHaveLength(0); // nunca ve el trabajo normal de Volcán (esa es la default)
+    expect(work.assigned).toHaveLength(0);
+  });
+
+  it('scope GLOBAL (jefaturas) -> ve todo, sin filtrar por cuadrilla default', () => {
+    const scopeGlobal = resolveOperationalScope({ currentUser: { id: 'admin1', role: 'ADMINISTRADOR' }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+    const work = classifyEquipmentWork({ scope: scopeGlobal, equipos, cuadrillas, assignments: [], equipoOccurrenceKeyFn: occFn });
+    expect(work.normal).toHaveLength(2);
+  });
+});
+
+describe('Motor de asignaciones (§L, §O, §P, §Q, §R) — CASO 3/11 del pedido', () => {
+  it('createAssignment() crea una PENDING nueva; nunca duplica si ya hay una activa para la misma occurrence', () => {
+    const a1 = createAssignment({ existing: [], occurrenceKey: 'plan1:2026-09-28', equipmentId: 'eq1', planId: 'plan1', assignedCrewId: 'crew_taller', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid });
+    expect(a1.status).toBe(ASSIGNMENT_STATUS.PENDING);
+    expect(a1.assignedCrewId).toBe('crew_taller');
+    expect(() => createAssignment({ existing: [a1], occurrenceKey: 'plan1:2026-09-28', equipmentId: 'eq1', assignedCrewId: 'crew_mojon', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid })).toThrow();
+  });
+
+  it('findActivePendingAssignment() ignora CANCELLED/COMPLETED — permite crear una nueva después', () => {
+    const cancelada = { id: 'a0', occurrenceKey: 'plan1:2026-09-28', status: ASSIGNMENT_STATUS.CANCELLED, active: true };
+    expect(findActivePendingAssignment([cancelada], 'plan1:2026-09-28')).toBeNull();
+    const nueva = createAssignment({ existing: [cancelada], occurrenceKey: 'plan1:2026-09-28', equipmentId: 'eq1', assignedCrewId: 'crew_mojon', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid });
+    expect(nueva.status).toBe(ASSIGNMENT_STATUS.PENDING);
+  });
+
+  it('CASO 11 — reassignAssignment(): Mojón -> Taller, conserva previousCrewId, nunca crea una segunda activa', () => {
+    const original = createAssignment({ existing: [], occurrenceKey: 'plan2:2026-09-28', equipmentId: 'eq2', assignedCrewId: 'crew_mojon', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid });
+    const reasignada = reassignAssignment(original, { newCrewId: 'crew_taller', now: NOW });
+    expect(reasignada.assignedCrewId).toBe('crew_taller');
+    expect(reasignada.previousCrewId).toBe('crew_mojon');
+    expect(reasignada.id).toBe(original.id); // MISMA fila, no una nueva
+  });
+
+  it('reassignAssignment() rechaza reasignar una que ya no está PENDING', () => {
+    const completada = { id: 'a3', occurrenceKey: 'k', assignedCrewId: 'crew_mojon', status: ASSIGNMENT_STATUS.COMPLETED };
+    expect(() => reassignAssignment(completada, { newCrewId: 'crew_taller', now: NOW })).toThrow();
+  });
+
+  it('cancelAssignment() marca CANCELLED, no borra nada, permite que classifyEquipmentWork() vuelva a mostrarla como normal', () => {
+    const asg = createAssignment({ existing: [], occurrenceKey: 'plan3:2026-09-28', equipmentId: 'eq3', assignedCrewId: 'crew_taller', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid });
+    const cancelada = cancelAssignment(asg, { now: NOW });
+    expect(cancelada.status).toBe(ASSIGNMENT_STATUS.CANCELLED);
+
+    const cuadrillas = [{ id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01' }];
+    const equipos = [{ id: 'eq3', locationId: 'loc_volcan' }];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_volcan' }, cuadrillas, shiftId: 'shift_dia' });
+    const work = classifyEquipmentWork({ scope, equipos, cuadrillas, assignments: [cancelada], equipoOccurrenceKeyFn: () => 'plan3:2026-09-28' });
+    expect(work.normal.find(e => e.id === 'eq3')).toBeDefined(); // vuelve al flujo normal (preferencia documentada en §Q)
+  });
+
+  it('completeAssignmentIfPending(): con assignment activa la completa; sin assignment (trabajo normal) no hace nada', () => {
+    const asg = createAssignment({ existing: [], occurrenceKey: 'plan4:2026-09-28', equipmentId: 'eq4', assignedCrewId: 'crew_taller', assignedByUserId: 'u_jvalles', assignedByUserName: 'Junior Valles', now: NOW, uid });
+    const completada = completeAssignmentIfPending([asg], { occurrenceKey: 'plan4:2026-09-28', recordId: 'rec_1', now: NOW });
+    expect(completada.status).toBe(ASSIGNMENT_STATUS.COMPLETED);
+    expect(completada.completedRecordId).toBe('rec_1');
+
+    expect(completeAssignmentIfPending([asg], { occurrenceKey: 'nunca-existio', recordId: 'rec_2', now: NOW })).toBeNull();
+  });
+});
+
+describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => {
+  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
+  const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_mojon' }, cuadrillas, shiftId: 'shift_dia' });
+
+  it('equipo dentro de su ubicación normal -> siempre ejecutable', () => {
+    expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e1', locationId: 'loc_mojon' }, assignments: [] })).toBe(true);
+  });
+  it('equipo fuera de su ubicación, SIN assignment a su cuadrilla -> NO ejecutable', () => {
+    expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments: [] })).toBe(false);
+  });
+  it('equipo fuera de su ubicación, CON assignment PENDING a su cuadrilla -> sí ejecutable', () => {
+    const assignments = [{ equipmentId: 'e2', assignedCrewId: 'crew_mojon', status: ASSIGNMENT_STATUS.PENDING, active: true }];
+    expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments })).toBe(true);
+  });
+  it('jefaturas (scope GLOBAL) -> siempre pueden (esta función no restringe scope global)', () => {
+    const scopeAdmin = resolveOperationalScope({ currentUser: { id: 'a1', role: 'ADMINISTRADOR' }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+    expect(canLubricadorExecuteEquipment({ scope: scopeAdmin, equipo: { id: 'e3', locationId: 'loc_volcan' }, assignments: [] })).toBe(true);
+  });
+});

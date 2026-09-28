@@ -14,8 +14,10 @@ import { loadSyncLogic, DB_JS_PATH } from '../helpers/loadLubricationLogic.js';
 const dbSource = readSource(DB_JS_PATH);
 
 describe('db.js — store grease_validations registrado correctamente', () => {
-  it('DB_VERSION se subió a 6 (necesario para que onupgradeneeded cree el store nuevo)', () => {
-    expect(dbSource).toMatch(/const DB_VERSION = 6;/);
+  it('DB_VERSION es 6 o superior (necesario para que onupgradeneeded haya creado el store nuevo)', () => {
+    const m = dbSource.match(/const DB_VERSION = (\d+);/);
+    expect(m).not.toBeNull();
+    expect(Number(m[1])).toBeGreaterThanOrEqual(6);
   });
 
   it('STORES incluye "grease_validations" (participa en push/pull genérico, igual que el resto)', () => {

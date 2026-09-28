@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v46'; // v46: CUTOVER PREPARADO (docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §26-27) — AUTH_MODE pasa de 'legacy' a 'supabase' como default DEFINITIVO del código (src/core/auth.js). Este build queda listo pero NO se publica/instala en este commit — ver el orden de despliegue documentado antes de subir esta versión a producción real; solo entonces esta versión de SW llega a un dispositivo. auth.js es runtime precacheado, mismo motivo de siempre para subir versión (stale-first, ver v27-v45).
+const CACHE = 'engrase-openpit-v47'; // v47: rediseño operativo — dispositivos compartidos + cuadrillas + ubicaciones + asignación manual de engrases (ver docs/OPERATIONAL_SCOPE.md). Agrega src/core/operational-scope.js (precacheado, ver ASSETS abajo) y cambios en app.js/db.js/styles.css de este mismo lote. Este build queda listo pero NO se publica/instala en este commit.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
@@ -8,6 +8,7 @@ const ASSETS = [
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',
+  './src/core/operational-scope.js',
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',
