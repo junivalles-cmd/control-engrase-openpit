@@ -1239,7 +1239,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
 .lub-scan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; }
 
+.lub-section-head { margin: var(--sp-3) 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
+.lub-eq-list + .lub-section-head { margin-top: var(--sp-4, 20px); }
 .lub-eq-btn {
   display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
   border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); cursor: pointer; color: var(--text);

@@ -384,7 +384,18 @@ async function showEquipmentQrInfo(equipmentId) {
     : null;
   const location_ = (await DB.allActive('locations')).find(l => l.id === equipment.locationId);
   const needsGrease = s.code === 'ROJO' || s.code === 'AMARILLO';
-  const canRegister = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  const canRegisterRole = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  // Un Lubricador solo puede ejecutar equipos de su cuadrilla/ubicación, o con
+  // una asignación manual activa hacia su cuadrilla (§AO) — nunca cualquier
+  // equipo del sistema solo por escanear su QR.
+  let outOfScopeMsg = '';
+  let canRegister = canRegisterRole;
+  if (canRegisterRole && App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    const { assignments } = await loadAssignmentContext();
+    canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
+    if (!canRegister) outOfScopeMsg = '<div class="qr-info-alert">Este equipo no pertenece a tu cuadrilla ni tiene una asignación activa para ti — no puedes registrar su engrase desde aquí.</div>';
+  }
 
   openModal(`${esc(equipment.code)}${equipment.shortCode ? ' · ' + equipment.shortCode : ''}`, `
     <div class="qr-info-card">
@@ -404,6 +415,7 @@ async function showEquipmentQrInfo(equipmentId) {
       ${needsGrease
         ? `<div class="qr-info-alert">${s.code === 'ROJO' ? '🔴 Este equipo tiene el engrase vencido.' : '🟡 Este equipo está próximo a vencer.'}</div>`
         : `<div class="qr-info-ok">✓ Este equipo está al día, no necesita engrase ahora.</div>`}
+      ${outOfScopeMsg}
 
       <div class="modal-actions" style="flex-wrap:wrap">
         ${canRegister ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
@@ -653,6 +665,121 @@ async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
     ultimoUsuario: App.currentUser ? App.currentUser.name : (actual?.ultimoUsuario || ''),
     active: true
   }, App.currentUser ? App.currentUser.name : 'sistema'));
+  Sync.fullSync();
+}
+
+/* ============================================================
+   SCOPE OPERATIVO CENTRAL (dispositivos compartidos + cuadrillas +
+   ubicaciones + asignación manual de engrases) — ver
+   docs/OPERATIONAL_SCOPE.md. Las reglas de decisión viven, puras, en
+   src/core/operational-scope.js; aquí solo se conectan con IndexedDB/App,
+   nunca se reimplementan.
+   ============================================================ */
+
+// Scope vigente EN ESTE MOMENTO para el usuario/dispositivo actual. El turno
+// SIEMPRE viene de currentShiftId() en vivo, nunca de un valor guardado en
+// el dispositivo (ver §H del pedido — resolveOperationalScope() ya lo
+// garantiza, esto solo junta los datos que necesita).
+async function getCurrentOperationalScope() {
+  const deviceAssignment = await getDeviceAssignment();
+  const cuadrillas = await DB.allActive('cuadrillas');
+  return resolveOperationalScope({
+    currentUser: App.currentUser,
+    deviceAssignment,
+    cuadrillas,
+    shiftId: currentShiftId()
+  });
+}
+
+function todayDateISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Clave de ocurrencia (identidad de "este engrase pendiente hoy", ver
+// computeOccurrenceKey en operational-scope.js) del trabajo de un equipo
+// según su plan activo. null si el equipo no tiene plan configurado.
+function equipoOccurrenceKey(equipo, plansByEquipoId) {
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) return null;
+  return computeOccurrenceKey(plan, { dateISO: todayDateISO() });
+}
+
+async function loadAssignmentContext() {
+  const [assignments, cuadrillas, plans] = await Promise.all([
+    DB.allActive('lubrication_assignments'),
+    DB.allActive('cuadrillas'),
+    DB.allActive('lubrication_plans')
+  ]);
+  const plansByEquipoId = {};
+  plans.forEach(p => { plansByEquipoId[p.equipmentId] = p; });
+  return { assignments, cuadrillas, plansByEquipoId };
+}
+
+// Asigna manualmente el engrase PENDIENTE de `equipo` a `assignedCrewId`
+// (responsabilidad temporal — NUNCA mueve el equipo de ubicación, ver
+// moverEquipoDeUbicacion() más abajo para eso). Si ya había una asignación
+// activa para esta misma ocurrencia, la reasigna en vez de duplicarla.
+async function assignGreaseToCrew(equipo, assignedCrewId, notes) {
+  const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) throw new Error('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.');
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const existing = findActivePendingAssignment(assignments, occurrenceKey);
+  const crew = cuadrillas.find(cq => cq.id === assignedCrewId);
+  let saved;
+  if (existing) {
+    saved = reassignAssignment(existing, { newCrewId: assignedCrewId, now: nowISO() });
+    await logAudit('GREASE_REASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
+  } else {
+    saved = createAssignment({
+      existing, occurrenceKey, equipmentId: equipo.id, planId: plan.id,
+      assignedCrewId, assignedByUserId: App.currentUser.id, assignedByUserName: App.currentUser.name,
+      notes, now: nowISO(), uid
+    });
+    await logAudit('GREASE_ASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
+  }
+  await DB.put('lubrication_assignments', stamp(saved, App.currentUser.name));
+  Sync.fullSync();
+  return saved;
+}
+
+// Cancela una asignación PENDING: el equipo vuelve a su flujo normal (la
+// cuadrilla default de su ubicación), sin borrar el historial de que existió.
+async function cancelGreaseAssignment(assignment, equipo) {
+  const cancelled = cancelAssignment(assignment, { now: nowISO() });
+  await DB.put('lubrication_assignments', stamp(cancelled, App.currentUser.name));
+  await logAudit('GREASE_ASSIGNMENT_CANCELLED', esc(equipo ? equipo.code : assignment.equipmentId), App.currentUser.name);
+  Sync.fullSync();
+  return cancelled;
+}
+
+// Se llama al guardar un registro de engrase, con la occurrenceKey calculada
+// ANTES de que el plan se actualice (el horómetro base cambia al guardar, ver
+// startGreaseFlow) — si esa ocurrencia tenía una asignación manual PENDING la
+// cierra; si el equipo se engrasó dentro de su trabajo normal, no hace nada.
+async function completeGreaseAssignmentForOccurrence(equipo, occurrenceKey, recordId) {
+  if (!occurrenceKey) return null;
+  const assignments = await DB.allActive('lubrication_assignments');
+  const completed = completeAssignmentIfPending(assignments, { occurrenceKey, recordId, now: nowISO() });
+  if (!completed) return null;
+  await DB.put('lubrication_assignments', stamp(completed, App.currentUser.name));
+  await logAudit('GREASE_ASSIGNMENT_COMPLETED', esc(equipo.code), App.currentUser.name);
+  Sync.fullSync();
+  return completed;
+}
+
+// Mueve PERMANENTEMENTE un equipo a otra ubicación (distinto de asignar un
+// engrase puntual — ver §M del pedido). Solo ADMIN/PLANIFICADOR
+// (canMoveEquipment, validado también en la UI que llama a esto).
+async function moverEquipoDeUbicacion(equipo, newLocationId, locations) {
+  const anterior = locations.find(l => l.id === equipo.locationId);
+  const nueva = locations.find(l => l.id === newLocationId);
+  equipo.locationId = newLocationId;
+  await DB.put('equipment', stamp(equipo, App.currentUser.name));
+  await logAudit('EQUIPMENT_LOCATION_CHANGED',
+    `${esc(equipo.code)}: ${esc(anterior ? anterior.name : 'sin ubicación')} → ${esc(nueva ? nueva.name : newLocationId)}`,
+    App.currentUser.name);
   Sync.fullSync();
 }
 
@@ -2195,42 +2322,70 @@ async function renderLubricadorHome() {
   c.innerHTML = `<div class="loading">Cargando tu turno…</div>`;
   const equipos = await DB.allActive('equipment');
   const locations = await DB.allActive('locations');
-  const myCuadrilla = App.currentUser.cuadrillaId;
 
-  // Si el equipo tiene cuadrilla asignada, solo se lo mostramos a lubricadores de esa
-  // misma cuadrilla (para que dos cuadrillas no engrasen el mismo equipo). Los equipos
-  // sin cuadrilla asignada se muestran a todos, para no dejar nada fuera de la vista.
-  const equiposTurno = equiposDeEstaPersona(equipos, App.currentUser);
-  const statuses = await computeAllStatuses(equiposTurno);
-  const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
-  statuses.sort((a, b) => order[a.s.code] - order[b.s.code]);
-
+  const scope = await getCurrentOperationalScope();
   const cuadrillas = await DB.allActive('cuadrillas');
-  const myCuadrillaName = (cuadrillas.find(cq => cq.id === myCuadrilla) || {}).name;
+  const myCrew = cuadrillas.find(cq => cq.id === scope.crewId);
+
+  // Dispositivo sin cuadrilla asignada (§G del pedido): NUNCA cae a la lista
+  // global de equipos — se muestra un mensaje claro y se pide contactar a
+  // un Planificador/Administrador para asignarlo desde "Dispositivo
+  // operativo" en Configuración.
+  if (scope.kind === 'DEVICE_UNASSIGNED') {
+    c.innerHTML = `
+      <div class="lub-header-row"><div><h2 class="lub-heading">Este dispositivo no tiene cuadrilla</h2></div></div>
+      <div class="empty-state">
+        Este teléfono/tablet todavía no está asignado a ninguna cuadrilla, así que no se le puede mostrar ningún equipo.
+        Pide a un Administrador o Planificador que lo configure en <b>Configuración → Dispositivo operativo</b>.
+      </div>
+      <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>`;
+    $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
+    return;
+  }
+
+  const { assignments, plansByEquipoId } = await loadAssignmentContext();
+  const { normal, assigned } = classifyEquipmentWork({
+    scope, equipos, cuadrillas, assignments,
+    equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+  });
+
+  const statusesNormal = await computeAllStatuses(normal);
+  const equiposAsignados = assigned.map(a => equipos.find(e => e.id === a.equipmentId)).filter(Boolean);
+  const statusesAssigned = await computeAllStatuses(equiposAsignados);
+  const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
+  // Prioridad (§T): asignados a mi cuadrilla > vencidos > pendientes de turno > al día.
+  statusesNormal.sort((a, b) => order[a.s.code] - order[b.s.code]);
+  statusesAssigned.sort((a, b) => order[a.s.code] - order[b.s.code]);
+
+  const eqButtonHTML = (e, s) => `
+    <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
+      <div class="lub-eq-top">
+        <span class="lub-eq-code">${esc(e.code)}</span>
+        <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
+      </div>
+      <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+      <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
+      <div class="lub-eq-bottom">
+        <span class="mono">${fmt(e.hourmeter)} h</span>
+        ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
+      </div>
+    </button>`;
 
   c.innerHTML = `
     <div class="lub-header-row">
       <div>
         <h2 class="lub-heading">Equipos asignados</h2>
-        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCuadrillaName ? ' · ' + myCuadrillaName : ''}</p>
+        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}</p>
       </div>
       <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
     </div>
     ${await recentEquiposHTML()}
+    ${statusesAssigned.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ASIGNADOS A MI CUADRILLA</span></div>
+    <div class="lub-eq-list">${statusesAssigned.map(({ e, s }) => eqButtonHTML(e, s)).join('')}</div>` : ''}
+    ${scope.kind === 'GLOBAL' ? '' : '<div class="lub-section-head"><span class="dim">Trabajo normal de mi cuadrilla</span></div>'}
     <div class="lub-eq-list">
-      ${statuses.map(({ e, s }) => `
-        <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
-          <div class="lub-eq-top">
-            <span class="lub-eq-code">${esc(e.code)}</span>
-            <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
-          </div>
-          <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-          <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
-          <div class="lub-eq-bottom">
-            <span class="mono">${fmt(e.hourmeter)} h</span>
-            ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
-          </div>
-        </button>`).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCuadrillaName ? ' para ' + myCuadrillaName : ''}.</div>`}
+      ${statusesNormal.map(({ e, s }) => eqButtonHTML(e, s)).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCrew ? ' para ' + esc(myCrew.name) : ''}.</div>`}
     </div>
     <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
@@ -3506,6 +3661,10 @@ async function openEquipmentDetail(id) {
         <button class="btn" id="btn-pausar-avisos">${ic("clock")}${avisosPausados(e) ? 'Reanudar avisos' : 'Pausar avisos'}</button>` : ''}
       ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) && s.plan && s.plan.controlType === 'Día y turno de la semana' ? `
         <button class="btn" id="btn-reprogramar">${ic("clock")}Reprogramar esta semana</button>` : ''}
+      ${canManageAssignments(App.currentUser.role) && (s.code === 'ROJO' || s.code === 'AMARILLO') ? `
+        <button class="btn" id="btn-asignar-cuadrilla">${ic("clock")}Asignar a cuadrilla</button>` : ''}
+      ${canMoveEquipment(App.currentUser.role) ? `
+        <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -3514,6 +3673,8 @@ async function openEquipmentDetail(id) {
     const locations = await DB.allActive('locations');
     openEquipmentForm(e, types, locations);
   });
+  $('#btn-asignar-cuadrilla')?.addEventListener('click', () => { closeModal(); openAssignGreaseModal(e); });
+  $('#btn-mover-ubicacion')?.addEventListener('click', () => { closeModal(); openMoveEquipmentLocationModal(e); });
   $('#btn-delete-eq')?.addEventListener('click', async () => {
     if (!confirm(`¿Eliminar el equipo ${esc(e.code)}${e.shortCode ? ' (' + e.shortCode + ')' : ''}? Esta acción es un borrado lógico: el equipo deja de aparecer en la app pero su historial de engrases y anomalías se conserva en la auditoría. No se puede deshacer desde la interfaz.`)) return;
     await deleteEquipmentCascade(e);
@@ -3625,6 +3786,102 @@ async function openEquipmentDetail(id) {
       const sel = $('#hist-equipo');
       if (sel) { sel.value = e.id; sel.dispatchEvent(new Event('change')); }
     }, 50);
+  });
+}
+
+/* ---------- Asignar/reasignar/cancelar el engrase pendiente de un equipo a
+   otra cuadrilla (responsabilidad temporal, NUNCA mueve el equipo — ver
+   openMoveEquipmentLocationModal() para eso). Solo ADMIN/PLANIFICADOR/
+   SUPERVISOR, ver canManageAssignments(). ---------- */
+async function openAssignGreaseModal(equipo) {
+  const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) { alert('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.'); return; }
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const current = findActivePendingAssignment(assignments, occurrenceKey);
+  const currentCrew = current ? cuadrillas.find(cq => cq.id === current.assignedCrewId) : null;
+  const opciones = cuadrillas.filter(cq => cq.active !== false);
+
+  openModal(`Asignar engrase · ${esc(equipo.code)}`, `
+    ${current
+      ? `<p class="dim">Actualmente asignado a <b>${esc(currentCrew ? currentCrew.name : current.assignedCrewId)}</b>.</p>`
+      : '<p class="dim">Este engrase sigue su flujo normal (sin asignación manual todavía).</p>'}
+    <form id="assign-crew-form">
+      <label>Asignar a cuadrilla
+        <select name="crewId" required>
+          <option value="">— Selecciona —</option>
+          ${opciones.map(cq => `<option value="${cq.id}" ${current && current.assignedCrewId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Notas (opcional)<textarea name="notes" rows="2">${current ? esc(current.notes || '') : ''}</textarea></label>
+      <div class="modal-actions">
+        ${current ? `<button type="button" class="btn btn-danger" id="btn-cancel-assign">Cancelar asignación</button>` : ''}
+        <button type="submit" class="btn btn-accent">${ic("check")}${current ? 'Reasignar' : 'Asignar'}</button>
+      </div>
+    </form>
+  `);
+  $('#assign-crew-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    if (!fd.crewId) { alert('Selecciona una cuadrilla.'); return; }
+    try {
+      await assignGreaseToCrew(equipo, fd.crewId, fd.notes);
+      showInAppToast(`✓ ${esc(equipo.code)} asignado`);
+      closeModal();
+      navigate(App.route);
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar este engrase.');
+    }
+  });
+  $('#btn-cancel-assign')?.addEventListener('click', async () => {
+    if (!confirm('¿Cancelar esta asignación? El engrase vuelve a su flujo normal.')) return;
+    await cancelGreaseAssignment(current, equipo);
+    showInAppToast('✓ Asignación cancelada');
+    closeModal();
+    navigate(App.route);
+  });
+}
+
+/* ---------- Mover PERMANENTEMENTE un equipo a otra ubicación — distinto de
+   asignar un engrase puntual (ver openAssignGreaseModal()). Solo ADMIN/
+   PLANIFICADOR, ver canMoveEquipment(). ---------- */
+async function openMoveEquipmentLocationModal(equipo) {
+  const locations = await DB.allActive('locations');
+  const { assignments, plansByEquipoId } = await loadAssignmentContext();
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const activeAssignment = occurrenceKey ? findActivePendingAssignment(assignments, occurrenceKey) : null;
+
+  openModal(`Mover ubicación · ${esc(equipo.code)}`, `
+    <p class="dim">Esto mueve <b>permanentemente</b> el equipo a otra ubicación — distinto de asignar un engrase puntual a otra cuadrilla. Queda registrado en la auditoría.</p>
+    ${activeAssignment ? '<div class="qr-info-alert">Este equipo tiene una asignación manual de engrase pendiente.</div>' : ''}
+    <form id="move-eq-form">
+      <label>Nueva ubicación
+        <select name="locationId" required>
+          <option value="">— Selecciona —</option>
+          ${locations.map(l => `<option value="${l.id}" ${l.id === equipo.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
+      </label>
+      ${activeAssignment ? `
+      <label class="check-row" style="margin-top:8px">
+        <input type="checkbox" class="chk-done" name="cancelAssignment" checked/>
+        <span class="check-row-text">Cancelar la asignación pendiente al mover (recomendado)</span>
+      </label>` : ''}
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("check")}Mover</button></div>
+    </form>
+  `);
+  $('#move-eq-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const locationId = fd.get('locationId');
+    if (!locationId) { alert('Selecciona una ubicación.'); return; }
+    if (locationId === equipo.locationId) { closeModal(); return; }
+    if (activeAssignment && fd.get('cancelAssignment')) {
+      await cancelGreaseAssignment(activeAssignment, equipo);
+    }
+    await moverEquipoDeUbicacion(equipo, locationId, locations);
+    showInAppToast(`✓ ${esc(equipo.code)} movido de ubicación`);
+    closeModal();
+    navigate(App.route);
   });
 }
 
@@ -3773,6 +4030,11 @@ async function renderPlan() {
   // Planificador con las herramientas completas — configurar el plan de engrase es
   // literalmente su trabajo principal, no tenía sentido limitarlo a solo uno por uno.
   const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  // Asignar a cuadrilla es una acción DISTINTA de editar el plan (canEdit) —
+  // SUPERVISOR también puede asignar, aunque no configure planes (§AB).
+  const canAssign = canManageAssignments(App.currentUser.role);
+  const statusByEquipoId = {};
+  if (canAssign) (await computeAllStatuses(equipos)).forEach(({ e, s }) => { statusByEquipoId[e.id] = s; });
   let bulkMode = false;
   const selected = new Set();
 
@@ -3793,7 +4055,7 @@ async function renderPlan() {
     <div class="panel">
       <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
       <table class="data-table">
-        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
+        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th>${canAssign ? '<th></th>' : ''}</tr></thead>
         <tbody>
           ${(await Promise.all(equipos.map(async e => {
             const plan = plans.find(p => p.equipmentId === e.id);
@@ -3801,6 +4063,8 @@ async function renderPlan() {
             // completa por cada equipo: con 300 equipos eran 300 lecturas de 4.500 puntos).
             const points = plan ? (puntosPorPlan[plan.id] || []) : [];
             const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
+            const st = statusByEquipoId[e.id];
+            const puedeAsignar = canAssign && plan && st && (st.code === 'ROJO' || st.code === 'AMARILLO');
             return `<tr data-row-id="${e.id}">
               ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${e.id}"/></td>` : ''}
               <td class="mono">${esc(e.code)}</td>
@@ -3810,6 +4074,7 @@ async function renderPlan() {
               <td class="mono">${plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—'}</td>
               <td>${points.length}</td>
               <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">${ic("edit")}Configurar</button></td>
+              ${canAssign ? `<td>${puedeAsignar ? `<button class="btn btn-sm" data-assign-eq="${e.id}">${ic("clock")}Asignar a cuadrilla</button>` : ''}</td>` : ''}
             </tr>`;
           }))).join('')}
         </tbody>
@@ -3833,6 +4098,12 @@ async function renderPlan() {
 
   $$('button[data-eq]', c).forEach(btn => {
     btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
+  });
+  $$('button[data-assign-eq]', c).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const eq = equipos.find(x => x.id === btn.dataset.assignEq);
+      if (eq) openAssignGreaseModal(eq);
+    });
   });
 
   if (!canEdit) return;
@@ -5423,6 +5694,10 @@ async function startGreaseFlow(equipmentId, target) {
       const respaldoPlan = plan ? JSON.parse(JSON.stringify(plan)) : null;
       let registroGuardado = false;
       let anomaliasCreadas = [];
+      // Se calcula ANTES de que el plan se actualice más abajo (lastGreaseHour
+      // cambia al guardar) — completeGreaseAssignmentForOccurrence() necesita
+      // la clave de LA ocurrencia que se está cerrando, no la siguiente.
+      const occurrenceKeyDeEsteEngrase = plan ? computeOccurrenceKey(plan, { dateISO: todayDateISO() }) : null;
 
       try {
         await DB.put('lubrication_records', record);
@@ -5462,6 +5737,13 @@ async function startGreaseFlow(equipmentId, target) {
         await logAudit(esRetro ? 'ENGRASE_RETROACTIVO_REGISTRADO' : 'ENGRASE_REGISTRADO',
           `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
           App.currentUser.name);
+
+        // Si este engrase cerraba una asignación manual PENDING (§R), la
+        // completa. Si era trabajo normal sin asignación, no hace nada.
+        if (occurrenceKeyDeEsteEngrase) {
+          await completeGreaseAssignmentForOccurrence(equipment, occurrenceKeyDeEsteEngrase, record.id)
+            .catch(err => console.warn('No se pudo cerrar la asignación de este engrase', err));
+        }
 
       } catch (err) {
         // Algo falló a mitad del guardado (disco lleno, base bloqueada, app cerrándose).
@@ -8513,6 +8795,196 @@ function wireSimpleListPanel(container, store, onChange) {
   });
 }
 
+/* ---------- Cuadrillas: panel dedicado (Configuración) ----------
+   Distinto del genérico simpleListPanelHTML (solo nombre+activo): cada
+   cuadrilla tiene además `locationId` y `isDefault` (§C/§K del pedido) —
+   máximo una cuadrilla `isDefault:true` por ubicación, la que recibe el
+   trabajo normal (ver resolveDefaultCrewForLocation() en
+   operational-scope.js). Cambiar la ubicación de una cuadrilla queda en
+   auditoría (CREW_LOCATION_CHANGED). ---------- */
+async function cuadrillasPanelHTML() {
+  const cuadrillas = await DB.allActive('cuadrillas');
+  const locations = await DB.allActive('locations');
+  const locName = (id) => (locations.find(l => l.id === id) || {}).name || '—';
+  return `
+    <div class="panel" data-cuadrillas-panel>
+      <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo.</div>
+      <table class="data-table">
+        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Por defecto</th><th></th></tr></thead>
+        <tbody>
+          ${cuadrillas.map(cq => `
+            <tr data-id="${cq.id}">
+              <td>${esc(cq.name)}</td>
+              <td>${esc(locName(cq.locationId))}</td>
+              <td>${cq.isDefault ? '✓' : '—'}</td>
+              <td class="row-actions">
+                <button class="btn btn-sm cq-edit">${ic("edit")}Editar</button>
+                <button class="btn btn-sm btn-danger cq-remove">${ic("trash")}Eliminar</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin cuadrillas todavía.</td></tr>'}
+        </tbody>
+      </table>
+      <div class="toolbar" style="padding:10px 14px">
+        <button class="btn btn-accent" id="cq-add">${ic("plus")}Agregar cuadrilla</button>
+      </div>
+    </div>`;
+}
+
+function wireCuadrillasPanel(container, onChange) {
+  const panel = container.querySelector('[data-cuadrillas-panel]');
+  if (!panel) return;
+
+  async function openCuadrillaForm(cuadrilla) {
+    const locations = await DB.allActive('locations');
+    openModal(cuadrilla ? `Editar ${esc(cuadrilla.name)}` : 'Nueva cuadrilla', `
+      <form id="cq-form">
+        <label>Nombre<input required name="name" value="${cuadrilla ? esc(cuadrilla.name) : ''}"/></label>
+        <label>Ubicación
+          <select name="locationId">
+            <option value="">— Sin ubicación —</option>
+            ${locations.map(l => `<option value="${l.id}" ${cuadrilla && cuadrilla.locationId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="check-row" style="margin-top:8px">
+          <input type="checkbox" class="chk-done" name="isDefault" ${cuadrilla && cuadrilla.isDefault ? 'checked' : ''}/>
+          <span class="check-row-text">Cuadrilla por defecto de esa ubicación (recibe el trabajo normal)</span>
+        </label>
+        <span class="field-hint">Si la marcas como default, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
+        <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
+      </form>
+    `);
+    $('#cq-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = Object.fromEntries(new FormData(ev.target).entries());
+      const locationId = fd.locationId || null;
+      const isDefault = !!fd.isDefault;
+      const anterior = cuadrilla ? await DB.get('cuadrillas', cuadrilla.id) : null;
+      const cambioUbicacion = !!anterior && anterior.locationId !== locationId;
+
+      // Máximo una default por ubicación (§K): marcar esta desmarca las demás de esa ubicación.
+      if (isDefault && locationId) {
+        const todas = await DB.allActive('cuadrillas');
+        for (const otra of todas) {
+          if (otra.id !== (cuadrilla ? cuadrilla.id : null) && otra.locationId === locationId && otra.isDefault) {
+            otra.isDefault = false;
+            await DB.put('cuadrillas', stamp(otra, App.currentUser.name));
+          }
+        }
+      }
+
+      const item = cuadrilla || { id: uid('cua'), active: true };
+      item.name = fd.name.trim();
+      item.locationId = locationId;
+      item.isDefault = isDefault;
+      await DB.put('cuadrillas', stamp(item, App.currentUser.name));
+
+      if (cambioUbicacion) {
+        const nombreAntes = locName2(locations, anterior.locationId);
+        const nombreDespues = locName2(locations, locationId);
+        await logAudit('CREW_LOCATION_CHANGED', `${esc(item.name)}: ${esc(nombreAntes)} → ${esc(nombreDespues)}`, App.currentUser.name);
+      } else {
+        await logAudit('LISTA_ACTUALIZADA', `cuadrillas: "${esc(item.name)}" guardada`, App.currentUser.name);
+      }
+      showInAppToast(`✓ "${esc(item.name)}" guardada`);
+      Sync.fullSync();
+      closeModal();
+      onChange();
+    });
+  }
+  function locName2(locations, id) { return (locations.find(l => l.id === id) || {}).name || 'sin ubicación'; }
+
+  panel.querySelector('#cq-add').addEventListener('click', () => openCuadrillaForm(null));
+  panel.querySelectorAll('.cq-edit').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.closest('tr').dataset.id;
+      openCuadrillaForm(await DB.get('cuadrillas', id));
+    });
+  });
+  panel.querySelectorAll('.cq-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const id = row.dataset.id;
+      const item = await DB.get('cuadrillas', id);
+      if (!confirm(`¿Eliminar la cuadrilla "${esc(item.name)}"? Los dispositivos que ya la tengan asignada no se modifican, pero dejará de aparecer como opción.`)) return;
+      item.active = false;
+      await DB.put('cuadrillas', stamp(item, App.currentUser.name));
+      await logAudit('LISTA_ACTUALIZADA', `cuadrillas: eliminada "${esc(item.name)}"`, App.currentUser.name);
+      showInAppToast(`✓ "${esc(item.name)}" eliminada`);
+      onChange();
+    });
+  });
+}
+
+/* ---------- Dispositivo operativo (Configuración) ----------
+   Conecta getDeviceAssignment()/saveDeviceAssignment() (app.js, ya
+   existían para push pero nunca se usaban para scope operativo — ver
+   docs/OPERATIONAL_SCOPE.md) con una UI real. Visibilidad por rol (§F):
+   ADMIN/PLANIFICADOR editan, SUPERVISOR y LUBRICADOR solo lectura,
+   VISOR no ve este panel. ---------- */
+async function devicePanelHTML() {
+  const role = App.currentUser.role;
+  if (role === 'VISOR') return '';
+  const assignment = await getDeviceAssignment();
+  const cuadrillas = await DB.allActive('cuadrillas');
+  const locations = await DB.allActive('locations');
+  const crew = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
+  const crewLocationName = crew ? (locations.find(l => l.id === crew.locationId) || {}).name : null;
+  const canEditDevice = canConfigureDevice(role);
+  return `
+    <div class="panel" data-device-panel>
+      <div class="panel-head"><h3>Dispositivo operativo</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Este teléfono/tablet se asigna a UNA cuadrilla — de ahí sale qué equipos ve "Mi Turno" de cualquier Lubricador que inicie sesión aquí. La asignación es de ESTE dispositivo, no de la persona, y sigue guardada aunque cierres sesión, uses el PIN rápido o reinstales la app. El turno (Día/Noche) nunca se guarda aquí: siempre se calcula por la hora real.</p>
+        <div class="detail-grid" style="margin:10px 0">
+          <div><b>Identificador</b><div class="mono" style="font-size:11px">${esc(getDeviceId())}</div></div>
+          <div><b>Cuadrilla asignada</b><div>${crew ? esc(crew.name) : 'Sin asignar'}</div></div>
+          <div><b>Ubicación (según la cuadrilla)</b><div>${crewLocationName ? esc(crewLocationName) : '—'}</div></div>
+        </div>
+        ${canEditDevice
+          ? `<button class="btn btn-accent" id="btn-device-config">${ic("edit")}${crew ? 'Cambiar cuadrilla' : 'Asignar cuadrilla'}</button>`
+          : role === 'LUBRICADOR'
+            ? '<p class="dim">Solo un Administrador o Planificador puede cambiar la cuadrilla de este dispositivo.</p>'
+            : ''}
+      </div>
+    </div>`;
+}
+
+function wireDevicePanel(container, onChange) {
+  const panel = container.querySelector('[data-device-panel]');
+  if (!panel) return;
+  panel.querySelector('#btn-device-config')?.addEventListener('click', async () => {
+    const assignment = await getDeviceAssignment();
+    const cuadrillas = (await DB.allActive('cuadrillas')).filter(cq => cq.active !== false);
+    openModal('Dispositivo operativo', `
+      <form id="device-form">
+        <label>Nombre de este dispositivo (opcional, para identificarlo)
+          <input name="nombre" value="${esc(assignment.nombre || '')}" placeholder="Ej: Teléfono Volcán 1"/>
+        </label>
+        <label>Cuadrilla asignada
+          <select name="cuadrillaId">
+            <option value="">— Sin asignar —</option>
+            ${cuadrillas.map(cq => `<option value="${cq.id}" ${assignment.cuadrillaId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
+          </select>
+          <span class="field-hint">Los lubricadores que inicien sesión en este dispositivo verán el trabajo de esta cuadrilla en "Mi Turno".</span>
+        </label>
+        <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
+      </form>
+    `);
+    $('#device-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = Object.fromEntries(new FormData(ev.target).entries());
+      const crewAnterior = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
+      const crewNueva = cuadrillas.find(cq => cq.id === fd.cuadrillaId);
+      await saveDeviceAssignment({ cuadrillaId: fd.cuadrillaId || '', nombre: fd.nombre });
+      await logAudit('DEVICE_CREW_CHANGED', `${esc(getDeviceId())}: ${esc(crewAnterior ? crewAnterior.name : 'sin asignar')} → ${esc(crewNueva ? crewNueva.name : 'sin asignar')}`, App.currentUser.name);
+      showInAppToast('✓ Dispositivo actualizado');
+      closeModal();
+      onChange();
+    });
+  });
+}
+
 /* ---------- Respaldo completo: exportar / restaurar todos los datos ---------- */
 /* ---------- Recordatorio de respaldo ----------
    El respaldo depende de que alguien se acuerde de bajarlo. Esto avisa al Administrador
@@ -8940,6 +9412,7 @@ async function renderConfig() {
           : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
       </div>
     </div>` : ''}
+    ${await devicePanelHTML()}
     <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
@@ -8955,7 +9428,7 @@ async function renderConfig() {
         </form>
       </div>
     </div>
-    ${await simpleListPanelHTML('cuadrillas', 'Cuadrillas de lubricación', 'Se asignan a lubricadores (Usuarios) y a equipos (ficha del equipo) para que dos cuadrillas no engrasen el mismo equipo.')}
+    ${await cuadrillasPanelHTML()}
     ${await simpleListPanelHTML('locations', 'Ubicaciones / Flotas', 'Aparecen como opción de "Ubicación" al crear o editar un equipo.')}
     ${await simpleListPanelHTML('equipment_types', 'Categorías de equipo', 'Aparecen como opción de "Categoría" al crear o editar un equipo.')}
 
@@ -9147,7 +9620,8 @@ async function renderConfig() {
     renderConfig();
   });
 
-  wireSimpleListPanel(c, 'cuadrillas', () => renderConfig());
+  wireCuadrillasPanel(c, () => renderConfig());
+  wireDevicePanel(c, () => renderConfig());
   wireSimpleListPanel(c, 'locations', () => renderConfig());
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
