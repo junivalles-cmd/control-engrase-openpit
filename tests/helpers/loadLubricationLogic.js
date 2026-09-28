@@ -235,6 +235,8 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'classifyEquipmentWork', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
     'canLubricadorExecuteEquipment',
+    'buildExecutionSnapshot', 'resolveRecordEquipmentLocationId',
+    'resolveRecordCrewId', 'resolveRecordCrewLocationId',
   ]],
 ];
 
@@ -243,6 +245,29 @@ export function loadOperationalScopeLogic() {
   const body = buildBodyFromSources(OPERATIONAL_SCOPE_SOURCES);
   const factory = new Function(body);
   return factory();
+}
+
+// Identidad del dispositivo (§3 del cierre de lote — teléfonos compartidos
+// por cuadrilla, ver docs/OPERATIONAL_SCOPE.md). getDeviceId()/
+// getDeviceAssignment()/saveDeviceAssignment() leen `localStorage`/`DB`/
+// `App`/`Sync`/`window` como globales, igual que en el navegador — el test
+// los stubea con vi.stubGlobal() antes de llamar (mismo patrón que
+// loadDbSeedLogic con localStorage/navigator/fetch).
+const DEVICE_IDENTITY_SOURCES = [
+  [DB_JS_PATH, ['nowISO', 'stamp']],
+  [APP_JS_PATH, ['getDeviceId', 'getDeviceName', 'setDeviceName', 'getDeviceAssignment', 'saveDeviceAssignment']],
+];
+
+/**
+ * Devuelve las funciones REALES de identidad de dispositivo de app.js,
+ * ligadas a un `DB`/`App` de prueba. `localStorage`/`window`/`Sync` deben
+ * quedar stubeados globalmente por el test ANTES de invocar la función
+ * devuelta (ver tests/unit/device-assignment-isolation.test.js).
+ */
+export function loadDeviceIdentityLogic(fakeDB, fakeApp) {
+  const body = buildBodyFromSources(DEVICE_IDENTITY_SOURCES);
+  const factory = new Function('DB', 'App', body);
+  return factory(fakeDB, fakeApp);
 }
 
 // P0-2 — administración de usuarios. El archivo se guarda como .ts (misma

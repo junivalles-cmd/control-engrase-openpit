@@ -30,11 +30,17 @@ async function bootPage(page, { lubShell = true, route = 'turno' } = {}) {
     content: `
       window.App = { route: ${JSON.stringify(route)}, lubricadorGreaseFlowActive: false };
       let lastSyncState = { status: 'idle' };
-      window.__calls = { renderAnomalias: 0, renderLubricadorHistorial: 0, renderLubricadorHome: 0, navigate: 0 };
+      window.__calls = { renderAnomalias: 0, renderLubricadorHistorial: 0, renderLubricadorHome: 0, navigate: 0, refreshLocalNotifications: 0 };
       function renderAnomalias() { window.__calls.renderAnomalias++; }
       function renderLubricadorHistorial() { window.__calls.renderLubricadorHistorial++; }
       function renderLubricadorHome() { window.__calls.renderLubricadorHome++; }
       function navigate() { window.__calls.navigate++; }
+      // onSyncStateChange() la llama cuando pulled>0 (§2 del cierre de lote —
+      // recalcula avisos de asignaciones, ver docs/OPERATIONAL_SCOPE.md). No
+      // toca el DOM ni App.route, así que no interfiere con esta prueba —
+      // solo se espía para confirmar que sigue llamándose, nunca su propio
+      // comportamiento (probado aparte).
+      function refreshLocalNotifications() { window.__calls.refreshLocalNotifications++; }
 
       ${dollarSrc}
       ${updateConnBadgeSrc}

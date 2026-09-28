@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v47'; // v47: rediseño operativo — dispositivos compartidos + cuadrillas + ubicaciones + asignación manual de engrases (ver docs/OPERATIONAL_SCOPE.md). Agrega src/core/operational-scope.js (precacheado, ver ASSETS abajo) y cambios en app.js/db.js/styles.css de este mismo lote. Este build queda listo pero NO se publica/instala en este commit.
+const CACHE = 'engrase-openpit-v48'; // v48: cierre del lote operativo — snapshot histórico en lubrication_records (nueva columna "Ubicación" en Historial), ciclo completo de notificaciones de assignments (LocalNotifications, sin OneSignal), aislamiento de device assignment verificado (ver docs/OPERATIONAL_SCOPE.md). Cambios en app.js/src/core/operational-scope.js de este mismo lote. Este build queda listo pero NO se publica/instala en este commit.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

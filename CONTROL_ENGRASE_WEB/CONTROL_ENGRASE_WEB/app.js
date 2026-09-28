@@ -464,6 +464,8 @@ const NOTIF_ID_VENCIDOS_REC = 1006;    // recordatorio de vencidos a media jorna
 const NOTIF_ID_POR_ENGRASAR_REC = 1007; // recordatorio de lo que falta por engrasar
 const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (lunes)
 const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
+const NOTIF_ID_ASSIGNED = 1010;        // engrase asignado manualmente a mi cuadrilla
+const NOTIF_ID_ASSIGNED_REC = 1011;    // recordatorio de asignación todavía pendiente
 
 /* Configuración por defecto de las notificaciones. El Administrador puede cambiar
    cada una por separado desde Configuración: activarla o apagarla, a qué hora suena,
@@ -941,7 +943,8 @@ async function refreshLocalNotifications() {
       { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
       { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
       { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
-      { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO }
+      { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO },
+      { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC }
     ]});
     if (!settings.enabled) return;
 
@@ -1096,6 +1099,64 @@ async function refreshLocalNotifications() {
         extra: { tipo: 'semanal', ruta: 'reportes' },
         schedule: { at: proximoDiaSemana(cfgS.diaSemana ?? 1, cfgS.hour, cfgS.minute), every: 'week', repeats: true }
       });
+    }
+
+    // ── 5) Asignaciones manuales PENDIENTES para la cuadrilla de este
+    // dispositivo (§2 del cierre de lote — ver docs/OPERATIONAL_SCOPE.md) ──
+    // Todo el ciclo de vida (crear/reasignar/cancelar/completar) se resuelve
+    // SOLO recalculando desde cero cada vez que esta función corre, sin
+    // rastrear estado propio: arriba se cancelan TODAS las notificaciones
+    // conocidas (incluidas estas dos IDs) antes de reprogramar, así que una
+    // asignación que dejó de estar PENDING para la cuadrilla de este
+    // dispositivo (completada, cancelada, o reasignada a otra cuadrilla)
+    // simplemente deja de calificar aquí y no se reprograma — nunca hace
+    // falta "cancelarla" a mano. Mismo patrón agrupado que vencidos/
+    // porEngrasar arriba (una notificación por tipo, nunca una por fila).
+    if (rol === 'LUBRICADOR') {
+      const scopeNotif = await getCurrentOperationalScope();
+      if (scopeNotif.kind === 'DEVICE_SCOPED') {
+        // Mismo criterio EXACTO que "ASIGNADOS A MI CUADRILLA" en Mi Turno
+        // (renderLubricadorHome) — reutiliza classifyEquipmentWork() en vez
+        // de repetir el filtro PENDING+assignedCrewId por separado.
+        const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+        const { assigned: misAsignaciones } = classifyEquipmentWork({
+          scope: scopeNotif, equipos, cuadrillas, assignments,
+          equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+        });
+        if (misAsignaciones.length) {
+          const equiposAsignados = misAsignaciones
+            .map(a => equipos.find(e => e.id === a.equipmentId))
+            .filter(Boolean);
+          const listaAsig = equiposAsignados.slice(0, 5).map(e => e.code).join(', ');
+          const tituloAsig = `🟣 ${misAsignaciones.length} engrase(s) asignado(s) a tu cuadrilla`;
+          const cuerpoAsig = `${listaAsig}${equiposAsignados.length > 5 ? ` y ${equiposAsignados.length - 5} más` : ''}. Fuera de tu ubicación normal.`;
+          const extraAsig = {
+            tipo: 'asignacion',
+            equipoId: equiposAsignados.length === 1 ? equiposAsignados[0].id : '',
+            ruta: 'turno'
+          };
+          // Aviso inicial: casi inmediato (esto corre cuando llegó la
+          // asignación por sync o al abrir la app — no es un aviso diario a
+          // hora fija como vencidos/porEngrasar).
+          notifications.push({
+            id: NOTIF_ID_ASSIGNED, title: tituloAsig, body: cuerpoAsig,
+            extra: extraAsig, schedule: { at: new Date(Date.now() + 3000) }
+          });
+          registrarAvisoEnviado('asignacion', tituloAsig, cuerpoAsig, rol);
+          // Recordatorio: si sigue pendiente 2 horas después de la última vez
+          // que se recalculó (sync/apertura de app), vuelve a sonar. Al
+          // recalcularse de nuevo con la asignación todavía activa, el
+          // recordatorio simplemente se reprograma más adelante (nunca se
+          // acumulan varios).
+          notifications.push({
+            id: NOTIF_ID_ASSIGNED_REC,
+            title: `🟣 Recordatorio: ${misAsignaciones.length} engrase(s) asignado(s) siguen pendientes`,
+            body: listaAsig,
+            extra: extraAsig,
+            schedule: { at: new Date(Date.now() + 2 * 60 * 60 * 1000) }
+          });
+        }
+      }
     }
 
     if (notifications.length) await LN.schedule({ notifications });
@@ -1618,6 +1679,14 @@ function onSyncStateChange(state) {
   }
   if (state.status === 'ok' && state.newAnomalies && state.newAnomalies.length) {
     notifyNewAnomalies(state.newAnomalies);
+  }
+  // Recalcula avisos locales (incluida una asignación manual nueva/cancelada/
+  // reasignada llegada por sync, §2 del cierre de lote) SOLO cuando de verdad
+  // llegó algo nuevo — nunca en cada tick del timer sin cambios, para no
+  // convertir esto en un polling adicional (ya reutiliza el mismo ciclo de
+  // sync existente, con su propio intervalo configurable).
+  if (state.status === 'ok' && state.pulled > 0) {
+    refreshLocalNotifications();
   }
 }
 
@@ -5672,6 +5741,43 @@ async function startGreaseFlow(equipmentId, target) {
         ? (await DB.get('users', fd.retroUser)) || App.currentUser
         : App.currentUser;
 
+      // Snapshot operativo (§1 del cierre de lote — ver docs/OPERATIONAL_SCOPE.md):
+      // se calcula ANTES de tocar el plan/equipo (lastGreaseHour/locationId
+      // pueden cambiar después de HOY) para que quede fijo el contexto de
+      // ESTE momento, nunca reconstruible desde el estado actual. Se
+      // calcula ANTES de guardar nada — completeGreaseAssignmentForOccurrence()
+      // más abajo reutiliza la MISMA occurrenceKey, nunca la recalcula.
+      // Retroactivo: la ocurrencia que se cierra es la de la fecha REAL del
+      // engrase, no la de hoy (que es cuando se está capturando) — solo
+      // importa para planes "Día y turno de la semana" (los de "Horas de
+      // operación" no usan dateISO, ver computeOccurrenceKey()).
+      const occurrenceKeyDeEsteEngrase = plan ? computeOccurrenceKey(plan, { dateISO: esRetro ? fechaRegistro.slice(0, 10) : todayDateISO() }) : null;
+      const asignacionActivaDeEsteEngrase = occurrenceKeyDeEsteEngrase
+        ? findActivePendingAssignment(await DB.allActive('lubrication_assignments'), occurrenceKeyDeEsteEngrase)
+        : null;
+      // Si había una asignación manual activa, la cuadrilla RESPONSABLE es la
+      // asignada (aunque quien tenga la sesión sea una jefatura registrando en
+      // nombre de otro); si no, la cuadrilla del DISPOSITIVO — solo cuando
+      // quien registra es Lubricador con dispositivo configurado. Nunca se
+      // inventa una cuadrilla cuando no se puede saber (jefatura registrando
+      // sin asignación activa: queda null a propósito).
+      let crewIdDeEsteEngrase = asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.assignedCrewId : null;
+      if (!crewIdDeEsteEngrase && App.currentUser.role === 'LUBRICADOR') {
+        const scopeDeEsteEngrase = await getCurrentOperationalScope();
+        if (scopeDeEsteEngrase.kind === 'DEVICE_SCOPED') crewIdDeEsteEngrase = scopeDeEsteEngrase.crewId;
+      }
+      const crewLocationIdDeEsteEngrase = crewIdDeEsteEngrase
+        ? ((await DB.allActive('cuadrillas')).find(c => c.id === crewIdDeEsteEngrase) || {}).locationId || null
+        : null;
+      const operationalSnapshot = buildExecutionSnapshot({
+        equipmentLocationId: equipment.locationId,
+        crewId: crewIdDeEsteEngrase,
+        crewLocationId: crewLocationIdDeEsteEngrase,
+        performedByUserId: autor.id,
+        shiftId: turnoRegistro,
+        assignmentId: asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.id : null
+      });
+
       const record = stamp({
         id: uid('greg'), equipmentId: equipment.id, planId: plan ? plan.id : null,
         date: fechaRegistro, shiftId: turnoRegistro, hourmeter: sinHorometro ? equipment.hourmeter : newHourmeter,
@@ -5683,6 +5789,7 @@ async function startGreaseFlow(equipmentId, target) {
         noHourmeterReason: sinHorometro ? fd.noHourmeterReason : undefined,
         retroactivo: esRetro || undefined,
         capturadoPor: esRetro ? App.currentUser.name : undefined,
+        operationalSnapshot,
         synced: navigator.onLine
       }, App.currentUser.name);
       // ── Guardado protegido ────────────────────────────────────────────
@@ -5694,10 +5801,6 @@ async function startGreaseFlow(equipmentId, target) {
       const respaldoPlan = plan ? JSON.parse(JSON.stringify(plan)) : null;
       let registroGuardado = false;
       let anomaliasCreadas = [];
-      // Se calcula ANTES de que el plan se actualice más abajo (lastGreaseHour
-      // cambia al guardar) — completeGreaseAssignmentForOccurrence() necesita
-      // la clave de LA ocurrencia que se está cerrando, no la siguiente.
-      const occurrenceKeyDeEsteEngrase = plan ? computeOccurrenceKey(plan, { dateISO: todayDateISO() }) : null;
 
       try {
         await DB.put('lubrication_records', record);
@@ -6614,6 +6717,20 @@ async function drawHistory(equipmentId) {
   const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const allAnomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
   const lubricants = await DB.allActive('lubricants');
+  const locationsHist = await DB.allActive('locations');
+  const locNameHist = (id) => (locationsHist.find(l => l.id === id) || {}).name || 'Sin ubicación';
+  // Ubicación de CADA registro AL MOMENTO en que se hizo (§1 del cierre de
+  // lote): usa el snapshot guardado en ese registro si existe; para
+  // registros de antes de este lote, cae a la ubicación ACTUAL del equipo
+  // (marcado con "*" — nunca se presenta como si fuera dato histórico real,
+  // ver resolveRecordEquipmentLocationId() en operational-scope.js).
+  const ubicacionRecordHTML = (r) => {
+    const { value, source } = resolveRecordEquipmentLocationId(r, equipment);
+    const nombre = value ? locNameHist(value) : 'Sin ubicación';
+    return source === 'snapshot'
+      ? esc(nombre)
+      : `<span title="Registro anterior al historial de ubicaciones: se muestra la ubicación ACTUAL del equipo, no necesariamente la de ese momento">${esc(nombre)} *</span>`;
+  };
   const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
   const validations = await DB.allActive('grease_validations');
   const isAdmin = App.currentUser.role === 'ADMINISTRADOR';
@@ -6688,7 +6805,7 @@ async function drawHistory(equipmentId) {
       <div class="panel">
         <div class="panel-head"><h3>Engrases</h3></div>
         <table class="data-table hist-table">
-          <thead><tr><th>Fecha</th><th>Turno</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+          <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
           <tbody>
             ${records.map(r => {
               const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
@@ -6708,6 +6825,7 @@ async function drawHistory(equipmentId) {
               return `<tr data-rec="${r.id}">
               <td>${fmtDate(r.date)}</td>
               <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+              <td>${ubicacionRecordHTML(r)}</td>
               <td class="mono">${fmt(r.hourmeter)} h</td>
               <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
               <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
@@ -6718,7 +6836,7 @@ async function drawHistory(equipmentId) {
               <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
               ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
             </tr>`;
-            }).join('') || `<tr><td colspan="${isAdmin ? 11 : 10}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
+            }).join('') || `<tr><td colspan="${isAdmin ? 12 : 11}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
           </tbody>
         </table>
       </div>

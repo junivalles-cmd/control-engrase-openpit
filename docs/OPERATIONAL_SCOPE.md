@@ -121,17 +121,108 @@ pasa con el resto de stores de `engrase_sync`).
 ## Deliberadamente fuera de alcance de este lote (transparencia)
 
 - Propagación a pantallas secundarias: Dashboard, Matriz Semanal (badge de
-  asignación), Horómetros, Reportes, Historial, `renderTurno` (vista de
-  escritorio del turno, filtra por `shiftId` legacy), Usuarios, exports.
-  Ninguna de ellas queda rota — siguen leyendo `equipment.locationId` real
-  (que `moverEquipoDeUbicacion()` sí mantiene correcto) — pero no muestran
-  todavía el badge de "asignado" ni el link a la asignación activa.
-- Notificaciones push/OS reales para crear/reasignar/cancelar una
-  asignación: el aviso "persistente" implementado es el badge en Mi Turno
-  mientras la asignación siga `PENDING` (desaparece sola al completarse/
-  cancelarse), no un push al estilo OneSignal.
-- Historial (`lubrication_records`) no guarda todavía un snapshot explícito
-  de `{locationId, crewId, assignmentId}` al momento del registro — el campo
-  `planId` que ya guarda permite reconstruir la mayoría de los casos, pero
-  no es un snapshot completo. Señalado para un lote futuro, nunca
-  reconstruido retroactivamente.
+  asignación), `renderTurno` (vista de escritorio del turno, filtra por
+  `shiftId` legacy), Reportes (el filtro "Ubicación" sigue agrupando por la
+  ubicación ACTUAL del equipo, no por la de cada registro histórico — ver
+  limitación conocida más abajo), Usuarios, exports. Ninguna de ellas queda
+  rota — siguen leyendo `equipment.locationId` real (que
+  `moverEquipoDeUbicacion()` sí mantiene correcto).
+
+## Cierre del lote — 3 gaps resueltos (2026-09-28, commit posterior a `44a312b`)
+
+### 1) Snapshot histórico en `lubrication_records`
+
+Todo registro NUEVO guarda `record.operationalSnapshot` (construido por
+`buildExecutionSnapshot()` en `operational-scope.js`, con los valores
+resueltos ANTES de tocar plan/equipo):
+`{ equipmentLocationIdAtExecution, crewId, crewLocationIdAtExecution,
+performedByUserId, shiftId, assignmentId, executionType: 'NORMAL'|'MANUAL' }`.
+`executionType` es `'MANUAL'` si existía una asignación PENDING activa para
+esa ocurrencia al momento de registrar (la cuadrilla responsable es la
+asignada, no la del dispositivo que registra), `'NORMAL'` en caso contrario.
+`crewId` queda `null` cuando quien registra es una jefatura sin asignación
+activa — nunca se inventa una cuadrilla.
+
+Lectura con fallback explícito (`resolveRecordEquipmentLocationId()`/
+`resolveRecordCrewId()`/`resolveRecordCrewLocationId()`): con snapshot,
+devuelven el dato histórico real (`source:'snapshot'`); sin snapshot
+(registros de antes de este cierre), caen a `source:'legacy_fallback'` — la
+ubicación del equipo cae a la ACTUAL (marcada con "*" en UI, nunca
+presentada como histórica real), la cuadrilla queda `null` siempre (no hay
+"actual" razonable al que caer). Wired en Historial → "Por equipo" →
+Engrases, nueva columna "Ubicación".
+
+**Nunca se reescribe el pasado**: mover un equipo/cuadrilla después de un
+registro no lo modifica — los 15 tests de `tests/unit/operational-scope.test.js`
+("Snapshot histórico") cubren exactamente el CASO A/B/C pedido (registrar en
+Volcán → mover a Mojón → el histórico sigue Volcán) y su equivalente con
+cuadrilla.
+
+**Limitación conocida (no resuelta, fuera de alcance):** Reportes sigue
+filtrando/agrupando por la ubicación ACTUAL del equipo (`equipos.filter(e =>
+e.locationId === ubic)` antes de contar sus registros), no por el snapshot
+de cada registro — un reporte "por ubicación" puede seguir atribuyendo
+trabajo histórico a la ubicación nueva del equipo tras un movimiento. El
+dato correcto YA existe (`operationalSnapshot`); falta reescribir el
+pipeline de agregación de Reportes para usarlo — señalado para un lote
+futuro, nunca resuelto a medias aquí.
+
+### 2) Notificaciones de assignments — ciclo completo
+
+Reutiliza 100% la infraestructura existente de `LocalNotifications`
+(Capacitor, funciona SIN OneSignal — no depende de ningún servicio push
+externo): `refreshLocalNotifications()` gana un bloque nuevo (IDs
+`NOTIF_ID_ASSIGNED`/`NOTIF_ID_ASSIGNED_REC`) que reutiliza
+`classifyEquipmentWork()` (la MISMA función que ya decide "ASIGNADOS A MI
+CUADRILLA" en Mi Turno) para saber qué notificar — nunca un cálculo
+paralelo. Como el patrón ya existente para vencidos/porEngrasar cancela
+TODAS las notificaciones conocidas y recalcula desde cero cada vez que
+corre, el ciclo de vida completo queda cubierto sin rastrear estado propio:
+- **PENDING** → aparece en `classifyEquipmentWork().assigned` → se
+  (re)programa la notificación inicial (~3s) + un recordatorio a 2h.
+- **COMPLETED/CANCELLED** → deja de aparecer → al cancelarse todo al inicio
+  de la función y no volver a programarse, desaparece sola.
+- **REASSIGNED A→B** → A deja de verla en su `.assigned` (siguiente
+  recálculo), B empieza a verla — nunca se duplica (un solo ID agrupado, no
+  uno por asignación).
+- **Cambio de turno** → `classifyEquipmentWork()` no depende de `shiftId`
+  para "assigned", así que el recordatorio sigue activo para la cuadrilla
+  sin importar Día/Noche.
+
+Disparo **sin polling nuevo**: `onSyncStateChange()` (ya existente) llama a
+`refreshLocalNotifications()` cuando `state.pulled > 0` — reutiliza el ciclo
+de sync YA configurado (30s-10min), nunca un timer adicional.
+
+### 3) Aislamiento del device assignment — garantía verificada
+
+`getDeviceAssignment()`/`saveDeviceAssignment()` (app.js) SOLO leen/escriben
+la fila `push_tokens` cuyo `id === getDeviceId()` — nunca iteran ni tocan
+otras filas, aunque `push_tokens` sea una tabla COMPARTIDA que sincroniza
+las filas de TODOS los dispositivos. `tests/unit/device-assignment-isolation.test.js`
+(8 tests) verifica contra el código real: dispositivo A y B mantienen
+cuadrillas independientes incluso con ambas filas ya sincronizadas
+localmente; cambiar A nunca toca ningún campo de B; `saveDeviceAssignment()`
+escribe ÚNICAMENTE en `push_tokens` (nunca en `settings/general` ni ninguna
+tabla global); `getDeviceId()` no depende de `App.currentUser` (logout no lo
+afecta); un dispositivo nuevo (localStorage vacío) nunca hereda la cuadrilla
+de otro.
+
+**Logout/Quick Unlock/offline**: ninguno de los tres toca las claves
+`engrase_device_id`/`engrase_device_name` de `localStorage` (auditado: cero
+referencias fuera del bloque de identidad de dispositivo) — la cuadrilla del
+dispositivo sobrevive los tres casos por construcción, no por un mecanismo
+especial.
+
+**Reinstalación — comportamiento REAL, sin sobreprometer:**
+- `adb install -r` (reinstalar SOBRE la instalación existente, mismo
+  paquete) preserva `localStorage`/IndexedDB en Android — confirmado
+  empíricamente en una sesión previa (ver `docs/SESSION_HANDOFF.md`,
+  verificación con CDP). La cuadrilla del dispositivo sobrevive.
+- `adb uninstall` (o `pm clear`) seguido de una instalación nueva **borra**
+  `localStorage` — `getDeviceId()` genera un id nuevo (`Math.random()` +
+  `Date.now()`, sin ningún componente de hardware) y el dispositivo aparece
+  como "sin cuadrilla" (`DEVICE_UNASSIGNED`) hasta que alguien lo reconfigure
+  a mano en Configuración → Dispositivo operativo. **No existe ningún
+  mecanismo de recuperación** (no hay lookup por IMEI/Android ID/serial ni
+  backend que asocie un teléfono físico a su fila anterior) — no afirmar lo
+  contrario ante el usuario.

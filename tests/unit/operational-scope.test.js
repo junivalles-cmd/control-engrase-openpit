@@ -16,6 +16,8 @@ const {
   classifyEquipmentWork, findActivePendingAssignment, createAssignment,
   reassignAssignment, cancelAssignment, completeAssignmentIfPending,
   canLubricadorExecuteEquipment,
+  buildExecutionSnapshot, resolveRecordEquipmentLocationId,
+  resolveRecordCrewId, resolveRecordCrewLocationId,
 } = loadOperationalScopeLogic();
 
 let uidSeq = 0;
@@ -259,5 +261,64 @@ describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => 
   it('jefaturas (scope GLOBAL) -> siempre pueden (esta función no restringe scope global)', () => {
     const scopeAdmin = resolveOperationalScope({ currentUser: { id: 'a1', role: 'ADMINISTRADOR' }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
     expect(canLubricadorExecuteEquipment({ scope: scopeAdmin, equipo: { id: 'e3', locationId: 'loc_volcan' }, assignments: [] })).toBe(true);
+  });
+});
+
+describe('Snapshot histórico (§1 del cierre de lote) — CASO A/B/C del pedido', () => {
+  it('buildExecutionSnapshot(): sin assignment -> NORMAL; con assignment -> MANUAL', () => {
+    const normal = buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_volcan', crewLocationId: 'loc_volcan', performedByUserId: 'u1', shiftId: 'shift_dia', assignmentId: null });
+    expect(normal.executionType).toBe('NORMAL');
+    expect(normal.assignmentId).toBeNull();
+
+    const manual = buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_taller', crewLocationId: 'loc_taller', performedByUserId: 'u1', shiftId: 'shift_dia', assignmentId: 'asg_1' });
+    expect(manual.executionType).toBe('MANUAL');
+    expect(manual.assignmentId).toBe('asg_1');
+  });
+
+  it('buildExecutionSnapshot(): valores ausentes -> null, nunca undefined ni inventados', () => {
+    const snap = buildExecutionSnapshot({});
+    expect(snap).toEqual({
+      equipmentLocationIdAtExecution: null, crewId: null, crewLocationIdAtExecution: null,
+      performedByUserId: null, shiftId: null, assignmentId: null, executionType: 'NORMAL'
+    });
+  });
+
+  it('CASO A/B/C — registro con snapshot conserva la ubicación de ejecución aunque el equipo se mueva después', () => {
+    // A) se registra el engrase con el equipo en Volcán
+    const record = {
+      id: 'greg_1',
+      operationalSnapshot: buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_volcan', crewLocationId: 'loc_volcan', performedByUserId: 'u_lub1', shiftId: 'shift_dia' })
+    };
+    // B) el equipo se mueve a Mojón DESPUÉS (equipoActual ya no es Volcán)
+    const equipoActual = { id: 'e1', locationId: 'loc_mojon' };
+    // C) el histórico del registro anterior sigue mostrando Volcán, no Mojón
+    const resuelto = resolveRecordEquipmentLocationId(record, equipoActual);
+    expect(resuelto.value).toBe('loc_volcan');
+    expect(resuelto.source).toBe('snapshot');
+  });
+
+  it('equivalente con cambio de ubicación de CUADRILLA: el registro conserva la ubicación de la cuadrilla al momento, no la actual', () => {
+    // La cuadrilla estaba en Volcán cuando se ejecutó el engrase
+    const record = {
+      id: 'greg_2',
+      operationalSnapshot: buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_x', crewLocationId: 'loc_volcan', performedByUserId: 'u_lub1', shiftId: 'shift_dia' })
+    };
+    // La cuadrilla luego se movió a Taller (irrelevante para este registro ya guardado)
+    const resuelto = resolveRecordCrewLocationId(record);
+    expect(resuelto.value).toBe('loc_volcan');
+    expect(resuelto.source).toBe('snapshot');
+    expect(resolveRecordCrewId(record)).toEqual({ value: 'crew_x', source: 'snapshot' });
+  });
+
+  it('registro VIEJO sin operationalSnapshot -> fallback legado explícito a la ubicación ACTUAL del equipo, crew siempre null (nunca se inventa)', () => {
+    const recordViejo = { id: 'greg_old' };
+    const equipoActual = { id: 'e1', locationId: 'loc_taller' };
+    expect(resolveRecordEquipmentLocationId(recordViejo, equipoActual)).toEqual({ value: 'loc_taller', source: 'legacy_fallback' });
+    expect(resolveRecordCrewId(recordViejo)).toEqual({ value: null, source: 'legacy_fallback' });
+    expect(resolveRecordCrewLocationId(recordViejo)).toEqual({ value: null, source: 'legacy_fallback' });
+  });
+
+  it('registro viejo sin equipo actual disponible (equipo eliminado) -> value null, nunca lanza', () => {
+    expect(resolveRecordEquipmentLocationId({ id: 'greg_old2' }, null)).toEqual({ value: null, source: 'legacy_fallback' });
   });
 });

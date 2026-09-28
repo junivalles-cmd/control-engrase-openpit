@@ -230,6 +230,60 @@ function completeAssignmentIfPending(existing, { occurrenceKey, recordId, now })
 }
 
 /* ============================================================
+   SNAPSHOT HISTÓRICO (§1 del cierre de lote — lubrication_records)
+   ============================================================
+   Equipo/cuadrilla ahora pueden moverse de ubicación — un registro
+   histórico NUNCA puede depender de `equipment.locationId`/`crew.locationId`
+   ACTUALES (eso reescribiría el pasado en cuanto alguien mueva algo).
+   `buildExecutionSnapshot()` arma el snapshot para un registro NUEVO, con
+   los valores YA resueltos por el caller (app.js, que sí puede leer
+   DB/scope) — este módulo sigue sin tocar DB/red. `resolveRecord*()` los
+   leen de vuelta con fallback legado EXPLÍCITO (nunca inventa datos para
+   registros viejos que no lo tienen). */
+function buildExecutionSnapshot({ equipmentLocationId, crewId, crewLocationId, performedByUserId, shiftId, assignmentId }) {
+  return {
+    equipmentLocationIdAtExecution: equipmentLocationId || null,
+    crewId: crewId || null,
+    crewLocationIdAtExecution: crewLocationId || null,
+    performedByUserId: performedByUserId || null,
+    shiftId: shiftId || null,
+    assignmentId: assignmentId || null,
+    executionType: assignmentId ? 'MANUAL' : 'NORMAL'
+  };
+}
+
+// Ubicación del EQUIPO al momento de ejecutar ese registro concreto.
+// `source` deja explícito si el dato es histórico real (snapshot) o un
+// fallback a la ubicación ACTUAL del equipo (registros de antes de este
+// lote, que nunca guardaron snapshot) — nunca se presenta uno como el otro.
+function resolveRecordEquipmentLocationId(record, equipoActual) {
+  const snap = record && record.operationalSnapshot;
+  if (snap && snap.equipmentLocationIdAtExecution) {
+    return { value: snap.equipmentLocationIdAtExecution, source: 'snapshot' };
+  }
+  return { value: equipoActual ? (equipoActual.locationId || null) : null, source: 'legacy_fallback' };
+}
+
+// Cuadrilla que ejecutó ese registro concreto — sin snapshot, NUNCA se
+// adivina (a diferencia de la ubicación del equipo, no hay un "actual"
+// razonable al que caer: el registro pudo hacerse antes de que existiera el
+// concepto de cuadrilla-por-dispositivo).
+function resolveRecordCrewId(record) {
+  const snap = record && record.operationalSnapshot;
+  if (snap && snap.crewId) return { value: snap.crewId, source: 'snapshot' };
+  return { value: null, source: 'legacy_fallback' };
+}
+
+// Ubicación de ESA cuadrilla al momento de ejecutar — nunca la ubicación
+// ACTUAL de la cuadrilla (que pudo moverse desde entonces, ver CASO
+// equivalente de mover cuadrilla en el pedido).
+function resolveRecordCrewLocationId(record) {
+  const snap = record && record.operationalSnapshot;
+  if (snap && snap.crewLocationIdAtExecution) return { value: snap.crewLocationIdAtExecution, source: 'snapshot' };
+  return { value: null, source: 'legacy_fallback' };
+}
+
+/* ============================================================
    QR — permiso de ejecución fuera de scope (§AO)
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
