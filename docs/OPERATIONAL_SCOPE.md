@@ -226,3 +226,75 @@ especial.
   mecanismo de recuperación** (no hay lookup por IMEI/Android ID/serial ni
   backend que asocie un teléfono físico a su fila anterior) — no afirmar lo
   contrario ante el usuario.
+
+## Engrase fuera de plan (lote 2026-09-28c)
+
+Tres tipos de ejecución, ortogonales a `record.retroactivo` (CUÁNDO se
+registra) — `executionType` describe POR QUÉ/CONTEXTO: `PLANNED` (trabajo
+normal del plan), `ASSIGNED` (asignación manual activa — SIEMPRE gana sobre
+OUT_OF_PLAN, nunca se convierte silenciosamente), `OUT_OF_PLAN` (PM,
+correctivo, oportunidad, otro — botón "+ Fuera de plan", nunca requiere que
+Planificador cree una assignment artificial primero).
+
+- **Central**: `findExistingWorkForEquipment()` (detecta ASSIGNED/PLANNED
+  antes de dejar abrir el flujo fuera de plan — nunca duplica),
+  `computeExecutionCompleteness()` (desde el checklist, nunca un checkbox
+  manual), `findNextApplicableOccurrence()`/`resolveOutOfPlanSatisfaction()`
+  (única ocurrencia próxima sin completar en una ventana de 7 días; ambigua
+  o inexistente → `null`, nunca se inventa un cumplimiento).
+- **Plan por horas**: un OUT_OF_PLAN COMPLETO avanza `plan.lastGreaseHour`
+  igual que cualquier registro más reciente (lógica YA existente, sin
+  cambios) — `satisfiedOccurrenceKey` solo certifica cuál ciclo quedó
+  satisfecho, nunca reinicia el ciclo si es PARTIAL.
+- **Plan día/turno**: un OUT_OF_PLAN COMPLETO puede satisfacer por
+  adelantado la ÚNICA ocurrencia futura sin completar en los próximos 7
+  días — el plan maestro (`assignedDays`/`frequency`/etc.) **nunca se
+  toca**. La Matriz Semanal (`estadoCelda()`) muestra esa celda como
+  `hecho_adelantado` cuando algún registro trae
+  `operationalSnapshot.satisfiedOccurrenceKey` igual a la clave de esa
+  celda — el registro real queda en su propia fecha, nunca se reescribe.
+- **UI**: botón "+ Fuera de plan" en Mi Turno (junto a "Escanear QR", **sin
+  pestaña nueva** en la barra inferior) → `openOutOfPlanEquipmentPicker()`
+  (lista scopeada, nunca toda la flota para un Lubricador) →
+  `handleOutOfPlanEquipoSelected()` (detección de trabajo existente, §5) →
+  `startGreaseFlow(id, target, {outOfPlan:true})` (badge "FUERA DE PLAN" +
+  selector de motivo, "Otro" exige observación). Mismo flujo disponible
+  desde QR (`showEquipmentQrInfo`, caso C del §21) y desde la ficha de
+  equipo para jefaturas (`canRegisterOutOfPlan()`).
+- **Historial**: columna "Tipo" (Planificado/Asignado/Fuera de plan, con
+  motivo+completitud en tooltip para fuera de plan).
+- **Reportes**: el filtro "Ubicación" ahora usa
+  `resolveRecordEquipmentLocationId()` sobre cada registro (snapshot real si
+  existe, fallback a la ubicación actual del equipo si no) en vez de la
+  ubicación ACTUAL del equipo para decidir qué registros entran — el
+  universo de "programados" (Tendencia/por turno) sigue usando la ubicación
+  actual a propósito, porque "programado" es un concepto del plan vigente
+  hoy, no un dato histórico.
+- **Auditoría**: `OUT_OF_PLAN_GREASE_RECORDED` (equipo, motivo,
+  completitud, ocurrencia satisfecha o "pendiente de conciliación").
+- **DB_VERSION**: sigue en 7 — solo campos nuevos en `operationalSnapshot`
+  (`executionType`/`outOfPlanReason`/`executionCompleteness`/
+  `satisfiedOccurrenceKey`), ningún store nuevo.
+
+**Deliberadamente fuera de alcance de este lote:**
+- Reportes: sin filtros/indicadores dedicados de PLANNED/ASSIGNED/OUT_OF_PLAN
+  por motivo (el dato ya se captura en `operationalSnapshot`, listo para un
+  lote futuro de Reportes).
+- Caso ambiguo (§13, 2+ ocurrencias candidatas): ADMIN/PLANIFICADOR NO tienen
+  todavía un selector explícito de "qué ocurrencia sustituye" — se registra
+  igual que para Lubricador, sin satisfacer ninguna, sin picker dedicado.
+- ASSIGNED + PM (§15, "executionContext" adicional sobre una completación de
+  assignment): la prioridad ASSIGNED-siempre-gana SÍ está garantizada; la
+  nota extra de "esto también fue PM" sobre una assignment no se implementó.
+- **Bug pre-existente encontrado (NO introducido en este lote, NO
+  corregido)**: en `showEquipmentQrInfo()`, el botón "Registrar engrase
+  ahora" para ADMIN/PLANIFICADOR/SUPERVISOR llamaba a
+  `startGreaseFlow(equipment.id, App.route)` — `App.route` es un string
+  (ej. `'equipos'`), no un elemento DOM, y `startGreaseFlow()` espera un
+  elemento o `undefined`. Como una asignación de propiedad sobre un string
+  primitivo no lanza error en modo no estricto, el formulario simplemente
+  nunca aparecía (bug silencioso, ya existía antes de este lote). Las
+  llamadas NUEVAS de este lote (`handleOutOfPlanEquipoSelected()`) usan el
+  patrón correcto (`startGreaseFlow(id)` sin `target`, cae a
+  `navigate('registrar')`). El bug original en la línea 443 no se tocó —
+  fuera del alcance pedido, señalado aquí para una sesión futura.

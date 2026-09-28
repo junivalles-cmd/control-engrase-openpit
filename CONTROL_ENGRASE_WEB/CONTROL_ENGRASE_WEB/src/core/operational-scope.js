@@ -29,11 +29,115 @@ const ROLES_CAN_MOVE_EQUIPMENT = ['ADMINISTRADOR', 'PLANIFICADOR'];
 const ROLES_CAN_MOVE_CREW = ['ADMINISTRADOR', 'PLANIFICADOR'];
 // Roles que pueden cambiar la cuadrilla asignada a UN DISPOSITIVO (§F).
 const ROLES_CAN_CONFIGURE_DEVICE = ['ADMINISTRADOR', 'PLANIFICADOR'];
+// Roles que pueden registrar un engrase FUERA DE PLAN (lote "engrase fuera
+// de plan" §2/§28) — VISOR nunca registra nada, igual que en el resto de la app.
+const ROLES_CAN_REGISTER_OUT_OF_PLAN = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'LUBRICADOR'];
 
 function canManageAssignments(role) { return ROLES_CAN_MANAGE_ASSIGNMENTS.includes(role); }
 function canMoveEquipment(role) { return ROLES_CAN_MOVE_EQUIPMENT.includes(role); }
 function canMoveCrew(role) { return ROLES_CAN_MOVE_CREW.includes(role); }
 function canConfigureDevice(role) { return ROLES_CAN_CONFIGURE_DEVICE.includes(role); }
+function canRegisterOutOfPlan(role) { return ROLES_CAN_REGISTER_OUT_OF_PLAN.includes(role); }
+
+/* ============================================================
+   TIPOS DE EJECUCIÓN (lote "engrase fuera de plan")
+   ============================================================
+   RETROACTIVO/ATRASADO (campo `record.retroactivo`, ya existente) describe
+   CUÁNDO se registra un engrase — nada que ver con esto. `executionType`
+   describe POR QUÉ/CONTEXTO se ejecutó, y es ortogonal: un engrase puede
+   ser retroactivo Y fuera de plan a la vez, o ninguna de las dos.
+     - PLANNED: trabajo generado normalmente por el plan (flujo de siempre).
+     - ASSIGNED: la ocurrencia pendiente fue asignada manualmente a otra
+       cuadrilla (lubrication_assignments) — SIEMPRE gana sobre OUT_OF_PLAN
+       si existe una assignment activa para la ocurrencia (§15).
+     - OUT_OF_PLAN: el equipo se engrasó fuera de la ocurrencia esperada
+       (PM, correctivo, oportunidad operativa, otro motivo) — botón
+       "+ Engrase fuera de plan", nunca requiere que Planificador cree una
+       assignment artificial primero. */
+const EXECUTION_TYPE = { PLANNED: 'PLANNED', ASSIGNED: 'ASSIGNED', OUT_OF_PLAN: 'OUT_OF_PLAN' };
+const EXECUTION_COMPLETENESS = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL' };
+const OUT_OF_PLAN_REASONS = ['PM', 'CORRECTIVO', 'OPORTUNIDAD', 'OTRO'];
+
+// Se calcula desde los puntos del checklist — nunca un checkbox manual
+// "engrase completo" (§8 del pedido). Sin puntos configurados: no hay nada
+// requerido que pueda faltar -> COMPLETE.
+function computeExecutionCompleteness(details) {
+  if (!details || !details.length) return EXECUTION_COMPLETENESS.COMPLETE;
+  return details.every(d => d.done) ? EXECUTION_COMPLETENESS.COMPLETE : EXECUTION_COMPLETENESS.PARTIAL;
+}
+
+function toISODateUTCLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* ============================================================
+   OCURRENCIA APLICABLE PARA UN ENGRASE FUERA DE PLAN (§12/§13)
+   ============================================================
+   Determina si existe UNA sola ocurrencia próxima (sin completar todavía)
+   que un engrase fuera de plan COMPLETO puede satisfacer por adelantado.
+   Ambiguo (0 o 2+ candidatas en la ventana) -> null, NUNCA se inventa un
+   cumplimiento (§13: "para LUBRICADOR, registrar OUT_OF_PLAN sin satisfacer
+   occurrence" en ese caso). Usa el global WEEKDAY_NAMES (lubrication-status.js),
+   mismo patrón que estadoCelda() en weekly-matrix.js. */
+function findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate }) {
+  if (!plan || plan.controlType !== 'Día y turno de la semana') return null;
+  const dias = plan.assignedDays || [];
+  if (!dias.length) return null;
+  const candidatas = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(todayDate);
+    d.setDate(d.getDate() + i);
+    const nombreDia = WEEKDAY_NAMES[d.getDay()];
+    if (!dias.includes(nombreDia)) continue;
+    const yaHecho = (existingRecords || []).some(r => new Date(r.date).toDateString() === d.toDateString());
+    if (!yaHecho) candidatas.push(toISODateUTCLocal(d));
+  }
+  if (candidatas.length !== 1) return null;
+  return { occurrenceKey: computeOccurrenceKey(plan, { dateISO: candidatas[0] }), dateISO: candidatas[0] };
+}
+
+// Punto de entrada único (§12: "no copiar lógica en varias pantallas") —
+// despacha por tipo de plan. "Horas de operación" nunca es ambiguo: el
+// ciclo vigente siempre es UNO solo (ver computeOccurrenceKey).
+function findNextApplicableOccurrence({ plan, existingRecords, todayDate }) {
+  if (!plan) return null;
+  if (plan.controlType === 'Día y turno de la semana') {
+    return findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate });
+  }
+  return { occurrenceKey: computeOccurrenceKey(plan, {}), dateISO: null };
+}
+
+// ¿Qué ocurrencia satisface (si alguna) un engrase FUERA DE PLAN al
+// guardarse? Solo COMPLETE puede satisfacer (§9/§25: PARTIAL nunca reinicia
+// ciclo ni cancela un recordatorio pendiente).
+function resolveOutOfPlanSatisfaction({ plan, completeness, existingRecords, todayDate }) {
+  if (completeness !== EXECUTION_COMPLETENESS.COMPLETE) return null;
+  const found = findNextApplicableOccurrence({ plan, existingRecords, todayDate });
+  return found ? found.occurrenceKey : null;
+}
+
+/* ============================================================
+   DETECCIÓN DE TRABAJO EXISTENTE ANTES DE ABRIR "FUERA DE PLAN" (§5)
+   ============================================================
+   Prioridad ASSIGNED > PLANNED > (ninguno, recién ahí se abre OUT_OF_PLAN).
+   `statusCode` (ROJO/AMARILLO/VERDE/GRIS) ya viene resuelto por el caller
+   (statusFor(), lubrication-status.js) — este módulo no recalcula el
+   semáforo, evita duplicar esa lógica. */
+function findExistingWorkForEquipment({ plan, assignments, statusCode, todayDate }) {
+  if (!plan) return { kind: 'NONE' };
+  const dateISO = toISODateUTCLocal(todayDate);
+  const occurrenceKey = computeOccurrenceKey(plan, { dateISO });
+  const activeAssignment = findActivePendingAssignment(assignments, occurrenceKey);
+  if (activeAssignment) return { kind: 'ASSIGNED', assignment: activeAssignment, occurrenceKey };
+
+  if (plan.controlType === 'Día y turno de la semana') {
+    const nombreDia = WEEKDAY_NAMES[todayDate.getDay()];
+    if ((plan.assignedDays || []).includes(nombreDia)) return { kind: 'PLANNED', occurrenceKey };
+    return { kind: 'NONE' };
+  }
+  if (statusCode === 'ROJO' || statusCode === 'AMARILLO') return { kind: 'PLANNED', occurrenceKey };
+  return { kind: 'NONE' };
+}
 
 /* ============================================================
    IDENTIDAD DE OCURRENCIA (§O) — CRÍTICO
@@ -240,7 +344,10 @@ function completeAssignmentIfPending(existing, { occurrenceKey, recordId, now })
    DB/scope) — este módulo sigue sin tocar DB/red. `resolveRecord*()` los
    leen de vuelta con fallback legado EXPLÍCITO (nunca inventa datos para
    registros viejos que no lo tienen). */
-function buildExecutionSnapshot({ equipmentLocationId, crewId, crewLocationId, performedByUserId, shiftId, assignmentId }) {
+function buildExecutionSnapshot({
+  equipmentLocationId, crewId, crewLocationId, performedByUserId, shiftId, assignmentId,
+  executionType, outOfPlanReason, executionCompleteness, satisfiedOccurrenceKey
+}) {
   return {
     equipmentLocationIdAtExecution: equipmentLocationId || null,
     crewId: crewId || null,
@@ -248,7 +355,14 @@ function buildExecutionSnapshot({ equipmentLocationId, crewId, crewLocationId, p
     performedByUserId: performedByUserId || null,
     shiftId: shiftId || null,
     assignmentId: assignmentId || null,
-    executionType: assignmentId ? 'MANUAL' : 'NORMAL'
+    // El caller decide PLANNED/ASSIGNED/OUT_OF_PLAN según por qué flujo entró
+    // (Mi Turno normal / assignment activa / botón "+ Engrase fuera de
+    // plan") — nunca se infiere solo de assignmentId, salvo el fallback
+    // razonable de "si no me dicen nada y hay assignmentId, es ASSIGNED".
+    executionType: executionType || (assignmentId ? EXECUTION_TYPE.ASSIGNED : EXECUTION_TYPE.PLANNED),
+    outOfPlanReason: outOfPlanReason || null,
+    executionCompleteness: executionCompleteness || null,
+    satisfiedOccurrenceKey: satisfiedOccurrenceKey || null
   };
 }
 
@@ -281,6 +395,26 @@ function resolveRecordCrewLocationId(record) {
   const snap = record && record.operationalSnapshot;
   if (snap && snap.crewLocationIdAtExecution) return { value: snap.crewLocationIdAtExecution, source: 'snapshot' };
   return { value: null, source: 'legacy_fallback' };
+}
+
+// Tipo de ejecución para Historial/Reportes (§18/§22) — registros de antes
+// de este lote nunca guardaron esto: se presentan como PLANNED (el
+// comportamiento de siempre era "todo es trabajo normal"), nunca como si
+// hubieran sido fuera de plan o asignados sin poder probarlo.
+function resolveRecordExecutionType(record) {
+  const snap = record && record.operationalSnapshot;
+  if (snap && snap.executionType) return { value: snap.executionType, source: 'snapshot' };
+  return { value: EXECUTION_TYPE.PLANNED, source: 'legacy_fallback' };
+}
+
+function resolveRecordOutOfPlanReason(record) {
+  const snap = record && record.operationalSnapshot;
+  return snap && snap.outOfPlanReason ? snap.outOfPlanReason : null;
+}
+
+function resolveRecordCompleteness(record) {
+  const snap = record && record.operationalSnapshot;
+  return snap && snap.executionCompleteness ? snap.executionCompleteness : null;
 }
 
 /* ============================================================

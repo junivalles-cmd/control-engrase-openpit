@@ -32,6 +32,7 @@ export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
 export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix.js');
 export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-actions.js');
 export const PLAN_COMPLIANCE_JS_PATH = path.join(SRC_ROOT, 'src/core/plan-compliance.js');
+export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -122,6 +123,10 @@ export function loadDbSeedLogic(fakeDB, fakeAuth) {
 // con statusFor()/WEEKDAY_NAMES.
 const WEEKLY_MATRIX_SOURCES = [
   [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
+  // estadoCelda() usa computeOccurrenceKey() (operational-scope.js) para
+  // detectar "REALIZADO ADELANTADO" (engrase fuera de plan que satisfizo
+  // esta celda por adelantado, ver lote "engrase fuera de plan" §19).
+  [OPERATIONAL_SCOPE_JS_PATH, ['computeOccurrenceKey']],
   [WEEKLY_MATRIX_JS_PATH, ['estadoCelda']],
 ];
 
@@ -225,18 +230,26 @@ export function loadGreaseValidationLogic() {
 
 // Rediseño operativo (dispositivos + cuadrillas + ubicaciones + asignación
 // manual) — 100% puro, sin DB/App/Auth, mismo patrón que grease-validation.js.
-export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
 const OPERATIONAL_SCOPE_SOURCES = [
+  // findNextApplicableOccurrenceForWeekdayPlan() usa el global WEEKDAY_NAMES,
+  // mismo patrón que estadoCelda() en weekly-matrix.js.
+  [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
   [OPERATIONAL_SCOPE_JS_PATH, [
     'ASSIGNMENT_STATUS', 'ROLES_CAN_MANAGE_ASSIGNMENTS', 'ROLES_CAN_MOVE_EQUIPMENT',
-    'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_CONFIGURE_DEVICE',
+    'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_CONFIGURE_DEVICE', 'ROLES_CAN_REGISTER_OUT_OF_PLAN',
     'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canConfigureDevice',
+    'canRegisterOutOfPlan',
     'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveOperationalScope',
     'classifyEquipmentWork', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
     'canLubricadorExecuteEquipment',
     'buildExecutionSnapshot', 'resolveRecordEquipmentLocationId',
     'resolveRecordCrewId', 'resolveRecordCrewLocationId',
+    'EXECUTION_TYPE', 'EXECUTION_COMPLETENESS', 'OUT_OF_PLAN_REASONS',
+    'toISODateUTCLocal',
+    'computeExecutionCompleteness', 'findNextApplicableOccurrenceForWeekdayPlan',
+    'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'findExistingWorkForEquipment',
+    'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness',
   ]],
 ];
 

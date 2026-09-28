@@ -136,4 +136,35 @@ describe('estadoCelda() — Matriz Semanal, celda equipo x día', () => {
     const r = estadoCelda(equipo, ayer, plans, records, HOY);
     expect(r).toEqual({ tipo: 'no_realizado', diasAtras: 1 });
   });
+
+  // 14-16: lote "engrase fuera de plan" §19 — REALIZADO ADELANTADO cuando un
+  // registro OUT_OF_PLAN (fecha distinta, otro día) certificó via
+  // satisfiedOccurrenceKey que ESTA celda concreta ya quedó cubierta.
+  it('14. hecho_adelantado: PM el martes (registro con esa fecha) satisface la celda del miércoles siguiente', () => {
+    const miercoles = fecha(2026, 0, 14); // HOY
+    const plan = { id: 'plan_x', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Miércoles'] };
+    const registroMartes = {
+      equipmentId: 'e1', date: fecha(2026, 0, 13).toISOString(), userName: 'Ana',
+      operationalSnapshot: { satisfiedOccurrenceKey: 'plan_x:2026-01-14' }
+    };
+    const r = estadoCelda(equipo, miercoles, [plan], [registroMartes], HOY);
+    expect(r).toEqual({ tipo: 'hecho_adelantado', por: 'Ana', fecha: registroMartes.date });
+  });
+
+  it('15. sin satisfiedOccurrenceKey coincidente -> sigue el flujo normal (pendiente), nunca se inventa un adelantado', () => {
+    const miercoles = fecha(2026, 0, 14);
+    const plan = { id: 'plan_x', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Miércoles'] };
+    const registroOtraSemana = {
+      equipmentId: 'e1', date: fecha(2026, 0, 6).toISOString(), userName: 'Ana',
+      operationalSnapshot: { satisfiedOccurrenceKey: 'plan_x:2026-01-07' } // otra ocurrencia
+    };
+    const r = estadoCelda(equipo, miercoles, [plan], [registroOtraSemana], HOY);
+    expect(r).toEqual({ tipo: 'pendiente' });
+  });
+
+  it('16. plan sin id (fixtures legacy) -> nunca lanza, se comporta igual que antes de este lote', () => {
+    const plans = [{ equipmentId: 'e1', assignedDays: ['Miércoles'] }]; // sin id
+    expect(() => estadoCelda(equipo, HOY, plans, [], HOY)).not.toThrow();
+    expect(estadoCelda(equipo, HOY, plans, [], HOY)).toEqual({ tipo: 'pendiente' });
+  });
 });

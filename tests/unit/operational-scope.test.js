@@ -11,13 +11,17 @@ import { loadOperationalScopeLogic } from '../helpers/loadLubricationLogic.js';
 
 const {
   ASSIGNMENT_STATUS,
-  canManageAssignments, canMoveEquipment, canMoveCrew, canConfigureDevice,
+  canManageAssignments, canMoveEquipment, canMoveCrew, canConfigureDevice, canRegisterOutOfPlan,
   computeOccurrenceKey, resolveDefaultCrewForLocation, resolveOperationalScope,
   classifyEquipmentWork, findActivePendingAssignment, createAssignment,
   reassignAssignment, cancelAssignment, completeAssignmentIfPending,
   canLubricadorExecuteEquipment,
   buildExecutionSnapshot, resolveRecordEquipmentLocationId,
   resolveRecordCrewId, resolveRecordCrewLocationId,
+  EXECUTION_TYPE, EXECUTION_COMPLETENESS, OUT_OF_PLAN_REASONS,
+  computeExecutionCompleteness, findNextApplicableOccurrenceForWeekdayPlan,
+  findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, findExistingWorkForEquipment,
+  resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
 } = loadOperationalScopeLogic();
 
 let uidSeq = 0;
@@ -265,21 +269,29 @@ describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => 
 });
 
 describe('Snapshot histórico (§1 del cierre de lote) — CASO A/B/C del pedido', () => {
-  it('buildExecutionSnapshot(): sin assignment -> NORMAL; con assignment -> MANUAL', () => {
+  it('buildExecutionSnapshot(): sin assignment -> PLANNED (fallback); con assignment -> ASSIGNED (fallback)', () => {
     const normal = buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_volcan', crewLocationId: 'loc_volcan', performedByUserId: 'u1', shiftId: 'shift_dia', assignmentId: null });
-    expect(normal.executionType).toBe('NORMAL');
+    expect(normal.executionType).toBe('PLANNED');
     expect(normal.assignmentId).toBeNull();
 
     const manual = buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', crewId: 'crew_taller', crewLocationId: 'loc_taller', performedByUserId: 'u1', shiftId: 'shift_dia', assignmentId: 'asg_1' });
-    expect(manual.executionType).toBe('MANUAL');
+    expect(manual.executionType).toBe('ASSIGNED');
     expect(manual.assignmentId).toBe('asg_1');
+  });
+
+  it('buildExecutionSnapshot(): executionType explícito siempre gana sobre el fallback por assignmentId', () => {
+    const outOfPlan = buildExecutionSnapshot({ equipmentLocationId: 'loc_volcan', executionType: 'OUT_OF_PLAN', outOfPlanReason: 'PM', executionCompleteness: 'COMPLETE' });
+    expect(outOfPlan.executionType).toBe('OUT_OF_PLAN');
+    expect(outOfPlan.outOfPlanReason).toBe('PM');
+    expect(outOfPlan.executionCompleteness).toBe('COMPLETE');
   });
 
   it('buildExecutionSnapshot(): valores ausentes -> null, nunca undefined ni inventados', () => {
     const snap = buildExecutionSnapshot({});
     expect(snap).toEqual({
       equipmentLocationIdAtExecution: null, crewId: null, crewLocationIdAtExecution: null,
-      performedByUserId: null, shiftId: null, assignmentId: null, executionType: 'NORMAL'
+      performedByUserId: null, shiftId: null, assignmentId: null, executionType: 'PLANNED',
+      outOfPlanReason: null, executionCompleteness: null, satisfiedOccurrenceKey: null
     });
   });
 
@@ -320,5 +332,125 @@ describe('Snapshot histórico (§1 del cierre de lote) — CASO A/B/C del pedido
 
   it('registro viejo sin equipo actual disponible (equipo eliminado) -> value null, nunca lanza', () => {
     expect(resolveRecordEquipmentLocationId({ id: 'greg_old2' }, null)).toEqual({ value: null, source: 'legacy_fallback' });
+  });
+});
+
+describe('Engrase fuera de plan — computeExecutionCompleteness() (§8)', () => {
+  it('sin puntos configurados -> COMPLETE (nada requerido que pueda faltar)', () => {
+    expect(computeExecutionCompleteness([])).toBe('COMPLETE');
+    expect(computeExecutionCompleteness(undefined)).toBe('COMPLETE');
+  });
+  it('todos los puntos hechos -> COMPLETE', () => {
+    expect(computeExecutionCompleteness([{ done: true }, { done: true }])).toBe('COMPLETE');
+  });
+  it('al menos un punto sin hacer -> PARTIAL', () => {
+    expect(computeExecutionCompleteness([{ done: true }, { done: false, reason: 'Punto inaccesible' }])).toBe('PARTIAL');
+  });
+});
+
+describe('Engrase fuera de plan — CASO A-N del pedido', () => {
+  const HOY = new Date('2026-09-28T10:00:00'); // lunes
+
+  it('CASO A — OUT_OF_PLAN + PM + COMPLETE, plan por horas: satisface el ciclo vigente (nunca ambiguo)', () => {
+    const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 4800 };
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    expect(key).toBe(computeOccurrenceKey(plan, {}));
+    expect(key).toBe('plan_horas:h:4800');
+    // El avance real (4800 -> 5000, próximo 5250) lo hace app.js igual que
+    // con cualquier registro más reciente (plan.lastGreaseHour = newHourmeter)
+    // — este módulo solo certifica QUÉ ocurrencia queda satisfecha.
+  });
+
+  it('CASO B — OUT_OF_PLAN + PM + PARTIAL, plan por horas: NO satisface nada (nunca reinicia el ciclo a medias)', () => {
+    const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 4800 };
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY });
+    expect(key).toBeNull();
+  });
+
+  it('CASO C — OUT_OF_PLAN día/turno: PM el martes satisface por adelantado el miércoles (única ocurrencia pendiente en la ventana)', () => {
+    const plan = { id: 'plan_dt', controlType: 'Día y turno de la semana', assignedDays: ['Miércoles'] };
+    const martes = new Date('2026-09-29T09:00:00'); // martes de esa semana
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: martes });
+    expect(key).toBe('plan_dt:2026-09-30'); // miércoles siguiente
+  });
+
+  it('CASO D — OUT_OF_PLAN sin ocurrencia aplicable (plan sin días asignados): no satisface nada, nunca lanza', () => {
+    const plan = { id: 'plan_sin_dias', controlType: 'Día y turno de la semana', assignedDays: [] };
+    expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY })).toBeNull();
+  });
+
+  it('CASO D2 — ambiguo (2+ días programados pendientes en la ventana de 7 días): NUNCA se inventa cuál satisface, null', () => {
+    const plan = { id: 'plan_multi', controlType: 'Día y turno de la semana', assignedDays: ['Lunes', 'Miércoles'] };
+    // Hoy es lunes: el propio lunes (hoy) y el miércoles que viene son ambos candidatos sin completar
+    const key = findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords: [], todayDate: HOY });
+    expect(key).toBeNull();
+  });
+
+  it('CASO E — con assignment activa, findExistingWorkForEquipment() devuelve ASSIGNED (gana sobre OUT_OF_PLAN, §15)', () => {
+    const plan = { id: 'plan_dt2', controlType: 'Día y turno de la semana', assignedDays: ['Lunes'] };
+    const occurrenceKey = computeOccurrenceKey(plan, { dateISO: '2026-09-28' });
+    const assignments = [{ id: 'asg1', occurrenceKey, assignedCrewId: 'crew_taller', status: 'PENDING', active: true }];
+    const result = findExistingWorkForEquipment({ plan, assignments, statusCode: 'ROJO', todayDate: HOY });
+    expect(result.kind).toBe('ASSIGNED');
+    expect(result.assignment.id).toBe('asg1');
+  });
+
+  it('CASO F — mismo día: OUT_OF_PLAN completo el día programado satisface ESA misma ocurrencia (nunca queda PLANNED pendiente + OUT_OF_PLAN aparte)', () => {
+    const plan = { id: 'plan_dt3', controlType: 'Día y turno de la semana', assignedDays: ['Lunes'] };
+    const existing = findExistingWorkForEquipment({ plan, assignments: [], statusCode: 'AMARILLO', todayDate: HOY });
+    const satisfecha = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    expect(existing.kind).toBe('PLANNED');
+    expect(satisfecha).toBe(existing.occurrenceKey); // misma clave -> una sola ocurrencia, no dos
+  });
+
+  it('CASO G — canRegisterOutOfPlan(): LUBRICADOR puede registrar fuera de plan (no necesita que Planificador le cree una assignment)', () => {
+    expect(canRegisterOutOfPlan('LUBRICADOR')).toBe(true);
+    expect(canRegisterOutOfPlan('ADMINISTRADOR')).toBe(true);
+    expect(canRegisterOutOfPlan('PLANIFICADOR')).toBe(true);
+    expect(canRegisterOutOfPlan('SUPERVISOR')).toBe(true);
+    expect(canRegisterOutOfPlan('VISOR')).toBe(false);
+  });
+
+  it('CASO H — Lubricador fuera de scope sigue bloqueado (OUT_OF_PLAN NO permite saltarse permisos, §2/§21D)', () => {
+    const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_mojon' }, cuadrillas, shiftId: 'shift_dia' });
+    const equipoFuera = { id: 'e_fuera', locationId: 'loc_volcan' };
+    expect(canLubricadorExecuteEquipment({ scope, equipo: equipoFuera, assignments: [] })).toBe(false);
+  });
+
+  it('CASO I — QR: equipo con assignment a mi cuadrilla -> ASSIGNED; sin nada -> puede abrir "fuera de plan" si está en mi scope', () => {
+    const plan = { id: 'plan_qr', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100 };
+    const occurrenceKey = computeOccurrenceKey(plan, {});
+    const conAssignment = findExistingWorkForEquipment({
+      plan, assignments: [{ id: 'a1', occurrenceKey, assignedCrewId: 'crew_x', status: 'PENDING', active: true }],
+      statusCode: 'ROJO', todayDate: HOY
+    });
+    expect(conAssignment.kind).toBe('ASSIGNED');
+
+    const sinNada = findExistingWorkForEquipment({ plan, assignments: [], statusCode: 'VERDE', todayDate: HOY });
+    expect(sinNada.kind).toBe('NONE'); // no vencido/próximo y sin assignment -> el botón "fuera de plan" es la única vía
+  });
+
+  it('CASO M — PARTIAL nunca satisface (no cancela un recordatorio de ocurrencia pendiente válida)', () => {
+    const plan = { id: 'plan_m', controlType: 'Día y turno de la semana', assignedDays: ['Martes'] };
+    expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY })).toBeNull();
+  });
+
+  it('CASO N — COMPLETE sí satisface la ocurrencia correcta (la única candidata, no una arbitraria)', () => {
+    const plan = { id: 'plan_n', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'] };
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    expect(key).toBe('plan_n:2026-10-01'); // jueves de esa semana
+  });
+
+  it('resolveRecordExecutionType()/resolveRecordOutOfPlanReason()/resolveRecordCompleteness(): con snapshot devuelven el dato real; sin snapshot, PLANNED por defecto (nunca se presenta como fuera de plan sin poder probarlo)', () => {
+    const conSnapshot = { operationalSnapshot: buildExecutionSnapshot({ executionType: 'OUT_OF_PLAN', outOfPlanReason: 'CORRECTIVO', executionCompleteness: 'PARTIAL' }) };
+    expect(resolveRecordExecutionType(conSnapshot)).toEqual({ value: 'OUT_OF_PLAN', source: 'snapshot' });
+    expect(resolveRecordOutOfPlanReason(conSnapshot)).toBe('CORRECTIVO');
+    expect(resolveRecordCompleteness(conSnapshot)).toBe('PARTIAL');
+
+    const viejo = { id: 'greg_old3' };
+    expect(resolveRecordExecutionType(viejo)).toEqual({ value: 'PLANNED', source: 'legacy_fallback' });
+    expect(resolveRecordOutOfPlanReason(viejo)).toBeNull();
+    expect(resolveRecordCompleteness(viejo)).toBeNull();
   });
 });

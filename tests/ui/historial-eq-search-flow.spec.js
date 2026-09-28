@@ -23,11 +23,13 @@ const appSource = readSource(APP_JS_PATH);
 const statusSource = readSource(LUBRICATION_STATUS_JS_PATH);
 const complianceSource = readSource(PLAN_COMPLIANCE_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
-// drawHistory() usa resolveRecordEquipmentLocationId() (§1 del cierre de
-// lote — snapshot histórico, ver operational-scope.js) para la columna
-// "Ubicación" — real, no reimplementada aquí.
+// drawHistory() usa resolveRecordEquipmentLocationId()/resolveRecordExecutionType()/
+// resolveRecordOutOfPlanReason()/resolveRecordCompleteness() (operational-scope.js,
+// snapshot histórico + engrase fuera de plan) para las columnas "Ubicación"/"Tipo"
+// — reales, no reimplementadas aquí.
 const operationalScopeSource = readSource(OPERATIONAL_SCOPE_JS_PATH);
-const operationalScopeSrc = extractDeclaration(operationalScopeSource, 'resolveRecordEquipmentLocationId');
+const OPERATIONAL_SCOPE_NAMES = ['EXECUTION_TYPE', 'resolveRecordEquipmentLocationId', 'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness'];
+const operationalScopeSrc = OPERATIONAL_SCOPE_NAMES.map(n => extractDeclaration(operationalScopeSource, n)).join('\n\n');
 
 const REAL_NAMES = ['$', '$$', 'esc', 'ic', 'equipoMatchesQuery', 'complianceBadgeHTML', 'validationBadgeHTML', 'renderHistorial', 'drawHistory'];
 const realSrc = REAL_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
@@ -109,6 +111,9 @@ async function bootPage(page, plans = [], validations = []) {
       window.validationStatusFor = validationStatusFor;
       ${operationalScopeSrc}
       window.resolveRecordEquipmentLocationId = resolveRecordEquipmentLocationId;
+      window.resolveRecordExecutionType = resolveRecordExecutionType;
+      window.resolveRecordOutOfPlanReason = resolveRecordOutOfPlanReason;
+      window.resolveRecordCompleteness = resolveRecordCompleteness;
       ${realSrc}
       window.$ = $; window.$$ = $$; window.esc = esc; window.ic = ic;
       window.equipoMatchesQuery = equipoMatchesQuery;
@@ -392,10 +397,11 @@ test.describe('Cumplimiento del plan — columna en la tabla de Engrases', () =>
     await page.waitForTimeout(400);
     await page.locator('.hist-eq-result').first().click();
 
-    // Solo el badge de Cumplimiento (columna 9 de la fila, td:nth-child(9) —
-    // se agregó "Ubicación" como columna 3, ver §1 del cierre de lote) —
-    // el de Validación (columna 10) es un badge distinto ("Pendiente"), no forma parte de esta prueba.
-    const badges = await page.locator('.hist-table tbody tr td:nth-child(9) .hist-compliance-badge').allTextContents();
+    // Solo el badge de Cumplimiento (columna 10 de la fila, td:nth-child(10) —
+    // se agregaron "Ubicación" y "Tipo" como columnas 3/4, ver §1/§18 del
+    // cierre de lote) — el de Validación (columna 11) es un badge distinto
+    // ("Pendiente"), no forma parte de esta prueba.
+    const badges = await page.locator('.hist-table tbody tr td:nth-child(10) .hist-compliance-badge').allTextContents();
     expect(badges.length).toBeGreaterThan(0);
     for (const b of badges) expect(b).toBe('No evaluable');
   });

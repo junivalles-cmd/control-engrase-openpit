@@ -1237,7 +1237,8 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 var(--sp-3); }
 
 .lub-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-.lub-scan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; }
+.lub-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.lub-scan-btn, .lub-outofplan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; min-height: 44px; }
 
 .lub-section-head { margin: var(--sp-3) 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
@@ -1619,6 +1620,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .retro-tag {
   display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
   background: var(--amber); color: #1a1400; border-radius: 4px; padding: 1px 5px; margin-left: 4px;
+}
+.oop-badge {
+  display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  background: var(--purple, #7c5cff); color: #fff; border-radius: 4px; padding: 3px 8px; margin-bottom: 8px;
 }
 
 /* ---------------- Puntos no engrasados / sin horómetro ---------------- */

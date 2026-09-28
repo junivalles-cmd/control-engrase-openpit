@@ -390,11 +390,23 @@ async function showEquipmentQrInfo(equipmentId) {
   // equipo del sistema solo por escanear su QR.
   let outOfScopeMsg = '';
   let canRegister = canRegisterRole;
+  // §21 del lote "engrase fuera de plan": A) assignment a mi cuadrilla ->
+  // ASSIGNED, B) occurrence normal pendiente -> PLANNED (ambas abren igual,
+  // "Registrar engrase ahora" ya las detecta solo), C) sin ninguna pero
+  // dentro de mi scope -> ofrece "Registrar fuera de plan" en vez del botón
+  // normal, D) fuera de mi scope -> bloqueado (ya cubierto arriba/abajo).
+  let ofreceFueraDePlan = false;
   if (canRegisterRole && App.currentUser.role === 'LUBRICADOR') {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
     canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
-    if (!canRegister) outOfScopeMsg = '<div class="qr-info-alert">Este equipo no pertenece a tu cuadrilla ni tiene una asignación activa para ti — no puedes registrar su engrase desde aquí.</div>';
+    if (!canRegister) {
+      outOfScopeMsg = '<div class="qr-info-alert">Este equipo no pertenece a tu cuadrilla ni tiene una asignación activa para ti — no puedes registrar su engrase desde aquí.</div>';
+    } else {
+      const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+      const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+      if (existing.kind === 'NONE') ofreceFueraDePlan = true;
+    }
   }
 
   openModal(`${esc(equipment.code)}${equipment.shortCode ? ' · ' + equipment.shortCode : ''}`, `
@@ -418,7 +430,8 @@ async function showEquipmentQrInfo(equipmentId) {
       ${outOfScopeMsg}
 
       <div class="modal-actions" style="flex-wrap:wrap">
-        ${canRegister ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
+        ${canRegister && !ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
+        ${ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-out-of-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
         ${App.currentUser.role !== 'LUBRICADOR' ? `<button class="btn" id="qr-info-detail">Ver ficha completa</button>` : ''}
       </div>
     </div>
@@ -428,6 +441,10 @@ async function showEquipmentQrInfo(equipmentId) {
     closeModal();
     if (App.currentUser.role === 'LUBRICADOR') await startLubricadorGreaseFlow(equipment.id);
     else await startGreaseFlow(equipment.id, App.route);
+  });
+  $('#qr-info-out-of-plan')?.addEventListener('click', async () => {
+    closeModal();
+    await startLubricadorGreaseFlow(equipment.id, { outOfPlan: true });
   });
   $('#qr-info-detail')?.addEventListener('click', () => {
     closeModal();
@@ -2446,7 +2463,10 @@ async function renderLubricadorHome() {
         <h2 class="lub-heading">Equipos asignados</h2>
         <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}</p>
       </div>
-      <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
+      <div class="lub-header-actions">
+        <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
+        <button class="btn lub-outofplan-btn" id="lub-out-of-plan">${ic("plus")}Fuera de plan</button>
+      </div>
     </div>
     ${await recentEquiposHTML()}
     ${statusesAssigned.length ? `
@@ -2462,10 +2482,11 @@ async function renderLubricadorHome() {
   $$('.lub-eq-btn', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-scan-qr').addEventListener('click', () => openQrScanner());
+  $('#lub-out-of-plan').addEventListener('click', () => openOutOfPlanEquipmentPicker());
   $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.recentId)));
 }
 
-async function startLubricadorGreaseFlow(equipmentId) {
+async function startLubricadorGreaseFlow(equipmentId, options) {
   const c = $('#app-content');
   if (!c) return;
   App.lubricadorGreaseFlowActive = true;
@@ -2474,7 +2495,111 @@ async function startLubricadorGreaseFlow(equipmentId) {
     App.lubricadorGreaseFlowActive = false; // cancelación explícita: vuelve a una pantalla estable
     renderLubricadorHome();
   });
-  await startGreaseFlow(equipmentId, $('#lub-flow'));
+  await startGreaseFlow(equipmentId, $('#lub-flow'), options);
+}
+
+/* ============================================================
+   ENGRASE FUERA DE PLAN (§3-§6 del lote correspondiente) — botón
+   "+ Fuera de plan" en Mi Turno, NUNCA una pestaña nueva de la barra
+   inferior. Antes de abrir el flujo, SIEMPRE se detecta si el equipo ya
+   tiene trabajo pendiente (ASSIGNED > PLANNED > ninguno, §5/§15) — un
+   engrase fuera de plan JAMÁS permite saltarse el scope operativo del
+   Lubricador (canLubricadorExecuteEquipment sigue siendo la única puerta).
+   ============================================================ */
+async function openOutOfPlanEquipmentPicker() {
+  const equipos = await DB.allActive('equipment');
+  let candidatos = equipos;
+
+  if (App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    if (scope.kind !== 'DEVICE_SCOPED') { candidatos = []; } else {
+      const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+      const { normal, assigned } = classifyEquipmentWork({
+        scope, equipos, cuadrillas, assignments,
+        equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+      });
+      const asignadosEq = assigned.map(a => equipos.find(e => e.id === a.equipmentId)).filter(Boolean);
+      candidatos = [...normal, ...asignadosEq];
+      // Un PM puede pasar en cualquier momento, no solo cuando el equipo ya
+      // está vencido/próximo — se agrega el resto de la ubicación de la
+      // cuadrilla aunque hoy no le "toque" nada (nunca toda la flota, ver §4).
+      const idsYa = new Set(candidatos.map(e => e.id));
+      equipos.filter(e => e.locationId === scope.crewLocationId && !idsYa.has(e.id)).forEach(e => candidatos.push(e));
+    }
+  }
+
+  openModal('Engrase fuera de plan', `
+    <p class="dim">Busca el equipo. Si ya tiene un engrase pendiente o asignado, se abrirá directo — "Fuera de plan" es solo para trabajo que no estaba programado ahora (PM, correctivo, oportunidad).</p>
+    <input type="search" id="oop-search" class="input" placeholder="Buscar por código, marca o modelo…" autocomplete="off"/>
+    <div id="oop-results" class="hist-eq-results" style="position:static; margin-top:8px; max-height:320px; overflow-y:auto"></div>
+    <div class="modal-actions"><button type="button" class="btn" id="oop-scan-qr">${ic("qr")}Escanear QR</button></div>
+  `);
+  const box = $('#oop-results');
+  function pintar(lista) {
+    box.innerHTML = lista.slice(0, 30).map(e => `
+      <button type="button" class="hist-eq-result" data-id="${e.id}">
+        <span class="mono"><b>${esc(e.code)}</b></span>
+        <span class="dim">${esc(e.brand)} ${esc(e.model)}</span>
+      </button>`).join('') || '<div class="empty-state">Ningún equipo coincide, o este dispositivo no tiene equipos visibles.</div>';
+    $$('.hist-eq-result', box).forEach(b => b.addEventListener('click', () => {
+      closeModal();
+      handleOutOfPlanEquipoSelected(b.dataset.id);
+    }));
+  }
+  pintar(candidatos);
+  $('#oop-search').addEventListener('input', () => {
+    const q = $('#oop-search').value.trim().toLowerCase();
+    pintar(!q ? candidatos : candidatos.filter(e =>
+      (e.code || '').toLowerCase().includes(q) || (e.brand || '').toLowerCase().includes(q) || (e.model || '').toLowerCase().includes(q)));
+  });
+  $('#oop-scan-qr').addEventListener('click', () => {
+    closeModal();
+    openQrScanner();
+  });
+}
+
+// Decide, para UN equipo elegido desde "+ Fuera de plan" (o desde QR, ver
+// §21), si ya hay trabajo pendiente que abrir en vez de crear uno fuera de
+// plan — nunca duplica occurrence/assignment (§5).
+async function handleOutOfPlanEquipoSelected(equipmentId) {
+  const equipo = await DB.get('equipment', equipmentId);
+  if (!equipo || equipo.active === false) { alert('Este equipo no está activo, o este dispositivo aún no lo ha sincronizado.'); return; }
+
+  if (App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    const { assignments } = await loadAssignmentContext();
+    if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
+      alert('Este equipo no está asignado a su cuadrilla.');
+      return;
+    }
+  }
+
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+  const { assignments } = await loadAssignmentContext();
+  const s = await statusFor(equipo);
+  const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+
+  if (existing.kind !== 'NONE') {
+    openModal('Este equipo ya tiene un engrase pendiente', `
+      <p class="dim">${existing.kind === 'ASSIGNED'
+        ? 'Hay una asignación manual activa para este equipo — ábrelo desde ahí, no hace falta registrarlo como fuera de plan.'
+        : 'Este equipo ya tiene su engrase normal pendiente. Regístralo como cualquier otro, no como fuera de plan.'}</p>
+      <div class="modal-actions"><button type="button" class="btn btn-accent" id="oop-open-pending">${ic("check")}Abrir trabajo pendiente</button></div>
+    `);
+    $('#oop-open-pending').addEventListener('click', () => {
+      closeModal();
+      if (App.currentUser.role === 'LUBRICADOR') startLubricadorGreaseFlow(equipmentId);
+      // Sin `target`: cae a navigate('registrar') + #reg-flow-area, el mismo
+      // patrón real que usa esta pantalla para cualquier otro equipo (ver
+      // renderRegistrar()) — nunca un `target` string como App.route, que
+      // startGreaseFlow() no sabe interpretar como contenedor DOM.
+      else startGreaseFlow(equipmentId);
+    });
+    return;
+  }
+
+  if (App.currentUser.role === 'LUBRICADOR') startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
+  else startGreaseFlow(equipmentId, undefined, { outOfPlan: true });
 }
 
 // "Mis Engrases" — trabajo YA realizado por este lubricador (distinto de
@@ -3734,6 +3859,8 @@ async function openEquipmentDetail(id) {
         <button class="btn" id="btn-asignar-cuadrilla">${ic("clock")}Asignar a cuadrilla</button>` : ''}
       ${canMoveEquipment(App.currentUser.role) ? `
         <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
+      ${canRegisterOutOfPlan(App.currentUser.role) ? `
+        <button class="btn" id="btn-fuera-de-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -3744,6 +3871,7 @@ async function openEquipmentDetail(id) {
   });
   $('#btn-asignar-cuadrilla')?.addEventListener('click', () => { closeModal(); openAssignGreaseModal(e); });
   $('#btn-mover-ubicacion')?.addEventListener('click', () => { closeModal(); openMoveEquipmentLocationModal(e); });
+  $('#btn-fuera-de-plan')?.addEventListener('click', () => { closeModal(); handleOutOfPlanEquipoSelected(e.id); });
   $('#btn-delete-eq')?.addEventListener('click', async () => {
     if (!confirm(`¿Eliminar el equipo ${esc(e.code)}${e.shortCode ? ' (' + e.shortCode + ')' : ''}? Esta acción es un borrado lógico: el equipo deja de aparecer en la app pero su historial de engrases y anomalías se conserva en la auditoría. No se puede deshacer desde la interfaz.`)) return;
     await deleteEquipmentCascade(e);
@@ -5394,7 +5522,8 @@ function irAMisEngrasesTrasRegistrar() {
   }
 }
 
-async function startGreaseFlow(equipmentId, target) {
+async function startGreaseFlow(equipmentId, target, options) {
+  const outOfPlan = !!(options && options.outOfPlan);
   trackRecentEquipment(equipmentId);
   const equipment = await DB.get('equipment', equipmentId);
   // Estado ANTES de engrasar: sirve para saber si el equipo venía vencido, dato que usa
@@ -5423,13 +5552,27 @@ async function startGreaseFlow(equipmentId, target) {
   const draftId = `draft_${equipmentId}_${App.currentUser.id}`;
   const draft = await DB.get('grease_drafts', draftId);
 
+  const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
   const html = `
     <div class="grease-flow-panel">
       <div class="grease-flow-card grease-flow-equipo-card">
+        ${outOfPlan ? `<span class="oop-badge">FUERA DE PLAN</span>` : ''}
         <div class="grease-flow-equipo-code">${esc(equipment.code)}</div>
         <div class="grease-flow-equipo-model">${esc(equipment.brand)} ${esc(equipment.model)}</div>
         <div class="grease-flow-equipo-meta">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())} · ${currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche'}</div>
+        ${outOfPlan ? `<p class="dim" style="margin:6px 0 0">Este engrase no estaba programado para este momento.</p>` : ''}
       </div>
+      ${outOfPlan ? `
+      <div class="grease-flow-card">
+        <h4 class="grease-flow-card-head">Motivo</h4>
+        <div class="form-grid">
+          <label class="span-2">Motivo del engrase fuera de plan
+            <select required name="outOfPlanReason" id="oop-reason-select">
+              ${OUT_OF_PLAN_REASONS.map(r => `<option value="${r}">${OUT_OF_PLAN_REASON_LABELS[r]}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+      </div>` : ''}
       ${duplicateWarning}
       ${draft ? `<div class="draft-banner" id="draft-banner">📝 Tienes un progreso sin terminar guardado ${fmtDate(draft.savedAt)}. <button type="button" class="btn btn-sm btn-accent" id="btn-restore-draft">Continuar</button> <button type="button" class="btn btn-sm" id="btn-discard-draft">Descartar</button></div>` : ''}
       <form id="grease-form" class="grease-flow-form">
@@ -5707,6 +5850,13 @@ async function startGreaseFlow(equipmentId, target) {
         }
       }
 
+      // "Otro" como motivo de fuera de plan exige observación — nunca depender
+      // solo de esa etiqueta genérica (§7 del lote correspondiente).
+      if (outOfPlan && fd.outOfPlanReason === 'OTRO' && !(fd.notes || '').trim()) {
+        alert('Escribe una observación describiendo el motivo del engrase fuera de plan.');
+        return;
+      }
+
       const details = $$('.checklist-item').map(item => ({
         pointId: item.dataset.point,
         pointName: item.querySelector('span').textContent,
@@ -5769,13 +5919,37 @@ async function startGreaseFlow(equipmentId, target) {
       const crewLocationIdDeEsteEngrase = crewIdDeEsteEngrase
         ? ((await DB.allActive('cuadrillas')).find(c => c.id === crewIdDeEsteEngrase) || {}).locationId || null
         : null;
+      // Fuera de plan (lote correspondiente) — prioridad ASSIGNED > OUT_OF_PLAN
+      // > PLANNED (§15): una assignment activa SIEMPRE gana, aunque se haya
+      // entrado por el botón "+ Fuera de plan" (nunca se convierte en
+      // OUT_OF_PLAN solo porque el lubricador tocó ese botón por costumbre).
+      const executionTypeDeEsteEngrase = asignacionActivaDeEsteEngrase
+        ? 'ASSIGNED'
+        : (outOfPlan ? 'OUT_OF_PLAN' : 'PLANNED');
+      const completenessDeEsteEngrase = computeExecutionCompleteness(details);
+      // Solo un engrase fuera de plan puede "satisfacer por adelantado" una
+      // ocurrencia futura (§9/§10/§13/§14) — trabajo PLANNED/ASSIGNED ya
+      // tiene su propio mecanismo (completeGreaseAssignmentForOccurrence()/
+      // avance normal de plan.lastGreaseHour más abajo).
+      const satisfiedOccurrenceKeyDeEsteEngrase = executionTypeDeEsteEngrase === 'OUT_OF_PLAN'
+        ? resolveOutOfPlanSatisfaction({
+            plan, completeness: completenessDeEsteEngrase,
+            existingRecords: await DB.allActive('lubrication_records'),
+            todayDate: esRetro ? new Date(fechaRegistro) : new Date()
+          })
+        : null;
+
       const operationalSnapshot = buildExecutionSnapshot({
         equipmentLocationId: equipment.locationId,
         crewId: crewIdDeEsteEngrase,
         crewLocationId: crewLocationIdDeEsteEngrase,
         performedByUserId: autor.id,
         shiftId: turnoRegistro,
-        assignmentId: asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.id : null
+        assignmentId: asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.id : null,
+        executionType: executionTypeDeEsteEngrase,
+        outOfPlanReason: executionTypeDeEsteEngrase === 'OUT_OF_PLAN' ? (fd.outOfPlanReason || 'OTRO') : null,
+        executionCompleteness: completenessDeEsteEngrase,
+        satisfiedOccurrenceKey: satisfiedOccurrenceKeyDeEsteEngrase
       });
 
       const record = stamp({
@@ -5840,6 +6014,14 @@ async function startGreaseFlow(equipmentId, target) {
         await logAudit(esRetro ? 'ENGRASE_RETROACTIVO_REGISTRADO' : 'ENGRASE_REGISTRADO',
           `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
           App.currentUser.name);
+
+        // Evento propio para engrase fuera de plan (§27) — nunca tokens/PIN,
+        // solo el contexto de negocio.
+        if (executionTypeDeEsteEngrase === 'OUT_OF_PLAN') {
+          await logAudit('OUT_OF_PLAN_GREASE_RECORDED',
+            `${equipment.code} · motivo ${operationalSnapshot.outOfPlanReason} · ${completenessDeEsteEngrase}${satisfiedOccurrenceKeyDeEsteEngrase ? ' · satisface ' + satisfiedOccurrenceKeyDeEsteEngrase : ' · pendiente de conciliación'}`,
+            App.currentUser.name);
+        }
 
         // Si este engrase cerraba una asignación manual PENDING (§R), la
         // completa. Si era trabajo normal sin asignación, no hace nada.
@@ -6731,6 +6913,22 @@ async function drawHistory(equipmentId) {
       ? esc(nombre)
       : `<span title="Registro anterior al historial de ubicaciones: se muestra la ubicación ACTUAL del equipo, no necesariamente la de ese momento">${esc(nombre)} *</span>`;
   };
+  // Tipo de ejecución (§18 del lote "engrase fuera de plan"): distingue
+  // PLANIFICADO/ASIGNADO/FUERA DE PLAN — para FUERA DE PLAN se agrega motivo
+  // + completo/parcial en el título (tooltip), sin ensuciar la tabla con más
+  // columnas de las necesarias.
+  const OOP_REASON_LABELS_HIST = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const tipoRecordHTML = (r) => {
+    const { value: tipo } = resolveRecordExecutionType(r);
+    if (tipo === 'OUT_OF_PLAN') {
+      const motivo = resolveRecordOutOfPlanReason(r);
+      const completeness = resolveRecordCompleteness(r);
+      const detalle = [motivo ? OOP_REASON_LABELS_HIST[motivo] || motivo : null, completeness === 'COMPLETE' ? 'Completo' : completeness === 'PARTIAL' ? 'Parcial' : null].filter(Boolean).join(' · ');
+      return `<span class="oop-badge" style="margin-bottom:0" title="${esc(detalle)}">Fuera de plan</span>`;
+    }
+    if (tipo === 'ASSIGNED') return '<span class="status-chip" style="--c:var(--amber)">Asignado</span>';
+    return '<span class="dim">Planificado</span>';
+  };
   const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
   const validations = await DB.allActive('grease_validations');
   const isAdmin = App.currentUser.role === 'ADMINISTRADOR';
@@ -6805,7 +7003,7 @@ async function drawHistory(equipmentId) {
       <div class="panel">
         <div class="panel-head"><h3>Engrases</h3></div>
         <table class="data-table hist-table">
-          <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+          <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Tipo</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
           <tbody>
             ${records.map(r => {
               const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
@@ -6826,6 +7024,7 @@ async function drawHistory(equipmentId) {
               <td>${fmtDate(r.date)}</td>
               <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
               <td>${ubicacionRecordHTML(r)}</td>
+              <td>${tipoRecordHTML(r)}</td>
               <td class="mono">${fmt(r.hourmeter)} h</td>
               <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
               <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
@@ -6836,7 +7035,7 @@ async function drawHistory(equipmentId) {
               <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
               ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
             </tr>`;
-            }).join('') || `<tr><td colspan="${isAdmin ? 12 : 11}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
+            }).join('') || `<tr><td colspan="${isAdmin ? 13 : 12}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -7109,8 +7308,10 @@ async function renderReportes() {
   let consumoTabActual = 'equipo';
   let consumoDatasets = null;
 
-  // Equipos que pasan Equipo/Familia/Ubicación (sin fecha — se usan tanto
-  // para filtrar registros como para el universo de "programados").
+  // Equipos que pasan Equipo/Familia/Ubicación (sin fecha) — universo de
+  // "programados" (Tendencia/por turno/por equipo): esto SÍ es correcto que
+  // use la ubicación ACTUAL del equipo, porque "programado" es un concepto
+  // del plan vigente HOY, no un dato histórico.
   function equiposFiltrados() {
     const eqId = $('#f-equipo').value;
     const fam = $('#f-familia').value;
@@ -7123,14 +7324,35 @@ async function renderReportes() {
     });
   }
 
+  // Pendiente cerrado (§23/§24 del cierre de lote): los REGISTROS reales
+  // (a diferencia de "programados" arriba) se filtran por Equipo/Familia
+  // usando el equipo actual (esos dos campos no cambian con el tiempo), pero
+  // por UBICACIÓN usan resolveRecordEquipmentLocationId() — la ubicación
+  // real AL MOMENTO de ejecutarse cuando el registro tiene snapshot, nunca
+  // la ubicación ACTUAL del equipo (que pudo moverse después). Registros
+  // sin snapshot (de antes de este lote) siguen cayendo a la ubicación
+  // actual, exactamente el comportamiento de siempre — fallback controlado,
+  // nunca se inventa dónde estuvo el equipo en el pasado.
+  function equiposFiltradosPorEquipoYFamilia() {
+    const eqId = $('#f-equipo').value;
+    const fam = $('#f-familia').value;
+    return equipos.filter(e => {
+      if (eqId && e.id !== eqId) return false;
+      if (fam && e.typeId !== fam) return false;
+      return true;
+    });
+  }
+
   function applyFilters() {
     const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
     const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
     const turno = $('#f-turno').value;
     const respId = $('#f-resp').value;
-    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
+    const ubic = $('#f-ubic').value;
+    const idsPermitidos = new Set(equiposFiltradosPorEquipoYFamilia().map(e => e.id));
     return allRecords.filter(r => {
       if (!idsPermitidos.has(r.equipmentId)) return false;
+      if (ubic && resolveRecordEquipmentLocationId(r, equiposPorId[r.equipmentId]).value !== ubic) return false;
       const d = new Date(r.date);
       if (from && d < from) return false;
       if (to && d > to) return false;

@@ -43,6 +43,19 @@ function estadoCelda(eq, fecha, plans, records, hoy) {
     new Date(r.date).toDateString() === fecha.toDateString());
   if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
 
+  // Engrase FUERA DE PLAN que satisfizo ESTA ocurrencia por adelantado (lote
+  // "engrase fuera de plan" §10/§19): el registro real quedó en OTRO día
+  // (antes), pero operational-scope.js ya certificó que esta celda concreta
+  // quedó cubierta — ver resolveOutOfPlanSatisfaction()/satisfiedOccurrenceKey
+  // en operationalSnapshot. El plan maestro NUNCA se toca (sigue siendo el
+  // mismo día la semana siguiente, ver §11) — esto es solo una lectura.
+  if (plan.id) {
+    const cellKey = computeOccurrenceKey(plan, { dateISO: `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}` });
+    const adelantado = records.find(r => r.equipmentId === eq.id &&
+      r.operationalSnapshot && r.operationalSnapshot.satisfiedOccurrenceKey === cellKey);
+    if (adelantado) return { tipo: 'hecho_adelantado', por: adelantado.userName, fecha: adelantado.date };
+  }
+
   if (eq.status && eq.status !== 'Operativo') return { tipo: 'pausado', status: eq.status };
 
   if (fecha.getTime() > hoy.getTime()) return { tipo: 'futuro' };
