@@ -91,6 +91,7 @@ async function bootPage(page, plans = [], validations = []) {
       };
       window.computeAllStatuses = async () => [];
       window.photoThumbsHTML = () => '<span class="dim">—</span>';
+      window.resolvePhotoThumbSrcs = async () => []; // gap de Storage privado cerrado — drawHistory() ahora resuelve fotos antes de pintar la tabla, ver docs/STORAGE_PRIVACY_DESIGN.md §7
       window.wirePhotoThumbs = () => {};
       window.makeTablesResponsive = () => {};
       window.downloadCSV = () => {};

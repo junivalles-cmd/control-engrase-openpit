@@ -103,6 +103,46 @@ describe('Sync.getSignedPhotoUrl() — URL firmada TEMPORAL para ver evidencia q
     expect(seenHeaders.Authorization).toBe(`Bearer ${CFG.anonKey}`);
   });
 
+  describe('cache EN MEMORIA (§39 docs/STORAGE_PRIVACY_DESIGN.md)', () => {
+    it('dentro de la ventana de vigencia: la segunda llamada para el mismo path NO pide otra al servidor', async () => {
+      const { Sync, PHOTO_BUCKET } = loadSyncLogic(makeFakeDB(), []);
+      const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ signedURL: '/object/sign/x/y.jpg?token=first' }) }));
+      vi.stubGlobal('fetch', fetchMock);
+      const url = `${CFG.url}/storage/v1/object/public/${PHOTO_BUCKET}/x/y.jpg`;
+
+      const first = await Sync.getSignedPhotoUrl(url, CFG);
+      const second = await Sync.getSignedPhotoUrl(url, CFG);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(second).toBe(first);
+    });
+
+    it('`force: true` (reintento tras fallo, ver app.js resolveEvidenceSrc) ignora el cache y pide una URL nueva', async () => {
+      const { Sync, PHOTO_BUCKET } = loadSyncLogic(makeFakeDB(), []);
+      let n = 0;
+      vi.stubGlobal('fetch', vi.fn(async () => { n++; return { ok: true, json: async () => ({ signedURL: `/object/sign/x/y.jpg?token=v${n}` }) }; }));
+      const url = `${CFG.url}/storage/v1/object/public/${PHOTO_BUCKET}/x/y.jpg`;
+
+      const first = await Sync.getSignedPhotoUrl(url, CFG);
+      const forced = await Sync.getSignedPhotoUrl(url, CFG, { force: true });
+
+      expect(first).toContain('token=v1');
+      expect(forced).toContain('token=v2');
+    });
+
+    it('paths distintos nunca comparten entrada de cache', async () => {
+      const { Sync, PHOTO_BUCKET } = loadSyncLogic(makeFakeDB(), []);
+      const fetchMock = vi.fn(async (url) => ({ ok: true, json: async () => ({ signedURL: url.endsWith('/1.jpg') ? '/object/sign/x/1.jpg?token=uno' : '/object/sign/x/2.jpg?token=dos' }) }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const a = await Sync.getSignedPhotoUrl(`${CFG.url}/storage/v1/object/public/${PHOTO_BUCKET}/x/1.jpg`, CFG);
+      const b = await Sync.getSignedPhotoUrl(`${CFG.url}/storage/v1/object/public/${PHOTO_BUCKET}/x/2.jpg`, CFG);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(a).not.toBe(b);
+    });
+  });
+
   it('C) sin sesión válida en AUTH_MODE=supabase: null, CERO requests de red (nunca fallback anon)', async () => {
     const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: false });
     const { Sync, PHOTO_BUCKET } = loadSyncLogic(makeFakeDB(), [], fakeAuth);

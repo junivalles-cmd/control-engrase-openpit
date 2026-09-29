@@ -113,26 +113,54 @@ es la única pieza nueva del lado de lectura: si el valor es base64
 (`data:image...`), se muestra directo, **sin ninguna request de red** —
 la foto/firma local sigue viéndose sin internet exactamente igual que hoy.
 
-## 7. Dónde se conectó `getSignedPhotoUrl()` (y dónde NO, a propósito)
+## 7. Dónde se conectó `getSignedPhotoUrl()`
 
-Conectado (evidencia operativa, lo que pedía el objetivo del lote):
+**Actualizado — gap cerrado** (lote PIN+sync+storage, post a4ba3e9): las
+dos pantallas documentadas abajo como "NO conectado" ya están resueltas.
+
+Conectado (evidencia operativa + todo renderer directo del mismo bucket):
 
 - `openValidationDetailModal()` / `openValidationConflictModal()` — la
   firma, tratada como contenido sensible.
 - `drawPhotoReport()` → `pintarTanda()` — galería de Reportes (fotos de
   engrase + anomalías), resuelta por tanda de 24 (se mantiene el
   lazy-loading existente, nunca se piden cientos de signed URLs de golpe).
+- `pointRow()` (miniatura de un punto de checklist en Plan de Engrase →
+  Configurar) — `openPlanForm()` resuelve todos los puntos en paralelo
+  antes de armar la lista.
+- `familyCardHTML()` (diagrama de familia de equipo + miniaturas de sus
+  puntos, "Ayuda y soporte") — `renderAyuda()` resuelve todas las familias
+  en paralelo.
+- `photoThumbsHTML()`/`resolvePhotoThumbSrcs()` (fotos de engrase/anomalías
+  en Historial por equipo, Historial global y Anomalías) — cada tabla
+  resuelve las filas visibles en paralelo antes de dibujarse.
 
-**NO conectado (limitación conocida, documentada a propósito):**
+**Limitación conocida restante (documentada a propósito, NO cerrada):** el
+editor de familias de equipo (`openFamilyEditForm()`, solo Administrador —
+la vista previa al editar una familia existente) sigue usando el valor
+crudo directo. Es una superficie admin-only, de uso poco frecuente (editar
+una familia ya creada), con mayor complejidad de refactor (formulario con
+re-render en caliente al agregar/quitar zonas/puntos) — se prioriza cerrar
+primero las pantallas de uso diario/multi-rol. Mientras el bucket siga
+público (estado actual) funciona igual que hoy; antes de aplicar 0005 hace
+falta aplicarle el mismo tratamiento.
 
-- Miniaturas de puntos de checklist (`lubrication_plans`, `p.photo` en
-  `pointRow()`/render del formulario de engrase) y diagramas de ayuda de
-  familia de equipo (`fam.photo` en `familyCardHTML()`/`renderAyuda()`).
-  Siguen usando `<img src="${valorCrudo}">` directo. **Mientras el bucket
-  siga público (estado actual), esto sigue funcionando exactamente igual
-  que hoy.** El día que el bucket pase a privado (0005 aplicado), estas dos
-  pantallas dejarán de mostrar imagen hasta que se les aplique el mismo
-  `resolveEvidenceSrc()` — briefing para la sesión que ejecute ese cutover.
+## 7b. Reintento único + placeholder + cache (§38-40 del pedido original)
+
+- **Cache en memoria** (`Sync._signedUrlCache`, nunca IndexedDB): dentro de
+  la ventana de vigencia (expiresIn menos 60s de margen) reutiliza la misma
+  URL sin pedir otra; `force: true` la ignora.
+- **`evidenceValueAttr(rawValue)`** — marca cada `<img>` de evidencia con
+  `data-evidence-value="<valor crudo>"` (nunca el signed URL ya usado).
+- **`wireEvidenceImgFallbackOnce()`** — un único listener de `error` a nivel
+  de documento (capturado, ver por qué en el propio código: `error` en
+  `<img>` no burbujea), wireado una vez en `boot()`. Primer fallo de
+  cualquier `<img>` marcado: pide un signed URL nuevo (`force: true`) y
+  reintenta; si ese reintento también falla, reemplaza el `<img>` por un
+  placeholder ("Imagen no disponible sin conexión") — nunca un ícono de
+  imagen rota, nunca un segundo reintento (sin loop).
+- Cubre TODAS las pantallas de §7 de una sola vez (un solo listener a nivel
+  de documento) — no hace falta wirear cada pantalla por separado.
 
 ## 8. Firmas — tratamiento especial
 
@@ -189,12 +217,18 @@ cutover de Auth/RLS ya aplicado primero).
 
 - `tests/unit/storage-privacy.test.js` — `resolvePhotoStoragePath()`,
   `Sync.getSignedPhotoUrl()` (éxito, sin sesión, offline/base64, sin
-  config, falla de red, `!resp.ok`, nunca persiste), headers de Storage con
-  JWT real vs. anon key (legacy), reintento tras fallo.
+  config, falla de red, `!resp.ok`, nunca persiste, cache en memoria +
+  `force`), headers de Storage con JWT real vs. anon key (legacy),
+  reintento tras fallo.
 - `tests/ui/storage-privacy-evidence.spec.js` — `resolveEvidenceSrc()` +
   `openValidationDetailModal()`/`openValidationConflictModal()` reales
   (Playwright), firma local vs. remota, conflicto con 2 firmas resueltas en
   paralelo sin mezclarse.
+- `tests/ui/storage-privacy-gap-closure.spec.js` — `pointRow()`/
+  `familyCardHTML()`/`photoThumbsHTML()`/`resolvePhotoThumbSrcs()` reales
+  (Playwright) resolviendo signed URLs; reintento único + placeholder
+  (`wireEvidenceImgFallbackOnce()`) con fallas de red simuladas vía
+  `page.route().abort()` (determinista, sin depender de timing de DNS).
 - `tests/ui/grease-validation.spec.js` / `tests/ui/mis-engrases-flow.spec.js`
   actualizados (agregan `resolveEvidenceSrc` a la extracción; sin
   regresiones — el fallback silencioso a la URL original cuando `Sync`/

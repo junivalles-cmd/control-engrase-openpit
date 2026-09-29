@@ -2255,7 +2255,12 @@ const MENU = [
 ];
 
 function boot() {
-  Sync.fullSync();
+  wireEvidenceImgFallbackOnce();
+  // runAutoCycle() (no fullSync() directo): además del sync incremental de
+  // siempre, revisa si hay una ventana de full refresh 07:00/19:00
+  // pendiente de HOY — es el catch-up real al abrir la app (ver
+  // docs/SESSION_HANDOFF.md, nunca bloquea esta pantalla: corre aparte).
+  Sync.runAutoCycle();
   refreshLocalNotifications();
   refreshAppBadge();
   startInactivityTracking();
@@ -4768,6 +4773,11 @@ async function openPlanForm(equipmentId, planId, lubricants) {
   const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
   const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
   const assignedDays = (plan && plan.assignedDays) || [];
+  // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+  // la miniatura de un punto puede venir de otro dispositivo (URL/path de
+  // Storage, no base64 local) — se resuelve ANTES de armar el HTML, igual
+  // que Reportes/firma de validación.
+  const pointPhotoSrcs = await Promise.all(points.map(p => resolveEvidenceSrc(p.photo)));
 
   openModal(`Plan de engrase · ${esc(equipment.code)}`, `
     <form id="plan-form" class="form-grid">
@@ -4808,7 +4818,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     </form>
     <div class="panel-head" style="margin-top:16px"><h3>Puntos de engrase</h3></div>
     <div id="points-list">
-      ${points.map(p => pointRow(p, lubricants)).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
+      ${points.map((p, i) => pointRow(p, lubricants, pointPhotoSrcs[i])).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
     </div>
     <div class="row-actions" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-sm" id="btn-add-point" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>${ic("plus")}Agregar punto</button>
@@ -4901,10 +4911,10 @@ async function openPlanForm(equipmentId, planId, lubricants) {
   }));
 }
 
-function pointRow(p, lubricants) {
+function pointRow(p, lubricants, resolvedPhotoSrc) {
   const lub = lubricants.find(l => l.id === p.greaseType);
   return `<div class="point-row">
-    ${p.photo ? photoThumbHTML(p.photo, p.point) : ''}
+    ${p.photo ? photoThumbHTML(resolvedPhotoSrc !== undefined ? resolvedPhotoSrc : p.photo, p.point) : ''}
     <div><b>${esc(p.point)}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} ${GREASE_UNIT}</div></div>
     <div class="row-actions">
       <button class="btn btn-sm point-edit" data-id="${p.id}">${ic("edit")}Editar</button>
@@ -6290,9 +6300,13 @@ async function renderAnomalias() {
     </div>`;
 
 
-  function draw(filter = '') {
+  async function draw(filter = '') {
     const rows = anomalies.filter(a => !filter || a.status === filter);
-    $('#anom-table tbody').innerHTML = rows.map(a => {
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7): las fotos de anomalías pueden venir de otro dispositivo — se
+    // resuelven todas en paralelo antes de armar la tabla.
+    const photoSrcs = await Promise.all(rows.map(a => resolvePhotoThumbSrcs(a)));
+    $('#anom-table tbody').innerHTML = rows.map((a, i) => {
       const eq = equipos.find(e => e.id === a.equipmentId);
       return `<tr>
         <td><span class="dot" style="background:${CRIT_COLOR[a.criticality]}"></span> ${esc(a.criticality)}</td>
@@ -6302,7 +6316,7 @@ async function renderAnomalias() {
         <td>${fmtDate(a.createdAt)}</td>
         <td>${esc(a.createdBy)}</td>
         <td>${esc(a.status)}</td>
-        <td>${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`)}</td>
+        <td>${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`, photoSrcs[i])}</td>
         <td class="row-actions">
           <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
           ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm anom-close" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
@@ -6709,6 +6723,10 @@ async function renderHistorial() {
     const LIMITE_VISIBLE = 200;
     const visibles = results.slice(0, LIMITE_VISIBLE);
     const hayMas = results.length > LIMITE_VISIBLE;
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7) — solo se resuelven las filas VISIBLES (máximo 200), nunca los
+    // miles de resultados filtrados completos.
+    const photoSrcsVisibles = await Promise.all(visibles.map(r => resolvePhotoThumbSrcs(r)));
 
     $('#gh-summary').innerHTML = `
       <span class="hist-global-count">${results.length} resultados${hayMas ? ` · ${LIMITE_VISIBLE} recientes` : ''}</span>
@@ -6719,7 +6737,7 @@ async function renderHistorial() {
       <div class="hist-global-table-wrap">
       <table class="data-table hist-global-table">
         <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Cumplimiento</th><th>Foto</th></tr></thead>
-        <tbody>${visibles.map(r => {
+        <tbody>${visibles.map((r, i) => {
           const eq = eqPorId[r.equipmentId];
           const planEq = planPorEquipoIdHist[r.equipmentId] || null;
           const compliance = evaluateRecordCompliance(r, planEq, findPreviousRecord(r, recordsPorEquipo[r.equipmentId] || []));
@@ -6733,7 +6751,7 @@ async function renderHistorial() {
             <td>${(lubPorId[r.greaseType] || {}).name || '—'}</td>
             <td>${esc(r.condition)}</td>
             <td>${complianceBadgeHTML(compliance)}</td>
-            <td>${photoThumbsHTML(r, eq ? eq.code : '')}</td>
+            <td>${photoThumbsHTML(r, eq ? eq.code : '', photoSrcsVisibles[i])}</td>
           </tr>`;
         }).join('') || '<tr><td colspan="10" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
       </table>
@@ -6906,7 +6924,8 @@ async function openValidationDetailModal(validation, equipment, recordDate) {
   // La firma es contenido sensible (§8 docs/STORAGE_PRIVACY_DESIGN.md) — si
   // este dispositivo no tiene la copia local (base64), se pide un signed
   // URL en vez de mostrar la URL cruda del bucket.
-  const signatureSrc = await resolveEvidenceSrc(validation.signatureLocal || validation.signatureUrl);
+  const signatureRaw = validation.signatureLocal || validation.signatureUrl;
+  const signatureSrc = await resolveEvidenceSrc(signatureRaw);
   openModal('Validación del engrase', `
     <div class="val-info">
       <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
@@ -6919,7 +6938,7 @@ async function openValidationDetailModal(validation, equipment, recordDate) {
     </div>
     <div class="val-signature-wrap">
       <div class="val-signature-label">Firma</div>
-      ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"/>` : '<p class="dim">Firma no disponible en este dispositivo todavía (pendiente de sincronizar).</p>'}
+      ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"${evidenceValueAttr(signatureRaw)}/>` : '<p class="dim">Firma no disponible en este dispositivo todavía (pendiente de sincronizar).</p>'}
     </div>
   `);
 }
@@ -6932,9 +6951,8 @@ async function openValidationDetailModal(validation, equipment, recordDate) {
 async function openValidationConflictModal(validationsActivas, equipment, recordDate) {
   // Misma resolución que openValidationDetailModal(), para cada firma —
   // todas se piden en paralelo antes de armar el modal (nunca una a la vez).
-  const signatureSrcs = await Promise.all(
-    validationsActivas.map(v => resolveEvidenceSrc(v.signatureLocal || v.signatureUrl))
-  );
+  const signatureRaws = validationsActivas.map(v => v.signatureLocal || v.signatureUrl);
+  const signatureSrcs = await Promise.all(signatureRaws.map(v => resolveEvidenceSrc(v)));
   openModal(`Conflicto de validación (${validationsActivas.length})`, `
     <p class="dim">${validationsActivas.length} personas validaron este mismo engrase por separado (probablemente offline, en dispositivos distintos). Ninguna firma se eliminó — revisa cuál es la correcta manualmente.</p>
     ${recordDate ? `<div class="val-info"><div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div></div>` : ''}
@@ -6950,7 +6968,7 @@ async function openValidationConflictModal(validationsActivas, equipment, record
           ${validation.reason ? `<div class="val-info-row"><span>Motivo</span><span>${esc(validation.reason)}</span></div>` : ''}
         </div>
         <div class="val-signature-wrap">
-          ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"/>` : '<p class="dim">Firma no disponible en este dispositivo todavía.</p>'}
+          ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"${evidenceValueAttr(signatureRaws[idx])}/>` : '<p class="dim">Firma no disponible en este dispositivo todavía.</p>'}
         </div>
       </div>`;
     }).join('')}
@@ -7009,7 +7027,7 @@ async function drawHistory(equipmentId) {
     <div id="hist-eq-content"></div>
   `;
 
-  function renderPeriodContent() {
+  async function renderPeriodContent() {
     const fromVal = $('#hist-eq-from').value;
     const toVal = $('#hist-eq-to').value;
     const from = fromVal ? new Date(fromVal + 'T00:00:00') : null;
@@ -7056,6 +7074,12 @@ async function drawHistory(equipmentId) {
     // horómetro actual es el valor EN VIVO del equipo — no es un dato de
     // período, así que nunca cambia con este filtro.
     const ahoraValHist = new Date(); // una sola vez — nunca fecha de sync/apertura de pantalla
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7): fotos de engrase/anomalías pueden venir de otro dispositivo.
+    const [recordPhotoSrcs, anomalyPhotoSrcs] = await Promise.all([
+      Promise.all(records.map(r => resolvePhotoThumbSrcs(r))),
+      Promise.all(anomalies.map(a => resolvePhotoThumbSrcs(a))),
+    ]);
     $('#hist-eq-content').innerHTML = `
       <div class="kpi-grid hist-kpi-grid">
         <div class="kpi-card"><div class="kpi-value mono">${fmt(equipment.hourmeter)} h</div><div class="kpi-label">Horómetro actual</div></div>
@@ -7068,7 +7092,7 @@ async function drawHistory(equipmentId) {
         <table class="data-table hist-table">
           <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Tipo</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
           <tbody>
-            ${records.map(r => {
+            ${records.map((r, i) => {
               const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
               const activasEsteRegistro = findActiveValidations(r.id, validations);
               const valStatus = validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings);
@@ -7095,7 +7119,7 @@ async function drawHistory(equipmentId) {
               <td><span class="hist-cond-badge">${esc(r.condition)}</span>${condDetails[r.id] ? ` <button type="button" class="hist-cond-link" data-rec="${r.id}">Ver detalle</button>` : ''}</td>
               <td>${complianceBadgeHTML(compliance)}</td>
               <td>${validationBadgeHTML(valStatus)} ${valAction}</td>
-              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
+              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[i])}</td>
               ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
             </tr>`;
             }).join('') || `<tr><td colspan="${isAdmin ? 13 : 12}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
@@ -7107,7 +7131,7 @@ async function drawHistory(equipmentId) {
         <table class="data-table">
           <thead><tr><th>Fecha</th><th>Componente</th><th>Descripción</th><th>Criticidad</th><th>Estado</th><th>Foto</th></tr></thead>
           <tbody>
-            ${anomalies.map(a => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty-state">${filtered ? 'Sin anomalías en este período.' : 'Sin anomalías.'}</td></tr>`}
+            ${anomalies.map((a, i) => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`, anomalyPhotoSrcs[i])}</td></tr>`).join('') || `<tr><td colspan="6" class="empty-state">${filtered ? 'Sin anomalías en este período.' : 'Sin anomalías.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -7837,7 +7861,7 @@ async function renderReportes() {
       const srcs = await Promise.all(tanda.map(p => resolveEvidenceSrc(p.photo)));
       const html = tanda.map((p, i) => `
         <div class="photo-report-item">
-          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"/>
+          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"${evidenceValueAttr(p.photo)}/>
           <div class="photo-report-caption"><b>${esc(p.eq)}</b> · ${esc(p.type)}<br/>${fmtDate(p.date)} · ${esc(p.by)}</div>
         </div>`).join('');
 
@@ -8337,34 +8361,86 @@ function fileToCompressedDataURL(file, maxDim = 1400, quality = 0.8) {
 // "cruzable entre dispositivos" (Reportes, firma de validación) — ver
 // docs/STORAGE_PRIVACY_DESIGN.md §Limitaciones para los sitios que SIGUEN
 // usando el valor crudo (miniaturas de checklist, diagramas de familia).
-async function resolveEvidenceSrc(value) {
+async function resolveEvidenceSrc(value, { force = false } = {}) {
   if (!value || typeof value !== 'string') return value || null;
   if (value.startsWith('data:image')) return value; // copia local, nunca red
   try {
     const cfg = await DB.getConfig();
-    const signed = await Sync.getSignedPhotoUrl(value, cfg);
+    const signed = await Sync.getSignedPhotoUrl(value, cfg, { force });
     return signed || value;
   } catch (e) {
     return value;
   }
 }
 
+// Atributo `data-evidence-value` para un <img> resuelto vía
+// resolveEvidenceSrc() — guarda el valor CRUDO (nunca el signed URL ya
+// usado) para que wireEvidenceImgFallbackOnce() pueda pedir uno nuevo si
+// este falla. Base64 nunca lo necesita (no hay nada que "regenerar").
+function evidenceValueAttr(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string' || rawValue.startsWith('data:image')) return '';
+  return ` data-evidence-value="${esc(rawValue)}"`;
+}
+
+// Reintento único + placeholder controlado (§38/§40 docs/
+// STORAGE_PRIVACY_DESIGN.md): un <img> de evidencia (foto/firma) puede
+// fallar por una URL firmada vencida (más de ~1h en pantalla), sin red, o
+// el bucket ya privado sin sesión válida. Wireado UNA sola vez a nivel de
+// documento (el evento 'error' de <img> no burbujea, por eso se usa
+// captura) — cubre Reportes/Ayuda/Plan de engrase/validación sin tener que
+// wirear cada pantalla por separado. Solo actúa sobre <img
+// data-evidence-value="..."> (el valor CRUDO guardado, nunca el signed
+// URL ya usado) — cualquier otra imagen de la app (íconos, avatares) la
+// ignora tal cual.
+function wireEvidenceImgFallbackOnce() {
+  if (wireEvidenceImgFallbackOnce._wired) return;
+  wireEvidenceImgFallbackOnce._wired = true;
+  document.addEventListener('error', async (ev) => {
+    const img = ev.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.evidenceValue) return;
+    if (img.dataset.evidenceRetried) {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'photo-thumb-placeholder dim';
+      placeholder.style.cssText = 'display:flex; align-items:center; justify-content:center; text-align:center; padding:8px; font-size:11px; min-height:60px';
+      placeholder.textContent = 'Imagen no disponible sin conexión';
+      img.replaceWith(placeholder);
+      return;
+    }
+    img.dataset.evidenceRetried = '1';
+    const fresh = await resolveEvidenceSrc(img.dataset.evidenceValue, { force: true });
+    if (fresh) img.src = fresh;
+  }, true);
+}
+
 function openPhotoLightbox(src, caption) {
   openModal(caption || 'Fotografía', `<img src="${src}" style="width:100%; border-radius:8px; display:block"/>`);
 }
 
-function photoThumbHTML(src, caption) {
+function photoThumbHTML(src, caption, rawValue) {
   if (!src) return '<span class="dim">—</span>';
-  return `<img src="${src}" class="photo-thumb" data-full="${src}" data-caption="${(caption || '').replace(/"/g, '&quot;')}" alt="Foto"/>`;
+  return `<img src="${src}" class="photo-thumb" data-full="${src}" data-caption="${(caption || '').replace(/"/g, '&quot;')}" alt="Foto"${evidenceValueAttr(rawValue)}/>`;
 }
 
-// Muestra TODAS las fotos de un registro (funciona igual con registros viejos de una sola foto)
-function photoThumbsHTML(record, caption) {
+// Muestra TODAS las fotos de un registro (funciona igual con registros viejos de una sola foto).
+// `resolvedSrcs` (mismo orden que photosOf(record)) viene de
+// resolvePhotoThumbSrcs() — quien llama lo resuelve ANTES para no volver
+// async esta función ni romper sus muchos llamadores síncronos. Sin
+// `resolvedSrcs` cae al valor crudo (compatibilidad con cualquier llamador
+// que aún no se haya actualizado).
+function photoThumbsHTML(record, caption, resolvedSrcs) {
   const photos = photosOf(record);
   if (!photos.length) return '<span class="dim">—</span>';
+  const srcs = resolvedSrcs || photos;
   return `<div class="photo-thumb-group">${photos.map((p, i) =>
-    photoThumbHTML(p, `${caption || ''}${photos.length > 1 ? ` (${i + 1}/${photos.length})` : ''}`)
+    photoThumbHTML(srcs[i], `${caption || ''}${photos.length > 1 ? ` (${i + 1}/${photos.length})` : ''}`, p)
   ).join('')}</div>`;
+}
+
+// Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+// resuelve TODAS las fotos de un registro en paralelo — usado por Historial
+// (equipo/global) y Anomalías antes de armar la tabla.
+async function resolvePhotoThumbSrcs(record) {
+  return Promise.all(photosOf(record).map(p => resolveEvidenceSrc(p)));
 }
 
 function wirePhotoThumbs(container) {
@@ -8831,7 +8907,17 @@ async function getHelpContent() {
   return help;
 }
 
-function familyCardHTML(fam, canEdit) {
+// Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+// el diagrama de familia y las miniaturas de sus puntos pueden venir de
+// otro dispositivo — async ahora, resuelve TODO antes de armar el HTML
+// (mismo patrón que Reportes/firma de validación/pointRow).
+async function familyCardHTML(fam, canEdit) {
+  const allPoints = fam.zones.flatMap(z => z.points);
+  const [diagramSrc, ...pointSrcs] = await Promise.all([
+    resolveEvidenceSrc(fam.photo),
+    ...allPoints.map(p => resolveEvidenceSrc(p.photo)),
+  ]);
+  const pointSrcByRef = new Map(allPoints.map((p, i) => [p, pointSrcs[i]]));
   return `
     <div class="panel family-card" data-family-id="${fam.id}">
       <div class="panel-head">
@@ -8840,13 +8926,13 @@ function familyCardHTML(fam, canEdit) {
       </div>
       <div class="family-body">
         <div class="family-diagram">${fam.photo
-          ? `<img src="${fam.photo}" class="family-photo photo-thumb" data-full="${fam.photo}" data-caption="${esc(fam.name)}" alt="${esc(fam.name)}"/>`
+          ? `<img src="${diagramSrc}" class="family-photo photo-thumb" data-full="${diagramSrc}" data-caption="${esc(fam.name)}" alt="${esc(fam.name)}"/>`
           : familySilhouetteSvg(fam.svg)}</div>
         <div class="family-zones">
           ${fam.zones.map(z => `
             <div class="family-zone">
               <div class="family-zone-title"><span class="dot" style="background:${z.color}"></span>${esc(z.name)}</div>
-              <ul class="family-zone-list">${z.points.map(p => `<li>${p.photo ? photoThumbHTML(p.photo, p.text) : ''}<span>${p.text}</span></li>`).join('')}</ul>
+              <ul class="family-zone-list">${z.points.map(p => `<li>${p.photo ? photoThumbHTML(pointSrcByRef.get(p), p.text) : ''}<span>${p.text}</span></li>`).join('')}</ul>
             </div>`).join('')}
         </div>
       </div>
@@ -8862,11 +8948,14 @@ async function renderAyuda() {
 
   // Accesos compactos por familia (chip) en vez de mostrar las N tarjetas completas de
   // una vez — la tarjeta real (familyCardHTML) se muestra/oculta al tocar su chip.
+  // familyCardHTML() es async (resuelve signed URLs) — se resuelven todas
+  // las familias en paralelo antes de armar el HTML final.
+  const familyCards = await Promise.all(help.families.map(f => familyCardHTML(f, canEdit)));
   const familiesHTML = help.families.length ? `
       <div class="ayuda-family-chips">
         ${help.families.map(f => `<button type="button" class="ayuda-family-chip" data-family-id="${f.id}">${esc(f.name)}</button>`).join('')}
       </div>
-      ${help.families.map(f => `<div class="ayuda-family-card hidden" data-family-wrap="${f.id}">${familyCardHTML(f, canEdit)}</div>`).join('')}`
+      ${help.families.map((f, i) => `<div class="ayuda-family-card hidden" data-family-wrap="${f.id}">${familyCards[i]}</div>`).join('')}`
     : `<div class="empty-state">No hay guías visuales configuradas todavía.</div>`;
 
   c.innerHTML = `

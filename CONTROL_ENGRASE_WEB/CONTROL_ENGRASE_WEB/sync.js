@@ -170,6 +170,10 @@ function syncAuthHeaders(cfg) {
 const Sync = {
   syncing: false,
   listeners: [],
+  // Signed URLs de Storage — EN MEMORIA nada más (§39 docs/
+  // STORAGE_PRIVACY_DESIGN.md), se vacía sola al recargar la página, nunca
+  // se persiste. Ver getSignedPhotoUrl() más abajo.
+  _signedUrlCache: new Map(),
   // Mejora: intervalo de auto-sync configurable por el Administrador (ver
   // app.js renderConfig() → "Sincronización"). Guardan el ID del timer
   // activo y el intervalo vigente para poder cambiarlo en caliente sin
@@ -338,11 +342,21 @@ const Sync = {
   // conexión, bucket todavía no privado pero policy de signing distinta,
   // etc.) — quien llama debe caer de vuelta a la URL/valor original en ese
   // caso (ver app.js, siempre con fallback).
-  async getSignedPhotoUrl(value, cfg, { expiresIn = 3600 } = {}) {
+  // Cache EN MEMORIA (nunca IndexedDB, nunca sobrevive un reload) por path
+  // — dentro de la ventana de vigencia (menos un margen de 60s) devuelve la
+  // misma URL sin pedir otra al servidor; `force: true` (usado por el
+  // reintento de app.js cuando un <img> falla por URL vencida, ver
+  // resolveEvidenceSrc()) ignora el cache y pide una nueva de una vez.
+  async getSignedPhotoUrl(value, cfg, { expiresIn = 3600, force = false } = {}) {
     const path = resolvePhotoStoragePath(value);
     if (!path) return null;
     if (!cfg || !cfg.url || !cfg.anonKey) return null;
     if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) return null;
+    const cacheKey = `${cfg.url}::${path}`;
+    if (!force) {
+      const cached = this._signedUrlCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) return cached.url;
+    }
     try {
       const resp = await fetchWithTimeout(`${cfg.url}/storage/v1/object/sign/${PHOTO_BUCKET}/${path}`, {
         method: 'POST',
@@ -352,7 +366,9 @@ const Sync = {
       if (!resp.ok) return null;
       const json = await resp.json();
       if (!json || typeof json.signedURL !== 'string') return null;
-      return `${cfg.url}/storage/v1${json.signedURL}`;
+      const url = `${cfg.url}/storage/v1${json.signedURL}`;
+      this._signedUrlCache.set(cacheKey, { url, expiresAt: Date.now() + expiresIn * 1000 - 60000 });
+      return url;
     } catch (e) {
       return null;
     }

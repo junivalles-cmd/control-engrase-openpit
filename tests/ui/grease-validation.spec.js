@@ -22,7 +22,7 @@ const dbSource = readSource(DB_JS_PATH);
 const statusSource = readSource(LUBRICATION_STATUS_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 
-const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal', 'validationBadgeHTML', 'openValidationModal', 'openValidationDetailModal', 'openValidationConflictModal', 'resolveEvidenceSrc'];
+const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal', 'validationBadgeHTML', 'openValidationModal', 'openValidationDetailModal', 'openValidationConflictModal', 'resolveEvidenceSrc', 'evidenceValueAttr'];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
 const dbRealSrc = ['uid', 'nowISO', 'stamp'].map(n => extractDeclaration(dbSource, n)).join('\n\n');
