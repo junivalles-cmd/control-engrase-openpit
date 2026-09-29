@@ -8,6 +8,39 @@
 
 const PHOTO_BUCKET = 'engrase-photos';
 
+// Pre-cutover — ventanas diarias de "full refresh" (ver
+// docs/SESSION_HANDOFF.md, lote PIN+sync+storage). El sync incremental
+// normal (pushAll/pullAll cada `syncIntervalSeconds`, ver startAuto() más
+// abajo) sigue corriendo exactamente igual — esto es una red de seguridad
+// ADICIONAL, no un reemplazo: dos veces al día se fuerza un re-pull
+// COMPLETO (cursor `lastPull` retrocedido, nunca filtrado por store — el
+// esquema de `engrase_sync` no separa cursores por store) para autocorregir
+// cualquier fila que el sync incremental haya podido saltarse, sin depender
+// de que el dispositivo esté encendido justo a esa hora (ver
+// runFullRefreshIfDue() y el catch-up al reabrir la app).
+const FULL_REFRESH_WINDOWS = [
+  { id: 'AM', hour: 7, minute: 0 },
+  { id: 'PM', hour: 19, minute: 0 },
+];
+
+function localDateISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Puras — qué ventanas de HOY ya deberían haber pasado y cuál (si alguna)
+// sigue pendiente, dado el estado ya guardado en cfg.lastFullRefreshWindow
+// (`{ date, windows: [...ids ya cumplidos hoy] }`). Un día distinto al
+// guardado reinicia la lista (ninguna ventana de HOY se ha cumplido
+// todavía) — nunca se arrastra el estado de un día anterior.
+function dueFullRefreshWindows(now, lastState) {
+  const todayISO = localDateISO(now);
+  const doneToday = (lastState && lastState.date === todayISO) ? (lastState.windows || []) : [];
+  return FULL_REFRESH_WINDOWS.filter(w => {
+    const pasoLaHora = now.getHours() > w.hour || (now.getHours() === w.hour && now.getMinutes() >= w.minute);
+    return pasoLaHora && !doneToday.includes(w.id);
+  });
+}
+
 // P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md) — compatibilidad hacia atrás:
 // todo registro YA sincronizado (y todo el que se siga subiendo hoy, ver
 // uploadPhotoIfNeeded/uploadSignatureIfNeeded) guarda la URL PÚBLICA
@@ -591,6 +624,55 @@ const Sync = {
     return { ok: true, pulled: rows.length, newAnomalies, conflicts: conflicts.length };
   },
 
+  // Se llama SOLO desde dentro de fullSync() (después de un push/pull
+  // incremental exitoso) — nunca desde afuera, así nunca corre en paralelo
+  // con otro fullSync() (this.syncing ya lo serializa) y nunca corre sobre
+  // una sesión sin validar. Si ninguna ventana está pendiente, no hace
+  // ninguna request de más — el chequeo de fecha/hora es 100% local.
+  async runFullRefreshIfDue() {
+    const cfg = await DB.getConfig();
+    const now = new Date();
+    const pendientes = dueFullRefreshWindows(now, cfg.lastFullRefreshWindow);
+    if (!pendientes.length) return null;
+    const ventana = pendientes[0]; // una por llamada — la siguiente ventana (si la hay) se toma en el próximo ciclo/apertura
+    const cursorPrevio = cfg.lastPull;
+    // Retrocede el cursor para forzar un re-pull COMPLETO — pullAll() ya
+    // aplica decidePullAction()/CAS (ver P0-1) fila por fila, así que un
+    // cambio local pendiente NUNCA se pisa aunque el full refresh recorra
+    // años de historial (§22 del pedido: full refresh no debe borrar dirty).
+    cfg.lastPull = '1970-01-01T00:00:00.000Z';
+    await DB.setConfig(cfg);
+    // pullAll() no tiene try/catch propio (a diferencia de pushAll(), que sí
+    // aísla errores por store) — una falla de red a mitad del re-pull
+    // completo (mucho más largo que un pull incremental normal) puede
+    // lanzar en vez de devolver {ok:false}. Cualquiera de los dos casos
+    // restaura el cursor anterior de la misma forma, sin marcar la ventana.
+    let pullRes;
+    try {
+      pullRes = await this.pullAll();
+    } catch (e) {
+      pullRes = { ok: false, reason: isNetworkFailure(e) ? 'backend_unreachable' : 'error' };
+    }
+    if (!pullRes.ok) {
+      // No se pudo completar (sin sesión, red cortada a mitad de camino,
+      // etc.) — se restaura el cursor anterior para no perder el progreso
+      // incremental normal, y se reintenta en el próximo ciclo/apertura
+      // (nunca se marca la ventana como cumplida).
+      const cfgRevert = await DB.getConfig();
+      cfgRevert.lastPull = cursorPrevio;
+      await DB.setConfig(cfgRevert);
+      return { ok: false, window: ventana.id, reason: pullRes.reason };
+    }
+    const pushRes = await this.pushAll();
+    const cfgFinal = await DB.getConfig();
+    const doneToday = (cfgFinal.lastFullRefreshWindow && cfgFinal.lastFullRefreshWindow.date === localDateISO(now))
+      ? cfgFinal.lastFullRefreshWindow.windows : [];
+    cfgFinal.lastFullRefreshAt = nowISO();
+    cfgFinal.lastFullRefreshWindow = { date: localDateISO(now), windows: [...doneToday, ventana.id] };
+    await DB.setConfig(cfgFinal);
+    return { ok: true, window: ventana.id, pulled: pullRes.pulled, pushed: pushRes.pushed };
+  },
+
   async fullSync() {
     if (this.syncing) return;
     if (!(await this.isConfigured())) { this.notify({ status: 'unconfigured' }); return; }
@@ -664,6 +746,27 @@ const Sync = {
     }
   },
 
+  // Wrapper para los puntos de entrada AUTOMÁTICOS de sync (arranque de la
+  // app, timer periódico, reconexión, volver a foreground) — NUNCA para
+  // fullSync() en sí, que se deja intacto a propósito (lo llaman decenas de
+  // sitios existentes, incluyendo TODOS los tests de tests/unit/sync-*, que
+  // no deben depender del reloj real). Corre el sync incremental de
+  // siempre y, aparte, revisa si hay una ventana de full refresh pendiente
+  // (07:00/19:00, ver runFullRefreshIfDue()) — nunca antes de la primera
+  // sincronización real (`cfg.lastPull` todavía sin valor) ni sin sesión
+  // válida en modo supabase (mismo gate que pushAll/pullAll).
+  async runAutoCycle() {
+    // Hay que mirar `lastPull` ANTES de fullSync(): esa misma llamada, si es
+    // la primera del dispositivo, lo deja seteado al terminar — comprobarlo
+    // DESPUÉS ya no distinguiría "acababa de ser la primera vez".
+    const cfgBefore = await DB.getConfig();
+    const esPrimeraVez = !(cfgBefore && cfgBefore.lastPull);
+    await this.fullSync();
+    if (esPrimeraVez) return; // esa sincronización ya bajó todo — no hace falta un full refresh aparte
+    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) return;
+    await this.runFullRefreshIfDue();
+  },
+
   // `intervalSeconds`: lo decide el Administrador desde Configuración (ver
   // app.js App.generalSettings.syncIntervalSeconds, ya sincronizado y
   // validado — antes era un fijo de 20s). Los listeners de
@@ -672,17 +775,17 @@ const Sync = {
   // caliente (setAutoInterval()) sin duplicar listeners ni crear un
   // segundo timer.
   startAuto(intervalSeconds = 120) {
-    window.addEventListener('online', () => this.fullSync());
+    window.addEventListener('online', () => this.runAutoCycle());
 
     // Al volver a la app después de tenerla en segundo plano, sincroniza enseguida en
     // vez de esperar el siguiente ciclo. Es el momento en que la persona mira la
     // pantalla, y es cuando peor sienta ver datos viejos.
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && navigator.onLine) this.fullSync();
+      if (!document.hidden && navigator.onLine) this.runAutoCycle();
     });
 
     this._restartAutoTimer(intervalSeconds);
-    if (navigator.onLine) this.fullSync();
+    if (navigator.onLine) this.runAutoCycle();
   },
 
   // Cambia el intervalo del auto-sync EN CALIENTE (el Administrador lo
@@ -699,6 +802,6 @@ const Sync = {
     // Cada ciclo mueve solo lo que cambió (ver pushAll/pullAll), así que el
     // costo de un intervalo corto es mínimo — el valor en sí ahora lo
     // decide el Administrador, ya no un fijo de 20s.
-    this._autoTimerId = setInterval(() => { if (navigator.onLine) this.fullSync(); }, intervalSeconds * 1000);
+    this._autoTimerId = setInterval(() => { if (navigator.onLine) this.runAutoCycle(); }, intervalSeconds * 1000);
   }
 };
