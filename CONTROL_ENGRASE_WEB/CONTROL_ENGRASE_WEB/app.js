@@ -440,7 +440,13 @@ async function showEquipmentQrInfo(equipmentId) {
   $('#qr-info-register')?.addEventListener('click', async () => {
     closeModal();
     if (App.currentUser.role === 'LUBRICADOR') await startLubricadorGreaseFlow(equipment.id);
-    else await startGreaseFlow(equipment.id, App.route);
+    // FIX: startGreaseFlow() espera un elemento DOM real o `undefined`
+    // (cae a navigate('registrar') + #reg-flow-area) — App.route es un
+    // string (ej. 'equipos') y nunca debió pasarse aquí: una asignación de
+    // propiedad sobre un string primitivo no lanza error, simplemente no
+    // hace nada, así que el formulario nunca aparecía para jefaturas desde
+    // este botón (bug documentado en docs/OPERATIONAL_SCOPE.md).
+    else await startGreaseFlow(equipment.id);
   });
   $('#qr-info-out-of-plan')?.addEventListener('click', async () => {
     closeModal();

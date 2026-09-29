@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v49'; // v49: engrase fuera de plan (PLANNED/ASSIGNED/OUT_OF_PLAN) — botón "+ Fuera de plan" en Mi Turno (sin pestaña nueva), motivo+completitud, satisface ocurrencias por adelantado (día/turno) o reinicia el ciclo (horas), REALIZADO ADELANTADO en Matriz Semanal, columna "Tipo" en Historial, corrección del pendiente histórico de Reportes por ubicación (ver docs/OPERATIONAL_SCOPE.md). Cambios en app.js/src/core/operational-scope.js/src/core/weekly-matrix.js/styles.css de este mismo lote. Este build queda listo pero NO se publica/instala en este commit.
+const CACHE = 'engrase-openpit-v50'; // v50: fix — showEquipmentQrInfo() ya no pasa App.route (string) como target de startGreaseFlow() para jefaturas (ADMIN/PLANIFICADOR/SUPERVISOR) al registrar engrase desde el botón del QR; el formulario nunca aparecía para ese flujo (bug documentado en docs/OPERATIONAL_SCOPE.md, sesión 2026-09-28c). Solo app.js.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
