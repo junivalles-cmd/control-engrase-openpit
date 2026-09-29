@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v50'; // v50: fix — showEquipmentQrInfo() ya no pasa App.route (string) como target de startGreaseFlow() para jefaturas (ADMIN/PLANIFICADOR/SUPERVISOR) al registrar engrase desde el botón del QR; el formulario nunca aparecía para ese flujo (bug documentado en docs/OPERATIONAL_SCOPE.md, sesión 2026-09-28c). Solo app.js.
+const CACHE = 'engrase-openpit-v51'; // v51: prep P0-3 (Storage privado/autenticado, bucket NO cambiado todavía) — sync.js gana resolvePhotoStoragePath()/Sync.getSignedPhotoUrl(), uploads de fotos/firma ahora usan syncAuthHeaders() (JWT real en modo supabase, igual que engrase_sync); app.js gana resolveEvidenceSrc() y lo conecta en la firma de validación (detalle/conflicto) y en la galería de Reportes — ver docs/STORAGE_PRIVACY_DESIGN.md. Bucket sigue público, sin cambio de comportamiento visible hoy.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

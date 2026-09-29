@@ -2670,13 +2670,13 @@ async function renderLubricadorHistorial() {
     const validation = findActiveValidation(b.dataset.rec, validations);
     const rec = records.find(r => r.id === b.dataset.rec);
     const eq = equipos.find(e => e.id === b.dataset.eq);
-    if (validation && eq) openValidationDetailModal(validation, eq, rec ? rec.date : null);
+    if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
   }));
-  $$('.lub-ver-conflicto-btn', c).forEach(b => b.addEventListener('click', () => {
+  $$('.lub-ver-conflicto-btn', c).forEach(b => b.addEventListener('click', async () => {
     const activas = findActiveValidations(b.dataset.rec, validations);
     const rec = records.find(r => r.id === b.dataset.rec);
     const eq = equipos.find(e => e.id === b.dataset.eq);
-    if (activas.length > 1 && eq) openValidationConflictModal(activas, eq, rec ? rec.date : null);
+    if (activas.length > 1 && eq) await openValidationConflictModal(activas, eq, rec ? rec.date : null);
   }));
 }
 
@@ -3211,11 +3211,11 @@ async function renderDashboard() {
         }).join('') || '<div class="empty-state">Sin conflictos.</div>'}
       </div>
     `);
-    $$('.dash-ver-conflicto-btn', $('.modal-body')).forEach(b => b.addEventListener('click', () => {
+    $$('.dash-ver-conflicto-btn', $('.modal-body')).forEach(b => b.addEventListener('click', async () => {
       const activas = findActiveValidations(b.dataset.rec, validations);
       const rec = recordsConflictoValidacion.find(r => r.id === b.dataset.rec);
       const eq = rec ? equipos.find(e => e.id === rec.equipmentId) : null;
-      if (activas.length > 1) openValidationConflictModal(activas, eq, rec ? rec.date : null);
+      if (activas.length > 1) await openValidationConflictModal(activas, eq, rec ? rec.date : null);
     }));
   }
 
@@ -6825,12 +6825,12 @@ async function openValidationModal(record, equipment, onDone) {
     const yaActivas = findActiveValidations(record.id, await DB.allActive('grease_validations'));
     if (yaActivas.length === 1) {
       closeModal();
-      openValidationDetailModal(yaActivas[0], equipment, record.date);
+      await openValidationDetailModal(yaActivas[0], equipment, record.date);
       return;
     }
     if (yaActivas.length > 1) {
       closeModal();
-      openValidationConflictModal(yaActivas, equipment, record.date);
+      await openValidationConflictModal(yaActivas, equipment, record.date);
       return;
     }
 
@@ -6852,9 +6852,12 @@ async function openValidationModal(record, equipment, onDone) {
 // Vista de SOLO LECTURA de una validación ya existente — "Ver validación"
 // (nunca se abre openValidationModal de nuevo sobre un registro ya
 // validado: esta primera versión no soporta revalidación).
-function openValidationDetailModal(validation, equipment, recordDate) {
+async function openValidationDetailModal(validation, equipment, recordDate) {
   const status = statusForSignerRole(validation.signerRole);
-  const signatureSrc = validation.signatureLocal || validation.signatureUrl;
+  // La firma es contenido sensible (§8 docs/STORAGE_PRIVACY_DESIGN.md) — si
+  // este dispositivo no tiene la copia local (base64), se pide un signed
+  // URL en vez de mostrar la URL cruda del bucket.
+  const signatureSrc = await resolveEvidenceSrc(validation.signatureLocal || validation.signatureUrl);
   openModal('Validación del engrase', `
     <div class="val-info">
       <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
@@ -6877,12 +6880,17 @@ function openValidationDetailModal(validation, equipment, recordDate) {
 // Muestra TODAS completas (nombre/rol/fecha/motivo/firma), sin elegir
 // ninguna ni borrar nada — la resolución (marcar cuál es la válida) NO está
 // implementada todavía (ver docs/GREASE_VALIDATION_AUDIT.md §13).
-function openValidationConflictModal(validationsActivas, equipment, recordDate) {
+async function openValidationConflictModal(validationsActivas, equipment, recordDate) {
+  // Misma resolución que openValidationDetailModal(), para cada firma —
+  // todas se piden en paralelo antes de armar el modal (nunca una a la vez).
+  const signatureSrcs = await Promise.all(
+    validationsActivas.map(v => resolveEvidenceSrc(v.signatureLocal || v.signatureUrl))
+  );
   openModal(`Conflicto de validación (${validationsActivas.length})`, `
     <p class="dim">${validationsActivas.length} personas validaron este mismo engrase por separado (probablemente offline, en dispositivos distintos). Ninguna firma se eliminó — revisa cuál es la correcta manualmente.</p>
     ${recordDate ? `<div class="val-info"><div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div></div>` : ''}
     ${validationsActivas.map((validation, idx) => {
-      const signatureSrc = validation.signatureLocal || validation.signatureUrl;
+      const signatureSrc = signatureSrcs[idx];
       return `
       <div class="val-conflict-item">
         <div class="val-conflict-item-head">Firma ${idx + 1}</div>
@@ -7066,15 +7074,15 @@ async function drawHistory(equipmentId) {
       const rec = records.find(r => r.id === b.dataset.rec);
       if (rec) openValidationModal(rec, equipment, () => drawHistory(equipmentId));
     }));
-    $$('.hist-ver-validacion-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+    $$('.hist-ver-validacion-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
       const validation = findActiveValidation(b.dataset.rec, validations);
       const rec = records.find(r => r.id === b.dataset.rec);
-      if (validation) openValidationDetailModal(validation, equipment, rec ? rec.date : null);
+      if (validation) await openValidationDetailModal(validation, equipment, rec ? rec.date : null);
     }));
-    $$('.hist-ver-conflicto-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+    $$('.hist-ver-conflicto-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
       const activas = findActiveValidations(b.dataset.rec, validations);
       const rec = records.find(r => r.id === b.dataset.rec);
-      if (activas.length > 1) openValidationConflictModal(activas, equipment, rec ? rec.date : null);
+      if (activas.length > 1) await openValidationConflictModal(activas, equipment, rec ? rec.date : null);
     }));
 
     if (isAdmin) {
@@ -7771,11 +7779,16 @@ async function renderReportes() {
     const POR_TANDA = 24;
     let mostradas = 0;
 
-    function pintarTanda() {
+    async function pintarTanda() {
       const tanda = photoItems.slice(mostradas, mostradas + POR_TANDA);
-      const html = tanda.map(p => `
+      // Cada foto puede ser base64 local (se muestra directo) o una URL/path
+      // de Storage que puede necesitar un signed URL (ver
+      // docs/STORAGE_PRIVACY_DESIGN.md) — se resuelven las de ESTA tanda
+      // nada más (nunca las 300 de golpe), en paralelo.
+      const srcs = await Promise.all(tanda.map(p => resolveEvidenceSrc(p.photo)));
+      const html = tanda.map((p, i) => `
         <div class="photo-report-item">
-          <img src="${p.photo}" class="photo-thumb-lg" loading="lazy" data-full="${p.photo}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"/>
+          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"/>
           <div class="photo-report-caption"><b>${esc(p.eq)}</b> · ${esc(p.type)}<br/>${fmtDate(p.date)} · ${esc(p.by)}</div>
         </div>`).join('');
 
@@ -8261,6 +8274,30 @@ function fileToCompressedDataURL(file, maxDim = 1400, quality = 0.8) {
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
+}
+
+// P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md) — resuelve el `src` real para
+// mostrar UNA evidencia (foto de engrase/anomalía, firma) que puede venir
+// como base64 local (offline, este dispositivo la tomó) o como una URL/path
+// de Storage (la subió este u otro dispositivo). Base64 se muestra directo,
+// sin red. Cualquier otra cosa intenta un signed URL (funciona igual hoy,
+// con el bucket todavía público, que el día que deje de serlo); si eso
+// falla por lo que sea (sin conexión, sesión vencida, bucket aún no
+// migrado) cae de vuelta al valor original — nunca deja de mostrar algo si
+// había algo que mostrar. Usado hoy solo en las dos pantallas de evidencia
+// "cruzable entre dispositivos" (Reportes, firma de validación) — ver
+// docs/STORAGE_PRIVACY_DESIGN.md §Limitaciones para los sitios que SIGUEN
+// usando el valor crudo (miniaturas de checklist, diagramas de familia).
+async function resolveEvidenceSrc(value) {
+  if (!value || typeof value !== 'string') return value || null;
+  if (value.startsWith('data:image')) return value; // copia local, nunca red
+  try {
+    const cfg = await DB.getConfig();
+    const signed = await Sync.getSignedPhotoUrl(value, cfg);
+    return signed || value;
+  } catch (e) {
+    return value;
+  }
 }
 
 function openPhotoLightbox(src, caption) {

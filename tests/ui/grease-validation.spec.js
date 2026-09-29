@@ -22,7 +22,7 @@ const dbSource = readSource(DB_JS_PATH);
 const statusSource = readSource(LUBRICATION_STATUS_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 
-const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal', 'validationBadgeHTML', 'openValidationModal', 'openValidationDetailModal', 'openValidationConflictModal'];
+const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal', 'validationBadgeHTML', 'openValidationModal', 'openValidationDetailModal', 'openValidationConflictModal', 'resolveEvidenceSrc'];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
 const dbRealSrc = ['uid', 'nowISO', 'stamp'].map(n => extractDeclaration(dbSource, n)).join('\n\n');
@@ -199,13 +199,13 @@ test('máximo UNA validación activa: si ya existe una al confirmar, NO crea otr
 
 test('"Ver validación" (detalle) muestra nombre, rol, fecha/hora, motivo (Encargado) y la firma', async ({ page }) => {
   await bootPage(page);
-  await page.evaluate(({ equipment }) => {
+  await page.evaluate(async ({ equipment }) => {
     const validation = {
       id: 'val_1', lubricationRecordId: 'greg_1', equipmentId: equipment.id,
       signerName: 'María López', signerRole: 'ENCARGADO', reason: 'Operador no disponible',
       signedAt: '2026-09-24T18:20:00', signatureLocal: 'data:image/png;base64,ZZZZ', active: true,
     };
-    window.openValidationDetailModal(validation, equipment);
+    await window.openValidationDetailModal(validation, equipment);
   }, { equipment: EQUIPMENT });
 
   const info = page.locator('.val-info');

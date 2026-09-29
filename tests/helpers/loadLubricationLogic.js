@@ -172,7 +172,7 @@ export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, ['classifyAuthStatus']],
-  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'Sync']],
+  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'Sync']],
 ];
 
 /**

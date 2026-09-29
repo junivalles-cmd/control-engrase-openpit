@@ -8,6 +8,34 @@
 
 const PHOTO_BUCKET = 'engrase-photos';
 
+// P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md) — compatibilidad hacia atrás:
+// todo registro YA sincronizado (y todo el que se siga subiendo hoy, ver
+// uploadPhotoIfNeeded/uploadSignatureIfNeeded) guarda la URL PÚBLICA
+// completa (`.../storage/v1/object/public/<bucket>/<path>`), nunca un path
+// suelto — cambiar ese formato de escritura hoy habría significado revisar
+// TODO lugar que hace `<img src="${row.photo}">` en app.js (miniaturas de
+// checklist, diagramas de familia de equipo — fuera del alcance de fotos de
+// engrase/anomalías/firmas que pide este lote) para que supieran resolver
+// un path suelto, con riesgo real de romper alguno en silencio. En vez de
+// eso, esta función EXTRAE el path desde la URL pública ya guardada (o lo
+// devuelve tal cual si ya es un path suelto, para cuando en el futuro se
+// decida escribirlo así) — así getSignedPhotoUrl() funciona HOY, sin migrar
+// ni un solo registro histórico ni cambiar el formato de escritura.
+// null/undefined/base64 (`data:image...`, foto local sin subir todavía) no
+// son URLs de Storage — no se les puede pedir un signed URL, devuelve null.
+function resolvePhotoStoragePath(value) {
+  if (typeof value !== 'string' || !value) return null;
+  if (value.startsWith('data:image')) return null;
+  const marker = `/storage/v1/object/public/${PHOTO_BUCKET}/`;
+  const idx = value.indexOf(marker);
+  if (idx !== -1) return value.slice(idx + marker.length);
+  // Ya es un path suelto (sin protocolo) — se acepta tal cual.
+  if (!/^https?:\/\//i.test(value)) return value;
+  // Una URL absoluta que no es de nuestro bucket público conocido (dato
+  // legado de otra forma, o ya un signed URL) — no hay path que extraer.
+  return null;
+}
+
 function dataURLtoBlob(dataURL) {
   const [header, base64] = dataURL.split(',');
   const mimeMatch = /data:(.*?);base64/.exec(header || '');
@@ -64,20 +92,21 @@ function decidePullAction(localRow, remoteUpdatedAt) {
 }
 
 // P0-2 — fuente ÚNICA del Authorization real de TODA request a
-// `engrase_sync` (pull paginado, POST create, PATCH CAS, fetchRemoteUpdatedAt).
+// `engrase_sync` (pull paginado, POST create, PATCH CAS, fetchRemoteUpdatedAt)
+// Y, desde P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md), también de toda
+// request a Supabase Storage (subida de fotos/firmas, generación de signed
+// URLs) — mismo criterio, una sola fuente de verdad.
 // En AUTH_MODE='supabase' con sesión autenticada, el access_token de la
-// PERSONA (nunca el anon key) — así las políticas RLS nuevas pueden
+// PERSONA (nunca el anon key) — así las políticas RLS/Storage nuevas pueden
 // resolver auth.uid() de verdad; en 'legacy' (o sin Auth cargado, o sin
 // sesión) sigue siendo el anon key compartido, comportamiento actual sin
 // cambios. Nunca duplica lógica de refresh aquí: fullSync() ya llamó
 // Auth.restoreSession() (refresca si hace falta) ANTES de tocar la red de
 // sync — esto solo LEE el resultado ya vigente vía Auth.getSession(), en
 // cada llamada, así que un token recién refrescado se usa de inmediato en
-// la siguiente request. Storage (fotos/firmas) queda fuera a propósito —
-// ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §15 (P0-3, fuera de alcance de
-// P0-2) — y testConnection() también queda fuera: prueba una anon key que
-// el administrador acaba de escribir en el formulario, antes de que exista
-// ninguna sesión que usar.
+// la siguiente request. testConnection() queda fuera a propósito: prueba
+// una anon key que el administrador acaba de escribir en el formulario,
+// antes de que exista ninguna sesión que usar.
 function syncAuthHeaders(cfg) {
   const useUserJwt = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
   const bearer = useUserJwt ? Auth.getSession().accessToken : cfg.anonKey;
@@ -193,7 +222,7 @@ const Sync = {
         const resp = await fetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
           method: 'POST',
           headers: {
-            apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}`,
+            ...syncAuthHeaders(cfg),
             'Content-Type': blob.type || 'image/jpeg', 'x-upsert': 'true'
           },
           body: blob
@@ -236,7 +265,7 @@ const Sync = {
       const resp = await fetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
         method: 'POST',
         headers: {
-          apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}`,
+          ...syncAuthHeaders(cfg),
           'Content-Type': blob.type || 'image/png', 'x-upsert': 'true'
         },
         body: blob
@@ -256,6 +285,43 @@ const Sync = {
     } catch (e) {
       console.warn('No se pudo subir la firma a Storage', e);
       return row;
+    }
+  },
+
+  // P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md) — genera una URL firmada
+  // TEMPORAL para ver una evidencia (foto/firma) que este dispositivo NO
+  // tiene en base64 local (la subió otro dispositivo, o se perdió la copia
+  // local tras reinstalar). Es el mecanismo de lectura que sigue
+  // funcionando cuando el bucket deje de ser público — hoy, con el bucket
+  // todavía público, también funciona (la policy "lectura publica" sigue
+  // activa), así que no cambia nada visible todavía.
+  // NUNCA se persiste el resultado (el token expira) — quien la use la pide
+  // de nuevo cada vez que necesita mostrar la imagen, nunca la guarda en
+  // IndexedDB ni en el payload que se sube a engrase_sync.
+  // Devuelve null (nunca lanza) si: el valor no es una URL/path de Storage
+  // reconocible (p.ej. sigue en base64, o está vacío), si AUTH_MODE es
+  // 'supabase' y no hay sesión válida (mismo gate que pushAll/pullAll — cero
+  // requests de red sin sesión), o si la request de firmado falla (sin
+  // conexión, bucket todavía no privado pero policy de signing distinta,
+  // etc.) — quien llama debe caer de vuelta a la URL/valor original en ese
+  // caso (ver app.js, siempre con fallback).
+  async getSignedPhotoUrl(value, cfg, { expiresIn = 3600 } = {}) {
+    const path = resolvePhotoStoragePath(value);
+    if (!path) return null;
+    if (!cfg || !cfg.url || !cfg.anonKey) return null;
+    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) return null;
+    try {
+      const resp = await fetchWithTimeout(`${cfg.url}/storage/v1/object/sign/${PHOTO_BUCKET}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...syncAuthHeaders(cfg) },
+        body: JSON.stringify({ expiresIn })
+      });
+      if (!resp.ok) return null;
+      const json = await resp.json();
+      if (!json || typeof json.signedURL !== 'string') return null;
+      return `${cfg.url}/storage/v1${json.signedURL}`;
+    } catch (e) {
+      return null;
     }
   },
 
