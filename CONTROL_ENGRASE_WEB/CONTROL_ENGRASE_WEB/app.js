@@ -1924,6 +1924,51 @@ async function renderLogin() {
   $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 }
 
+// Modal de confirmación de "Cerrar sesión" (pre-cutover, ver
+// docs/SESSION_HANDOFF.md) — antes disparaba logout() directo desde el
+// click, sin ningún alert()/confirm() nativo ni modal propio. Nunca
+// destructivo por accidente: un solo toque en el botón del sidebar ya no
+// cierra la sesión de inmediato.
+function confirmLogout() {
+  openModal('¿Cerrar sesión en este dispositivo?', `
+    <p>Después tendrás que ingresar nuevamente tu usuario y contraseña.</p>
+    <p class="dim">El acceso rápido mediante PIN de esta sesión se eliminará.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirm-logout-cancel">Cancelar</button>
+      <button type="button" class="btn btn-danger" id="confirm-logout-confirm">Cerrar sesión</button>
+    </div>
+  `);
+  $('#confirm-logout-cancel').addEventListener('click', closeModal);
+  $('#confirm-logout-confirm').addEventListener('click', () => { closeModal(); logout(); });
+}
+
+// "Cambiar usuario" — distinto de Bloquear (mantiene todo intacto) y de
+// Cerrar sesión (mismo texto que esa acción para quien lo lee, pero pensado
+// para el flujo "otra persona va a usar este teléfono ahora", no para dejar
+// de trabajar). Arquitectura de una sola sesión Auth activa por dispositivo
+// (ver docs/SESSION_HANDOFF.md, "auditar arquitectura antes de PIN
+// multiusuario" — NO se implementó un almacén de varios refresh_tokens en
+// este lote): en la práctica es la MISMA operación de fondo que Cerrar
+// sesión (Auth.signOut() + borrar el PIN de este dispositivo), la próxima
+// persona entra con SU usuario/contraseña y configura SU propio PIN — nunca
+// pisa el PIN de la persona anterior hasta que de verdad haga login.
+// `App.currentUser` puede venir null (se llama también desde el propio
+// gate/login, no solo desde dentro de la app).
+function confirmChangeUser() {
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
+  const nombreActual = App.currentUser ? esc(App.currentUser.name) : 'este usuario';
+  openModal('Cambiar de usuario', `
+    <p>Vas a salir de la sesión de <b>${nombreActual}</b> en este dispositivo para que otra persona entre con su propio usuario y contraseña.</p>
+    <p class="dim">El PIN configurado aquí se reemplaza por el de la persona nueva cuando lo configure — la cuadrilla/ubicación de este dispositivo NO cambia.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirm-change-user-cancel">Cancelar</button>
+      <button type="button" class="btn btn-accent" id="confirm-change-user-confirm">Cambiar usuario</button>
+    </div>
+  `);
+  $('#confirm-change-user-cancel').addEventListener('click', closeModal);
+  $('#confirm-change-user-confirm').addEventListener('click', () => { closeModal(); logout(); });
+}
+
 function logout() {
   clearAppBadge();
   disablePushForCurrentUser();
@@ -2248,6 +2293,7 @@ function boot() {
           })()}
         </nav>
         ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span>Bloquear</span></button>` : ''}
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span>Cambiar usuario</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
         </button>
@@ -2288,8 +2334,9 @@ function boot() {
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
-  $('#btn-logout').addEventListener('click', logout);
+  $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-lock-app')?.addEventListener('click', lockApp);
+  $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
@@ -2365,6 +2412,7 @@ function bootLubricador() {
         <div class="lub-topbar-right">
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
           <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
@@ -2383,8 +2431,9 @@ function bootLubricador() {
   shiftLabel();
   setInterval(shiftLabel, 60000);
 
-  $('#btn-logout').addEventListener('click', logout);
+  $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-lock-app')?.addEventListener('click', lockApp);
+  $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
     // La barra inferior vive FUERA de #app-content (nunca se borra al entrar a
     // Registrar Engrase) — tocar cualquiera de estas 4 secciones es una salida

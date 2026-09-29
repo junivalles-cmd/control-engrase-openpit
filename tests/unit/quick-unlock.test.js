@@ -165,6 +165,27 @@ describe('G) el PIN NUNCA habilita sync — desacoplado por completo de Auth.isA
   });
 });
 
+describe('N) el PIN NUNCA cambia ni eleva el rol — el rol siempre viene del snapshot de Auth, nunca de QuickUnlock', () => {
+  it('un desbloqueo exitoso no devuelve ni toca ningún campo de rol', async () => {
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: APP_USER_ID, displayName: 'Junior Valles', role: 'LUBRICADOR', active: true });
+    await QuickUnlock.configure(APP_USER_ID, '739184');
+    const res = await QuickUnlock.attemptUnlock(APP_USER_ID, '739184');
+    expect(res).toEqual({ ok: true }); // ninguna propiedad de rol en el resultado
+    // El snapshot (única fuente real del rol, ver app.js currentUserFromAuthProfile())
+    // queda exactamente igual — QuickUnlock no lo leyó ni lo escribió.
+    const snapshot = await db.getAuthProfileSnapshot();
+    expect(snapshot.role).toBe('LUBRICADOR');
+  });
+
+  it('el registro persistido de QuickUnlock (auth_quick_unlock) nunca guarda un campo "role"', async () => {
+    await QuickUnlock.configure(APP_USER_ID, '739184');
+    await QuickUnlock.attemptUnlock(APP_USER_ID, '000000'); // un intento fallido de más, para forzar otra escritura
+    const rec = await db.getQuickUnlock();
+    expect(Object.keys(rec)).not.toContain('role');
+    expect(JSON.stringify(rec)).not.toContain('ADMINISTRADOR');
+  });
+});
+
 describe('I) reconnect + refresh inválido -> el snapshot desaparece, así que la app debe pedir contraseña (nunca el PIN)', () => {
   it('tras un refresh fallido, DB.getAuthProfileSnapshot() queda null aunque el PIN siga configurado', async () => {
     await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test' });
