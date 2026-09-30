@@ -411,11 +411,12 @@ describe('Generar informe — exportaciones unificadas visualmente (PDF/Excel pr
     expect(src).toContain('Más exportaciones');
   });
 
-  it('las 4 exportaciones CSV siguen disponibles dentro de "Más exportaciones"', () => {
+  it('las 5 exportaciones CSV siguen disponibles dentro de "Más exportaciones" (+ "No ejecutados", lote de exportación dedicado)', () => {
     expect(src).toContain('id="exp-cumplimiento"');
     expect(src).toContain('id="exp-historico"');
     expect(src).toContain('id="exp-anomalias"');
     expect(src).toContain('id="exp-puntos"');
+    expect(src).toContain('id="exp-no-ejecutados"');
   });
 });
 

@@ -152,6 +152,7 @@ function reportesFixture() {
               <button class="btn btn-sm" id="exp-historico">Histórico de engrases (CSV)</button>
               <button class="btn btn-sm" id="exp-anomalias">Anomalías (CSV)</button>
               <button class="btn btn-sm" id="exp-puntos">Puntos no engrasados (CSV)</button>
+              <button class="btn btn-sm" id="exp-no-ejecutados">No ejecutados (CSV)</button>
             </div>
           </details>
         </div>
@@ -410,4 +411,31 @@ test('Generar informe: PDF/Excel visibles siempre, CSV quedan dentro de "Más ex
   await expect(details).toHaveJSProperty('open', true);
   await expect(page.locator('#exp-cumplimiento')).toBeVisible();
   await expect(page.locator('#exp-puntos')).toBeVisible();
+  await expect(page.locator('#exp-no-ejecutados')).toBeVisible();
 });
+
+// Lote "exportación de No ejecutados" (§12 del pedido): el botón nuevo no
+// debe romper el layout en móvil angosto (390/412) ni tapar los filtros de
+// arriba — reusa el mismo toolbar con flex-wrap que ya usan los otros CSV.
+for (const width of [390, 412]) {
+  test(`Generar informe @ ${width}px — botón "No ejecutados (CSV)" accesible sin overflow horizontal, filtros no tapados`, async ({ page }) => {
+    await bootFixture(page, width);
+    await page.locator('.rep-more-exports summary').click();
+
+    const boton = page.locator('#exp-no-ejecutados');
+    await expect(boton).toBeVisible();
+    const box = await boton.boundingBox();
+    expect(box.height).toBeGreaterThanOrEqual(30); // btn-sm, mismo target táctil que sus hermanos
+
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+
+    // Los filtros (arriba de "Generar informe") siguen visibles y no quedan
+    // tapados por el panel de exportación recién desplegado.
+    await expect(page.locator('#f-from')).toBeVisible();
+    await expect(page.locator('#f-ubic')).toBeVisible();
+  });
+}

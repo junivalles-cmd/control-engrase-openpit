@@ -7952,6 +7952,12 @@ async function renderReportes() {
   const types = await DB.allActive('equipment_types');
   const plans = await DB.allActive('lubrication_plans');
   const validations = await DB.allActive('grease_validations');
+  // Exportación de "No ejecutados" (§4 del pedido, columna "Cuadrilla"): el
+  // skip no guarda su propia cuadrilla (no existe ese campo en el modelo),
+  // así que se resuelve vía la cuadrilla ACTUAL del usuario que lo registró
+  // — mismo fallback controlado que ya usa el resto de la app cuando no hay
+  // snapshot histórico (nunca se inventa una cuadrilla).
+  const cuadrillas = await DB.allActive('cuadrillas');
   const statuses = await computeAllStatuses(equipos);
 
   const equiposPorId = {}; equipos.forEach(e => equiposPorId[e.id] = e);
@@ -7959,6 +7965,8 @@ async function renderReportes() {
   const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
   const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
   const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  const usersPorId = {}; users.forEach(u => usersPorId[u.id] = u);
+  const cuadrillasPorId = {}; cuadrillas.forEach(cq => cuadrillasPorId[cq.id] = cq);
 
   const total = equipos.length;
 
@@ -8105,6 +8113,7 @@ async function renderReportes() {
           <button class="btn btn-sm" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
           <button class="btn btn-sm" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
           <button class="btn btn-sm" id="exp-puntos">${ic("download")}Puntos no engrasados (CSV)</button>
+          <button class="btn btn-sm" id="exp-no-ejecutados">${ic("download")}No ejecutados (CSV)</button>
         </div>
       </details>
     </div>
@@ -8210,6 +8219,52 @@ async function renderReportes() {
       if (turno && s.shiftId !== turno) return false;
       if (respId && s.userId !== respId) return false;
       return true;
+    });
+  }
+
+  // Exportación de "No ejecutados" (lote dedicado, CSV/Excel/PDF): texto
+  // legible de los filtros ACTIVOS del informe — reusa los mismos inputs
+  // que applyFilters()/applyFiltersSkips() ya leen, nunca un criterio
+  // propio. Solo lista lo que el usuario realmente eligió (§3/§6/§7).
+  function filtrosActivosTexto() {
+    const partes = [];
+    const ubicId = $('#f-ubic').value; if (ubicId) partes.push(`Ubicación: ${(locPorId[ubicId] || {}).name || ubicId}`);
+    const famId = $('#f-familia').value; if (famId) partes.push(`Familia: ${(typePorId[famId] || {}).name || famId}`);
+    const eqId = $('#f-equipo').value; if (eqId) partes.push(`Equipo: ${(equiposPorId[eqId] || {}).code || eqId}`);
+    const turno = $('#f-turno').value; if (turno) partes.push(`Turno: ${turno === 'shift_dia' ? 'Día' : 'Noche'}`);
+    const respId = $('#f-resp').value; if (respId) partes.push(`Responsable: ${(usersPorId[respId] || {}).name || respId}`);
+    return partes.length ? partes.join('  ·  ') : 'Todos los equipos/turnos/responsables';
+  }
+
+  // Filas de detalle de "No ejecutados" para exportar — FUENTE ÚNICA para
+  // CSV/Excel/PDF (§8/§16 del pedido: mismo orden en los 3 formatos, sin
+  // recalcular nada por separado). `skipsF` ya viene filtrado por
+  // applyFiltersSkips() — nunca se reconstruye desde audit_log ni se
+  // cuentan lubrication_records aquí. Orden: más reciente primero, misma
+  // convención que puntosNoEngrasadosDe() (única lista de detalle
+  // comparable que ya existe en este informe).
+  function noEjecutadosFilasDetalle(skipsF) {
+    return [...skipsF].sort((a, b) => new Date(b.date) - new Date(a.date)).map(s => {
+      const eq = equiposPorId[s.equipmentId];
+      const usr = usersPorId[s.userId];
+      const cuadrillaNombre = usr ? (cuadrillasPorId[usr.cuadrillaId] || {}).name : null;
+      const horaTxt = (s.date || '').includes('T')
+        ? new Date(s.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })
+        : '—';
+      return {
+        fecha: fmtDate(s.date),
+        hora: horaTxt,
+        codigo: eq ? eq.code : '—',
+        modelo: eq ? `${eq.brand} ${eq.model}` : '—',
+        ubicacion: (locPorId[(eq || {}).locationId] || {}).name || '—',
+        turno: s.shiftId === 'shift_dia' ? 'Día' : 'Noche',
+        motivo: NO_EXECUTION_REASON_LABELS[s.reason] || s.reason,
+        observacion: s.observacion || '—',
+        usuario: s.userName || '—',
+        cuadrilla: cuadrillaNombre || '—',
+        occurrence: s.occurrenceKey || '—',
+        estado: s.linkedRecordId ? 'Vinculado a un engrase real' : 'Sin vincular',
+      };
     });
   }
 
@@ -8746,6 +8801,16 @@ async function renderReportes() {
     filas.forEach(f => rows.push([fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]));
     downloadCSV(rows, 'puntos_no_engrasados.csv');
   });
+  $('#exp-no-ejecutados').addEventListener('click', () => {
+    // §10 del pedido: cero resultados no genera un archivo vacío/corrupto,
+    // solo avisa — mismo mecanismo (alert nativo) que ya usa el resto de la
+    // app para este tipo de guardia (ver "No hay equipos para imprimir.").
+    const filasDet = noEjecutadosFilasDetalle(applyFiltersSkips());
+    if (!filasDet.length) { alert('Sin registros para exportar en "No ejecutados" con los filtros actuales.'); return; }
+    const rows = [['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado']];
+    filasDet.forEach(f => rows.push([f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado]));
+    downloadCSV(rows, 'no_ejecutados.csv');
+  });
 
   $('#exp-excel').addEventListener('click', () => {
     const records = applyFilters();
@@ -8907,6 +8972,28 @@ async function renderReportes() {
       wsVal['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, wsVal, 'Validación');
     }
+
+    /* ---------- Hoja 8: No ejecutados (lote de exportación dedicado) ----------
+       Misma fuente/orden que el CSV y el PDF (noEjecutadosFilasDetalle()) —
+       nunca se recalcula por separado. Título/Periodo/Filtros activos/Total
+       van en el subtítulo (mismo patrón que el resto de hojas de este
+       informe, ej. "Anomalías"/"Puntos Pendientes"), luego la tabla
+       detallada. */
+    const filasNoEjecXls = noEjecutadosFilasDetalle(applyFiltersSkips());
+    const wsNoEjec = xlsHojaConFormato({
+      titulo: 'NO EJECUTADOS',
+      subtitulo: `Total: ${filasNoEjecXls.length}  ·  ${periodoTxt}  ·  Filtros: ${filtrosActivosTexto()}`,
+      columnas: ['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado'],
+      filas: filasNoEjecXls.length
+        ? filasNoEjecXls.map(f => [f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado])
+        : [['—', '—', '—', '—', '—', '—', '—', 'Sin "no se pudo ejecutar" en el período', '—', '—', '—', '—']],
+      hexEncabezado: C.ambar.hex,
+      estiloPorCelda: (valor, ci) => ci === 11 && valor === 'Vinculado a un engrase real'
+        ? xlsEstiloCelda({ hexFondo: C.verdeSuave.hex, hexTexto: REPORT_COLORS.verdeTexto.hex, centrado: true })
+        : xlsEstiloCelda()
+    });
+    wsNoEjec['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 12 }, { wch: 20 }, { wch: 16 }, { wch: 9 }, { wch: 22 }, { wch: 32 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, wsNoEjec, 'No ejecutados');
 
     XLSX.writeFile(wb, `informe_ejecutivo_engrase_${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
@@ -9092,6 +9179,46 @@ async function renderReportes() {
       y += 20;
     }
 
+    // Sección "NO EJECUTADOS" (lote de exportación dedicado) — MISMA
+    // fuente/orden que el CSV y la hoja de Excel (noEjecutadosFilasDetalle(),
+    // más reciente primero), nunca una consulta aparte. autoTable pagina
+    // solo (multipágina real); "Observación" usa el wrap por defecto de
+    // autoTable (overflow:'linebreak') para que el texto largo se vea
+    // completo en varias líneas, nunca recortado/oculto.
+    const filasNoEjecPdf = noEjecutadosFilasDetalle(applyFiltersSkips());
+    if (y > 600) { doc.addPage(); y = 40; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+    doc.text('NO EJECUTADOS', 40, y); y += 18;
+    doc.setFont(undefined, 'normal'); doc.setFontSize(9.5); doc.setTextColor(60);
+    doc.text(periodoTxt, 40, y); y += 14;
+    doc.text(`Filtros utilizados: ${filtrosActivosTexto()}`, 40, y); y += 14;
+    doc.text(`Total: ${filasNoEjecPdf.length}`, 40, y); y += 16;
+
+    // Resumen por motivo — SIEMPRE los 6 motivos reales (aunque alguno esté
+    // en 0), en el orden pedido explícitamente — nunca solo los presentes.
+    const ORDEN_MOTIVOS_RESUMEN_PDF = ['REPARACION', 'SIN_TIEMPO', 'NO_DISPONIBLE', 'CONDICION_INSEGURA', 'YA_ENGRASADO', 'OTRO'];
+    const conteoPorMotivoPdf = {};
+    filasNoEjecPdf.forEach(f => { conteoPorMotivoPdf[f.motivo] = (conteoPorMotivoPdf[f.motivo] || 0) + 1; });
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
+      head: [['Motivo', 'Cantidad']],
+      body: ORDEN_MOTIVOS_RESUMEN_PDF.map(r => [NO_EXECUTION_REASON_LABELS[r], conteoPorMotivoPdf[NO_EXECUTION_REASON_LABELS[r]] || 0])
+    });
+    y = doc.lastAutoTable.finalY + 16;
+
+    if (y > 600) { doc.addPage(); y = 40; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+    doc.text('Detalle', 40, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 7.5 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
+      head: [['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado']],
+      body: filasNoEjecPdf.length
+        ? filasNoEjecPdf.map(f => [f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado])
+        : [['—', '—', '—', '—', '—', '—', '—', 'Sin "no se pudo ejecutar" en el período', '—', '—', '—', '—']],
+      columnStyles: { 7: { cellWidth: 70 } }
+    });
+    y = doc.lastAutoTable.finalY + 20;
+
     // Pie de página
     const pageCount = doc.internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
@@ -9240,8 +9367,22 @@ function wirePhotoThumbs(container) {
   });
 }
 
+// Protecci\u00F3n CSV/Excel formula injection (lote "No ejecutados", \u00A75 \u2014
+// aplica a TODOS los CSV de la app por venir de la funci\u00F3n compartida):
+// un valor que EMPIECE con =, +, -, @ (o tab/CR, los otros disparadores
+// documentados) es interpretado como f\u00F3rmula por Excel/Sheets al abrir el
+// CSV. Se neutraliza con una comilla simple al frente \u2014 el campo sigue
+// vi\u00E9ndose igual como texto, nunca cambia el valor real exportado. Los
+// exports existentes (c\u00F3digos, fechas, n\u00FAmeros) no empiezan con esos
+// caracteres en la pr\u00E1ctica, as\u00ED que esto no altera su salida; el caso real
+// que lo necesita es el nuevo campo libre "Observaci\u00F3n" de No ejecutados.
+function csvSafeField(v) {
+  const s = String(v ?? '');
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 function downloadCSV(rows, filename) {
-  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = rows.map(r => r.map(v => `"${csvSafeField(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
