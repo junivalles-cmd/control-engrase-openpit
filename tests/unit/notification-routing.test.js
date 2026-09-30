@@ -145,16 +145,19 @@ describe('shouldNotifyOutOfPlanCompletion() — §27', () => {
   });
 });
 
-describe('routeAnomalyEvent() — §28, severidad de anomalías', () => {
-  it('CRITICAL -> inmediata a todos los supervisores elegibles', () => {
-    expect(routeAnomalyEvent('CRITICAL')).toBe('IMMEDIATE_ALL_ELIGIBLE_SUPERVISORS');
+describe('routeAnomalyEvent() — §28, severidad de anomalías (claves en español: mismo vocabulario real que anomaly.criticality en toda la app)', () => {
+  it('Crítica -> inmediata a todos los supervisores elegibles', () => {
+    expect(routeAnomalyEvent('Crítica')).toBe('IMMEDIATE_ALL_ELIGIBLE_SUPERVISORS');
   });
-  it('HIGH -> inmediata a Supervisor, Planificador configurable', () => {
-    expect(routeAnomalyEvent('HIGH')).toBe('IMMEDIATE_SUPERVISOR_CONFIGURABLE_PLANIFICADOR');
+  it('Alta -> inmediata a Supervisor, Planificador configurable', () => {
+    expect(routeAnomalyEvent('Alta')).toBe('IMMEDIATE_SUPERVISOR_CONFIGURABLE_PLANIFICADOR');
   });
-  it('MEDIUM/LOW -> solo resumen, nunca push inmediato (evita spam)', () => {
-    expect(routeAnomalyEvent('MEDIUM')).toBe('SUMMARY');
-    expect(routeAnomalyEvent('LOW')).toBe('SUMMARY');
+  it('Media/Baja -> solo resumen, nunca push inmediato (evita spam)', () => {
+    expect(routeAnomalyEvent('Media')).toBe('SUMMARY');
+    expect(routeAnomalyEvent('Baja')).toBe('SUMMARY');
+  });
+  it('valor desconocido -> SUMMARY por defecto, nunca lanza', () => {
+    expect(routeAnomalyEvent('lo-que-sea')).toBe('SUMMARY');
   });
 });
 

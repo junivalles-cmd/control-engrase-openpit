@@ -922,6 +922,27 @@ async function saveNotificationPreferences({ notificationShift, notificationAvai
   Sync.fullSync();
 }
 
+// Contexto de elegibilidad de QUIEN tiene sesión en ESTE dispositivo ahora
+// mismo (lote arquitectura de notificaciones, cierre §1/§9/§13) — objeto
+// listo para isUserEligibleForNotification() (notification-routing.js).
+// Nunca exige haber activado push: si la persona no tiene ninguna fila
+// push_tokens todavía (nunca activó notificaciones push), se usan los
+// defaults BOTH/AVAILABLE/false — NUNCA más restrictivo que el
+// comportamiento de siempre (las notificaciones LOCALES no dependen de
+// OneSignal). Si tiene varias filas (android+web), usa la primera — las
+// preferencias son las MISMAS en todas (ver saveNotificationPreferences()).
+async function currentUserEligibilityContext() {
+  if (!App.currentUser) return null;
+  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+  const prefs = propios[0] || {};
+  return {
+    active: true, role: App.currentUser.role,
+    notificationShift: prefs.notificationShift || 'BOTH',
+    notificationAvailability: prefs.notificationAvailability || 'AVAILABLE',
+    receiveAllShifts: !!prefs.receiveAllShifts
+  };
+}
+
 /* ---------- Push en NAVEGADOR (sin Capacitor) ----------
    Usa el SDK web de OneSignal. Funciona en Chrome/Edge de Android y de escritorio,
    incluso con la pestaña cerrada, porque quien recibe el aviso es el Service Worker.
@@ -1131,6 +1152,19 @@ async function refreshLocalNotifications() {
     const statuses = await computeAllStatuses(equipos);
     const notifications = [];
 
+    // Migración al routing central (lote arquitectura de notificaciones,
+    // cierre §8/§9 del pedido de cierre): cada tipo programado de abajo ya
+    // NO decide solo por rol (`cfg.roles.includes(rol)`) — pasa por
+    // isUserEligibleForNotification() (notification-routing.js), la MISMA
+    // regla que usan los Edge Functions para push remoto. Disponibilidad
+    // RESTING o turno de notificación incompatible apagan CUALQUIER tipo
+    // programado de esta función, sin excepción por tipo.
+    const personaElegible = await currentUserEligibilityContext();
+    const turnoReal = currentShiftId();
+    const elegiblePara = (cfg) => isUserEligibleForNotification({
+      user: personaElegible, rolesPermitidos: cfg.roles, currentShiftId: turnoReal
+    });
+
     // Filtro base: turno y cuadrilla del lubricador, y equipos con avisos pausados
     const relevantes = statuses.filter(x => {
       if (avisosPausados(x.e)) return false; // equipo en taller: no molesta
@@ -1151,7 +1185,7 @@ async function refreshLocalNotifications() {
 
     // ── 1) Engrases VENCIDOS ──────────────────────────────────────
     const cfgV = settings.vencidos;
-    if (cfgV.enabled && cfgV.roles.includes(rol) && (!cfgV.soloSiHay || vencidos.length)) {
+    if (cfgV.enabled && elegiblePara(cfgV) && (!cfgV.soloSiHay || vencidos.length)) {
       const h = horaAjustadaAlTurno(settings, cfgV.hour, cfgV.minute);
       const lista = vencidos.slice(0, 5).map(x => x.e.code).join(', ');
       const titulo = vencidos.length ? `🔴 ${vencidos.length} equipo(s) con engrase VENCIDO` : 'Sin engrases vencidos';
@@ -1204,7 +1238,7 @@ async function refreshLocalNotifications() {
 
     // ── 2) Equipos POR ENGRASAR hoy ───────────────────────────────
     const cfgP = settings.porEngrasar;
-    if (cfgP.enabled && cfgP.roles.includes(rol) && (!cfgP.soloSiHay || porEngrasar.length)) {
+    if (cfgP.enabled && elegiblePara(cfgP) && (!cfgP.soloSiHay || porEngrasar.length)) {
       const h = horaAjustadaAlTurno(settings, cfgP.hour, cfgP.minute);
       const lista = porEngrasar.slice(0, 5).map(x => x.e.code).join(', ');
       const titulo = porEngrasar.length ? `🟡 ${porEngrasar.length} equipo(s) por engrasar hoy` : 'Sin engrases programados';
@@ -1233,7 +1267,7 @@ async function refreshLocalNotifications() {
 
     // ── 3) Resumen de CUMPLIMIENTO ────────────────────────────────
     const cfgC = settings.cumplimiento;
-    if (cfgC.enabled && cfgC.roles.includes(rol)) {
+    if (cfgC.enabled && elegiblePara(cfgC)) {
       const totalV = statuses.filter(x => x.s.code === 'ROJO').length;
       const totalA = statuses.filter(x => x.s.code === 'AMARILLO').length;
       const compliance = equipos.length ? Math.round(((equipos.length - totalV) / equipos.length) * 100) : 100;
@@ -1252,7 +1286,7 @@ async function refreshLocalNotifications() {
 
     // ── 4) Resumen SEMANAL (lunes) ────────────────────────────────
     const cfgS = settings.resumenSemanal;
-    if (cfgS && cfgS.enabled && cfgS.roles.includes(rol)) {
+    if (cfgS && cfgS.enabled && elegiblePara(cfgS)) {
       const hace7 = Date.now() - 7 * 86400000;
       const recs = (await DB.allActive('lubrication_records')).filter(r => new Date(r.date).getTime() >= hace7);
       const puntosFallidos = {};
@@ -1283,7 +1317,10 @@ async function refreshLocalNotifications() {
     // simplemente deja de calificar aquí y no se reprograma — nunca hace
     // falta "cancelarla" a mano. Mismo patrón agrupado que vencidos/
     // porEngrasar arriba (una notificación por tipo, nunca una por fila).
-    if (rol === 'LUBRICADOR') {
+    // Migrado al routing central (cierre §3): RESTING sigue apagando este
+    // aviso aunque sea Lubricador con asignación real — sin `rolesPermitidos`
+    // porque el rol ya está fijo (LUBRICADOR) en el `if` de abajo.
+    if (rol === 'LUBRICADOR' && isUserEligibleForNotification({ user: personaElegible, currentShiftId: turnoReal })) {
       const scopeNotif = await getCurrentOperationalScope();
       if (scopeNotif.kind === 'DEVICE_SCOPED') {
         // Mismo criterio EXACTO que "ASIGNADOS A MI CUADRILLA" en Mi Turno
@@ -1353,6 +1390,10 @@ async function notificarEngraseRealizado(record, equipment) {
     const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
     const cfg = settings.engraseRealizado;
     if (!settings.enabled || !cfg.enabled) return;
+    // §27/§6 (cierre): un engrase FUERA DE PLAN completado nunca dispara
+    // este aviso — mismo criterio ya aplicado al push remoto real
+    // (supabase/functions/notify-push, shouldNotifyOutOfPlanCompletion()).
+    if (!shouldNotifyOutOfPlanCompletion() && record.operationalSnapshot?.executionType === 'OUT_OF_PLAN') return;
 
     // Si está marcado "solo críticos", avisa únicamente cuando el equipo venía VENCIDO
     // o quedaron puntos sin engrasar — así no se satura a nadie con avisos de rutina.
@@ -1880,15 +1921,30 @@ async function notifyNewAnomalies(anomalies) {
   const relevantRoles = ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'];
   const isRelevantRole = relevantRoles.includes(App.currentUser.role);
   const equipos = isRelevantRole ? await DB.allActive('equipment') : [];
+  // Migrado al routing central (lote arquitectura de notificaciones, cierre
+  // §7): antes esta función avisaba de CUALQUIER severidad (solo cambiaba
+  // el texto entre "crítica"/genérico) — nunca correspondía con §28
+  // (Media/Baja van a resumen/pantalla normal, nunca push/local
+  // individual). Se calcula UNA vez, no por anomalía: la disponibilidad/
+  // turno de la persona no cambia entre una anomalía y la siguiente del
+  // mismo lote.
+  const personaElegibleAnom = isRelevantRole ? await currentUserEligibilityContext() : null;
+  const elegibleAhoraAnom = isRelevantRole && isUserEligibleForNotification({
+    user: personaElegibleAnom, rolesPermitidos: relevantRoles, currentShiftId: currentShiftId()
+  });
 
   for (const a of anomalies) {
     if (seen.has(a.id)) continue;
     markAnomalyNotified(a.id);
     if (a.createdBy === App.currentUser.name) continue; // no avisarle a quien la reportó
-    if (!isRelevantRole) continue; // por ahora solo Admin/Supervisor/Planificador reciben el aviso, para no saturar a los lubricadores
+    if (!elegibleAhoraAnom) continue; // rol no relevante, RESTING, o turno de notificación incompatible
+    // §28: solo Crítica/Alta son un aviso individual inmediato — Media/Baja
+    // quedan para la pantalla de Anomalías/Dashboard, nunca un push/local
+    // aparte (evita saturar con anomalías menores).
+    if (routeAnomalyEvent(a.criticality) === 'SUMMARY') continue;
 
     const eq = equipos.find(e => e.id === a.equipmentId);
-    const title = a.criticality === 'Crítica' || a.criticality === 'Alta' ? '⚠ Anomalía crítica reportada' : 'Nueva anomalía reportada';
+    const title = a.criticality === 'Crítica' ? '⚠ Anomalía crítica reportada' : '⚠ Anomalía de alta prioridad reportada';
     const body = `${eq ? eq.code : 'Equipo'} · ${esc(a.component)} · Reportado por ${esc(a.createdBy)}`;
 
     const LN = window.Capacitor?.Plugins?.LocalNotifications;

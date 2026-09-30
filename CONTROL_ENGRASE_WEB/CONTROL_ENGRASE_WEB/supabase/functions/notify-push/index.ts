@@ -149,6 +149,16 @@ async function getNotifSettings() {
     enabled: true,
     engraseRealizado: { enabled: false, roles: ["SUPERVISOR"], soloCriticos: false },
     anomalias: { enabled: true, roles: ["ADMINISTRADOR", "SUPERVISOR", "PLANIFICADOR"] },
+    // §5/§26 (cierre de lote) — "No se pudo ejecutar": CONDICION_INSEGURA
+    // es inmediata a jefatura elegible; YA_ENGRASADO (ambiguo) es una
+    // conciliación para Planificador/Admin. Sin UI propia en Configuración
+    // todavía (pendiente, documentado) — usa estos defaults hasta que se
+    // guarde algo distinto.
+    noEjecucion: {
+      enabled: true,
+      rolesUnsafe: ["ADMINISTRADOR", "SUPERVISOR"],
+      rolesReconciliacion: ["ADMINISTRADOR", "PLANIFICADOR"],
+    },
   };
   if (!res.ok) return base;
   const rows = await res.json();
@@ -158,6 +168,7 @@ async function getNotifSettings() {
     enabled: guardado.enabled !== false,
     engraseRealizado: { ...base.engraseRealizado, ...(guardado.engraseRealizado || {}) },
     anomalias: { ...base.anomalias, ...(guardado.anomalias || {}) },
+    noEjecucion: { ...base.noEjecucion, ...(guardado.noEjecucion || {}) },
   };
 }
 
@@ -239,6 +250,46 @@ serve(async (req) => {
       const body = `${codigo} · ${rec.userName ?? "un lubricador"}${pendientes ? ` · ${pendientes} punto(s) sin engrasar` : ""}`;
       await sendOneSignalPush(ids, title, body);
       return new Response(`ok, engrase enviado a ${ids.length} dispositivo(s)`, { status: 200 });
+    }
+
+    // ── "No se pudo ejecutar" (lote occurrences/carryover §1, ruteo §5/§26) ──
+    // REPARACION/SIN_TIEMPO/NO_DISPONIBLE/OTRO: NUNCA disparan un aviso
+    // aquí — quedan visibles por carryover (Dashboard/Mi Turno), evita
+    // spam de motivos frecuentes. CONDICION_INSEGURA es inmediata a
+    // jefatura elegible; YA_ENGRASADO (ambiguo) es una conciliación para
+    // Planificador/Admin — NUNCA la misma ruta que UNSAFE.
+    if (row.store === "lubrication_skips") {
+      const cfg = settings.noEjecucion;
+      if (!cfg.enabled) return new Response("aviso de no-ejecución desactivado", { status: 200 });
+      const skip = row.payload ?? {};
+
+      let esUnsafe = skip.reason === "CONDICION_INSEGURA";
+      let esReconciliacion = skip.reason === "YA_ENGRASADO";
+      if (!esUnsafe && !esReconciliacion) {
+        return new Response("motivo sin aviso inmediato (carryover ya lo muestra)", { status: 200 });
+      }
+
+      const roles = esUnsafe ? cfg.rolesUnsafe : cfg.rolesReconciliacion;
+      const dedupeKey = `${esUnsafe ? "unsafe" : "reconciliacion"}|none|all|${row.id}`;
+      const reclamado = await claimDedupeKey(dedupeKey, { rowId: row.id, reason: skip.reason });
+      if (!reclamado) return new Response("ya enviado antes (dedupe)", { status: 200 });
+
+      let codigoSkip = "Equipo";
+      try {
+        const r = await fetch(
+          `${SUPABASE_URL}/rest/v1/engrase_sync?store=eq.equipment&id=eq.${skip.equipmentId}&select=payload`,
+          { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
+        );
+        if (r.ok) { const eqRows = await r.json(); codigoSkip = eqRows[0]?.payload?.code ?? codigoSkip; }
+      } catch (_) { /* si falla, se queda con "Equipo" */ }
+
+      const ids = await getEligiblePushIds(roles, turnoActual);
+      const title = esUnsafe ? "🚨 Condición insegura reportada" : "⚠ Requiere conciliación";
+      const body = esUnsafe
+        ? `${codigoSkip} · ${skip.userName ?? "un lubricador"}${skip.observacion ? ` · ${skip.observacion}` : ""}`
+        : `${codigoSkip} · ${skip.userName ?? "un lubricador"} marcó "ya engrasado" — revisar si es un duplicado o un registro real pendiente.`;
+      await sendOneSignalPush(ids, title, body);
+      return new Response(`ok, ${esUnsafe ? "unsafe" : "conciliación"} enviado a ${ids.length} dispositivo(s)`, { status: 200 });
     }
 
     return new Response("ignorado (no requiere aviso)", { status: 200 });

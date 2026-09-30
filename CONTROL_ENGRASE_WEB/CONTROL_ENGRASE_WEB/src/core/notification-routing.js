@@ -114,16 +114,20 @@ function routeNoExecutionEvent(reason) {
 function shouldNotifyOutOfPlanCompletion() { return false; }
 
 /* ============================================================
-   RUTEO DE ANOMALÍAS (§28)
-   ============================================================ */
+   RUTEO DE ANOMALÍAS (§28) — claves en ESPAÑOL a propósito: 'criticality'
+   (anomalies, ver app.js:6832) SIEMPRE usa 'Baja'/'Media'/'Alta'/'Crítica'
+   en todo el sistema (formulario, Reportes, exportaciones) — nunca se
+   tradujo a inglés en ningún otro lugar, así que este módulo usa la MISMA
+   palabra real en vez de inventar un vocabulario paralelo que habría que
+   traducir en cada caller. */
 const ANOMALY_NOTIFICATION_ROUTE = {
-  CRITICAL: 'IMMEDIATE_ALL_ELIGIBLE_SUPERVISORS',
-  HIGH: 'IMMEDIATE_SUPERVISOR_CONFIGURABLE_PLANIFICADOR',
-  MEDIUM: 'SUMMARY',
-  LOW: 'SUMMARY',
+  'Crítica': 'IMMEDIATE_ALL_ELIGIBLE_SUPERVISORS',
+  'Alta': 'IMMEDIATE_SUPERVISOR_CONFIGURABLE_PLANIFICADOR',
+  'Media': 'SUMMARY',
+  'Baja': 'SUMMARY',
 };
-function routeAnomalyEvent(severity) {
-  return ANOMALY_NOTIFICATION_ROUTE[severity] || 'SUMMARY';
+function routeAnomalyEvent(criticality) {
+  return ANOMALY_NOTIFICATION_ROUTE[criticality] || 'SUMMARY';
 }
 
 /* ============================================================
