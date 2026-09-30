@@ -9507,6 +9507,45 @@ async function renderUsuarios() {
    la autorización real (¿este caller es ADMINISTRADOR activo?) la decide
    siempre la Edge Function server-side, nunca este archivo.
    ============================================================ */
+// FIX "Agregar usuario" (auditoría previa): Auth.manageUsers() ya llamaba
+// correctamente a la Edge Function real (nunca auth.admin.* directo, nunca
+// service_role) — el problema era puramente de esta capa de UI: errores
+// del servidor mostrados como código crudo ("username_taken"), sin guardia
+// de doble-click, sin confirmación de contraseña, y fallas de red sin
+// traducir. Una sola tabla de traducción para las 4 pantallas (crear/rol/
+// activar/resetear) — nunca stack trace/service_role/JWT en el mensaje.
+const MANAGE_USERS_ERROR_LABELS = {
+  AUTH_REQUIRED: 'Tu sesión expiró o no hay una sesión activa. Vuelve a iniciar sesión.',
+  AUTH_FORBIDDEN: 'No tienes permisos de Administrador para hacer esto.',
+  SYNC_NOT_CONFIGURED: 'La sincronización no está configurada en este dispositivo.',
+  NETWORK: 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.',
+  TIMEOUT: 'El servidor no respondió a tiempo. Intenta de nuevo.',
+  username_taken: 'Ese nombre de usuario ya existe. Elige otro.',
+  invalid_role: 'El rol seleccionado no es válido.',
+  temp_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
+  new_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
+  display_name_required: 'Escribe el nombre completo.',
+  app_user_id_required: 'Falta indicar a qué usuario aplica esto.',
+  invalid_input: 'Los datos ingresados no son válidos.',
+  not_found: 'No se encontró ese usuario.',
+  cannot_remove_last_admin: 'No puedes quitar el rol de Administrador al único activo — activa otro Administrador primero.',
+  cannot_deactivate_last_admin: 'No puedes desactivar al único Administrador activo — activa otro primero.',
+  auth_create_failed: 'No se pudo crear la cuenta (podría ya existir, o los datos no son válidos).',
+  auth_create_no_id: 'El servidor no confirmó la creación de la cuenta. Intenta de nuevo.',
+  profile_create_failed_rolled_back: 'No se pudo completar la creación del usuario — no quedó ninguna cuenta a medio crear. Intenta de nuevo.',
+  update_failed: 'No se pudo guardar el cambio. Intenta de nuevo.',
+  reset_failed: 'No se pudo restablecer la contraseña. Intenta de nuevo.',
+  internal_error: 'Ocurrió un error inesperado en el servidor. Intenta de nuevo.',
+  unknown_action: 'Acción no reconocida.',
+};
+function manageUsersErrorMessage(err) {
+  const code = (err && err.message) || '';
+  if (MANAGE_USERS_ERROR_LABELS[code]) return MANAGE_USERS_ERROR_LABELS[code];
+  if (code.startsWith('list_failed_') || code.startsWith('HTTP_')) {
+    return 'No se pudo completar la acción (el servidor respondió con un error). Intenta de nuevo.';
+  }
+  return 'No se pudo completar la acción. Intenta de nuevo.';
+}
 async function renderUsuariosSupabase(c) {
   const offline = !navigator.onLine;
   c.innerHTML = `
@@ -9537,7 +9576,7 @@ async function renderUsuariosSupabase(c) {
     users = res.users || [];
   } catch (e) {
     const tbody = $('#usuarios-sb-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(e.message)}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
     return;
   }
 
@@ -9557,10 +9596,10 @@ async function renderUsuariosSupabase(c) {
       </td>
     </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
 
-  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase());
+  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase(c));
   $$('button[data-role]', c).forEach(b => b.addEventListener('click', () => {
     const u = users.find(x => x.app_user_id === b.dataset.role);
-    if (u) roleFormSupabase(u);
+    if (u) roleFormSupabase(u, c);
   }));
   $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', async () => {
     const activeNow = b.dataset.active === 'true';
@@ -9568,12 +9607,39 @@ async function renderUsuariosSupabase(c) {
       await Auth.manageUsers('SET_ACTIVE', { app_user_id: b.dataset.toggle, active: !activeNow });
       showInAppToast(activeNow ? '✓ Usuario desactivado' : '✓ Usuario activado');
       renderUsuariosSupabase(c);
-    } catch (e) { showInAppToast('✗ ' + e.message); }
+    } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
   }));
   $$('button[data-reset]', c).forEach(b => b.addEventListener('click', () => resetPasswordFormSupabase(b.dataset.reset)));
 }
 
-function userFormSupabase() {
+// Deshabilita el submit mientras la llamada está en vuelo (evita doble
+// creación/doble submit por doble click o red lenta) y restaura texto+
+// estado al terminar, sin importar si fue éxito o error — un solo lugar
+// para las 3 formas de este archivo, en vez de repetir el patrón 3 veces.
+async function withSubmitGuard(form, busyLabel, fn) {
+  const btn = form.querySelector('button[type="submit"]');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = busyLabel;
+  try {
+    await fn();
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+// "Activo" NO es un campo de este formulario a propósito: handleCreateUser()
+// (manage-users) siempre crea la cuenta con active=true — un checkbox aquí
+// no tendría ningún efecto real en el servidor (revisado explícitamente,
+// no agregado "por si acaso"). Desactivar es SET_ACTIVE, una acción
+// posterior y separada sobre un usuario ya creado.
+// Preparado para el futuro modelo de turno de notificaciones (§13 del
+// pedido de este fix, NO implementado aquí): `fd` se arma directo desde
+// FormData y se reenvía tal cual — el día que se agreguen inputs nuevos
+// (notificationShift/notificationAvailability/receiveAllShifts), viajan
+// solos sin tocar este handler, siempre que manage-users los valide como
+// campos PROPIOS y separados de `role` (nunca mezclados, nunca
+// SUPERVISOR_DIA/NOCHE como rol).
+function userFormSupabase(c) {
   openModal('Nuevo usuario', `
     <form id="user-form-sb" class="form-grid">
       <label>Nombre completo<input required name="display_name"/></label>
@@ -9584,21 +9650,38 @@ function userFormSupabase() {
       <label>Contraseña temporal (mínimo 8 caracteres)<input required minlength="8" type="password" name="temp_password" autocomplete="new-password"/>
         <span class="field-hint">La persona debería cambiarla apenas entre. Nunca queda guardada en este dispositivo.</span>
       </label>
+      <label>Confirmar contraseña<input required minlength="8" type="password" name="temp_password_confirm" autocomplete="new-password"/></label>
       <div class="modal-actions"><button type="submit" class="btn btn-accent">Crear usuario</button></div>
     </form>`);
   $('#user-form-sb').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    try {
-      await Auth.manageUsers('CREATE_USER', fd);
-      showInAppToast('✓ Usuario creado');
-      closeModal();
-      navigate('usuarios');
-    } catch (e) { showInAppToast('✗ ' + e.message); }
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    // Validación de formulario (nunca sustituye al servidor, solo evita
+    // un viaje de red inútil por un error obvio): campos requeridos ya
+    // los cubre `required`/`minlength` del HTML; lo único que el HTML no
+    // puede validar es que ambas contraseñas coincidan.
+    if (fd.temp_password !== fd.temp_password_confirm) {
+      showInAppToast('✗ Las contraseñas no coinciden.');
+      return;
+    }
+    delete fd.temp_password_confirm; // nunca se envía al servidor, es solo un chequeo de UI
+    await withSubmitGuard(form, 'Creando…', async () => {
+      try {
+        await Auth.manageUsers('CREATE_USER', fd);
+        showInAppToast('✓ Usuario creado correctamente.');
+        closeModal();
+        if (c) renderUsuariosSupabase(c); // refresca solo la lista, sin recargar toda la pantalla
+      } catch (e) {
+        showInAppToast('✗ ' + manageUsersErrorMessage(e));
+      } finally {
+        fd.temp_password = ''; // limpia la referencia local apenas termina el submit
+      }
+    });
   });
 }
 
-function roleFormSupabase(u) {
+function roleFormSupabase(u, c) {
   openModal(`Cambiar rol · ${esc(u.display_name)}`, `
     <form id="role-form-sb" class="form-grid">
       <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
@@ -9606,13 +9689,16 @@ function roleFormSupabase(u) {
     </form>`);
   $('#role-form-sb').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    try {
-      await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role });
-      showInAppToast('✓ Rol actualizado');
-      closeModal();
-      navigate('usuarios');
-    } catch (e) { showInAppToast('✗ ' + e.message); }
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    await withSubmitGuard(form, 'Guardando…', async () => {
+      try {
+        await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role });
+        showInAppToast('✓ Rol actualizado correctamente.');
+        closeModal();
+        if (c) renderUsuariosSupabase(c);
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    });
   });
 }
 
@@ -9620,16 +9706,24 @@ function resetPasswordFormSupabase(appUserId) {
   openModal('Restablecer contraseña', `
     <form id="reset-form-sb" class="form-grid">
       <label>Contraseña temporal nueva (mínimo 8 caracteres)<input required minlength="8" type="password" name="new_password" autocomplete="new-password"/></label>
+      <label>Confirmar contraseña<input required minlength="8" type="password" name="new_password_confirm" autocomplete="new-password"/></label>
       <div class="modal-actions"><button type="submit" class="btn btn-accent">Restablecer</button></div>
     </form>`);
   $('#reset-form-sb').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    try {
-      await Auth.manageUsers('RESET_PASSWORD', { app_user_id: appUserId, new_password: fd.new_password });
-      showInAppToast('✓ Contraseña restablecida');
-      closeModal();
-    } catch (e) { showInAppToast('✗ ' + e.message); }
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    if (fd.new_password !== fd.new_password_confirm) {
+      showInAppToast('✗ Las contraseñas no coinciden.');
+      return;
+    }
+    await withSubmitGuard(form, 'Restableciendo…', async () => {
+      try {
+        await Auth.manageUsers('RESET_PASSWORD', { app_user_id: appUserId, new_password: fd.new_password });
+        showInAppToast('✓ Contraseña restablecida correctamente.');
+        closeModal();
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    });
   });
 }
 

@@ -269,24 +269,43 @@ const Auth = {
   // a validar server-side que quien llama es ADMINISTRADOR activo, nunca
   // se confía en el rol local. Requiere red: sin sesión autenticada
   // (offline o sesión no vigente) lanza sin intentar la llamada.
+  // FIX formulario "Agregar usuario". Auditoría: el wiring con la Edge
+  // Function ya era correcto — el problema real era que esta función
+  // lanzaba mensajes ya redactados a medias, mezclados con códigos crudos
+  // del servidor, y una falla de red antes de tener respuesta ni se
+  // capturaba: el error crudo de fetch llegaba directo a la UI. Ahora
+  // SIEMPRE lanza un CÓDIGO estable como `message`, nunca una frase ya
+  // traducida. La traducción a texto legible vive en la capa de UI
+  // (app.js, función manageUsersErrorMessage), una sola vez, para las 4
+  // pantallas que llaman esto en vez de repetir el mapeo en cada una.
   async manageUsers(action, payload = {}) {
     if (!this.isAuthenticated()) {
-      throw new Error('Requiere conexión y una sesión válida para administrar usuarios.');
+      throw new Error('AUTH_REQUIRED');
     }
     const cfg = await DB.getConfig();
-    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
-    const resp = await fetchWithTimeout(`${cfg.url}/functions/v1/manage-users`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: cfg.anonKey,
-        Authorization: `Bearer ${this._session.accessToken}`
-      },
-      body: JSON.stringify({ action, ...payload })
-    });
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+    let resp;
+    try {
+      resp = await fetchWithTimeout(`${cfg.url}/functions/v1/manage-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: JSON.stringify({ action, ...payload })
+      });
+    } catch (e) {
+      // Nunca deja la excepción cruda de fetch llegar a la UI — mismo
+      // criterio de clasificación ya usado en el resto de este archivo
+      // (isNetworkFailure(), db.js). AbortSignal.timeout() dispara
+      // AbortError/TimeoutError específicamente por plazo agotado.
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      throw new Error((data && data.error) || `manage-users respondió ${resp.status}`);
+      throw new Error((data && data.error) || `HTTP_${resp.status}`);
     }
     return data;
   },
