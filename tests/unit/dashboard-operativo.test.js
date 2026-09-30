@@ -72,7 +72,10 @@ describe('"Mayor tiempo sin engrasar" — días de calendario, nunca vencimiento
     expect(rowSrc).toContain("last ? fmtDate(last) : 'Sin registro'");
   });
   it('la columna de días es independiente de counts.ROJO/AMARILLO (vencimiento por horómetro) — usa daysSinceLastGrease(), no s.remaining/s.code', () => {
-    const panelSrc = src.slice(src.indexOf('dash-tiempo-sin-engrase-panel'), src.indexOf('dash-attention-panel'));
+    // Rediseño §H: el panel ahora va DESPUÉS de "Requieren atención" (movido
+    // hacia abajo en la jerarquía) — se acota hasta "Indicadores
+    // secundarios" (sección I, siempre posterior).
+    const panelSrc = src.slice(src.indexOf('dash-tiempo-sin-engrase-panel'), src.indexOf('<h2 class="dash-section-title">Indicadores secundarios</h2>'));
     expect(panelSrc).toContain('daysSinceLastGrease(e.id)');
     expect(panelSrc).not.toMatch(/s\.remaining|s\.code/);
   });
@@ -81,7 +84,7 @@ describe('"Mayor tiempo sin engrasar" — días de calendario, nunca vencimiento
   });
 });
 
-describe('Ajuste final — panel "Equipos al día" (%+barra+"X de Y") ELIMINADO, solo queda la tarjeta destacada', () => {
+describe('Rediseño estructural del Dashboard (cierre Parte D) — "Al día" pasa a Indicador secundario (dashActivityCard), ya no hero', () => {
   it('no existe más el panel duplicado (h3, pill de %, barra ni subtítulo "X de Y evaluables")', () => {
     expect(src).not.toContain('<h3>Equipos al día</h3>');
     expect(src).not.toContain('dash-al-dia-sub');
@@ -89,29 +92,52 @@ describe('Ajuste final — panel "Equipos al día" (%+barra+"X de Y") ELIMINADO,
     expect(src).not.toContain('alDiaPct');
   });
 
-  it('la tarjeta "Al día" de "Estado de lubricación" sigue intacta (no se tocó su cálculo ni su acción)', () => {
-    expect(src).toContain("dashHeroCard('Al día', counts.VERDE, 'green', 'al-dia')");
+  it('"Al día" sigue con el mismo cálculo/acción (counts.VERDE, al-dia), solo cambia a dashActivityCard (Indicadores secundarios)', () => {
+    expect(src).toContain("dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')");
+    expect(src).not.toContain("dashHeroCard('Al día'");
   });
 });
 
-describe('Rediseño — "Estado de lubricación" (jerarquía alta) y "Actividad" (discreta)', () => {
-  it('5 tarjetas destacadas: Al día/Próximos/Vencidos/Sin plan/Pausados, con acción propia', () => {
-    expect(src).toContain("dashHeroCard('Al día', counts.VERDE, 'green', 'al-dia')");
-    expect(src).toContain("dashHeroCard('Próximos', counts.AMARILLO, 'amber', 'proximos')");
+describe('Rediseño estructural (cierre Parte D) — KPI principales (B) y Indicadores secundarios (I)', () => {
+  it('6 tarjetas destacadas en el orden pedido: Vencidos/Pendientes hoy/Próximos/Realizados hoy/Pendientes de validación/Cumplimiento hoy', () => {
     expect(src).toContain("dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')");
-    expect(src).toContain("dashHeroCard('Sin plan', sinPlan.length");
-    expect(src).toContain("dashHeroCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)");
+    expect(src).toContain("dashHeroCard('Pendientes hoy', pendientesHoyList.length");
+    expect(src).toContain("dashHeroCard('Próximos', proximosSinHoy.length");
+    expect(src).toContain("dashHeroCard('Realizados hoy', doneToday, 'green'");
+    expect(src).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length");
+    expect(src).toContain('<div class="dash-hero-label">Cumplimiento hoy</div>');
+    const iVenc = src.indexOf("dashHeroCard('Vencidos'");
+    const iPendHoy = src.indexOf("dashHeroCard('Pendientes hoy'");
+    const iProx = src.indexOf("dashHeroCard('Próximos'");
+    const iReal = src.indexOf("dashHeroCard('Realizados hoy'");
+    const iPendVal = src.indexOf("dashHeroCard('Pendientes de validación'");
+    const iCumpl = src.indexOf('<div class="dash-hero-label">Cumplimiento hoy</div>');
+    expect(iVenc).toBeLessThan(iPendHoy);
+    expect(iPendHoy).toBeLessThan(iProx);
+    expect(iProx).toBeLessThan(iReal);
+    expect(iReal).toBeLessThan(iPendVal);
+    expect(iPendVal).toBeLessThan(iCumpl);
   });
 
-  it('3 tarjetas de actividad, discretas y separadas del bloque destacado', () => {
-    expect(src).toContain("dashActivityCard('Total equipos'");
-    expect(src).toContain("dashActivityCard('Realizados hoy'");
+  it('no usa una fórmula nueva para los KPI principales — reusa counts/pendientesHoyList/proximosSinHoy/doneToday/recordsPendientesValidacion/cumplHoy ya calculados', () => {
+    expect(src).not.toMatch(/dashHeroCard\('Vencidos', [^c]/); // siempre counts.ROJO
+  });
+
+  it('5 tarjetas de indicadores secundarios (I): Al día/Sin plan/Pausados/Anomalías abiertas/Total equipos, con menor peso visual (dashActivityCard)', () => {
+    expect(src).toContain("dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')");
+    expect(src).toContain("dashActivityCard('Sin plan', sinPlan.length");
+    expect(src).toContain("dashActivityCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)");
     expect(src).toContain("dashActivityCard('Anomalías abiertas'");
-    // Las 2 secciones existen como bloques separados (jerarquía visual distinta).
-    const iHero = src.indexOf('Estado de lubricación');
-    const iActividad = src.indexOf('>Actividad<');
-    expect(iHero).toBeGreaterThan(-1);
-    expect(iActividad).toBeGreaterThan(iHero);
+    expect(src).toContain("dashActivityCard('Total equipos'");
+    const iSec = src.indexOf('<h2 class="dash-section-title">Indicadores secundarios</h2>');
+    const iAlDia = src.indexOf("dashActivityCard('Al día'");
+    expect(iSec).toBeGreaterThan(-1);
+    expect(iAlDia).toBeGreaterThan(iSec);
+  });
+
+  it('"Indicadores secundarios" es la ÚLTIMA sección del Dashboard (menor peso visual que Vencidos, al final)', () => {
+    const iSec = src.lastIndexOf('dash-section-title');
+    expect(src.slice(iSec, iSec + 60)).toContain('Indicadores secundarios');
   });
 
   it('ya no existe el "kpi-grid" plano de 8 tarjetas iguales ni el grid "Semáforo de equipos" (menos tarjetas iguales, dedup)', () => {
@@ -121,7 +147,7 @@ describe('Rediseño — "Estado de lubricación" (jerarquía alta) y "Actividad"
   });
 });
 
-describe('CORRECCIÓN CENTRAL — "Actividad" ya NO tiene su propia excepción para baseline null; depende 100% de las funciones centrales', () => {
+describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia excepción para baseline null; dependen 100% de las funciones centrales', () => {
   const activityCardSrc = extractDeclaration(appSource, 'dashActivityCard');
 
   it('dashActivityCard() vuelve a su firma simple (sin workaround local de "—"/subtext) — el 0 real ya sale solo de la función central', () => {
@@ -131,26 +157,26 @@ describe('CORRECCIÓN CENTRAL — "Actividad" ya NO tiene su propia excepción p
     expect(activityCardSrc).not.toContain('Number.isFinite');
   });
 
-  it('"Realizados hoy" usa tono verde discreto (acento positivo), ya no neutral', () => {
-    expect(src).toContain("dashActivityCard('Realizados hoy', doneToday, 'green'");
+  it('"Realizados hoy" usa tono verde (acento positivo) como KPI principal (dashHeroCard)', () => {
+    expect(src).toContain("dashHeroCard('Realizados hoy', doneToday, 'green'");
   });
 
   it('"Pendientes de validación" es UNA SOLA rama — recordsPendientesValidacion.length directo, SIN chequeo propio de GREASE_VALIDATION_ENABLED_FROM en el Dashboard', () => {
-    const iSecActividad = src.indexOf('dash-activity-row');
-    const iFinSeccion = src.indexOf('</section>', iSecActividad);
-    const seccionSrc = src.slice(iSecActividad, iFinSeccion);
+    const iSecHero = src.indexOf('dash-hero-grid');
+    const iFinSeccion = src.indexOf('</section>', iSecHero);
+    const seccionSrc = src.slice(iSecHero, iFinSeccion);
     expect(seccionSrc).not.toContain('GREASE_VALIDATION_ENABLED_FROM'); // sin excepción propia de pantalla
-    expect(seccionSrc).toContain("dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)");
+    expect(seccionSrc).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)");
   });
 
   it('"Conflictos de validación" usa isRecordInConflict() (función central) — nunca hasValidationConflict() directo, para no contar un conflicto que Historial ya muestra como Histórico', () => {
     expect(src).toContain('const recordsConflictoValidacion = recordsParaValidacion.filter(r => isRecordInConflict(r, validations));');
   });
 
-  it('el resto de "Actividad" (Total equipos/Realizados hoy/Anomalías/Conflictos) no se tocó — mismas acciones/condiciones de antes', () => {
+  it('el resto de indicadores secundarios (Total equipos/Anomalías) no se tocó — mismas acciones/condiciones de antes', () => {
     expect(src).toContain("dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)");
     expect(src).toContain("dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)");
-    expect(src).toContain("recordsConflictoValidacion.length > 0 ? dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion') : ''");
+    expect(src).toContain("recordsConflictoValidacion.length > 0 ? `<div class=\"dash-activity-row\" style=\"margin-top:8px\">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''");
   });
 });
 
@@ -256,13 +282,17 @@ describe('Rediseño — listas accionables respetan Ubicación/Familia y ofrecen
 });
 
 describe('Rediseño — "Equipos que requieren atención" como cola operativa (reemplaza la tabla de 9 columnas)', () => {
-  it('orden fijo por prioridad: Vencidos > Próximos > Sin plan > Pausados', () => {
+  it('orden fijo por prioridad pedido: Vencido > Turno anterior > Pendiente hoy > Próximo > Sin plan > Pausado', () => {
     const iCola = src.indexOf('const colaAtencion = [');
     const iVenc = src.indexOf('vencidos.map(x =>', iCola);
-    const iProx = src.indexOf('proximos.map(x =>', iCola);
+    const iTurnoAnt = src.indexOf('pendientesTurnoAnterior.map(e =>', iCola);
+    const iPendHoy = src.indexOf('pendientesHoyList.map(e =>', iCola);
+    const iProx = src.indexOf('proximosSinHoy.map(x =>', iCola);
     const iSinPlan = src.indexOf('sinPlan].sort', iCola);
     const iPausados = src.indexOf('pausados.map(e =>', iCola);
-    expect(iVenc).toBeLessThan(iProx);
+    expect(iVenc).toBeLessThan(iTurnoAnt);
+    expect(iTurnoAnt).toBeLessThan(iPendHoy);
+    expect(iPendHoy).toBeLessThan(iProx);
     expect(iProx).toBeLessThan(iSinPlan);
     expect(iSinPlan).toBeLessThan(iPausados);
   });
@@ -418,11 +448,22 @@ describe('Ajuste final — densidad visual de "Estado de lubricación"/"Activida
   });
 });
 
-describe('"Pendientes turno anterior" — lista explícita de equipos (cierre operativo §25), distinta de vencidos históricos', () => {
+describe('"Pendientes turno anterior" (sección E dedicada) — lista explícita de equipos, distinta de vencidos históricos, nunca convertida en KPI', () => {
+  it('sección propia con su propio panel (#dash-pendientes-anterior-panel), no una tarjeta KPI', () => {
+    expect(src).toContain('id="dash-pendientes-anterior-panel"');
+    expect(src).toContain('<h3>Pendientes del turno anterior</h3>');
+  });
+
   it('cuando hay pendientes, muestra los códigos reales (mismo array pendientesTurnoAnterior, sin recalcular)', () => {
     expect(src).toContain('${pendientesTurnoAnterior.length ? `');
-    expect(src).toContain('Pendientes del turno anterior (distinto de vencidos históricos)');
     expect(src).toContain('${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join(\'\')}');
+  });
+
+  it('cuando NO hay pendientes, no ocupa espacio excesivo (un solo empty-state corto, sin tabla ni lista vacía)', () => {
+    const iPanel = src.indexOf('id="dash-pendientes-anterior-panel"');
+    const panelSrc = src.slice(iPanel, iPanel + 700);
+    expect(panelSrc).toContain('Ninguno — nada heredado del turno anterior.');
+    expect(panelSrc).not.toContain('<table');
   });
 });
 

@@ -3222,9 +3222,17 @@ async function renderDashboard() {
   // 'pendiente' en la Matriz Semanal (ver comentario de
   // findCarriedOverSkipForToday() en operational-scope.js), este KPI solo
   // la hace visible sin tener que abrir cada equipo uno por uno.
+  // BUG REAL encontrado y corregido en este lote (auditoría de no-double-
+  // count, §15): antes NO se excluía un equipo que YA se engrasó más tarde
+  // el mismo día (Realizado atrasado) — el skip seguía existiendo, así que
+  // ese equipo aparecía como "pendiente" aquí Y como "realizado" en
+  // Cumplimiento operativo/Historial a la vez. Ahora se excluye cualquier
+  // equipo con un lubrication_record real de HOY, sin importar el turno.
   const pendientesTurnoAnterior = equipos.filter(e => {
     const carry = findCarriedOverSkipForToday(skipsHoy, { equipmentId: e.id, dateISO: todayISODash });
-    return carry && carry.shiftId !== turnoActual;
+    if (!carry || carry.shiftId === turnoActual) return false;
+    const yaEngrasadoHoy = records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today);
+    return !yaEngrasadoHoy;
   });
   const motivosNoEjecucionHoy = {};
   skipsHoy.forEach(s => { motivosNoEjecucionHoy[s.reason] = (motivosNoEjecucionHoy[s.reason] || 0) + 1; });
@@ -3249,35 +3257,6 @@ async function renderDashboard() {
   // scheduleDate). Orden fijo por prioridad: Vencidos > Próximos > Sin
   // plan > Pausados (solo si hay alguno).
   const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
-  function planLabelFor(plan) {
-    if (!plan) return '—';
-    if (plan.controlType === 'Horas de operación') return `Cada ${fmt(plan.frequency || 0)} h`;
-    // Presentación compacta (WEEKDAY_ABBR_DASH, ver drawColaAtencion): la
-    // fila ya antepone "Plan:" — aquí solo van los días, abreviados
-    // ("Lun · Jue · Sáb" en vez de "Día: Lunes/Jueves/Sábado"). El dato
-    // completo (plan.assignedDays con nombres completos) no se toca.
-    if (plan.controlType === 'Día y turno de la semana') {
-      return (plan.assignedDays || []).length ? plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ') : '—';
-    }
-    return '—';
-  }
-  function motivoFor(x) {
-    if (x.s.nextHour !== undefined) return x.s.code === 'ROJO' ? 'Vencido por horómetro' : 'Próximo por horómetro';
-    return x.s.code === 'ROJO' ? 'Vencido por día/turno' : 'Programado hoy';
-  }
-  function urgenciaFor(x) {
-    if (x.s.remaining !== undefined && x.s.remaining !== null) {
-      return x.s.remaining < 0 ? `Atraso: ${fmt(Math.abs(x.s.remaining))} h` : `Restante: ${fmt(x.s.remaining)} h`;
-    }
-    if (x.s.scheduleDate) return `Día: ${WEEKDAY_NAMES[x.s.scheduleDate.getDay()]}`;
-    return '—';
-  }
-  const colaAtencion = [
-    ...vencidos.map(x => ({ estado: 'Vencido', tone: 'red', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
-    ...proximos.map(x => ({ estado: 'Próximo', tone: 'amber', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
-    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'red', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
-    ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
-  ];
 
   // KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — realizados/
   // programados, SOLO planes "Día y turno de la semana". Planes por Horas
@@ -3290,7 +3269,10 @@ async function renderDashboard() {
   // siempre significa un día/turno REAL ya definido en
   // `plan.assignedDays`/`plan.shiftId`, nunca un valor inventado.
   // Independiente de `computeFleetCompliance()` (histórico por registro) —
-  // no se mezclan.
+  // no se mezclan. Movido ARRIBA de `colaAtencion` (rediseño de jerarquía,
+  // cierre Parte D) porque `colaAtencion` ahora necesita `progHoy`/
+  // `hechoHoy` para el bucket "Pendiente hoy" — antes se calculaban
+  // DESPUÉS de construir la cola, así que no estaban disponibles ahí.
   const nowTs = new Date();
   const hoyWeekday = WEEKDAY_NAMES[nowTs.getDay()];
   const turnoActualLabel = turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
@@ -3306,6 +3288,15 @@ async function renderDashboard() {
   // Hoy: equipos cuyo plan tiene HOY como día asignado.
   const progHoy = equiposDT.filter(e => (planByEquipoId[e.id].assignedDays || []).includes(hoyWeekday));
   const hechoHoy = progHoy.filter(e => hechoEnFecha(e.id, planByEquipoId[e.id], today));
+  // "Pendientes hoy" (KPI principal nuevo, cierre Parte D §4/§24): MISMO
+  // universo ya usado para "Cumplimiento Hoy" (progHoy/hechoHoy) — nunca
+  // una fórmula nueva, solo la diferencia de dos listas ya calculadas.
+  // Se reusa a propósito (en vez de derivar de `counts.AMARILLO`, que
+  // mezcla esto con lo próximo a vencer por horómetro) para que el número
+  // de esta tarjeta y el de "Cumplimiento Hoy" sean SIEMPRE consistentes
+  // entre sí (mismo denominador).
+  const pendientesHoyIds = new Set(progHoy.map(e => e.id)); hechoHoy.forEach(e => pendientesHoyIds.delete(e.id));
+  const pendientesHoyList = progHoy.filter(e => pendientesHoyIds.has(e.id));
 
   // Turno actual: de lo programado hoy, lo que aplica al turno en curso
   // (plan sin turno fijo = aplica a ambos) y tiene un registro hecho
@@ -3342,7 +3333,73 @@ async function renderDashboard() {
   const cumplTurno = { x: hechoTurno.length, y: progTurno.length, pct: cumplimientoPct(hechoTurno.length, progTurno.length) };
   const cumplSemana = { x: hechoSemana, y: progSemana, pct: cumplimientoPct(hechoSemana, progSemana) };
 
+  function planLabelFor(plan) {
+    if (!plan) return '—';
+    if (plan.controlType === 'Horas de operación') return `Cada ${fmt(plan.frequency || 0)} h`;
+    // Presentación compacta (WEEKDAY_ABBR_DASH, ver drawColaAtencion): la
+    // fila ya antepone "Plan:" — aquí solo van los días, abreviados
+    // ("Lun · Jue · Sáb" en vez de "Día: Lunes/Jueves/Sábado"). El dato
+    // completo (plan.assignedDays con nombres completos) no se toca.
+    if (plan.controlType === 'Día y turno de la semana') {
+      return (plan.assignedDays || []).length ? plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ') : '—';
+    }
+    return '—';
+  }
+  function motivoFor(x) {
+    if (x.s.nextHour !== undefined) return x.s.code === 'ROJO' ? 'Vencido por horómetro' : 'Próximo por horómetro';
+    return x.s.code === 'ROJO' ? 'Vencido por día/turno' : 'Programado hoy';
+  }
+  function urgenciaFor(x) {
+    if (x.s.remaining !== undefined && x.s.remaining !== null) {
+      return x.s.remaining < 0 ? `Atraso: ${fmt(Math.abs(x.s.remaining))} h` : `Restante: ${fmt(x.s.remaining)} h`;
+    }
+    if (x.s.scheduleDate) return `Día: ${WEEKDAY_NAMES[x.s.scheduleDate.getDay()]}`;
+    return '—';
+  }
+  // "Próximos" (KPI + cola de atención) ahora EXCLUYE lo que ya se cuenta
+  // como "Pendiente hoy" (§15 del pedido — "no double count"): antes
+  // `proximos` (counts.AMARILLO) mezclaba "próximo a vencer por
+  // horómetro" CON "programado hoy por día/turno, todavía sin hacer" en
+  // un solo balde — ahora que "Pendientes hoy" es su PROPIA tarjeta
+  // (arriba), dejarlo también aquí duplicaría el mismo equipo en 2 KPIs
+  // principales a la vez. `x.s.label === 'PROGRAMADO HOY'` es el MISMO
+  // campo que weekdayStatusFor() (lubrication-status.js) ya pone — no se
+  // inventa un criterio nuevo, solo se usa para filtrar.
+  const proximosSinHoy = proximos.filter(x => x.s.label !== 'PROGRAMADO HOY');
+  const colaAtencion = [
+    ...vencidos.map(x => ({ estado: 'Vencido', tone: 'red', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    // Pendiente turno anterior (§6/§25 del pedido): MISMA lista ya
+    // calculada para el bloque dedicado de la sección E — se reusa aquí
+    // tal cual, sin recalcular.
+    ...pendientesTurnoAnterior.map(e => ({ estado: 'Turno anterior', tone: 'amber', e, motivo: 'Pendiente del turno anterior (carryover)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: planByEquipoId[e.id] || null })),
+    ...pendientesHoyList.map(e => ({ estado: 'Pendiente hoy', tone: 'amber', e, motivo: 'Programado hoy', plan: planLabelFor(planByEquipoId[e.id]), urgencia: `Día: ${hoyWeekday}`, planObj: planByEquipoId[e.id] || null })),
+    ...proximosSinHoy.map(x => ({ estado: 'Próximo', tone: 'amber', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'red', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
+    ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
+  ];
+
   const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
+  // Rediseño estructural del Dashboard (cierre Parte D, pedido explícito):
+  // MISMAS fuentes de datos/fórmulas/filtros de siempre — el cambio es
+  // JERARQUÍA + DISTRIBUCIÓN (§1/§17). Orden A-I pedido:
+  //   A. Cabecera+filtros (ya existía, sin cambios)
+  //   B. KPI principales (Vencidos/Pendientes hoy/Próximos/Realizados hoy/
+  //      Pendientes de validación/Cumplimiento hoy) — antes repartidos
+  //      entre "Estado de lubricación"/"Actividad"/"Cumplimiento operativo"
+  //   C. Cumplimiento (Hoy/Semana/Turno) — ya existía, solo se mueve arriba
+  //   D. Requieren atención — ya existía (al fondo), ahora justo después
+  //      de B/C; "con el plan mal configurado" (conProblemas) queda junto
+  //      a esta sección por ser igual de urgente
+  //   E. Pendientes del turno anterior — antes mezclado dentro de "Panel
+  //      operativo", ahora su propia sección (§7: "no convertirla en KPI")
+  //   F. Estado por ubicación — idem, separado de "Panel operativo"
+  //   G. Assignments activas + Fuera de plan + No ejecutados — el resto de
+  //      lo que era "Panel operativo"
+  //   H. Mayor tiempo sin engrasar — ya existía, se mueve más abajo
+  //   I. Indicadores secundarios (Al día/Sin plan/Pausados/Anomalías
+  //      abiertas/Total equipos) — antes "Estado de lubricación"/
+  //      "Actividad", ahora al final con menor peso visual (dashActivityCard
+  //      en vez de dashHeroCard)
   c.innerHTML = `
     <div class="layout-wide">
     <div class="toolbar dash-filters-row">
@@ -3361,25 +3418,19 @@ async function renderDashboard() {
     </div>
 
     <section class="dash-section">
-      <h2 class="dash-section-title">Estado de lubricación</h2>
+      <h2 class="dash-section-title">Qué requiere acción</h2>
       <div class="dash-hero-grid">
-        ${dashHeroCard('Al día', counts.VERDE, 'green', 'al-dia')}
-        ${dashHeroCard('Próximos', counts.AMARILLO, 'amber', 'proximos')}
         ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
-        ${dashHeroCard('Sin plan', sinPlan.length, sinPlan.length ? 'red' : 'neutral', 'sin-plan')}
-        ${dashHeroCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
+        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', null)}
+        ${dashHeroCard('Próximos', proximosSinHoy.length, proximosSinHoy.length ? 'amber' : 'neutral', 'proximos')}
+        ${dashHeroCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
+        ${dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)}
+        <div class="dash-hero-card tone-${cumplHoy.pct === null ? 'neutral' : cumplHoy.pct >= App.generalSettings.complianceTarget ? 'green' : cumplHoy.pct >= 80 ? 'amber' : 'red'}">
+          <div class="dash-hero-value">${cumplHoy.pct === null ? '—' : cumplHoy.pct + '%'}</div>
+          <div class="dash-hero-label">Cumplimiento hoy</div>
+        </div>
       </div>
-    </section>
-
-    <section class="dash-section dash-section-secondary">
-      <h2 class="dash-section-title">Actividad</h2>
-      <div class="dash-activity-row">
-        ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
-        ${dashActivityCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
-        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
-        ${dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)}
-        ${recordsConflictoValidacion.length > 0 ? dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion') : ''}
-      </div>
+      ${recordsConflictoValidacion.length > 0 ? `<div class="dash-activity-row" style="margin-top:8px">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''}
     </section>
 
     <div class="panel">
@@ -3392,43 +3443,19 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <section class="dash-section dash-section-secondary">
-      <h2 class="dash-section-title">Panel operativo</h2>
-      <div class="dash-activity-row">
-        ${dashActivityCard('Pendientes turno anterior', pendientesTurnoAnterior.length, pendientesTurnoAnterior.length ? 'amber' : 'neutral', null)}
-        ${dashActivityCard('Asignaciones activas', assignmentsActivas.length, assignmentsActivas.length ? 'amber' : 'neutral', null)}
-        ${dashActivityCard('Fuera de plan hoy', recordsOutOfPlanHoy.length, 'neutral', null)}
-        ${dashActivityCard('No se pudo ejecutar hoy', skipsHoy.length, skipsHoy.length ? 'red' : 'neutral', null)}
+    <div class="panel" id="dash-attention-panel">
+      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
+      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
+      <div class="toolbar" style="padding:0 14px 10px">
+        <label class="filter-label">Turno
+          <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+        </label>
+        <label class="filter-label">Día asignado
+          <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
+        </label>
       </div>
-      ${pendientesTurnoAnterior.length ? `
-      <div class="dash-pendientes-anterior-list">
-        <div class="dim" style="padding:8px 0 4px">Pendientes del turno anterior (distinto de vencidos históricos):</div>
-        <div class="dash-motivos-noexec-list">
-          ${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join('')}
-        </div>
-      </div>` : ''}
-      ${Object.keys(motivosNoEjecucionHoy).length ? `
-      <div class="dash-motivos-noexec">
-        <div class="dim" style="padding:8px 0 4px">Motivos de "no se pudo ejecutar" hoy:</div>
-        <div class="dash-motivos-noexec-list">
-          ${Object.entries(motivosNoEjecucionHoy).map(([reason, n]) => `<span class="dash-motivo-chip">${esc(NO_EXECUTION_REASON_LABELS[reason] || reason)}: <b>${n}</b></span>`).join('')}
-        </div>
-      </div>` : ''}
-      ${estadoPorUbicacion.length > 1 ? `
-      <div class="dash-ubic-breakdown">
-        <div class="dim" style="padding:10px 0 4px">Estado por ubicación:</div>
-        <table class="data-table">
-          <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
-          <tbody>${estadoPorUbicacion.map(u => `<tr>
-            <td>${esc(u.location.name)}</td>
-            <td>${u.total}</td>
-            <td style="color:var(--green)">${u.verde}</td>
-            <td style="color:var(--amber)">${u.amarillo}</td>
-            <td style="color:var(--red)">${u.rojo}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-      </div>` : ''}
-    </section>
+      <div class="dash-cola-atencion" id="dash-cola-atencion"></div>`}
+    </div>
 
     ${conProblemas.length ? `
     <div class="panel panel-alerta">
@@ -3444,6 +3471,50 @@ async function renderDashboard() {
         </tr>`).join('')}</tbody>
       </table>
     </div>` : ''}
+
+    <div class="panel" id="dash-pendientes-anterior-panel">
+      <div class="panel-head"><h3>Pendientes del turno anterior</h3></div>
+      ${pendientesTurnoAnterior.length ? `
+      <div class="dash-pendientes-anterior-list">
+        <div class="dim" style="padding:0 14px 4px">${pendientesTurnoAnterior.length} equipo(s) — distinto de "Vencidos" (histórico): esto es de HOY, heredado del turno que ya terminó.</div>
+        <div class="dash-motivos-noexec-list" style="padding:0 14px 10px">
+          ${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join('')}
+        </div>
+      </div>` : `<div class="empty-state">Ninguno — nada heredado del turno anterior.</div>`}
+    </div>
+
+    ${estadoPorUbicacion.length > 1 ? `
+    <div class="panel" id="dash-ubic-panel">
+      <div class="panel-head"><h3>Estado por ubicación</h3></div>
+      <div class="dash-ubic-breakdown">
+        <table class="data-table">
+          <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
+          <tbody>${estadoPorUbicacion.map(u => `<tr>
+            <td>${esc(u.location.name)}</td>
+            <td>${u.total}</td>
+            <td style="color:var(--green)">${u.verde}</td>
+            <td style="color:var(--amber)">${u.amarillo}</td>
+            <td style="color:var(--red)">${u.rojo}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
+    <section class="dash-section dash-section-secondary" id="dash-panel-operativo">
+      <h2 class="dash-section-title">Asignaciones · Fuera de plan · No ejecutados</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Asignaciones activas', assignmentsActivas.length, assignmentsActivas.length ? 'amber' : 'neutral', null)}
+        ${dashActivityCard('Fuera de plan hoy', recordsOutOfPlanHoy.length, 'neutral', null)}
+        ${dashActivityCard('No ejecutados hoy', skipsHoy.length, skipsHoy.length ? 'red' : 'neutral', null)}
+      </div>
+      ${Object.keys(motivosNoEjecucionHoy).length ? `
+      <div class="dash-motivos-noexec">
+        <div class="dim" style="padding:8px 0 4px">Motivos de "no se pudo ejecutar" hoy (informativo — nunca se cuenta como realizado):</div>
+        <div class="dash-motivos-noexec-list">
+          ${Object.entries(motivosNoEjecucionHoy).map(([reason, n]) => `<span class="dash-motivo-chip">${esc(NO_EXECUTION_REASON_LABELS[reason] || reason)}: <b>${n}</b></span>`).join('')}
+        </div>
+      </div>` : ''}
+    </section>
 
     <div class="panel" id="dash-tiempo-sin-engrase-panel">
       <div class="panel-head dash-exc-head">
@@ -3461,19 +3532,16 @@ async function renderDashboard() {
       `}
     </div>
 
-    <div class="panel" id="dash-attention-panel">
-      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
-      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
-      <div class="toolbar" style="padding:0 14px 10px">
-        <label class="filter-label">Turno
-          <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
-        </label>
-        <label class="filter-label">Día asignado
-          <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
-        </label>
+    <section class="dash-section dash-section-secondary">
+      <h2 class="dash-section-title">Indicadores secundarios</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')}
+        ${dashActivityCard('Sin plan', sinPlan.length, sinPlan.length ? 'red' : 'neutral', 'sin-plan')}
+        ${dashActivityCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
+        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+        ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
       </div>
-      <div class="dash-cola-atencion" id="dash-cola-atencion"></div>`}
-    </div>
+    </section>
     </div>
   `;
 
@@ -3618,7 +3686,7 @@ async function renderDashboard() {
       } else if (action === 'al-dia') {
         openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
       } else if (action === 'proximos') {
-        openDashStatusModal('Próximos a engrase', `${proximos.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximos);
+        openDashStatusModal('Próximos a engrase', `${proximosSinHoy.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximosSinHoy);
       } else if (action === 'vencidos') {
         openDashStatusModal('Equipos vencidos', `${vencidos.length} equipo(s) vencidos, los más atrasados primero.`, vencidos);
       } else if (action === 'total-equipos') {

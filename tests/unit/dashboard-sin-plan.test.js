@@ -35,8 +35,8 @@ describe('renderDashboard() — conteo de equipos sin plan', () => {
     expect(hastaSinPlan).not.toMatch(/equipos\.filter\(e => e\.status/);
   });
 
-  it('el KPI está en la sección "Estado de lubricación", cableado a la acción "sin-plan"', () => {
-    expect(src).toContain("dashHeroCard('Sin plan', sinPlan.length");
+  it('el KPI está en "Indicadores secundarios" (rediseño Parte D), cableado a la acción "sin-plan"', () => {
+    expect(src).toContain("dashActivityCard('Sin plan', sinPlan.length");
     expect(src).toContain("'sin-plan'");
   });
 

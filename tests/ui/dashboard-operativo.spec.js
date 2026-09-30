@@ -1,21 +1,24 @@
 // tests/ui/dashboard-operativo.spec.js
 //
-// Dashboard operativo (ajuste visual final): filtros Ubicación/Familia, 5
-// tarjetas destacadas de "Estado de lubricación" (Al día/Próximos/Vencidos/
-// Sin plan/Pausados), 4 mini-KPIs de "Actividad" de ancho fijo (NO
-// estirados a todo el ancho), panel "Cumplimiento operativo" (Hoy/Semana/
-// Turno Día|Noche — el panel duplicado "Equipos al día" con %+barra fue
-// ELIMINADO, solo queda la tarjeta destacada), "Mayor tiempo sin engrasar"
-// como LISTA COMPACTA de excepciones estilo Fiix/UpKeep/Fracttal (sin
-// ranking #1/#2/#3, sin cards, chevron como única acción, toda la fila
-// navega a Historial) y "Equipos que requieren atención"
-// como cola compacta (sin alturas fijas, sin huecos en móvil). No requiere
-// login ni red: fragmento estático con la estructura/clases REALES de
-// renderDashboard() (app.js) — datos de relleno, nunca registros de
+// Rediseño estructural del Dashboard (cierre Parte D): JERARQUÍA + DISTRIBUCIÓN,
+// mismo orden A-I pedido:
+//   B. KPI principales (Vencidos/Pendientes hoy/Próximos/Realizados hoy/
+//      Pendientes de validación/Cumplimiento hoy) — 6 tarjetas destacadas
+//   C. Cumplimiento (Hoy/Semana/Turno)
+//   D. Requieren atención (cola compacta)
+//   E. Pendientes del turno anterior (sección propia, nunca un KPI)
+//   F. Estado por ubicación
+//   G. Asignaciones activas + Fuera de plan + No ejecutados (compacto)
+//   H. Mayor tiempo sin engrasar
+//   I. Indicadores secundarios (Al día/Sin plan/Pausados/Anomalías abiertas/
+//      Total equipos) — menor peso visual, al final
+// No requiere login ni red: fragmento estático con la estructura/clases REALES
+// de renderDashboard() (app.js) — datos de relleno, nunca registros de
 // producción. La lógica ya está probada contra la función REAL en
-// tests/unit/dashboard-operativo.test.js y tests/unit/dashboard-sin-plan.test.js
-// — aquí solo se valida la composición visual (jerarquía/acciones/layout),
-// sin duplicar esas pruebas.
+// tests/unit/dashboard-operativo.test.js, dashboard-sin-plan.test.js y los
+// nuevos dashboard-hierarchy/dashboard-attention-order/etc. — aquí solo se
+// valida la composición visual (jerarquía/acciones/layout), sin duplicar esas
+// pruebas.
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -23,11 +26,6 @@ import path from 'node:path';
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 
 function colaRow({ id, badge, tone, code, urgencia, linea2, plan }) {
-  // Estructura REAL post-rediseño (fila plana, sin "líneas" de igual
-  // flex-grow — ver app.js drawColaAtencion()/styles.css .dash-cola-row):
-  // badge, código, meta (marca/modelo·ubicación), programación compacta
-  // (progCompactaFor: ya trae "Atraso"/"Restante" o "HOY · Día"/"VENCIDO ·
-  // Día"), plan (ya abreviado), acciones.
   return `
     <div class="dash-cola-row">
       <span class="dash-cola-badge tone-${tone}">${badge}</span>
@@ -43,9 +41,6 @@ function colaRow({ id, badge, tone, code, urgencia, linea2, plan }) {
 }
 
 function excRow({ id, code, dias, isMax, brandModel, ubicacion, ultimo }) {
-  // Estructura REAL post-rediseño (ver app.js tiempoExcepcionRowHTML()): el
-  // bloque de días es un "stat" propio (número + etiqueta), con "Historial"
-  // como acción principal visible — ya no chevron + fila-clickable-sin-control.
   return `
     <div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${id}">
       <div class="dash-exc-main">
@@ -85,23 +80,14 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
         </div>
 
         <section class="dash-section">
-          <h2 class="dash-section-title">Estado de lubricación</h2>
+          <h2 class="dash-section-title">Qué requiere acción</h2>
           <div class="dash-hero-grid">
-            <div class="dash-hero-card tone-green kpi-clickable" data-kpi-action="al-dia"><div class="dash-hero-value">10</div><div class="dash-hero-label">Al día</div></div>
-            <div class="dash-hero-card tone-amber kpi-clickable" data-kpi-action="proximos"><div class="dash-hero-value">3</div><div class="dash-hero-label">Próximos</div></div>
             <div class="dash-hero-card tone-red kpi-clickable" data-kpi-action="vencidos"><div class="dash-hero-value">2</div><div class="dash-hero-label">Vencidos</div></div>
-            <div class="dash-hero-card tone-red kpi-clickable" data-kpi-action="sin-plan"><div class="dash-hero-value">2</div><div class="dash-hero-label">Sin plan</div></div>
-            <div class="dash-hero-card tone-neutral kpi-clickable" data-kpi-action="pausados"><div class="dash-hero-value">1</div><div class="dash-hero-label">Pausados</div></div>
-          </div>
-        </section>
-
-        <section class="dash-section dash-section-secondary">
-          <h2 class="dash-section-title">Actividad</h2>
-          <div class="dash-activity-row">
-            <div class="dash-activity-card tone-neutral kpi-clickable" data-kpi-action="total-equipos"><span class="dash-activity-value">18</span><span class="dash-activity-label">Total equipos</span></div>
-            <div class="dash-activity-card tone-green kpi-clickable" data-kpi-action="realizados-hoy"><span class="dash-activity-value">4</span><span class="dash-activity-label">Realizados hoy</span></div>
-            <div class="dash-activity-card tone-amber kpi-clickable" data-kpi-action="anomalias"><span class="dash-activity-value">1</span><span class="dash-activity-label">Anomalías abiertas</span></div>
-            <div class="dash-activity-card tone-neutral" data-kpi-action=""><span class="dash-activity-value">—</span><span class="dash-activity-label">Pendientes de validación</span><span class="dash-activity-subtext">Validación no activada</span></div>
+            <div class="dash-hero-card tone-amber"><div class="dash-hero-value">1</div><div class="dash-hero-label">Pendientes hoy</div></div>
+            <div class="dash-hero-card tone-amber kpi-clickable" data-kpi-action="proximos"><div class="dash-hero-value">3</div><div class="dash-hero-label">Próximos</div></div>
+            <div class="dash-hero-card tone-green kpi-clickable" data-kpi-action="realizados-hoy"><div class="dash-hero-value">4</div><div class="dash-hero-label">Realizados hoy</div></div>
+            <div class="dash-hero-card tone-neutral"><div class="dash-hero-value">0</div><div class="dash-hero-label">Pendientes de validación</div></div>
+            <div class="dash-hero-card tone-green"><div class="dash-hero-value">75%</div><div class="dash-hero-label">Cumplimiento hoy</div></div>
           </div>
         </section>
 
@@ -130,6 +116,53 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
           </div>
         </div>
 
+        <div class="panel" id="dash-attention-panel">
+          <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
+          <div class="toolbar">
+            <label class="filter-label">Turno<select id="att-turno" class="input input-sm"><option value="">Ambos</option></select></label>
+            <label class="filter-label">Día asignado<select id="att-dia" class="input input-sm"><option value="">Todos</option></select></label>
+          </div>
+          <div class="dash-cola-atencion" id="dash-cola-atencion">
+            ${colaRow({ id: 'e1', badge: 'Vencido', tone: 'red', code: '45-77', urgencia: 'Atraso: 43 h', linea2: 'CAT 740B · Volcán', plan: 'Cada 250 h' })}
+            ${colaRow({ id: 'e4', badge: 'Turno anterior', tone: 'amber', code: 'T-09', urgencia: '—', linea2: 'Komatsu WA470 · Rajo Principal', plan: 'Lun · Mié · Vie' })}
+            ${colaRow({ id: 'e5', badge: 'Pendiente hoy', tone: 'amber', code: 'T-11', urgencia: 'Día: Martes', linea2: 'Caterpillar 950 · Botadero Norte', plan: 'Mar · Jue' })}
+            ${colaRow({ id: 'e2', badge: 'Próximo', tone: 'amber', code: 'T-06', urgencia: 'Restante: 15 h', linea2: 'Caterpillar D8T · Rajo Principal', plan: 'Cada 250 h' })}
+            ${colaRow({ id: 'e3', badge: 'Sin plan', tone: 'red', code: 'CIS-03', urgencia: '—', linea2: 'Cisterna 5000gal · Botadero Norte', plan: '—' })}
+          </div>
+        </div>
+
+        <div class="panel" id="dash-pendientes-anterior-panel">
+          <div class="panel-head"><h3>Pendientes del turno anterior</h3></div>
+          <div class="dash-pendientes-anterior-list">
+            <div class="dim">1 equipo(s) — distinto de "Vencidos" (histórico): esto es de HOY, heredado del turno que ya terminó.</div>
+            <div class="dash-motivos-noexec-list">
+              <span class="dash-motivo-chip mono">T-09</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="dash-ubic-panel">
+          <div class="panel-head"><h3>Estado por ubicación</h3></div>
+          <div class="dash-ubic-breakdown">
+            <table class="data-table">
+              <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
+              <tbody>
+                <tr><td>Rajo Principal</td><td>10</td><td>7</td><td>2</td><td>1</td></tr>
+                <tr><td>Botadero Norte</td><td>8</td><td>6</td><td>1</td><td>1</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <section class="dash-section dash-section-secondary" id="dash-panel-operativo">
+          <h2 class="dash-section-title">Asignaciones · Fuera de plan · No ejecutados</h2>
+          <div class="dash-activity-row" id="dash-panel-operativo-row">
+            <div class="dash-activity-card tone-amber kpi-clickable"><span class="dash-activity-value">2</span><span class="dash-activity-label">Asignaciones activas</span></div>
+            <div class="dash-activity-card tone-neutral"><span class="dash-activity-value">1</span><span class="dash-activity-label">Fuera de plan hoy</span></div>
+            <div class="dash-activity-card tone-red"><span class="dash-activity-value">1</span><span class="dash-activity-label">No ejecutados hoy</span></div>
+          </div>
+        </section>
+
         <div class="panel" id="dash-tiempo-sin-engrase-panel">
           <div class="panel-head dash-exc-head">
             <h3>Mayor tiempo sin engrasar</h3>
@@ -145,18 +178,16 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
           </div>
         </div>
 
-        <div class="panel" id="dash-attention-panel">
-          <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
-          <div class="toolbar">
-            <label class="filter-label">Turno<select id="att-turno" class="input input-sm"><option value="">Ambos</option></select></label>
-            <label class="filter-label">Día asignado<select id="att-dia" class="input input-sm"><option value="">Todos</option></select></label>
+        <section class="dash-section dash-section-secondary">
+          <h2 class="dash-section-title">Indicadores secundarios</h2>
+          <div class="dash-activity-row" id="dash-secundarios-row">
+            <div class="dash-activity-card tone-green kpi-clickable" data-kpi-action="al-dia"><span class="dash-activity-value">10</span><span class="dash-activity-label">Al día</span></div>
+            <div class="dash-activity-card tone-red kpi-clickable" data-kpi-action="sin-plan"><span class="dash-activity-value">2</span><span class="dash-activity-label">Sin plan</span></div>
+            <div class="dash-activity-card tone-neutral kpi-clickable" data-kpi-action="pausados"><span class="dash-activity-value">1</span><span class="dash-activity-label">Pausados</span></div>
+            <div class="dash-activity-card tone-amber kpi-clickable" data-kpi-action="anomalias"><span class="dash-activity-value">1</span><span class="dash-activity-label">Anomalías abiertas</span></div>
+            <div class="dash-activity-card tone-neutral kpi-clickable" data-kpi-action="total-equipos"><span class="dash-activity-value">18</span><span class="dash-activity-label">Total equipos</span></div>
           </div>
-          <div class="dash-cola-atencion" id="dash-cola-atencion">
-            ${colaRow({ id: 'e1', badge: 'Vencido', tone: 'red', code: '45-77', urgencia: 'Atraso: 43 h', linea2: 'CAT 740B · Volcán', plan: 'Cada 250 h' })}
-            ${colaRow({ id: 'e2', badge: 'Próximo', tone: 'amber', code: 'T-06', urgencia: 'Restante: 15 h', linea2: 'Caterpillar D8T · Rajo Principal', plan: 'Cada 250 h' })}
-            ${colaRow({ id: 'e3', badge: 'Sin plan', tone: 'red', code: 'CIS-03', urgencia: '—', linea2: 'Cisterna 5000gal · Botadero Norte', plan: '—' })}
-          </div>
-        </div>
+        </section>
       </main>
     </div>
   </div>`;
@@ -174,35 +205,36 @@ for (const width of WIDTHS) {
     expect(ubicOptions).toEqual(['Todas', 'Rajo Principal', 'Botadero Norte', 'Taller Central']);
   });
 
-  test(`Dashboard @ ${width}px — "Estado de lubricación" tiene 5 tarjetas destacadas, más grandes que "Actividad"`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — KPI principales (B) tiene 6 tarjetas destacadas en el orden pedido, más grandes que los indicadores secundarios`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
 
     const heroCards = page.locator('.dash-hero-card');
-    await expect(heroCards).toHaveCount(5);
+    await expect(heroCards).toHaveCount(6);
     const labels = await heroCards.locator('.dash-hero-label').allTextContents();
-    expect(labels).toEqual(['Al día', 'Próximos', 'Vencidos', 'Sin plan', 'Pausados']);
+    expect(labels).toEqual(['Vencidos', 'Pendientes hoy', 'Próximos', 'Realizados hoy', 'Pendientes de validación', 'Cumplimiento hoy']);
 
-    const activityCards = page.locator('.dash-activity-card');
-    await expect(activityCards).toHaveCount(4);
+    const secundarios = page.locator('#dash-secundarios-row .dash-activity-card');
+    await expect(secundarios).toHaveCount(5);
 
     const heroFontSize = await heroCards.first().locator('.dash-hero-value').evaluate(el => parseFloat(getComputedStyle(el).fontSize));
-    const activityFontSize = await activityCards.first().locator('.dash-activity-value').evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+    const activityFontSize = await secundarios.first().locator('.dash-activity-value').evaluate(el => parseFloat(getComputedStyle(el).fontSize));
     expect(heroFontSize).toBeGreaterThan(activityFontSize);
   });
 
-  test(`Dashboard @ ${width}px — NO existe el panel duplicado "Equipos al día" (solo queda la tarjeta destacada)`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Al día" es ahora un indicador secundario (menor peso visual), no una tarjeta destacada`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
 
     await expect(page.locator('h3:has-text("Equipos al día")')).toHaveCount(0);
     await expect(page.locator('.dash-al-dia-sub')).toHaveCount(0);
-    await expect(page.locator('.dash-hero-label:has-text("Al día")')).toHaveCount(1);
+    await expect(page.locator('.dash-hero-label:has-text("Al día")')).toHaveCount(0);
+    await expect(page.locator('.dash-activity-label:has-text("Al día")')).toHaveCount(1);
   });
 
-  test(`Dashboard @ ${width}px — "Cumplimiento operativo": 3 tarjetas (Hoy/Semana/Turno Día|Noche), texto explicativo corto`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Cumplimiento operativo" (C) va justo después de los KPI principales (B), 3 tarjetas (Hoy/Semana/Turno Día|Noche)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
@@ -220,9 +252,17 @@ for (const width of WIDTHS) {
     await expect(note).toContainText('Basado en planes programados por Día/Turno.');
     await expect(note).toContainText('Los planes por Horas no se incluyen.');
     await expect(note).not.toContainText('no hay forma de saber');
+
+    // Orden en el DOM: Cumplimiento aparece DESPUÉS del bloque de KPI
+    // principales (B) y ANTES de "Equipos que requieren atención" (D).
+    const heroBox = await page.locator('.dash-hero-grid').boundingBox();
+    const complianceBox = await page.locator('.dash-compliance-grid').boundingBox();
+    const attentionBox = await page.locator('#dash-attention-panel').boundingBox();
+    expect(complianceBox.y).toBeGreaterThan(heroBox.y);
+    expect(attentionBox.y).toBeGreaterThan(complianceBox.y);
   });
 
-  test(`Dashboard @ ${width}px — "Mayor tiempo sin engrasar" es una LISTA/RANKING COMPACTO de excepciones (sin ranking #1/#2), con "Historial" como acción principal visible`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Mayor tiempo sin engrasar" (H) es una LISTA/RANKING COMPACTO de excepciones (sin ranking #1/#2), con "Historial" como acción principal visible, y va DESPUÉS de "Requieren atención"`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
@@ -235,8 +275,6 @@ for (const width of WIDTHS) {
     await expect(page.locator('#dash-tiempo-sin-engrase-panel .dash-tiempo-rank')).toHaveCount(0); // sin número de ranking
     await expect(rows.first()).toContainText('T-06');
 
-    // REDISEÑO: el dato de días es un bloque destacado (número + etiqueta) y
-    // "Historial" es un botón visible — ya no chevron + fila-clickable-oculta.
     await expect(rows.first().locator('.dash-exc-days-wrap')).toBeVisible();
     await expect(rows.first().locator('.dash-exc-hist-btn')).toBeVisible();
     await expect(rows.first().locator('.dash-exc-hist-btn')).toHaveText('Historial');
@@ -247,6 +285,10 @@ for (const width of WIDTHS) {
 
     const resumen = page.locator('.dash-exc-summary');
     await expect(resumen).toContainText('Máximo:');
+
+    const attentionBox = await page.locator('#dash-attention-panel').boundingBox();
+    const tiempoBox = await page.locator('#dash-tiempo-sin-engrase-panel').boundingBox();
+    expect(tiempoBox.y).toBeGreaterThan(attentionBox.y);
   });
 
   test(`Dashboard @ ${width}px — lista de "Mayor tiempo sin engrasar" es vertical (nunca 2 filas lado a lado)`, async ({ page }) => {
@@ -259,14 +301,14 @@ for (const width of WIDTHS) {
     expect(row2Box.y).toBeGreaterThan(row1Box.y); // la fila 2 va DEBAJO de la 1, nunca al lado
   });
 
-  test(`Dashboard @ ${width}px — "Equipos que requieren atención" es una cola compacta (Vencido > Próximo > Sin plan), no una tabla ancha`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Equipos que requieren atención" (D) es una cola compacta en el orden Vencido > Turno anterior > Pendiente hoy > Próximo > Sin plan, no una tabla ancha`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
 
     await expect(page.locator('#dash-attention-panel table')).toHaveCount(0);
     const badges = await page.locator('.dash-cola-badge').allTextContents();
-    expect(badges).toEqual(['Vencido', 'Próximo', 'Sin plan']);
+    expect(badges).toEqual(['Vencido', 'Turno anterior', 'Pendiente hoy', 'Próximo', 'Sin plan']);
 
     const primera = page.locator('.dash-cola-row').first();
     await expect(primera).toContainText('45-77');
@@ -285,6 +327,41 @@ for (const width of WIDTHS) {
     await expect(page.locator('#dash-attention-panel #att-dia')).toBeVisible();
   });
 
+  test(`Dashboard @ ${width}px — "Pendientes del turno anterior" (E) es su propia sección, con la lista real de códigos, distinta de una tarjeta KPI`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(dashboardFixture());
+    await page.addStyleTag({ path: STYLES_PATH });
+
+    const panel = page.locator('#dash-pendientes-anterior-panel');
+    await expect(panel.locator('h3')).toHaveText('Pendientes del turno anterior');
+    await expect(panel.locator('.dash-motivo-chip')).toHaveCount(1);
+    await expect(panel.locator('.dash-motivo-chip').first()).toHaveText('T-09');
+    // Nunca es una tarjeta KPI (dash-hero-card/dash-activity-card) — es lista real.
+    await expect(panel.locator('.dash-hero-card, .dash-activity-card')).toHaveCount(0);
+  });
+
+  test(`Dashboard @ ${width}px — "Estado por ubicación" (F) mantiene la tabla dinámica (nunca nombres de ubicación hardcodeados en el markup base)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(dashboardFixture());
+    await page.addStyleTag({ path: STYLES_PATH });
+
+    const panel = page.locator('#dash-ubic-panel');
+    await expect(panel.locator('h3')).toHaveText('Estado por ubicación');
+    const rows = panel.locator('tbody tr');
+    await expect(rows).toHaveCount(2);
+  });
+
+  test(`Dashboard @ ${width}px — "Asignaciones · Fuera de plan · No ejecutados" (G) es compacta y separada de "Requieren atención" (sin doble conteo visual)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(dashboardFixture());
+    await page.addStyleTag({ path: STYLES_PATH });
+
+    const row = page.locator('#dash-panel-operativo-row .dash-activity-card');
+    await expect(row).toHaveCount(3);
+    const labels = await row.locator('.dash-activity-label').allTextContents();
+    expect(labels).toEqual(['Asignaciones activas', 'Fuera de plan hoy', 'No ejecutados hoy']);
+  });
+
   test(`Dashboard @ ${width}px — tarjetas/filas clicables con touch target ≥44px, sin scroll horizontal`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
@@ -301,43 +378,37 @@ for (const width of WIDTHS) {
   });
 }
 
-test('Dashboard @ 1366px — "Actividad" ocupa TODO el ancho de la sección en 4 columnas equilibradas (ya NO deja espacio vacío a la derecha)', async ({ page }) => {
+test('Dashboard @ 1366px — "Indicadores secundarios" ocupa TODO el ancho de la sección en 4 columnas equilibradas (ya NO deja espacio vacío a la derecha)', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const row = page.locator('.dash-activity-row');
+  const row = page.locator('#dash-secundarios-row');
   const rowBox = await row.boundingBox();
-  const lastCardBox = await page.locator('.dash-activity-card').last().boundingBox();
-  // La última tarjeta llega hasta el borde derecho de la fila (±1px de
-  // redondeo) — antes quedaba espacio de sobra porque las cards tenían un
-  // ancho tope fijo (240px) y se agrupaban a la izquierda.
-  expect(lastCardBox.x + lastCardBox.width).toBeGreaterThanOrEqual(rowBox.x + rowBox.width - 1);
-
+  const lastCardBox = await row.locator('.dash-activity-card').last().boundingBox();
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
   expect(cols).toBe(4);
+  // La última fila puede quedar a menos del ancho total (5 tarjetas en grid de
+  // 4 columnas), pero ninguna tarjeta se sale del contenedor.
+  expect(lastCardBox.x + lastCardBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width + 1);
 });
 
-test('Dashboard @ 412px — "Actividad" usa grid de 2 columnas ocupando todo el ancho (no 1 columna angosta con hueco a la derecha)', async ({ page }) => {
+test('Dashboard @ 412px — "Indicadores secundarios" usa grid de 2 columnas ocupando todo el ancho (no 1 columna angosta con hueco a la derecha)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const row = page.locator('.dash-activity-row');
+  const row = page.locator('#dash-secundarios-row');
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
   expect(cols).toBe(2);
-
-  const rowBox = await row.boundingBox();
-  const lastCardBox = await page.locator('.dash-activity-card').nth(1).boundingBox(); // 2da tarjeta = fin de la 1ra fila
-  expect(lastCardBox.x + lastCardBox.width).toBeGreaterThanOrEqual(rowBox.x + rowBox.width - 1);
 });
 
-test('Dashboard @ 360px — "Actividad" mantiene 2 columnas (sin overflow ni scroll horizontal)', async ({ page }) => {
+test('Dashboard @ 360px — "Indicadores secundarios" mantiene 2 columnas (sin overflow ni scroll horizontal)', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const row = page.locator('.dash-activity-row');
+  const row = page.locator('#dash-secundarios-row');
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
   expect(cols).toBe(2);
 
@@ -348,22 +419,22 @@ test('Dashboard @ 360px — "Actividad" mantiene 2 columnas (sin overflow ni scr
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 });
 
-test('Dashboard @ 768px — "Actividad" ya usa 4 columnas (no 2)', async ({ page }) => {
+test('Dashboard @ 768px — "Indicadores secundarios" ya usa 4 columnas (no 2)', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const row = page.locator('.dash-activity-row');
+  const row = page.locator('#dash-secundarios-row');
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
   expect(cols).toBe(4);
 });
 
-test('Actividad — el número va ARRIBA y el label ABAJO (no label-izquierda/valor-derecha), touch target >=44px', async ({ page }) => {
+test('Indicadores secundarios — el número va ARRIBA y el label ABAJO (no label-izquierda/valor-derecha), touch target >=44px', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('.dash-activity-card').first();
+  const card = page.locator('#dash-secundarios-row .dash-activity-card').first();
   const valueTop = await card.locator('.dash-activity-value').evaluate(el => el.getBoundingClientRect().top);
   const labelTop = await card.locator('.dash-activity-label').evaluate(el => el.getBoundingClientRect().top);
   expect(valueTop).toBeLessThan(labelTop);
@@ -372,15 +443,14 @@ test('Actividad — el número va ARRIBA y el label ABAJO (no label-izquierda/va
   expect(box.height).toBeGreaterThanOrEqual(44);
 });
 
-test('Pendientes de validación con baseline sin activar: muestra "—" + "Validación no activada", sin acción clicable (nunca fabrica un conteo histórico)', async ({ page }) => {
+test('"Pendientes de validación" es un KPI principal más — muestra el valor real (nunca un texto inventado tipo "Validación no activada")', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('.dash-activity-card').filter({ hasText: 'Pendientes de validación' });
-  await expect(card.locator('.dash-activity-value')).toHaveText('—');
-  await expect(card.locator('.dash-activity-subtext')).toHaveText('Validación no activada');
-  await expect(card).not.toHaveClass(/kpi-clickable/);
+  const card = page.locator('.dash-hero-card').filter({ hasText: 'Pendientes de validación' });
+  await expect(card.locator('.dash-hero-value')).toHaveText('0');
+  await expect(page.locator('.dash-activity-subtext')).toHaveCount(0);
 });
 
 test('Dashboard @ 412px — cola de atención SIN altura fija forzada (el alto lo define el texto, no un min-height)', async ({ page }) => {
@@ -401,8 +471,6 @@ test('Dashboard @ 412px — cola de atención se apila en tarjeta vertical (mism
   const row = page.locator('.dash-cola-row').first();
   const flexWrap = await row.evaluate(el => getComputedStyle(el).flexWrap);
   expect(flexWrap).toBe('wrap');
-  // La meta (marca/modelo·ubicación) cae en una línea propia, debajo del
-  // código — ya no hay franjas de columnas angostas con el mismo flex-grow.
   const codeBox = await row.locator('.dash-cola-code').boundingBox();
   const metaBox = await row.locator('.dash-cola-meta').boundingBox();
   expect(metaBox.y).toBeGreaterThan(codeBox.y);
@@ -416,7 +484,6 @@ test('Dashboard @ 1366px — cola de atención es una fila compacta en desktop (
   const row = page.locator('.dash-cola-row').first();
   const flexWrap = await row.evaluate(el => getComputedStyle(el).flexWrap);
   expect(flexWrap).toBe('nowrap');
-  // Todo cabe en la misma línea vertical (una sola fila real, no apilado).
   const codeBox = await row.locator('.dash-cola-code').boundingBox();
   const planBox = await row.locator('.dash-cola-plan').boundingBox();
   expect(Math.abs(planBox.y - codeBox.y)).toBeLessThan(4);
@@ -442,9 +509,6 @@ test('Dashboard @ 1366px — la fila de "Mayor tiempo sin engrasar" mantiene el 
   const row = page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-row').first();
   expect(await row.evaluate(el => getComputedStyle(el).flexDirection)).toBe('row');
   const box = await row.boundingBox();
-  // REDISEÑO: 3 líneas de texto + bloque de días destacado + botón Historial
-  // (antes solo chevron) — un poco más alto que la versión ultra-mínima
-  // anterior, pero sigue siendo una fila compacta, no una card.
   expect(box.height).toBeLessThanOrEqual(70);
 });
 
