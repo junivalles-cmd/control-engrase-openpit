@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v54'; // v54: lote occurrences/carryover, continuación — §1 "No se pudo ejecutar" (src/core/operational-scope.js: NO_EXECUTION_REASONS/buildNoExecutionRecord/findCarriedOverSkipForToday; store nuevo 'lubrication_skips', DB_VERSION 7→8; botón + modal en startGreaseFlow(), NUNCA crea lubrication_record; carryover automático vía estadoCelda() ya existente) + §2 mejoras Registrar Engrase (header con turno programado/actual + vencido + carryover, selector de equipo compacto por búsqueda en vez de <select>, validación 0 lb si checklist 100%, "Marcar todos" pide confirmación, retroactivo bajo "Opciones avanzadas") + §3 Dashboard "Panel operativo" (pendientes turno anterior, asignaciones activas, fuera de plan hoy, motivos de no ejecución, estado por ubicación — reusa statuses/ASSIGNMENT_STATUS/EXECUTION_TYPE ya existentes, sin duplicar ningún conteo). Ver docs/SESSION_HANDOFF.md. Nada tocó producción/Supabase (migration 0005 PREPARADA, no ejecutada).
+const CACHE = 'engrase-openpit-v55'; // v55: arquitectura de notificaciones (usuario+turno+disponibilidad+scope+OneSignal, pedido explícito). src/core/notification-routing.js nuevo (motor puro de elegibilidad, sin roles de turno nuevos). Identidad OneSignal atada a App.currentUser (bindOneSignalIdentity en login, clearOneSignalIdentity en logout, intacta en Bloquear). Bug real corregido: disablePushForCurrentUser() buscaba una llave que nunca existía (nunca desactivó nada desde que se escribió) y el filtro de zona/turno de Lubricador en notify-vencidos/notify-push nunca tenía datos reales que comparar — ambos corregidos (saveOneSignalId() ahora copia cuadrillaId/locationId/shiftId del dispositivo). Preferencias de notificación propias (notificationShift/notificationAvailability/receiveAllShifts) autoservicio en Configuración. cancelAllLocalNotifications() factorizada, cancela también en logout(). Edge Functions notify-vencidos/notify-push: eligibilidad server-side para TODOS los roles + deduplicación real (notification_dispatch_log, migration 0006 PREPARADA) + OUT_OF_PLAN nunca dispara el push normal. Ver docs/SESSION_HANDOFF.md. Nada tocó producción/Supabase, nada desplegado.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
@@ -8,7 +8,7 @@ const ASSETS = [
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',
-  './src/core/operational-scope.js',
+  './src/core/operational-scope.js', './src/core/notification-routing.js',
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',

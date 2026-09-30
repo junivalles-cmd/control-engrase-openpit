@@ -490,6 +490,25 @@ const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
 const NOTIF_ID_ASSIGNED = 1010;        // engrase asignado manualmente a mi cuadrilla
 const NOTIF_ID_ASSIGNED_REC = 1011;    // recordatorio de asignación todavía pendiente
 
+// Factorizada aparte (lote arquitectura de notificaciones, §15) para poder
+// cancelar TODAS las notificaciones locales programadas desde logout()
+// incluso sin App.currentUser (refreshLocalNotifications() exige un
+// usuario válido — logout() ya lo dejó en null para ese momento). Misma
+// lista que ya se cancelaba al inicio de refreshLocalNotifications(), sin
+// cambios.
+const LOCAL_NOTIF_IDS = [
+  { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
+  { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
+  { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
+  { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO },
+  { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC }
+];
+async function cancelAllLocalNotifications() {
+  const LN = window.Capacitor?.Plugins?.LocalNotifications;
+  if (!LN) return;
+  try { await LN.cancel({ notifications: LOCAL_NOTIF_IDS }); } catch (e) {}
+}
+
 /* Configuración por defecto de las notificaciones. El Administrador puede cambiar
    cada una por separado desde Configuración: activarla o apagarla, a qué hora suena,
    y qué roles la reciben. */
@@ -690,6 +709,7 @@ async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
     ultimoUsuario: App.currentUser ? App.currentUser.name : (actual?.ultimoUsuario || ''),
     active: true
   }, App.currentUser ? App.currentUser.name : 'sistema'));
+  await refreshPushTokenDeviceScope();
   Sync.fullSync();
 }
 
@@ -808,17 +828,98 @@ async function moverEquipoDeUbicacion(equipo, newLocationId, locations) {
   Sync.fullSync();
 }
 
+// Snapshot del scope del DISPOSITIVO (cuadrilla/ubicación/turno asignado,
+// ver getDeviceAssignment()) para copiarlo sobre la fila push_tokens de LA
+// PERSONA. BUG REAL encontrado en este lote (auditoría de notify-vencidos/
+// notify-push): esos Edge Functions ya filtran Lubricador por
+// `disp.shiftId`/`disp.locationId`/`disp.cuadrillaId`, pero la fila que
+// saveOneSignalId() escribía nunca tenía esos campos (solo existían en la
+// fila APARTE del dispositivo, keyed por getDeviceId(), que jamás tiene un
+// `token` real) — en la práctica ese filtro nunca hacía nada: TODOS los
+// tokens de Lubricador recibían TODOS los avisos sin importar turno/zona/
+// cuadrilla. Corregido copiando el scope del dispositivo aquí; se vuelve a
+// llamar cada vez que cambia la suscripción Y cada vez que cambia la
+// asignación del dispositivo (ver saveDeviceAssignment()) para que nunca
+// quede desactualizado mientras la persona sigue conectada.
+async function currentDeviceScopeSnapshotForPush() {
+  const deviceAssignment = await getDeviceAssignment();
+  if (!deviceAssignment.cuadrillaId) return { cuadrillaId: '', locationId: '', shiftId: deviceAssignment.shiftId || '' };
+  const cuadrilla = await DB.get('cuadrillas', deviceAssignment.cuadrillaId).catch(() => null);
+  return {
+    cuadrillaId: deviceAssignment.cuadrillaId,
+    locationId: cuadrilla?.locationId || '',
+    shiftId: deviceAssignment.shiftId || ''
+  };
+}
+
 async function saveOneSignalId(subscriptionId, plataforma) {
   try {
     // El id incluye la plataforma: así una misma persona puede recibir avisos en la app
     // del celular Y en el navegador de la computadora, sin que uno pise al otro.
     const plat = plataforma || (window.Capacitor ? 'android' : 'web');
+    const id = `tok_${App.currentUser.id}_${plat}`;
+    // notificationShift/notificationAvailability/receiveAllShifts (lote
+    // arquitectura de notificaciones, §2/§29): preferencias PROPIAS de la
+    // persona, nunca reseteadas por un simple cambio de subscription id —
+    // se preservan si ya existían, con default BOTH/AVAILABLE/false solo
+    // para una fila nueva.
+    const actual = await DB.get('push_tokens', id).catch(() => null);
+    const deviceScope = await currentDeviceScopeSnapshotForPush();
     await DB.put('push_tokens', stamp({
-      id: `tok_${App.currentUser.id}_${plat}`, userId: App.currentUser.id, userName: App.currentUser.name,
-      role: App.currentUser.role, token: subscriptionId, platform: plat, active: true
+      ...(actual || {}),
+      id, userId: App.currentUser.id, userName: App.currentUser.name,
+      role: App.currentUser.role, token: subscriptionId, platform: plat, active: true,
+      cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId,
+      notificationShift: actual?.notificationShift || 'BOTH',
+      notificationAvailability: actual?.notificationAvailability || 'AVAILABLE',
+      receiveAllShifts: actual?.receiveAllShifts || false
     }, App.currentUser.name));
     Sync.fullSync();
   } catch (e) { console.warn('No se pudo guardar el ID de notificaciones push', e); }
+}
+
+// Refresca el scope de dispositivo (cuadrillaId/locationId/shiftId) sobre
+// la fila push_tokens de QUIEN TENGA SESIÓN ABIERTA ahora mismo — se llama
+// desde saveDeviceAssignment() (cambia la cuadrilla/turno del dispositivo
+// mientras alguien sigue conectado en él) para que esa fila nunca quede
+// desactualizada hasta la próxima vez que cambie la suscripción. Si la
+// persona actual no tiene todavía un push_token (nunca activó push), no
+// hace nada — no se inventa una fila sin un subscription id real.
+async function refreshPushTokenDeviceScope() {
+  if (!App.currentUser) return;
+  try {
+    const plat = window.Capacitor ? 'android' : 'web';
+    const id = `tok_${App.currentUser.id}_${plat}`;
+    const actual = await DB.get('push_tokens', id).catch(() => null);
+    if (!actual || !actual.token) return;
+    const deviceScope = await currentDeviceScopeSnapshotForPush();
+    await DB.put('push_tokens', stamp({
+      ...actual, cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId
+    }, App.currentUser.name));
+  } catch (e) { console.warn('No se pudo actualizar el scope de push del dispositivo', e); }
+}
+
+// Preferencias de notificación PROPIAS (lote arquitectura de
+// notificaciones, §2/§21/§22/§29) — autoservicio: cada persona ajusta su
+// turno de notificación/disponibilidad; receiveAllShifts solo tiene efecto
+// real para ADMINISTRADOR (isUserEligibleForNotification() lo ignora para
+// cualquier otro rol, pero se guarda igual si se manda — sin inventar una
+// restricción de rol aquí, esa regla vive en notification-routing.js).
+// Actualiza TODAS las filas push_tokens de la persona (puede tener una por
+// plataforma: android Y web) — nunca solo la primera que encuentre.
+async function saveNotificationPreferences({ notificationShift, notificationAvailability, receiveAllShifts }) {
+  if (!App.currentUser) throw new Error('No hay sesión activa.');
+  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+  if (!propios.length) throw new Error('Todavía no activaste las notificaciones push en este dispositivo — no hay nada que configurar.');
+  for (const tok of propios) {
+    await DB.put('push_tokens', stamp({
+      ...tok,
+      notificationShift: notificationShift || tok.notificationShift || 'BOTH',
+      notificationAvailability: notificationAvailability || tok.notificationAvailability || 'AVAILABLE',
+      receiveAllShifts: receiveAllShifts !== undefined ? !!receiveAllShifts : !!tok.receiveAllShifts
+    }, App.currentUser.name));
+  }
+  Sync.fullSync();
 }
 
 /* ---------- Push en NAVEGADOR (sin Capacitor) ----------
@@ -867,14 +968,63 @@ async function initPushNotifications() {
   } catch (e) { console.warn('Notificaciones push no disponibles en esta plataforma', e); }
 }
 
+// BUG REAL corregido en este lote: buscaba la fila por `tok_${userId}`
+// (sin la plataforma), pero saveOneSignalId() SIEMPRE la guarda como
+// `tok_${userId}_${plataforma}` (android/web) — esa clave nunca existía,
+// así que DB.get() nunca encontraba nada y ESTA función jamás desactivó un
+// push_token real, en ningún logout, desde que se escribió. Corregido
+// buscando por el campo `userId` (que sí existe en la fila) en vez de
+// adivinar la clave — de paso, desactiva TODAS las plataformas de la
+// persona (android Y web), no solo una.
 async function disablePushForCurrentUser() {
   if (!App.currentUser) return;
   const userId = App.currentUser.id;
   const userName = App.currentUser.name;
   try {
-    const tok = await DB.get('push_tokens', `tok_${userId}`);
-    if (tok) { tok.active = false; await DB.put('push_tokens', stamp(tok, userName)); }
+    const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === userId && t.active !== false);
+    for (const tok of propios) {
+      await DB.put('push_tokens', stamp({ ...tok, active: false }, userName));
+    }
   } catch (e) {}
+}
+
+/* ============================================================
+   IDENTIDAD ONESIGNAL (lote arquitectura de notificaciones, §9-§13) —
+   ata la identidad de push al USUARIO Auth actual (App.currentUser.id,
+   que en AUTH_MODE='supabase' es profile.appUserId), NUNCA al
+   deviceId/cuadrillaId (esos siguen siendo del dispositivo, ver bloque de
+   arriba — no se tocan aquí). Así, en un dispositivo compartido, la
+   identidad de push SIEMPRE es la de quien tiene sesión iniciada, no la
+   de quien lo usó por última vez. Sin efecto mientras ONESIGNAL_APP_ID
+   esté vacío (feature apagada hoy) — mismo guard que el resto de este
+   bloque, nunca lanza si OneSignal no está disponible.
+   ============================================================ */
+function oneSignalHandle() {
+  return window.plugins?.OneSignal || window.OneSignal || null;
+}
+
+// Se llama SOLO al iniciar sesión con éxito (enterAppAsProfile()) — nunca
+// antes de resolver identidad (§10: "No enviar push antes de resolver
+// identidad" — aquí "enviar" es responsabilidad de la Edge Function/
+// servidor, pero la identidad SIEMPRE se asocia antes de cualquier otra
+// cosa que dependa de ella, como initPushNotifications()).
+async function bindOneSignalIdentity(userId) {
+  if (!ONESIGNAL_APP_ID || !userId) return;
+  const OneSignal = oneSignalHandle();
+  if (!OneSignal || typeof OneSignal.login !== 'function') return;
+  try { await OneSignal.login(String(userId)); } catch (e) { console.warn('No se pudo asociar la identidad de OneSignal', e); }
+}
+
+// Se llama SOLO en Cerrar sesión real (logout(), AUTH_MODE='supabase') —
+// NUNCA en Bloquear (lockApp() no la toca, la persona sigue siendo la
+// misma, §12) ni en Cambiar usuario de forma directa (confirmChangeUser()
+// ya delega en logout() para la salida; el login siguiente vuelve a
+// asociar con bindOneSignalIdentity(), ver §11).
+async function clearOneSignalIdentity() {
+  if (!ONESIGNAL_APP_ID) return;
+  const OneSignal = oneSignalHandle();
+  if (!OneSignal || typeof OneSignal.logout !== 'function') return;
+  try { await OneSignal.logout(); } catch (e) { console.warn('No se pudo retirar la identidad de OneSignal', e); }
 }
 
 async function refreshAppBadge() {
@@ -957,18 +1107,16 @@ function wireLocalNotificationTaps() {
 
 async function refreshLocalNotifications() {
   const LN = window.Capacitor?.Plugins?.LocalNotifications;
-  if (!LN || !App.currentUser) return;
+  if (!LN) return;
+  // Se cancelan todas primero, INCLUSO sin usuario válido (§15: al cambiar
+  // de usuario/cerrar sesión, las notificaciones de la persona anterior
+  // deben desaparecer de inmediato, no quedar "pegadas" hasta el próximo
+  // login) — antes este cancel vivía DESPUÉS del guard de App.currentUser,
+  // así que nunca corría en ese caso.
+  await cancelAllLocalNotifications();
+  if (!App.currentUser) return;
   try {
     const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
-
-    // Se cancelan todas primero: si el admin apaga un aviso, deja de sonar
-    await LN.cancel({ notifications: [
-      { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
-      { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
-      { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
-      { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO },
-      { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC }
-    ]});
     if (!settings.enabled) return;
 
     const perm = await LN.checkPermissions();
@@ -1972,6 +2120,16 @@ function confirmChangeUser() {
 function logout() {
   clearAppBadge();
   disablePushForCurrentUser();
+  // Retira la identidad de OneSignal de ESTA persona (lote arquitectura de
+  // notificaciones, §13) — solo tiene sentido en modo supabase (identidad
+  // Auth real); el login PIN legacy nunca asoció una. NUNCA se llama desde
+  // lockApp() (§12: bloquear conserva la identidad, sigue siendo la misma
+  // persona) ni cambia nada del deviceId/cuadrillaId del dispositivo.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) clearOneSignalIdentity();
+  // Cancela de inmediato las notificaciones locales de la persona que se
+  // va (§15) — sin esto, quedarían programadas hasta que alguien más
+  // inicie sesión y refreshLocalNotifications() las recalcule.
+  cancelAllLocalNotifications();
   stopInactivityTimer();
   App.currentUser = null;
   App.lubricadorGreaseFlowActive = false; // salida explícita — no debe sobrevivir a la sesión siguiente
@@ -2024,6 +2182,7 @@ function currentUserFromAuthProfile(profile) {
 
 function enterAppAsProfile(profile) {
   App.currentUser = currentUserFromAuthProfile(profile);
+  bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
   boot();
 }
 
@@ -10255,6 +10414,7 @@ async function renderConfig() {
         </div>
         ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
           ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
+        <div id="my-notif-prefs" style="margin-top:14px"></div>
         <div id="push-tokens-list" style="margin-top:14px"></div>
         ` : `
         <p class="dim"><b>Notificaciones push no configuradas</b></p>
@@ -10413,6 +10573,59 @@ async function renderConfig() {
     alert('Listo. Si OneSignal está bien configurado, este dispositivo debería aparecer en la lista de abajo en unos segundos (puede que tengas que volver a entrar a esta pantalla).');
     renderConfig();
   });
+
+  // "Mis notificaciones" (lote arquitectura de notificaciones, §2/§21/§22/
+  // §29) — autoservicio: cada persona ajusta SU PROPIO turno/disponibilidad
+  // de notificación; receiveAllShifts solo se ofrece a ADMINISTRADOR (a
+  // cualquier otro rol isUserEligibleForNotification() lo ignora, pero
+  // tampoco tiene sentido mostrárselo). Solo existe si la persona YA
+  // activó push en este dispositivo (si no, no hay fila push_tokens propia
+  // que editar — se pide activar primero, nunca se inventa una fila vacía
+  // aquí en la UI).
+  const misPrefsEl = $('#my-notif-prefs');
+  if (misPrefsEl) {
+    const misTokens = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+    if (!misTokens.length) {
+      misPrefsEl.innerHTML = `<p class="dim">Activa las notificaciones push arriba para poder configurar tu turno de notificación.</p>`;
+    } else {
+      const actual = misTokens[0]; // mismas preferencias en todas las plataformas de la persona (ver saveNotificationPreferences)
+      misPrefsEl.innerHTML = `
+        <h4 class="grease-flow-card-head" style="margin-top:0">Mis notificaciones</h4>
+        <form id="my-notif-prefs-form" class="form-grid">
+          <label>Turno en el que quiero recibir avisos
+            <select name="notificationShift">
+              <option value="BOTH" ${actual.notificationShift === 'BOTH' || !actual.notificationShift ? 'selected' : ''}>Ambos turnos</option>
+              <option value="DAY" ${actual.notificationShift === 'DAY' ? 'selected' : ''}>Solo Turno Día</option>
+              <option value="NIGHT" ${actual.notificationShift === 'NIGHT' ? 'selected' : ''}>Solo Turno Noche</option>
+            </select>
+          </label>
+          <label>Disponibilidad
+            <select name="notificationAvailability">
+              <option value="AVAILABLE" ${actual.notificationAvailability !== 'RESTING' ? 'selected' : ''}>Disponible</option>
+              <option value="RESTING" ${actual.notificationAvailability === 'RESTING' ? 'selected' : ''}>De descanso (no recibir avisos operativos)</option>
+            </select>
+          </label>
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `
+          <label class="retro-toggle span-2">
+            <input type="checkbox" name="receiveAllShifts" ${actual.receiveAllShifts ? 'checked' : ''}/>
+            <span>Recibir alertas de todos los turnos (ignora el filtro de turno para mí)</span>
+          </label>` : ''}
+          <div class="span-2"><button type="submit" class="btn btn-sm btn-accent">Guardar mis notificaciones</button></div>
+        </form>`;
+      $('#my-notif-prefs-form').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const fd = Object.fromEntries(new FormData(ev.target).entries());
+        try {
+          await saveNotificationPreferences({
+            notificationShift: fd.notificationShift,
+            notificationAvailability: fd.notificationAvailability,
+            receiveAllShifts: fd.receiveAllShifts === 'on'
+          });
+          showInAppToast('✓ Preferencias de notificación guardadas');
+        } catch (e) { alert(e.message || 'No se pudo guardar.'); }
+      });
+    }
+  }
 
   // Solo existe cuando ONESIGNAL_APP_ID está configurado (ver markup arriba)
   // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
