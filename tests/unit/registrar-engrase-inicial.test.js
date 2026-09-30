@@ -96,3 +96,26 @@ describe('"No se pudo ejecutar" — visible SOLO para PLANNED/ASSIGNED pendiente
     expect(startGreaseFlowSrc).toContain('const trabajoReg = findExistingWorkForEquipment({');
   });
 });
+
+describe('YA_ENGRASADO — búsqueda automática de match antes de conciliación (cierre histórico Parte A)', () => {
+  it('el cambio de motivo a YA_ENGRASADO dispara la búsqueda (findMatchingGreaseRecordForOccurrence), nunca cierra nada sin ella', () => {
+    expect(startGreaseFlowSrc).toContain("$('#noexec-reason').addEventListener('change', actualizarMatchYaEngrasado);");
+    expect(startGreaseFlowSrc).toContain('findMatchingGreaseRecordForOccurrence({');
+  });
+
+  it('MATCH ofrece "Vincular al plan"; AMBIGUOUS pide conciliación del Planificador; NONE avisa sin match — las 3 ramas, ninguna cierra nada por su cuenta', () => {
+    expect(startGreaseFlowSrc).toContain('Vincular al plan');
+    expect(startGreaseFlowSrc).toContain('Se encontraron varios engrases posibles. Requiere revisión del Planificador.');
+    expect(startGreaseFlowSrc).toContain('No se encontró un engrase compatible.');
+  });
+
+  it('"Vincular al plan" pasa linkedRecordId al guardar — NUNCA crea un lubrication_record nuevo, solo enlaza el skip al real existente', () => {
+    const iVincular = startGreaseFlowSrc.indexOf("$('#noexec-vincular').addEventListener('click', () => guardarNoEjecucion({ linkedRecordId: rec.id }));");
+    expect(iVincular).toBeGreaterThan(-1);
+    expect(startGreaseFlowSrc).not.toMatch(/noexec-vincular[\s\S]{0,200}uid\('greg'\)/);
+  });
+
+  it('"Confirmar" normal (sin match) sigue guardando el skip sin linkedRecordId, como antes de este lote', () => {
+    expect(startGreaseFlowSrc).toContain("$('#noexec-confirm').addEventListener('click', () => guardarNoEjecucion());");
+  });
+});

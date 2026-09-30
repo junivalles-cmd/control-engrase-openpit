@@ -6270,13 +6270,49 @@ async function startGreaseFlow(equipmentId, target, options) {
         </label>
         <label class="span-2">Observación<textarea id="noexec-obs" rows="3" placeholder="Obligatoria si el motivo es &quot;Otro&quot;"></textarea></label>
       </div>
+      <div id="noexec-match-result"></div>
       <div class="modal-actions" style="margin-top:14px">
         <button type="button" class="btn" id="noexec-cancel">Cancelar</button>
         <button type="button" class="btn btn-accent" id="noexec-confirm">Confirmar</button>
       </div>
     `);
     $('#noexec-cancel').addEventListener('click', closeModal);
-    $('#noexec-confirm').addEventListener('click', async () => {
+
+    // YA_ENGRASADO (cierre histórico, Parte A): busca automáticamente si
+    // hay un lubrication_record real que satisfaga ESTA ocurrencia antes
+    // de dejarlo como una afirmación sin respaldo — NUNCA cierra nada solo
+    // por elegir el motivo (§2 del pedido). Ver
+    // findMatchingGreaseRecordForOccurrence() en operational-scope.js.
+    async function actualizarMatchYaEngrasado() {
+      const cont = $('#noexec-match-result');
+      if (!cont) return;
+      if ($('#noexec-reason').value !== 'YA_ENGRASADO' || !plan) { cont.innerHTML = ''; return; }
+      cont.innerHTML = `<p class="dim" style="margin:8px 0 0">Buscando un engrase reciente compatible…</p>`;
+      const [recordsParaMatch, assignmentsParaMatch, skipsParaMatch] = await Promise.all([
+        DB.allActive('lubrication_records'), DB.allActive('lubrication_assignments'), DB.allActive('lubrication_skips')
+      ]);
+      const match = findMatchingGreaseRecordForOccurrence({
+        plan, occurrenceKey: occurrenceKeyHoy, occurrenceDate: new Date(),
+        records: recordsParaMatch, assignments: assignmentsParaMatch, skips: skipsParaMatch
+      });
+      if (match.status === 'MATCH') {
+        const rec = match.records[0];
+        cont.innerHTML = `
+          <div class="grease-flow-carryover-warn" style="margin-top:10px">
+            <b>✓ Se encontró un engrase reciente compatible.</b><br>
+            ${esc(equipment.code)} · ${fmtDate(rec.date)} · ${fmt(rec.hourmeter)} h · ${esc(rec.userName || '—')}
+            <div class="modal-actions" style="margin-top:8px"><button type="button" class="btn btn-sm btn-accent" id="noexec-vincular">Vincular al plan</button></div>
+          </div>`;
+        $('#noexec-vincular').addEventListener('click', () => guardarNoEjecucion({ linkedRecordId: rec.id }));
+      } else if (match.status === 'AMBIGUOUS') {
+        cont.innerHTML = `<div class="grease-flow-vencido-warn" style="margin-top:10px">⚠ Se encontraron varios engrases posibles. Requiere revisión del Planificador.</div>`;
+      } else {
+        cont.innerHTML = `<p class="dim" style="margin:8px 0 0">No se encontró un engrase compatible.</p>`;
+      }
+    }
+    $('#noexec-reason').addEventListener('change', actualizarMatchYaEngrasado);
+
+    async function guardarNoEjecucion({ linkedRecordId } = {}) {
       const reason = $('#noexec-reason').value;
       const observacion = $('#noexec-obs').value;
       let skip;
@@ -6284,7 +6320,8 @@ async function startGreaseFlow(equipmentId, target, options) {
         skip = buildNoExecutionRecord({
           id: uid('skip'), equipmentId: equipment.id, planId: plan ? plan.id : null,
           occurrenceKey: occurrenceKeyHoy, date: nowISO(), shiftId: turnoActualReg,
-          reason, observacion, userId: App.currentUser.id, userName: App.currentUser.name, now: nowISO()
+          reason, observacion, userId: App.currentUser.id, userName: App.currentUser.name, now: nowISO(),
+          linkedRecordId
         });
       } catch (err) {
         alert(err.message);
@@ -6292,15 +6329,16 @@ async function startGreaseFlow(equipmentId, target, options) {
       }
       await DB.put('lubrication_skips', skip);
       await logAudit('ENGRASE_NO_EJECUTADO',
-        `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}`,
+        `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}${linkedRecordId ? ' · vinculado a ' + linkedRecordId : ''}`,
         App.currentUser.name);
       await discardDraft();
       closeModal();
-      showInAppToast(`Registrado: no se pudo ejecutar — ${equipment.code}`);
+      showInAppToast(linkedRecordId ? `✓ Vinculado a un engrase real — ${equipment.code}` : `Registrado: no se pudo ejecutar — ${equipment.code}`);
       App.lubricadorGreaseFlowActive = false; // el flujo terminó (sin engrase) — no debe sobrevivir a la sesión siguiente
       Sync.fullSync();
       redibujarPantallaActual();
-    });
+    }
+    $('#noexec-confirm').addEventListener('click', () => guardarNoEjecucion());
   }
 
   function restoreDraftIntoForm(d) {
@@ -7524,6 +7562,12 @@ async function drawHistory(equipmentId) {
   const equipment = await DB.get('equipment', equipmentId);
   const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const allAnomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
+  // Cierre histórico, Parte B (§11/§12/§13/§15): "No se pudo ejecutar"
+  // NUNCA había aparecido en Historial — los lubrication_skips se mezclan
+  // ahora en la MISMA tabla de "Engrases" (nunca se borra ni se oculta un
+  // NO EJECUTADO cuando el turno siguiente sí engrasa; ambos eventos
+  // quedan, en su propio orden cronológico real).
+  const allSkips = (await DB.allActive('lubrication_skips')).filter(s => s.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const lubricants = await DB.allActive('lubricants');
   const locationsHist = await DB.allActive('locations');
   const locNameHist = (id) => (locationsHist.find(l => l.id === id) || {}).name || 'Sin ubicación';
@@ -7592,6 +7636,19 @@ async function drawHistory(equipmentId) {
       if (to && d > to) return false;
       return true;
     });
+    const skipsDelPeriodo = allSkips.filter(s => {
+      const d = new Date(s.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+    // Línea temporal unificada (§11/§15): ENGRASE y NO_EJECUTADO ordenados
+    // por fecha real descendente, igual criterio que `records` a secas
+    // (más reciente primero) — nunca se separan en 2 listas distintas.
+    const eventosHist = [
+      ...records.map(r => ({ tipo: 'ENGRASE', date: r.date, record: r })),
+      ...skipsDelPeriodo.map(s => ({ tipo: 'NO_EJECUTADO', date: s.date, skip: s })),
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
     let avgInterval = '—';
     if (records.length > 1) {
@@ -7631,13 +7688,38 @@ async function drawHistory(equipmentId) {
         <div class="kpi-card"><div class="kpi-value">${records.length}</div><div class="kpi-label">Engrases ${filtered ? 'en el período' : 'registrados'}</div></div>
         <div class="kpi-card"><div class="kpi-value">${avgInterval}</div><div class="kpi-label">Intervalo promedio ${filtered ? '(período)' : 'real'}</div></div>
         <div class="kpi-card ${anomalies.length ? 'tone-amber' : ''}"><div class="kpi-value">${anomalies.length}</div><div class="kpi-label">Anomalías ${filtered ? 'en el período' : 'registradas'}</div></div>
+        <div class="kpi-card ${skipsDelPeriodo.length ? 'tone-amber' : ''}"><div class="kpi-value">${skipsDelPeriodo.length}</div><div class="kpi-label">No ejecutados ${filtered ? 'en el período' : 'registrados'}</div></div>
       </div>
       <div class="panel">
         <div class="panel-head"><h3>Engrases</h3></div>
         <table class="data-table hist-table">
           <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Tipo</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
           <tbody>
-            ${records.map((r, i) => {
+            ${eventosHist.map((ev, i) => {
+              if (ev.tipo === 'NO_EJECUTADO') {
+                const s = ev.skip;
+                // Fila compacta (cierre histórico §12/§13): mismas columnas de
+                // la tabla, pero la mayoría no aplica a un "no ejecutado" — se
+                // dejan en "—" en vez de inventar un dato. Nunca se muestra el
+                // código interno del motivo (NO_EXECUTION_REASON_LABELS ya
+                // traduce a texto real).
+                return `<tr data-skip="${s.id}" class="hist-row-skip">
+                <td>${fmtDate(s.date)}</td>
+                <td>${s.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+                <td>—</td>
+                <td><span class="hist-noexec-badge">No ejecutado</span></td>
+                <td class="mono">—</td>
+                <td>${esc(s.userName)}</td>
+                <td>—</td>
+                <td>—</td>
+                <td><button type="button" class="btn btn-sm hist-skip-detail" data-skip="${s.id}">${esc(NO_EXECUTION_REASON_LABELS[s.reason] || s.reason)}</button></td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                ${isAdmin ? '<td></td>' : ''}
+              </tr>`;
+              }
+              const r = ev.record;
               const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
               const activasEsteRegistro = findActiveValidations(r.id, validations);
               const valStatus = validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings);
@@ -7652,6 +7734,7 @@ async function drawHistory(equipmentId) {
                 : activasEsteRegistro.length === 1
                   ? `<button type="button" class="btn btn-sm hist-ver-validacion-btn" data-rec="${r.id}">Ver validación</button>`
                   : `<button type="button" class="btn btn-sm hist-ver-conflicto-btn" data-rec="${r.id}">Ver conflicto</button>`;
+              const iRecords = records.indexOf(r); // índice real en `records` (recordPhotoSrcs está alineado con esa lista, no con eventosHist)
               return `<tr data-rec="${r.id}">
               <td>${fmtDate(r.date)}</td>
               <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
@@ -7664,7 +7747,7 @@ async function drawHistory(equipmentId) {
               <td><span class="hist-cond-badge">${esc(r.condition)}</span>${condDetails[r.id] ? ` <button type="button" class="hist-cond-link" data-rec="${r.id}">Ver detalle</button>` : ''}</td>
               <td>${complianceBadgeHTML(compliance)}</td>
               <td>${validationBadgeHTML(valStatus)} ${valAction}</td>
-              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[i])}</td>
+              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[iRecords])}</td>
               ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
             </tr>`;
             }).join('') || `<tr><td colspan="${isAdmin ? 13 : 12}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
@@ -7686,6 +7769,23 @@ async function drawHistory(equipmentId) {
 
     $$('.hist-cond-link', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
       openModal('Detalle de la condición', condDetails[b.dataset.rec] || '<p class="dim">Sin detalles adicionales.</p>');
+    }));
+
+    // Detalle de "No ejecutado" (cierre histórico §16) — modal propio,
+    // nunca reutiliza el flujo de Registrar Engrase (no hay nada que
+    // registrar aquí, solo consultar lo que ya pasó).
+    $$('.hist-skip-detail', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      const s = allSkips.find(sk => sk.id === b.dataset.skip);
+      if (!s) return;
+      openModal('Detalle de "No se pudo ejecutar"', `
+        <div class="form-grid">
+          <div><b>Motivo</b><br>${esc(NO_EXECUTION_REASON_LABELS[s.reason] || s.reason)}</div>
+          <div><b>Fecha/hora</b><br>${fmtDate(s.date)}</div>
+          <div><b>Turno</b><br>${s.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</div>
+          <div><b>Registrado por</b><br>${esc(s.userName)}</div>
+          ${s.observacion ? `<div class="span-2"><b>Observación</b><br>${esc(s.observacion)}</div>` : ''}
+          ${s.linkedRecordId ? `<div class="span-2"><b>✓ Vinculado a un engrase real</b> (conciliado, ver fila del ${fmtDate((allRecords.find(r => r.id === s.linkedRecordId) || {}).date || '')} en esta misma tabla)</div>` : ''}
+        </div>`);
     }));
 
     $$('.hist-validar-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
@@ -7773,6 +7873,11 @@ async function renderReportes() {
   const equipos = await DB.allActive('equipment');
   const allRecords = await DB.allActive('lubrication_records');
   const anomalies = await DB.allActive('anomalies');
+  // Cierre histórico, Parte C (§17-§22 del pedido): lubrication_skips
+  // entran al análisis histórico como su PROPIA categoría — NUNCA se
+  // cuentan como lubrication_records (un "no ejecutado" nunca es un
+  // engrase realizado, ver §20).
+  const allSkips = await DB.allActive('lubrication_skips');
   const users = await DB.allActive('users');
   const locations = await DB.allActive('locations');
   const lubricants = await DB.allActive('lubricants');
@@ -7785,6 +7890,7 @@ async function renderReportes() {
   const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
   const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
   const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
 
   const total = equipos.length;
 
@@ -7890,6 +7996,12 @@ async function renderReportes() {
     <div class="panel">
       <div class="panel-head"><h3>Detalle de puntos no engrasados</h3></div>
       <div id="skipped-points-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>No ejecutados</h3></div>
+      <div class="dim" style="padding:0 14px 8px">"No se pudo ejecutar" (lubrication_skips) — NUNCA se cuenta como engrase realizado, aunque el turno siguiente sí lo haya hecho (ver Historial para esa secuencia completa).</div>
+      <div id="rep-no-ejecutados-area"></div>
     </div>
 
     <div class="panel">
@@ -8006,6 +8118,29 @@ async function renderReportes() {
       if (from && d < from) return false;
       if (to && d > to) return false;
       if (respUser && a.createdBy !== respUser.name) return false;
+      return true;
+    });
+  }
+
+  // Cierre histórico, Parte C (§17) — MISMOS filtros (Desde/Hasta/Equipo/
+  // Familia/Ubicación/Turno/Responsable) que applyFilters() aplica a
+  // lubrication_records, para que "No ejecutados" responda a los mismos
+  // controles del resto del informe sin un criterio propio.
+  function applyFiltersSkips() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
+    const turno = $('#f-turno').value;
+    const respId = $('#f-resp').value;
+    const ubic = $('#f-ubic').value;
+    const idsPermitidos = new Set(equiposFiltradosPorEquipoYFamilia().map(e => e.id));
+    return allSkips.filter(s => {
+      if (!idsPermitidos.has(s.equipmentId)) return false;
+      if (ubic && (equiposPorId[s.equipmentId] || {}).locationId !== ubic) return false;
+      const d = new Date(s.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      if (turno && s.shiftId !== turno) return false;
+      if (respId && s.userId !== respId) return false;
       return true;
     });
   }
@@ -8283,6 +8418,47 @@ async function renderReportes() {
       </div>` : '<div class="empty-state">Sin anomalías en este período.</div>'}`;
   }
 
+  // Cierre histórico, Parte C (§18/§19/§20 del pedido) — "No ejecutados":
+  // total + desglose por motivo/ubicación/equipo/turno/fecha. NUNCA se
+  // trata como cumplimiento (§20: un skip nunca cierra una ocurrencia por
+  // sí mismo — eso sigue dependiendo 100% de que exista un
+  // lubrication_record real, ya sea directo o vinculado vía
+  // findMatchingGreaseRecordForOccurrence(); este panel es puramente
+  // informativo, un conteo aparte).
+  function drawNoEjecutadosSeccion(skipsF) {
+    const area = $('#rep-no-ejecutados-area');
+    const porMotivo = {};
+    skipsF.forEach(s => { const k = NO_EXECUTION_REASON_LABELS[s.reason] || s.reason; porMotivo[k] = (porMotivo[k] || 0) + 1; });
+    const motivosOrdenados = Object.entries(porMotivo).sort((a, b) => b[1] - a[1]);
+    const porUbicacion = {};
+    skipsF.forEach(s => { const k = (locPorId[(equiposPorId[s.equipmentId] || {}).locationId] || {}).name || 'Sin ubicación'; porUbicacion[k] = (porUbicacion[k] || 0) + 1; });
+    const ubicacionesOrdenadas = Object.entries(porUbicacion).sort((a, b) => b[1] - a[1]);
+    const porEquipo = {};
+    skipsF.forEach(s => { const eq = equiposPorId[s.equipmentId]; const k = eq ? eq.code : '—'; porEquipo[k] = (porEquipo[k] || 0) + 1; });
+    const equiposOrdenados = Object.entries(porEquipo).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const porTurno = { 'Día': 0, 'Noche': 0 };
+    skipsF.forEach(s => { porTurno[s.shiftId === 'shift_dia' ? 'Día' : 'Noche']++; });
+
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('No ejecutados', skipsF.length, skipsF.length ? 'amber' : 'neutral')}
+        ${kpiCard('Turno Día', porTurno['Día'], 'neutral')}
+        ${kpiCard('Turno Noche', porTurno['Noche'], 'neutral')}
+      </div>
+      ${skipsF.length ? `
+      <div class="rep-subhead" style="padding:0 14px">Por motivo</div>
+      <div class="skipped-summary">${motivosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / skipsF.length * 100)}%)</span>`).join('')}</div>
+      <div class="rep-two-col">
+        <div>
+          <div class="rep-subhead">Por ubicación</div>
+          <div class="skipped-summary">${ubicacionesOrdenadas.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b></span>`).join('')}</div>
+        </div>
+        <div>
+          <div class="rep-subhead">Equipos con más "no ejecutados"</div>
+          ${equiposOrdenados.map(([k, n]) => `<div class="rep-consumo-row"><span class="mono">${esc(k)}</span><span>${n}</span></div>`).join('')}
+        </div>
+      </div>` : '<div class="empty-state">Sin "no se pudo ejecutar" en este período.</div>'}`;
+  }
+
   function drawValidacionSeccion(records) {
     const area = $('#rep-validacion-area');
     // Sin excepción propia de Reportes: `sujetos` sale de la MISMA función
@@ -8453,6 +8629,7 @@ async function renderReportes() {
       drawConsumo(records);
       drawSkippedPoints(records);
       drawAnomaliasSeccion(applyFiltersAnomalias());
+      drawNoEjecutadosSeccion(applyFiltersSkips());
       drawValidacionSeccion(records);
       drawActividadResponsable(records);
       drawPhotoReport(records);
