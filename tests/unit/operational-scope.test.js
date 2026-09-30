@@ -22,6 +22,7 @@ const {
   computeExecutionCompleteness, findNextApplicableOccurrenceForWeekdayPlan,
   findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, findExistingWorkForEquipment,
   resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
+  NO_EXECUTION_REASONS, validateNoExecutionInput, buildNoExecutionRecord, findCarriedOverSkipForToday,
 } = loadOperationalScopeLogic();
 
 let uidSeq = 0;
@@ -452,5 +453,87 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
     expect(resolveRecordExecutionType(viejo)).toEqual({ value: 'PLANNED', source: 'legacy_fallback' });
     expect(resolveRecordOutOfPlanReason(viejo)).toBeNull();
     expect(resolveRecordCompleteness(viejo)).toBeNull();
+  });
+});
+
+describe('"No se pudo ejecutar" (lote occurrences/carryover, §1) — NUNCA crea un lubrication_record', () => {
+  it('NO_EXECUTION_REASONS trae exactamente los 6 motivos del pedido', () => {
+    expect(NO_EXECUTION_REASONS).toEqual(['REPARACION', 'YA_ENGRASADO', 'SIN_TIEMPO', 'NO_DISPONIBLE', 'CONDICION_INSEGURA', 'OTRO']);
+  });
+
+  it('validateNoExecutionInput(): motivo no reconocido -> lanza', () => {
+    expect(() => validateNoExecutionInput({ reason: 'INVENTADO', observacion: '' })).toThrow(/no válido/);
+  });
+
+  it('validateNoExecutionInput(): OTRO sin observación -> lanza (mismo criterio que outOfPlanReason)', () => {
+    expect(() => validateNoExecutionInput({ reason: 'OTRO', observacion: '  ' })).toThrow(/observación/);
+  });
+
+  it('validateNoExecutionInput(): OTRO con observación -> no lanza', () => {
+    expect(() => validateNoExecutionInput({ reason: 'OTRO', observacion: 'Cuadrilla desviada a emergencia' })).not.toThrow();
+  });
+
+  it('validateNoExecutionInput(): un motivo de la lista distinto de OTRO nunca exige observación', () => {
+    expect(() => validateNoExecutionInput({ reason: 'CONDICION_INSEGURA', observacion: '' })).not.toThrow();
+  });
+
+  it('buildNoExecutionRecord(): arma el registro completo, observación recortada, sin inventar campos', () => {
+    const r = buildNoExecutionRecord({
+      id: 'skip_1', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
+      date: '2026-09-30T20:00:00.000Z', shiftId: 'shift_noche',
+      reason: 'CONDICION_INSEGURA', observacion: '  Zona con derrumbe activo  ',
+      userId: 'u1', userName: 'Ana G.', now: NOW
+    });
+    expect(r).toEqual({
+      id: 'skip_1', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
+      date: '2026-09-30T20:00:00.000Z', shiftId: 'shift_noche',
+      reason: 'CONDICION_INSEGURA', observacion: 'Zona con derrumbe activo',
+      userId: 'u1', userName: 'Ana G.', createdAt: NOW, active: true
+    });
+  });
+
+  it('buildNoExecutionRecord(): observación vacía cuando el motivo no es OTRO -> null, nunca cadena vacía', () => {
+    const r = buildNoExecutionRecord({
+      id: 'skip_2', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
+      date: '2026-09-30T08:00:00.000Z', shiftId: 'shift_dia',
+      reason: 'SIN_TIEMPO', observacion: '',
+      userId: 'u1', userName: 'Ana G.', now: NOW
+    });
+    expect(r.observacion).toBeNull();
+  });
+
+  it('buildNoExecutionRecord(): valida ANTES de armar el registro — OTRO sin observación nunca llega a construirse', () => {
+    expect(() => buildNoExecutionRecord({
+      id: 'skip_3', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
+      date: NOW, shiftId: 'shift_dia', reason: 'OTRO', observacion: '',
+      userId: 'u1', userName: 'Ana G.', now: NOW
+    })).toThrow(/observación/);
+  });
+
+  it('findCarriedOverSkipForToday(): un skip de Día del mismo día se ve como carryover en Noche', () => {
+    const skips = [{ id: 'skip_1', equipmentId: 'e1', date: '2026-09-30T08:00:00.000Z', shiftId: 'shift_dia', reason: 'CONDICION_INSEGURA', createdAt: '2026-09-30T08:05:00.000Z' }];
+    const r = findCarriedOverSkipForToday(skips, { equipmentId: 'e1', dateISO: '2026-09-30' });
+    expect(r).toMatchObject({ id: 'skip_1', reason: 'CONDICION_INSEGURA' });
+  });
+
+  it('findCarriedOverSkipForToday(): un skip de OTRO equipo o de OTRO día nunca contamina el resultado', () => {
+    const skips = [
+      { id: 'skip_x', equipmentId: 'otro', date: '2026-09-30T08:00:00.000Z', shiftId: 'shift_dia', createdAt: '2026-09-30T08:05:00.000Z' },
+      { id: 'skip_y', equipmentId: 'e1', date: '2026-09-29T08:00:00.000Z', shiftId: 'shift_dia', createdAt: '2026-09-29T08:05:00.000Z' },
+    ];
+    expect(findCarriedOverSkipForToday(skips, { equipmentId: 'e1', dateISO: '2026-09-30' })).toBeNull();
+  });
+
+  it('findCarriedOverSkipForToday(): sin ningún skip -> null (nunca inventa una advertencia)', () => {
+    expect(findCarriedOverSkipForToday([], { equipmentId: 'e1', dateISO: '2026-09-30' })).toBeNull();
+  });
+
+  it('findCarriedOverSkipForToday(): 2+ skips del mismo día -> toma el más reciente por createdAt', () => {
+    const skips = [
+      { id: 'skip_temprano', equipmentId: 'e1', date: '2026-09-30T08:00:00.000Z', shiftId: 'shift_dia', reason: 'SIN_TIEMPO', createdAt: '2026-09-30T08:05:00.000Z' },
+      { id: 'skip_tarde', equipmentId: 'e1', date: '2026-09-30T20:00:00.000Z', shiftId: 'shift_noche', reason: 'CONDICION_INSEGURA', createdAt: '2026-09-30T20:05:00.000Z' },
+    ];
+    const r = findCarriedOverSkipForToday(skips, { equipmentId: 'e1', dateISO: '2026-09-30' });
+    expect(r.id).toBe('skip_tarde');
   });
 });

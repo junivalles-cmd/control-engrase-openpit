@@ -250,6 +250,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'computeExecutionCompleteness', 'findNextApplicableOccurrenceForWeekdayPlan',
     'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'findExistingWorkForEquipment',
     'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness',
+    'NO_EXECUTION_REASONS', 'validateNoExecutionInput', 'buildNoExecutionRecord', 'findCarriedOverSkipForToday',
   ]],
 ];
 

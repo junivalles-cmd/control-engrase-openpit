@@ -4,20 +4,21 @@
    ============================================================ */
 
 const DB_NAME = 'engrase_openpit';
-// v7: agrega el store 'lubrication_assignments' (asignación manual de UN
-// engrase pendiente a una cuadrilla distinta de la normal de esa
-// ubicación — ver docs/OPERATIONAL_SCOPE.md). Migración NO destructiva:
-// onupgradeneeded ya crea genéricamente cualquier store nuevo que aparezca
-// en STORES (ver v6) — no hace falta tocar esa función, ningún store
-// existente se toca ni se vacía.
-const DB_VERSION = 7;
+// v8: agrega el store 'lubrication_skips' ("No se pudo ejecutar" — lote
+// occurrences/carryover, §1, ver src/core/operational-scope.js). NUNCA
+// pisa/duplica lubrication_records: un skip es un registro de que la
+// ocurrencia NO se hizo en este turno (motivo + observación), no un
+// engrase. Migración NO destructiva: onupgradeneeded ya crea genéricamente
+// cualquier store nuevo que aparezca en STORES (ver v6) — no hace falta
+// tocar esa función, ningún store existente se toca ni se vacía.
+const DB_VERSION = 8;
 
 // Almacenes que se sincronizan con el servidor remoto (todo excepto configuración local del dispositivo)
 const STORES = [
   'users', 'shifts', 'locations', 'equipment_types', 'equipment',
   'lubricants', 'lubrication_plans', 'lubrication_points',
   'lubrication_records', 'anomalies', 'audit_log', 'settings', 'cuadrillas', 'push_tokens',
-  'grease_validations', 'lubrication_assignments'
+  'grease_validations', 'lubrication_assignments', 'lubrication_skips'
 ];
 
 // app_config y grease_drafts viven solo en el dispositivo (credenciales de conexión,

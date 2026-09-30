@@ -418,6 +418,57 @@ function resolveRecordCompleteness(record) {
 }
 
 /* ============================================================
+   NO SE PUDO EJECUTAR (lote occurrences/carryover, §1)
+   ============================================================
+   Registra que una ocurrencia NO se pudo engrasar en este turno — NUNCA
+   crea un lubrication_record (no marca "realizado"). El carryover al
+   siguiente turno del MISMO día es automático y gratis: estadoCelda()
+   (weekly-matrix.js) decide 'pendiente'/'no_realizado' por FECHA, no por
+   turno — mientras la fecha de la ocurrencia siga siendo HOY, la celda
+   sigue 'pendiente' sin importar cuántos turnos ya pasaron hoy, así que un
+   "no se pudo ejecutar" de Día deja la ocurrencia disponible para Noche sin
+   ningún cambio en weekly-matrix.js/plan-compliance.js. Este módulo solo
+   valida la entrada y arma el registro — quien llama (app.js) hace el
+   DB.put()/logAudit() real, mismo criterio que buildExecutionSnapshot(). */
+const NO_EXECUTION_REASONS = ['REPARACION', 'YA_ENGRASADO', 'SIN_TIEMPO', 'NO_DISPONIBLE', 'CONDICION_INSEGURA', 'OTRO'];
+
+// "Otro" exige observación — mismo criterio que outOfPlanReason==='OTRO' en
+// el flujo de "+ Fuera de plan" (app.js): nunca depender solo de la
+// etiqueta genérica para saber qué pasó de verdad.
+function validateNoExecutionInput({ reason, observacion }) {
+  if (!NO_EXECUTION_REASONS.includes(reason)) {
+    throw new Error('Motivo de "No se pudo ejecutar" no válido.');
+  }
+  if (reason === 'OTRO' && !(observacion || '').trim()) {
+    throw new Error('Escribe una observación describiendo el motivo.');
+  }
+}
+
+function buildNoExecutionRecord({
+  id, equipmentId, planId, occurrenceKey, date, shiftId,
+  reason, observacion, userId, userName, now
+}) {
+  validateNoExecutionInput({ reason, observacion });
+  return {
+    id, equipmentId, planId: planId || null, occurrenceKey: occurrenceKey || null,
+    date, shiftId, reason, observacion: (observacion || '').trim() || null,
+    userId, userName, createdAt: now, active: true
+  };
+}
+
+// ¿La ocurrencia de HOY para este equipo ya tiene un "no se pudo ejecutar"
+// de OTRO turno anterior del mismo día? Sirve para avisar al turno que
+// entra (carryover) — nunca oculta el motivo real. Si hubiera más de uno
+// (no debería pasar en un día normal), toma el más reciente sin romperse.
+// `skips` ya viene filtrado a activos por el caller (DB.allActive).
+function findCarriedOverSkipForToday(skips, { equipmentId, dateISO }) {
+  const delDia = (skips || []).filter(s => s.equipmentId === equipmentId &&
+    (s.date || '').slice(0, 10) === dateISO);
+  if (!delDia.length) return null;
+  return delDia.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
+}
+
+/* ============================================================
    QR — permiso de ejecución fuera de scope (§AO)
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
