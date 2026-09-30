@@ -11345,6 +11345,23 @@ async function renderConfig() {
 /* ============================================================
    MODAL genérico
    ============================================================ */
+// Accesibilidad del modal (auditoría de accesibilidad, corrección #2 —
+// mayor impacto por lo poco que cuesta: un solo arreglo aquí cubre TODAS
+// las pantallas que llaman openModal()). Antes: sin Escape, sin trampa de
+// foco (Tab se escapaba a la página de atrás), sin foco inicial, sin
+// devolver el foco al cerrar, sin role/aria-modal/aria-labelledby, y el
+// botón "✕" sin aria-label.
+//
+// El estado (foco previo, listener de teclado) se guarda como propiedades
+// ad-hoc del propio nodo `overlay` (que es un singleton, nunca se recrea,
+// solo se vacía su innerHTML) — a propósito, en vez de funciones/variables
+// nuevas a nivel de módulo: varios specs reales (ej.
+// tests/ui/grease-validation.spec.js) extraen SOLO openModal()/closeModal()
+// con una lista acotada de nombres para probarlos en una página aislada;
+// agregar un identificador global nuevo rompería esos specs con un
+// ReferenceError. Manteniendo todo dentro de estas dos funciones, cualquier
+// arnés que ya extraiga openModal()/closeModal() sigue funcionando sin
+// tocar su lista de nombres.
 function openModal(title, bodyHTML) {
   let overlay = $('#modal-overlay');
   if (!overlay) {
@@ -11353,14 +11370,46 @@ function openModal(title, bodyHTML) {
     overlay.className = 'modal-overlay';
     document.body.appendChild(overlay);
   }
+  overlay._previousFocus = document.activeElement;
   overlay.innerHTML = `
-    <div class="modal">
-      <div class="modal-head"><h3>${title}</h3><button class="icon-btn" id="modal-close">✕</button></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text" tabindex="-1">
+      <div class="modal-head"><h3 id="modal-title-text">${title}</h3><button class="icon-btn" id="modal-close" aria-label="Cerrar">✕</button></div>
       <div class="modal-body">${bodyHTML}</div>
     </div>`;
   overlay.classList.add('open');
   $('#modal-close').addEventListener('click', closeModal);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+  // Trampa de foco + Escape: Tab/Shift+Tab nunca deben salir del modal, y
+  // Escape cierra igual que el botón "✕". `offsetParent !== null` excluye
+  // elementos ocultos (display:none / ramas condicionales del HTML).
+  function focusableElements() {
+    return Array.from(overlay.querySelectorAll(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+  }
+  function onKeydown(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); closeModal(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = focusableElements();
+    if (!focusable.length) { e.preventDefault(); return; } // nada que enfocar: el foco se queda en el modal mismo
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  // Quita el listener del modal anterior (si `overlay` se reutiliza para
+  // abrir varios modales en la misma sesión) antes de agregar el nuevo —
+  // nunca se acumulan listeners de Escape/Tab de modales ya cerrados.
+  if (overlay._onKeydown) overlay.removeEventListener('keydown', overlay._onKeydown);
+  overlay._onKeydown = onKeydown;
+  overlay.addEventListener('keydown', onKeydown);
+
+  // Foco inicial: el contenedor del modal mismo (tabindex="-1", nunca queda
+  // en el orden normal de Tab) — el lector de pantalla anuncia el diálogo y
+  // su título (aria-labelledby) antes de que la persona empiece a tabular
+  // por su contenido, en vez de quedarse leyendo donde estaba la página de
+  // atrás.
+  overlay.querySelector('.modal').focus();
 }
 function closeModal() {
   const overlay = $('#modal-overlay');
@@ -11370,4 +11419,12 @@ function closeModal() {
   // anterior sigue existiendo dentro del documento con sus campos y manejadores viejos,
   // y al abrir otra ventana se mezclan (ese era el "desfase" al agregar puntos de engrase).
   overlay.innerHTML = '';
+  // Devuelve el foco a quien abrió el modal — nunca lo deja "perdido" en el
+  // body. Si ese elemento ya no existe (la pantalla cambió debajo, o era de
+  // un modal anterior encadenado), focus() en un nodo desconectado es un
+  // no-op inofensivo, no un error.
+  if (overlay._previousFocus && typeof overlay._previousFocus.focus === 'function') {
+    overlay._previousFocus.focus();
+  }
+  overlay._previousFocus = null;
 }
