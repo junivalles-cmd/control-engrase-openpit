@@ -5170,13 +5170,21 @@ async function renderMatrizSemanal() {
   // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
   // datos ya cargados (plans, records, hoy).
 
+  // "Hecho" para efectos de cumplimiento incluye las 3 variantes reales de
+  // trabajo completado (a tiempo, atrasado en otro turno, o adelantado por
+  // fuera de plan) — antes solo se contaba 'hecho' a secas, así que
+  // hecho_adelantado (ya existía) y hecho_atrasado (nuevo) quedaban
+  // invisibles en el % de cumplimiento aunque el trabajo SÍ se hizo.
+  const TIPOS_HECHO = ['hecho', 'hecho_atrasado', 'hecho_adelantado'];
+  const esTipoHecho = tipo => TIPOS_HECHO.includes(tipo);
+
   // Resumen por turno (D/N) para el subtítulo del header azul — SOLO reusa
   // estadoCelda()/la MISMA fórmula de cumplimiento ya usada arriba (hechas/
   // (hechas+no_realizado+pendiente)), aplicada al subconjunto de ese turno.
   // No es un cálculo nuevo, es el mismo agregado con un `lista` distinto.
   function resumenTurno(lista) {
     const contarT = tipo => lista.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
-    const hechasT = contarT('hecho');
+    const hechasT = lista.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
     const yaVencidasT = hechasT + contarT('no_realizado') + contarT('pendiente');
     return { equipos: lista.length, pct: yaVencidasT ? Math.round((hechasT / yaVencidasT) * 100) : 100 };
   }
@@ -5206,6 +5214,13 @@ async function renderMatrizSemanal() {
                   const hoyCls = esHoy ? ' is-today' : '';
                   const s = estadoCelda(eq, d, plans, records, hoy);
                   if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
+                  // Corrección real (lote occurrences/carryover): estas dos celdas
+                  // NUNCA se habían wireado aquí — caían al <td> en blanco del
+                  // final, sin etiqueta ni color, aunque estadoCelda() ya las
+                  // distinguía desde antes (hecho_adelantado) o recién ahora
+                  // (hecho_atrasado).
+                  if (s.tipo === 'hecho_atrasado') return `<td class="celda-hecho-atrasado${hoyCls}" title="Realizado atrasado (turno distinto al planificado) por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ATRASADO</td>`;
+                  if (s.tipo === 'hecho_adelantado') return `<td class="celda-hecho-adelantado${hoyCls}" title="Satisfecho por adelantado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ADELANTADO</td>`;
                   if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
                   if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
                   if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
@@ -5224,7 +5239,7 @@ async function renderMatrizSemanal() {
   // Conteos de la semana visible
   const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
   const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo !== 'vacio').length, 0);
-  const hechas = contar('hecho');
+  const hechas = visibles.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
   const futuras = contar('futuro');
@@ -5439,6 +5454,20 @@ async function renderMatrizSemanal() {
             fila.push(celda('REALIZADO', {
               font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },
               fill: { fgColor: { rgb: '00B050' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'hecho_atrasado') {
+            fila.push(celda('REALIZADO ATRASADO', {
+              font: { bold: true, italic: true, sz: 8, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: '2DB6A3' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'hecho_adelantado') {
+            fila.push(celda('REALIZADO ADELANTADO', {
+              font: { bold: true, italic: true, sz: 8, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: '5B7FBF' } },
               alignment: { horizontal: 'center', vertical: 'center' },
               border: bordes
             }));
@@ -6789,6 +6818,11 @@ function complianceBadgeHTML(compliance) {
     cumplido: ['hist-compliance-ok', 'Cumplido'],
     fuera_de_plan: ['hist-compliance-alert', 'Fuera de plan'],
     anticipado: ['hist-compliance-early', 'Anticipado'],
+    // Mismo tono que VALIDATION_BADGE.VALIDADO_ENCARGADO (hist-compliance-teal)
+    // — un tercer color, ni verde "todo perfecto" ni rojo "incumplido", para
+    // el caso real "se hizo, pero en el otro turno del mismo día" (lote
+    // occurrences/carryover).
+    realizado_atrasado: ['hist-compliance-teal', 'Realizado atrasado'],
     no_evaluable: ['hist-compliance-neutral', 'No evaluable'],
   };
   const [cls, label] = MAP[compliance.estado] || MAP.no_evaluable;

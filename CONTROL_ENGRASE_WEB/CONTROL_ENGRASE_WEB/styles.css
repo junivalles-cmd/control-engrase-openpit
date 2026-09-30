@@ -1792,6 +1792,23 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
   background: #00B050; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
+/* "Realizado atrasado" (lote occurrences/carryover) — mismo turquesa que
+   .hist-compliance-teal (Historial/Reportes), para que sea el MISMO color
+   en toda la app cuando un engrase se hizo en un turno distinto al
+   planificado el mismo día (ej. Noche cerrando lo pendiente de Día). */
+.celda-hecho-atrasado {
+  background: #2DB6A3; color: #fff; font-weight: 700; font-style: italic;
+  font-size: 10.5px; letter-spacing: 0.03em;
+}
+/* "Realizado adelantado" (lote engrase fuera de plan) — un OUT_OF_PLAN que
+   ya satisfizo esta ocurrencia futura. Color propio (azulado), distinto de
+   verde/turquesa/naranja/rojo ya usados — nunca se había wireado esta
+   celda en la matriz interactiva (quedaba en blanco), corregido junto con
+   hecho_atrasado. */
+.celda-hecho-adelantado {
+  background: #5B7FBF; color: #fff; font-weight: 700; font-style: italic;
+  font-size: 10.5px; letter-spacing: 0.03em;
+}
 .celda-pendiente { background: #F4B183; }
 .celda-futuro { background: #F4B183; opacity: 0.5; }
 /* Equipo no operativo (Detenido/En mantenimiento/Fuera de servicio): gris, igual

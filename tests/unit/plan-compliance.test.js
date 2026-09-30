@@ -2,8 +2,11 @@
 //
 // Cumplimiento del plan (src/core/plan-compliance.js) contra la función REAL
 // evaluateRecordCompliance()/findPreviousRecord()/computeFleetCompliance().
-// 4 estados obligatorios (nunca Sí/No):
-// 'anticipado' | 'cumplido' | 'fuera_de_plan' | 'no_evaluable'.
+// 5 estados obligatorios (nunca Sí/No):
+// 'anticipado' | 'cumplido' | 'realizado_atrasado' | 'fuera_de_plan' | 'no_evaluable'.
+// 'realizado_atrasado' (lote occurrences/carryover): SOLO en Día y turno,
+// cuando el día es el correcto pero el registro real quedó en el OTRO turno
+// del mismo día — cuenta como cumplimiento en el %, ver computeFleetCompliance().
 //
 // Trazabilidad: record.planId (ya lo guarda app.js al crear el registro) +
 // plan.updatedAt (ya lo guarda stamp() en db.js) — sin campos nuevos. Si el
@@ -39,9 +42,9 @@ describe('Plan Día/Turno — cumplimiento', () => {
     expect(evaluateRecordCompliance(r, planDiaTurno, null).estado).toBe('fuera_de_plan');
   });
 
-  it('día correcto pero turno equivocado → fuera_de_plan', () => {
+  it('día correcto pero turno equivocado → realizado_atrasado', () => {
     const r = { planId: 'p1', date: '2026-09-24T20:00:00', shiftId: 'shift_noche' };
-    expect(evaluateRecordCompliance(r, planDiaTurno, null).estado).toBe('fuera_de_plan');
+    expect(evaluateRecordCompliance(r, planDiaTurno, null).estado).toBe('realizado_atrasado');
   });
 });
 
@@ -125,6 +128,14 @@ describe('computeFleetCompliance() — % de flota a partir de evaluaciones ya ca
     const evals = [{ estado: 'no_evaluable' }, { estado: 'anticipado' }];
     const r = computeFleetCompliance(evals);
     expect(r.pct).toBeNull();
+  });
+
+  it('realizado_atrasado cuenta como cumplimiento en el %, pero se reporta aparte en counts', () => {
+    const evals = [{ estado: 'cumplido' }, { estado: 'realizado_atrasado' }, { estado: 'fuera_de_plan' }];
+    const r = computeFleetCompliance(evals);
+    expect(r.pct).toBe(67); // (1 cumplido + 1 realizado_atrasado) / 3
+    expect(r.realizado_atrasado).toBe(1);
+    expect(r.cumplido).toBe(1);
   });
 });
 

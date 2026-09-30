@@ -65,7 +65,14 @@ function evaluateRecordCompliance(record, plan, previousRecord) {
     const turnoOk = !plan.shiftId || plan.shiftId === record.shiftId;
     if (diaOk && turnoOk) return { estado: 'cumplido', motivo: `Día y turno según el plan (${nombreDia}).` };
     if (!diaOk) return { estado: 'fuera_de_plan', motivo: `${nombreDia} no es un día asignado en el plan.` };
-    return { estado: 'fuera_de_plan', motivo: 'El turno del registro no coincide con el turno asignado en el plan.' };
+    // "Realizado atrasado" (lote occurrences/carryover, §6-9 del pedido): el
+    // DÍA sí es el correcto — la ocurrencia programada de ESE día sigue
+    // siendo la misma, nunca se cerró ni se reprogramó — solo se ejecutó en
+    // el otro turno del mismo día (típicamente Noche cerrando lo pendiente
+    // de Día). Antes esto se reportaba como 'fuera_de_plan' sin distinguirlo
+    // de un día equivocado — engañoso, porque el trabajo SÍ se hizo, solo que
+    // tarde dentro del mismo día.
+    return { estado: 'realizado_atrasado', motivo: `${nombreDia} es correcto, pero se realizó en el otro turno del mismo día (plan: ${plan.shiftId === 'shift_dia' ? 'Día' : 'Noche'}, registrado: ${record.shiftId === 'shift_dia' ? 'Día' : 'Noche'}).` };
   }
 
   if (plan.controlType === 'Horas de operación') {
@@ -173,11 +180,18 @@ function computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, d
 // cumplimiento, 'fuera_de_plan' como incumplimiento, 'anticipado' es una
 // categoría separada (ni cumplimiento ni incumplimiento — no entra en el
 // %), 'no_evaluable' se excluye del denominador por completo (no hay dato
-// para juzgarlo en ningún sentido).
+// para juzgarlo en ningún sentido). 'realizado_atrasado' (lote occurrences/
+// carryover) cuenta como cumplimiento en el %, igual que 'cumplido' — el
+// día correcto SÍ se engrasó, solo en el otro turno del mismo día; se
+// mantiene como bucket separado en `counts` para que Reportes pueda
+// mostrarlo aparte si quiere, sin que penalice el % como si fuera
+// incumplimiento real (mismo criterio que la Matriz Semanal, ver
+// estadoCelda()/hecho_atrasado en weekly-matrix.js).
 function computeFleetCompliance(evaluations) {
-  const counts = { cumplido: 0, fuera_de_plan: 0, anticipado: 0, no_evaluable: 0 };
+  const counts = { cumplido: 0, fuera_de_plan: 0, anticipado: 0, no_evaluable: 0, realizado_atrasado: 0 };
   evaluations.forEach(ev => { counts[ev.estado] = (counts[ev.estado] || 0) + 1; });
-  const base = counts.cumplido + counts.fuera_de_plan;
-  const pct = base ? Math.round((counts.cumplido / base) * 100) : null;
+  const cumplidoTotal = counts.cumplido + counts.realizado_atrasado;
+  const base = cumplidoTotal + counts.fuera_de_plan;
+  const pct = base ? Math.round((cumplidoTotal / base) * 100) : null;
   return { pct, ...counts, total: evaluations.length };
 }

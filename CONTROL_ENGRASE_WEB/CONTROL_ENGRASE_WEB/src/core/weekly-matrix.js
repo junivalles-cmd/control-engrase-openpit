@@ -41,7 +41,17 @@ function estadoCelda(eq, fecha, plans, records, hoy) {
 
   const hecho = records.find(r => r.equipmentId === eq.id &&
     new Date(r.date).toDateString() === fecha.toDateString());
-  if (hecho) return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
+  if (hecho) {
+    // "Realizado atrasado" (lote occurrences/carryover): el plan exige un
+    // turno concreto (plan.shiftId) y el registro real se hizo en el OTRO
+    // turno del mismo día — típicamente Noche cerrando lo pendiente de Día.
+    // Nunca oculta el registro real (sigue siendo 'hecho' de fondo, solo
+    // cambia el tipo de celda) ni inventa un registro nuevo.
+    if (plan.shiftId && hecho.shiftId && hecho.shiftId !== plan.shiftId) {
+      return { tipo: 'hecho_atrasado', por: hecho.userName, fecha: hecho.date };
+    }
+    return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
+  }
 
   // Engrase FUERA DE PLAN que satisfizo ESTA ocurrencia por adelantado (lote
   // "engrase fuera de plan" §10/§19): el registro real quedó en OTRO día

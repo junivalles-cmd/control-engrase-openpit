@@ -363,7 +363,7 @@ test.describe('Cumplimiento del plan — columna en la tabla de Engrases', () =>
   const PLAN_DIA = { id: 'p-dia', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Sábado', 'Viernes'], shiftId: 'shift_dia', updatedAt: '2026-08-01T00:00:00' };
   const PLAN_HORAS = { id: 'p-horas', equipmentId: 'e2', controlType: 'Horas de operación', frequency: 250, updatedAt: '2026-08-01T00:00:00' };
 
-  test('cumplimiento Día/Turno: cumplido (sábado+día) y fuera de plan (día y turno equivocados)', async ({ page }) => {
+  test('cumplimiento Día/Turno: cumplido (sábado+día), realizado atrasado (viernes+noche) y fuera de plan (día equivocado)', async ({ page }) => {
     await bootPage(page, [PLAN_DIA]);
     await page.locator('#hist-eq-search').fill('45-77');
     await page.waitForTimeout(400);
@@ -374,7 +374,11 @@ test.describe('Cumplimiento del plan — columna en la tabla de Engrases', () =>
     // clase .hist-compliance-badge, columna siguiente) — el de Cumplimiento
     // siempre es el primero en el DOM dentro de la fila.
     // Orden descendente por fecha: r3 (25/09, Viernes/noche), r2 (15/09, Martes), r1 (05/09, Sábado/día).
-    await expect(rows.nth(0).locator('.hist-compliance-badge').first()).toHaveText('Fuera de plan'); // turno equivocado
+    // r3: 25/09 es Viernes (día asignado en el plan), pero el registro real
+    // quedó en turno Noche (plan exige Día) — lote occurrences/carryover:
+    // ya NO es 'fuera_de_plan', ahora es 'realizado_atrasado' (día correcto,
+    // otro turno del mismo día, cuenta como cumplimiento en el %).
+    await expect(rows.nth(0).locator('.hist-compliance-badge').first()).toHaveText('Realizado atrasado'); // día correcto, turno equivocado
     await expect(rows.nth(1).locator('.hist-compliance-badge').first()).toHaveText('Fuera de plan'); // día no asignado
     await expect(rows.nth(2).locator('.hist-compliance-badge').first()).toHaveText('Cumplido');
   });

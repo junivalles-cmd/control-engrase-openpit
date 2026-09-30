@@ -44,6 +44,20 @@ describe('estadoCelda() — Matriz Semanal, celda equipo x día', () => {
     expect(r).toMatchObject({ tipo: 'hecho', por: 'Ana' });
   });
 
+  it('3b. hecho_atrasado: plan exige turno Día, registro real de hoy quedó en turno Noche -> hecho_atrasado', () => {
+    const plans = [{ equipmentId: 'e1', assignedDays: ['Miércoles'], shiftId: 'shift_dia' }];
+    const records = [{ equipmentId: 'e1', date: HOY.toISOString(), userName: 'Ana', shiftId: 'shift_noche' }];
+    const r = estadoCelda(equipo, HOY, plans, records, HOY);
+    expect(r).toEqual({ tipo: 'hecho_atrasado', por: 'Ana', fecha: records[0].date });
+  });
+
+  it('3c. hecho_atrasado no aplica si el plan no exige turno (shiftId ausente) -> hecho normal', () => {
+    const plans = [{ equipmentId: 'e1', assignedDays: ['Miércoles'] }];
+    const records = [{ equipmentId: 'e1', date: HOY.toISOString(), userName: 'Ana', shiftId: 'shift_noche' }];
+    const r = estadoCelda(equipo, HOY, plans, records, HOY);
+    expect(r).toEqual({ tipo: 'hecho', por: 'Ana', fecha: records[0].date });
+  });
+
   it('4. día pasado sin realizar -> no_realizado, con diasAtras correcto', () => {
     const ayer = fecha(2026, 0, 13); // Martes
     const plans = [{ equipmentId: 'e1', assignedDays: ['Martes'] }];
