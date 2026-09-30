@@ -23,6 +23,7 @@ const {
   findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, findExistingWorkForEquipment,
   resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
   NO_EXECUTION_REASONS, validateNoExecutionInput, buildNoExecutionRecord, findCarriedOverSkipForToday,
+  GREASE_MATCH_STATUS, findMatchingGreaseRecordForOccurrence,
 } = loadOperationalScopeLogic();
 
 let uidSeq = 0;
@@ -488,8 +489,17 @@ describe('"No se pudo ejecutar" (lote occurrences/carryover, §1) — NUNCA crea
       id: 'skip_1', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
       date: '2026-09-30T20:00:00.000Z', shiftId: 'shift_noche',
       reason: 'CONDICION_INSEGURA', observacion: 'Zona con derrumbe activo',
-      userId: 'u1', userName: 'Ana G.', createdAt: NOW, active: true
+      userId: 'u1', userName: 'Ana G.', createdAt: NOW, active: true, linkedRecordId: null
     });
+  });
+
+  it('buildNoExecutionRecord(): linkedRecordId se guarda cuando se pasa (cierre histórico Parte A, YA_ENGRASADO conciliado con un match real)', () => {
+    const r = buildNoExecutionRecord({
+      id: 'skip_2b', equipmentId: 'e1', planId: 'p1', occurrenceKey: 'p1:2026-09-30',
+      date: NOW, shiftId: 'shift_dia', reason: 'YA_ENGRASADO', observacion: '',
+      userId: 'u1', userName: 'Ana G.', now: NOW, linkedRecordId: 'greg_real_123'
+    });
+    expect(r.linkedRecordId).toBe('greg_real_123');
   });
 
   it('buildNoExecutionRecord(): observación vacía cuando el motivo no es OTRO -> null, nunca cadena vacía', () => {
@@ -535,5 +545,87 @@ describe('"No se pudo ejecutar" (lote occurrences/carryover, §1) — NUNCA crea
     ];
     const r = findCarriedOverSkipForToday(skips, { equipmentId: 'e1', dateISO: '2026-09-30' });
     expect(r.id).toBe('skip_tarde');
+  });
+});
+
+describe('findMatchingGreaseRecordForOccurrence() — cierre histórico Parte A, match de "ya fue engrasado" (§40 A-G del pedido)', () => {
+  const planDT = { id: 'plan_1', equipmentId: 'e1', controlType: 'Día y turno de la semana', shiftId: 'shift_dia' };
+  const occurrenceKey = 'plan_1:2026-09-28';
+  const occurrenceDate = new Date(2026, 8, 28); // 28 de septiembre de 2026
+  const completo = (over) => ({ equipmentId: 'e1', details: [{ pointId: 'p1', done: true }], operationalSnapshot: {}, ...over });
+  const parcial = (over) => ({ equipmentId: 'e1', details: [{ pointId: 'p1', done: false }], operationalSnapshot: {}, ...over });
+
+  it('A. único record COMPLETE ese día -> MATCH', () => {
+    const rec = completo({ id: 'greg_1', date: '2026-09-28T14:00:00.000Z' });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec], assignments: [], skips: [] });
+    expect(r.status).toBe('MATCH');
+    expect(r.records).toEqual([rec]);
+  });
+
+  it('B. 2+ records COMPLETE plausibles ese día -> AMBIGUOUS, nunca elige uno arbitrariamente', () => {
+    const rec1 = completo({ id: 'greg_1', date: '2026-09-28T08:00:00.000Z', userName: 'Ana' });
+    const rec2 = completo({ id: 'greg_2', date: '2026-09-28T20:00:00.000Z', userName: 'Luis' });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec1, rec2], assignments: [], skips: [] });
+    expect(r.status).toBe('AMBIGUOUS');
+    expect(r.records).toHaveLength(2);
+  });
+
+  it('C. sin ningún record ese día -> NONE, nunca vincula nada', () => {
+    const recOtroDia = completo({ id: 'greg_1', date: '2026-09-20T08:00:00.000Z' });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [recOtroDia], assignments: [], skips: [] });
+    expect(r.status).toBe('NONE');
+    expect(r.records).toEqual([]);
+  });
+
+  it('D. record PARTIAL ese día -> NUNCA satisface (excluido del todo, no solo "downgradeado")', () => {
+    const rec = parcial({ id: 'greg_1', date: '2026-09-28T08:00:00.000Z' });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec], assignments: [], skips: [] });
+    expect(r.status).toBe('NONE');
+  });
+
+  it('E. un record ya vinculado a OTRO skip (linkedRecordId) nunca vuelve a calificar — un record no cierra dos ocurrencias', () => {
+    const rec = completo({ id: 'greg_1', date: '2026-09-28T08:00:00.000Z' });
+    const otroSkipYaVinculado = { id: 'skip_previo', linkedRecordId: 'greg_1' };
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec], assignments: [], skips: [otroSkipYaVinculado] });
+    expect(r.status).toBe('NONE');
+  });
+
+  it('F1. OUT_OF_PLAN cuya satisfiedOccurrenceKey YA apunta a esta ocurrencia -> MATCH (certificado por la regla existente, no por fecha)', () => {
+    const rec = completo({
+      id: 'greg_1', date: '2026-09-15T08:00:00.000Z', // fecha DISTINTA a propósito
+      operationalSnapshot: { executionType: 'OUT_OF_PLAN', satisfiedOccurrenceKey: occurrenceKey }
+    });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec], assignments: [], skips: [] });
+    expect(r.status).toBe('MATCH');
+  });
+
+  it('F2. OUT_OF_PLAN de la fecha correcta pero SIN satisfiedOccurrenceKey (o apuntando a otra) -> nunca cuenta solo por la fecha', () => {
+    const rec = completo({
+      id: 'greg_1', date: '2026-09-28T08:00:00.000Z',
+      operationalSnapshot: { executionType: 'OUT_OF_PLAN', satisfiedOccurrenceKey: 'plan_1:2026-09-21' }
+    });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [rec], assignments: [], skips: [] });
+    expect(r.status).toBe('NONE');
+  });
+
+  it('G. assignment COMPLETED de esta ocurrencia -> MATCH vía ASSIGNMENT, con prioridad sobre el match por fecha', () => {
+    const recAsignado = completo({ id: 'greg_asignado', date: '2026-09-01T08:00:00.000Z' }); // fecha distinta, no importa
+    const recOtroDelDia = completo({ id: 'greg_otro', date: '2026-09-28T08:00:00.000Z' }); // este SÍ calificaría por fecha
+    const asg = { occurrenceKey, status: 'COMPLETED', completedRecordId: 'greg_asignado' };
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planDT, occurrenceKey, occurrenceDate, records: [recAsignado, recOtroDelDia], assignments: [asg], skips: [] });
+    expect(r.status).toBe('MATCH');
+    expect(r.via).toBe('ASSIGNMENT');
+    expect(r.records).toEqual([recAsignado]);
+  });
+
+  it('planes "Horas de operación" SIEMPRE van a conciliación manual — nunca se intenta un match automático (sin fecha discreta que proyectar)', () => {
+    const planHoras = { id: 'plan_2', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250 };
+    const rec = completo({ id: 'greg_1', date: '2026-09-28T08:00:00.000Z' });
+    const r = findMatchingGreaseRecordForOccurrence({ plan: planHoras, occurrenceKey: 'plan_2:h:0', occurrenceDate, records: [rec], assignments: [], skips: [] });
+    expect(r.status).toBe('NONE');
+  });
+
+  it('GREASE_MATCH_STATUS expone las 3 claves reales usadas', () => {
+    expect(GREASE_MATCH_STATUS).toEqual({ MATCH: 'MATCH', AMBIGUOUS: 'AMBIGUOUS', NONE: 'NONE' });
   });
 });

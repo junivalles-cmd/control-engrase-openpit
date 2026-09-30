@@ -446,13 +446,17 @@ function validateNoExecutionInput({ reason, observacion }) {
 
 function buildNoExecutionRecord({
   id, equipmentId, planId, occurrenceKey, date, shiftId,
-  reason, observacion, userId, userName, now
+  reason, observacion, userId, userName, now, linkedRecordId
 }) {
   validateNoExecutionInput({ reason, observacion });
   return {
     id, equipmentId, planId: planId || null, occurrenceKey: occurrenceKey || null,
     date, shiftId, reason, observacion: (observacion || '').trim() || null,
-    userId, userName, createdAt: now, active: true
+    userId, userName, createdAt: now, active: true,
+    // Solo para YA_ENGRASADO conciliado con un lubrication_record real
+    // (ver findMatchingGreaseRecordForOccurrence() más abajo) — null en
+    // cualquier otro caso, nunca inventado.
+    linkedRecordId: linkedRecordId || null
   };
 }
 
@@ -466,6 +470,80 @@ function findCarriedOverSkipForToday(skips, { equipmentId, dateISO }) {
     (s.date || '').slice(0, 10) === dateISO);
   if (!delDia.length) return null;
   return delDia.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
+}
+
+/* ============================================================
+   MATCH DE "YA FUE ENGRASADO RECIENTEMENTE" (cierre histórico, Parte A)
+   ============================================================
+   Cuando el motivo de "no se pudo ejecutar" es YA_ENGRASADO, busca si
+   existe un lubrication_record REAL que satisfaga inequívocamente esta
+   ocurrencia — NUNCA cierra/asume cumplimiento solo porque se marcó el
+   motivo (§2 del pedido: "no inventar cumplimiento"). Un match, si existe,
+   ya era antes suficiente para que weekly-matrix.js/plan-compliance.js
+   mostraran la ocurrencia como hecha (esto NUNCA recalcula eso) — esta
+   función solo decide si hay una correspondencia clara para poder
+   ENLAZAR el motivo YA_ENGRASADO a esa evidencia real en el historial, en
+   vez de dejarlo como una afirmación sin respaldo.
+
+   Alcance a propósito LIMITADO a planes "Día y turno de la semana": para
+   "Horas de operación" no hay una fecha discreta que "corresponda" a la
+   ocurrencia sin proyectar horas->tiempo (prohibido, ver
+   docs/PLAN_COMPLIANCE_ANTICIPADO.md) — esos casos SIEMPRE van a
+   conciliación manual, nunca se intenta un match automático.
+
+   Prioridad (§8/§9/§10):
+     1. Si la ocurrencia ya tiene una assignment COMPLETED con
+        completedRecordId — ese vínculo YA es inequívoco por diseño
+        (completeGreaseAssignmentForOccurrence()), se reutiliza tal cual,
+        nunca se reevalúa por fecha.
+     2. Si no, candidatos = records del MISMO equipo, MISMA fecha de
+        calendario que la ocurrencia, COMPLETE (nunca PARTIAL — §7: un
+        parcial nunca cierra automáticamente algo que se espera COMPLETE),
+        que un OUT_OF_PLAN solo cuenta si su propio
+        satisfiedOccurrenceKey YA apunta a esta ocurrencia (§9: "no asumir
+        que todo OUT_OF_PLAN cuenta"), y que ningún OTRO skip ya haya
+        vinculado (linkedRecordId) — un mismo record nunca reconcilia dos
+        ocurrencias (§10).
+   0 candidatos -> NONE (conciliación manual, sin cerrar nada).
+   1 candidato -> MATCH (candidato único, listo para "Vincular al plan").
+   2+ candidatos -> AMBIGUOUS (requiere revisión del Planificador, nunca
+   se elige uno arbitrariamente). */
+const GREASE_MATCH_STATUS = { MATCH: 'MATCH', AMBIGUOUS: 'AMBIGUOUS', NONE: 'NONE' };
+
+function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrenceDate, records, assignments, skips }) {
+  if (!plan || plan.controlType !== 'Día y turno de la semana') {
+    return { status: GREASE_MATCH_STATUS.NONE, records: [] };
+  }
+
+  const asgCompletada = (assignments || []).find(a =>
+    a.occurrenceKey === occurrenceKey && a.status === ASSIGNMENT_STATUS.COMPLETED && a.completedRecordId);
+  if (asgCompletada) {
+    const rec = (records || []).find(r => r.id === asgCompletada.completedRecordId);
+    if (rec) return { status: GREASE_MATCH_STATUS.MATCH, records: [rec], via: 'ASSIGNMENT' };
+  }
+
+  const yaVinculados = new Set((skips || []).filter(s => s.linkedRecordId).map(s => s.linkedRecordId));
+  const fechaOcurrenciaStr = occurrenceDate.toDateString();
+  // Candidato elegible: mismo equipo, COMPLETE, no vinculado ya a otro
+  // skip, y (mismo día de calendario que la ocurrencia) O (OUT_OF_PLAN
+  // cuya propia satisfiedOccurrenceKey YA apunta exactamente a esta
+  // ocurrencia — §9: nunca "cualquier OUT_OF_PLAN de esa fecha" cuenta
+  // solo por coincidir de fecha, tiene que venir certificado por
+  // resolveOutOfPlanSatisfaction() en el momento en que se guardó).
+  const candidatos = (records || []).filter(r => {
+    if (r.equipmentId !== plan.equipmentId) return false;
+    if (yaVinculados.has(r.id)) return false;
+    if (computeExecutionCompleteness(r.details) !== EXECUTION_COMPLETENESS.COMPLETE) return false;
+    const esOutOfPlan = resolveRecordExecutionType(r).value === EXECUTION_TYPE.OUT_OF_PLAN;
+    if (esOutOfPlan) {
+      return !!(r.operationalSnapshot && r.operationalSnapshot.satisfiedOccurrenceKey === occurrenceKey);
+    }
+    return new Date(r.date).toDateString() === fechaOcurrenciaStr;
+  });
+
+  if (candidatos.length === 1) return { status: GREASE_MATCH_STATUS.MATCH, records: candidatos, via: 'DATE' };
+  if (candidatos.length > 1) return { status: GREASE_MATCH_STATUS.AMBIGUOUS, records: candidatos };
+  return { status: GREASE_MATCH_STATUS.NONE, records: [] };
 }
 
 /* ============================================================

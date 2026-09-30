@@ -252,6 +252,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'findExistingWorkForEquipment',
     'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness',
     'NO_EXECUTION_REASONS', 'validateNoExecutionInput', 'buildNoExecutionRecord', 'findCarriedOverSkipForToday',
+    'GREASE_MATCH_STATUS', 'findMatchingGreaseRecordForOccurrence',
   ]],
 ];
 
