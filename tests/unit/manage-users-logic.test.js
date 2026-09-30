@@ -12,17 +12,45 @@ import { loadManageUsersLogic } from '../helpers/loadLubricationLogic.js';
 const ENV = { supabaseUrl: 'https://fake.test', serviceRoleKey: 'service-role-fake', anonKey: 'anon-fake' };
 
 let decideCallerAuthorization, wouldLeaveZeroActiveAdmins, isValidRoleValue, usernameToAuthIdentifier,
-  handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers;
+  handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS;
 
 beforeEach(() => {
   ({
     decideCallerAuthorization, wouldLeaveZeroActiveAdmins, isValidRoleValue, usernameToAuthIdentifier,
-    handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers,
+    handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS,
   } = loadManageUsersLogic());
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// FIX CORS — diagnóstico confirmado con una llamada OPTIONS real contra la
+// función desplegada en producción (sin tocar datos): el preflight del
+// navegador SOLO permitía "authorization, content-type", pero
+// Auth.manageUsers() (src/core/auth.js) SIEMPRE manda también `apikey` —
+// el navegador bloqueaba el POST real antes de enviarlo, nunca llegaba a
+// mandar el JWT. Esto NUNCA lo detectaba el resto de la suite porque
+// fetch() mockeado en Node no aplica CORS — por eso esta prueba lee el
+// objeto CORS_HEADERS REAL (ejecutado, no solo texto) en vez de confiar en
+// un mock de fetch.
+describe('CORS — Access-Control-Allow-Headers debe incluir TODOS los headers que el cliente real envía', () => {
+  it('incluye exactamente authorization, content-type y apikey (los 3 headers que Auth.manageUsers() manda en cada llamada)', () => {
+    const allowed = CORS_HEADERS['Access-Control-Allow-Headers'].split(',').map(h => h.trim().toLowerCase());
+    expect(allowed).toContain('authorization');
+    expect(allowed).toContain('content-type');
+    expect(allowed).toContain('apikey');
+  });
+
+  it('no abre headers innecesarios — solo esos 3, ni uno más', () => {
+    const allowed = CORS_HEADERS['Access-Control-Allow-Headers'].split(',').map(h => h.trim().toLowerCase());
+    expect(allowed.sort()).toEqual(['apikey', 'authorization', 'content-type']);
+  });
+
+  it('mantiene intactos el resto de los headers CORS (origin abierto, métodos POST/OPTIONS)', () => {
+    expect(CORS_HEADERS['Access-Control-Allow-Origin']).toBe('*');
+    expect(CORS_HEADERS['Access-Control-Allow-Methods']).toBe('POST, OPTIONS');
+  });
 });
 
 describe('A-F) decideCallerAuthorization() — la MISMA regla para las 5 acciones', () => {

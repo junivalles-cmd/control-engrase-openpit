@@ -54,7 +54,14 @@ const AUTH_IDENTIFIER_DOMAIN = "engrase.internal"; // mismo dominio que src/core
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*", // mismo criterio que el resto del proyecto (la anon key ya es pública; esta función exige un JWT real de todos modos, no depende de origen)
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  // FIX CORS (diagnóstico confirmado con curl real contra producción, sin
+  // tocar datos): Auth.manageUsers() (src/core/auth.js) SIEMPRE envía
+  // apikey además de authorization/content-type — faltaba en esta lista,
+  // así que el navegador bloqueaba el preflight OPTIONS antes de mandar el
+  // POST real con el JWT. /rest/v1/* (PostgREST) no tiene este problema
+  // porque su gateway hace echo automático de los headers pedidos; una
+  // Edge Function propia tiene que declarar la lista completa a mano.
+  "Access-Control-Allow-Headers": "authorization, content-type, apikey",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 

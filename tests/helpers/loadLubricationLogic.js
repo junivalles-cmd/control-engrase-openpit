@@ -328,6 +328,7 @@ export function loadDeviceIdentityLogic(fakeDB, fakeApp) {
 export const MANAGE_USERS_TS_PATH = path.join(SRC_ROOT, 'supabase/functions/manage-users/index.ts');
 const MANAGE_USERS_SOURCES = [
   [MANAGE_USERS_TS_PATH, [
+    'CORS_HEADERS',
     'VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
     'isValidRoleValue', 'usernameToAuthIdentifier', 'appUserIdFromUsername',
     'isValidTempPassword', 'decideCallerAuthorization', 'wouldLeaveZeroActiveAdmins',
