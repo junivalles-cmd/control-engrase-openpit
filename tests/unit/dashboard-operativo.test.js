@@ -417,3 +417,37 @@ describe('Ajuste final — densidad visual de "Estado de lubricación"/"Activida
     expect(iClear).toBeLessThan(iUse);
   });
 });
+
+describe('"Pendientes turno anterior" — lista explícita de equipos (cierre operativo §25), distinta de vencidos históricos', () => {
+  it('cuando hay pendientes, muestra los códigos reales (mismo array pendientesTurnoAnterior, sin recalcular)', () => {
+    expect(src).toContain('${pendientesTurnoAnterior.length ? `');
+    expect(src).toContain('Pendientes del turno anterior (distinto de vencidos históricos)');
+    expect(src).toContain('${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join(\'\')}');
+  });
+});
+
+describe('BUG REAL corregido (cierre operativo) — `turnoActual` se usaba (dentro de pendientesTurnoAnterior) ANTES de declararse', () => {
+  it('const turnoActual = currentShiftId() aparece SOLO UNA VEZ, y ANTES de que pendientesTurnoAnterior lo use', () => {
+    // Antes había una SEGUNDA declaración más abajo (sección "Cumplimiento
+    // operativo") — `pendientesTurnoAnterior` (Panel operativo, declarado
+    // ANTES de esa sección) ya leía `turnoActual` dentro de
+    // `carry && carry.shiftId !== turnoActual`. Mientras `carry` fuera
+    // null (sin ningún skip real ese día — el caso más común, el único que
+    // cubrían los tests hasta ahora) el `&&` cortocircuitaba y la lectura
+    // de `turnoActual` nunca llegaba a evaluarse, así que el bug quedó
+    // invisible. En cuanto existiera un carryover REAL (justo el escenario
+    // que esta sección existe para mostrar), `carry` se vuelve verdadero,
+    // `turnoActual` se lee en su "temporal dead zone" (`const` usado antes
+    // de su propia declaración) y TODO el render del Dashboard revienta con
+    // un ReferenceError. Corregido subiendo la única declaración al
+    // principio de la función.
+    const ocurrencias = src.match(/const turnoActual = currentShiftId\(\);/g) || [];
+    expect(ocurrencias).toHaveLength(1);
+
+    const iDeclaracion = src.indexOf('const turnoActual = currentShiftId();');
+    const iUsoPendientesTurnoAnterior = src.indexOf("const pendientesTurnoAnterior = equipos.filter(e => {");
+    expect(iDeclaracion).toBeGreaterThan(-1);
+    expect(iUsoPendientesTurnoAnterior).toBeGreaterThan(-1);
+    expect(iDeclaracion).toBeLessThan(iUsoPendientesTurnoAnterior);
+  });
+});

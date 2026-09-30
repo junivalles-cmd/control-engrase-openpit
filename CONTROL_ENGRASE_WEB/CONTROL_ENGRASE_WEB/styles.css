@@ -848,6 +848,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 
 /* ---- Acción final: fuera de las cards, como cierre de página (no otra card) ---- */
 .grease-flow-final { margin-top: var(--sp-3); }
+/* Guardar fácil en móvil (cierre operativo §19) — sticky SOLO dentro del
+   shell del Lubricador (donde existe .lub-bottom-nav fija) y solo en
+   anchos móviles (en tablet/desktop el formulario ya no compite con una
+   sola mano ni con una barra inferior). `bottom` despega lo suficiente
+   para NUNCA tapar la barra inferior (68px cubre su alto real + el
+   safe-area de notch, con margen) — verificado en
+   tests/ui/lubricador-grease-form.spec.js contra el markup real de
+   .lub-bottom-nav. Fondo igual al de la página (nunca un recuadro flotante
+   que no combine) + sombra sutil hacia arriba para separarlo del
+   contenido que queda debajo al hacer scroll. */
+@media (max-width: 640px) {
+  .lub-shell .grease-flow-final {
+    position: sticky; bottom: 68px; z-index: 20;
+    background: var(--bg); padding: 10px 0 4px;
+    box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.3);
+  }
+}
 
 /* ---- Iteración 3: ancho de página y layout tablet/desktop ----
    Móvil (360-412): sin cambios, 1 columna, todo el ancho de .lub-content/
@@ -993,6 +1010,14 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 12px 28px rgba(0,0,0,0.4); padding: 5px;
 }
+/* Chip compacto tras elegir equipo (cierre operativo §13) — reemplaza el
+   buscador + recientes, sin desperdiciar el espacio vertical que antes
+   ocupaban mientras se llena el formulario debajo. */
+.reg-select-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; text-align: left;
+}
+.reg-select-chip span { font-size: 14px; }
 
 /* ---------------- Gestor de listas simples (cuadrillas, ubicaciones, categorías) ---------------- */
 .simple-list { display: flex; flex-direction: column; padding: 4px 14px; }
@@ -1334,6 +1359,18 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .grease-flow-turno-warn { background: rgba(45,182,163,0.14); border: 1px solid #2DB6A3; color: var(--text); }
 .grease-flow-vencido-warn { background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--text); }
 .grease-flow-carryover-warn { background: rgba(232,163,61,0.12); border: 1px solid var(--amber); color: var(--text); }
+/* Contexto completo de la ocurrencia (cierre operativo §11/§12) — grid de
+   2 columnas en móvil (nunca 1 columna angosta, cabe bien), 3 desde
+   tablet. Datos reales (ubicación/tipo de trabajo/estado/programado/
+   turno/último engrase), nunca texto fijo. */
+.grease-flow-contexto {
+  margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 14px; width: 100%;
+}
+.grease-flow-contexto > div { min-width: 0; }
+.grease-flow-contexto dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0; }
+.grease-flow-contexto dd { font-size: 13px; margin: 1px 0 0; overflow-wrap: break-word; }
+@media (min-width: 640px) { .grease-flow-contexto { grid-template-columns: repeat(3, 1fr); } }
 
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;

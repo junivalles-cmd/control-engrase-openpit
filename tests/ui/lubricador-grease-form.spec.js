@@ -78,6 +78,12 @@ const FIXTURE = `
       </form>
     </div>
   </main>
+  <nav class="lub-bottom-nav">
+    <button class="lub-nav-item active">Mi Turno</button>
+    <button class="lub-nav-item">Anomalías</button>
+    <button class="lub-nav-item">Mis Engrases</button>
+    <button class="lub-nav-item">Ayuda</button>
+  </nav>
 </div>
 `;
 
@@ -178,6 +184,11 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     // solo pide que Finalizar no quede más angosto que un secundario.
     const cancelBox = await page.locator('#grease-form .grease-flow-final .btn:not(.btn-accent)').first().boundingBox();
     expect(submitBox.width).toBeGreaterThanOrEqual(cancelBox.width);
+
+    // Guardar fácil en móvil (cierre operativo §19): sticky real, nunca
+    // tapa la barra inferior fija del Lubricador.
+    const navBox = await page.locator('.lub-bottom-nav').boundingBox();
+    expect(submitBox.y + submitBox.height, 'el botón Finalizar no debe quedar por debajo de donde empieza la barra inferior').toBeLessThanOrEqual(navBox.y + 1);
   } else if (width && width >= 1024) {
     // En escritorio no debe convertirse en un botón gigante de ancho completo.
     expect(submitBox.width).toBeLessThan(panelBox.width * 0.6);
