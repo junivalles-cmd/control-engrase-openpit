@@ -33,6 +33,7 @@ export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix
 export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-actions.js');
 export const PLAN_COMPLIANCE_JS_PATH = path.join(SRC_ROOT, 'src/core/plan-compliance.js');
 export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
+export const NOTIFICATION_ROUTING_JS_PATH = path.join(SRC_ROOT, 'src/core/notification-routing.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -261,6 +262,28 @@ export function loadOperationalScopeLogic() {
   return factory();
 }
 
+// Arquitectura de notificaciones (usuario+turno+disponibilidad+scope, lote
+// 2026-09-30) — 100% puro, sin DB/App/OneSignal, mismo patrón que
+// operational-scope.js.
+const NOTIFICATION_ROUTING_SOURCES = [
+  [NOTIFICATION_ROUTING_JS_PATH, [
+    'NOTIFICATION_SHIFT', 'NOTIFICATION_AVAILABILITY',
+    'shiftIdToNotificationShift', 'notificationShiftMatches',
+    'isUserEligibleForNotification', 'resolveEligibleRecipients',
+    'NO_EXECUTION_NOTIFICATION_ROUTE', 'routeNoExecutionEvent',
+    'shouldNotifyOutOfPlanCompletion',
+    'ANOMALY_NOTIFICATION_ROUTE', 'routeAnomalyEvent',
+    'buildNotificationDedupeKey',
+  ]],
+];
+
+/** Devuelve las funciones/constantes reales de src/core/notification-routing.js. */
+export function loadNotificationRoutingLogic() {
+  const body = buildBodyFromSources(NOTIFICATION_ROUTING_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
 // Identidad del dispositivo (§3 del cierre de lote — teléfonos compartidos
 // por cuadrilla, ver docs/OPERATIONAL_SCOPE.md). getDeviceId()/
 // getDeviceAssignment()/saveDeviceAssignment() leen `localStorage`/`DB`/
@@ -269,7 +292,18 @@ export function loadOperationalScopeLogic() {
 // loadDbSeedLogic con localStorage/navigator/fetch).
 const DEVICE_IDENTITY_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'stamp']],
-  [APP_JS_PATH, ['getDeviceId', 'getDeviceName', 'setDeviceName', 'getDeviceAssignment', 'saveDeviceAssignment']],
+  [APP_JS_PATH, [
+    'getDeviceId', 'getDeviceName', 'setDeviceName', 'getDeviceAssignment', 'saveDeviceAssignment',
+    // saveDeviceAssignment() ahora también refresca el scope de push de la
+    // persona conectada (lote arquitectura de notificaciones, §6/§7) — se
+    // incluyen sus dependencias para que la extracción siga ejecutando sin
+    // ReferenceError.
+    'refreshPushTokenDeviceScope', 'currentDeviceScopeSnapshotForPush',
+    // saveOneSignalId()/saveNotificationPreferences() comparten el mismo
+    // patrón de prueba (DB/App/window/Sync fakes, ver
+    // tests/unit/push-token-scope.test.js).
+    'saveOneSignalId', 'saveNotificationPreferences',
+  ]],
 ];
 
 /**
@@ -310,6 +344,27 @@ const MANAGE_USERS_SOURCES = [
  */
 export function loadManageUsersLogic() {
   const body = buildBodyFromSources(MANAGE_USERS_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
+// Lote arquitectura de notificaciones (2026-09-30) — la función PURA de
+// elegibilidad de cada Edge Function (isRecipientEligible), que debe
+// reflejar la MISMA regla que isUserEligibleForNotification()
+// (notification-routing.js). No se extraen getCurrentNotificationShift()/
+// claimDedupeKey()/sendPush() (dependen de fetch/Deno.env real) — mismo
+// límite ya aceptado para manage-users (solo se prueban las decisiones
+// puras, nunca la plumbing HTTP/Deno sin un runtime real).
+export const NOTIFY_VENCIDOS_TS_PATH = path.join(SRC_ROOT, 'supabase/functions/notify-vencidos/index.ts');
+export const NOTIFY_PUSH_TS_PATH = path.join(SRC_ROOT, 'supabase/functions/notify-push/index.ts');
+
+export function loadNotifyVencidosEligibility() {
+  const body = buildBodyFromSources([[NOTIFY_VENCIDOS_TS_PATH, ['isRecipientEligible']]]);
+  const factory = new Function(body);
+  return factory();
+}
+export function loadNotifyPushEligibility() {
+  const body = buildBodyFromSources([[NOTIFY_PUSH_TS_PATH, ['isRecipientEligible']]]);
   const factory = new Function(body);
   return factory();
 }
