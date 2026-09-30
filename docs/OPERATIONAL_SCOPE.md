@@ -298,3 +298,70 @@ Planificador cree una assignment artificial primero).
   patrón correcto (`startGreaseFlow(id)` sin `target`, cae a
   `navigate('registrar')`). El bug original en la línea 443 no se tocó —
   fuera del alcance pedido, señalado aquí para una sesión futura.
+
+## Lote occurrences/carryover (2026-09-30) — "No se pudo ejecutar" + mejoras Registrar Engrase + Panel operativo del Dashboard
+
+- **§1 "No se pudo ejecutar"**: nuevo store sincronizado `lubrication_skips`
+  (`DB_VERSION` 7→8, no destructivo). `src/core/operational-scope.js` gana
+  `NO_EXECUTION_REASONS` (`REPARACION`/`YA_ENGRASADO`/`SIN_TIEMPO`/
+  `NO_DISPONIBLE`/`CONDICION_INSEGURA`/`OTRO`), `validateNoExecutionInput()`
+  (`OTRO` exige observación, mismo criterio que `outOfPlanReason`),
+  `buildNoExecutionRecord()` y `findCarriedOverSkipForToday()`. Botón "No se
+  pudo ejecutar" en `startGreaseFlow()` (`openNoExecutionForm()`) abre un
+  modal motivo+observación — **NUNCA crea un `lubrication_record`**, solo
+  el skip. El carryover al turno siguiente del MISMO día es automático y
+  gratis: `estadoCelda()` (weekly-matrix.js) ya decide 'pendiente' por
+  FECHA, no por turno, así que un skip de Día no hace nada especial para
+  que Noche siga viendo la ocurrencia como pendiente — no se tocó
+  weekly-matrix.js/plan-compliance.js en este punto. RLS preparada (NO
+  aplicada): `supabase/migrations/0005_lubrication_skips_rls_PREPARED.sql`.
+- **§2 Registrar Engrase**: header de `startGreaseFlow()` ahora muestra 3
+  avisos informativos (nunca bloquean el registro): turno programado vs.
+  turno en el que se está registrando (si no coinciden, adelanta que
+  quedará "Realizado atrasado"), equipo VENCIDO (`estadoPrevio==='ROJO'`),
+  y carryover de un "no se pudo ejecutar" de un turno anterior del mismo
+  día (`findCarriedOverSkipForToday()`). Selector de equipo: el `<select>`
+  con todos los equipos activos fue reemplazado por un buscador en vivo
+  (`wireRegEquipoSearch()`, mismo patrón que `wireQuickFind()` de la
+  topbar pero con contenedor propio, sin listener en `document`).
+  Validación nueva: si el checklist quedó 100% marcado y la cantidad de
+  grasa es 0, bloquea el submit (contradictorio). "Marcar todos" pide
+  `confirm()` antes de aplicar (ya no es un toque accidental). El bloque de
+  registro retroactivo (Planificador/Administrador) quedó colapsado dentro
+  de `<details class="reg-advanced">` ("Opciones avanzadas"), sin cambiar
+  su lógica. "Guardar fácil en móvil" ya estaba resuelto de un lote
+  anterior (`.modal-actions` en `column-reverse` @640px pone "Finalizar
+  engrase" arriba del todo, ancho completo) — no se tocó.
+- **§3 Dashboard — "Panel operativo"** (nueva sección, después de
+  "Cumplimiento operativo"): Pendientes turno anterior (carryover de
+  skips), Asignaciones activas (`lubrication_assignments` PENDING),
+  Fuera de plan hoy (`resolveRecordExecutionType()===OUT_OF_PLAN` sobre
+  `recordsHoy`), No se pudo ejecutar hoy + desglose de motivos (chips), y
+  Estado por ubicación (tabla, reagrupa el `statuses` YA calculado por
+  `locationId` — el semáforo no se recalcula). Cero duplicación de
+  conteos: todo reusa `ASSIGNMENT_STATUS`/`EXECUTION_TYPE`/
+  `resolveRecordExecutionType()`/`statuses`/`equipoIdsFiltrados` ya
+  existentes, independiente de "Cumplimiento operativo" (pregunta
+  distinta: "¿se ejecutó lo programado?" vs. "¿qué está pendiente/fuera de
+  plan/sin poder ejecutarse AHORA?"). Sin drill-down/modal propio en estas
+  4 tarjetas todavía (a diferencia de las demás tarjetas del Dashboard) —
+  simple decisión de alcance de este lote, no una limitación técnica.
+- **Fuera de alcance de este lote** (auditado, documentado, NO tocado):
+  sidebar (auditoría confirmó que no hay duplicado real — ver informe de
+  sesión); notificaciones (OneSignal sin `external_id`/identidad por
+  usuario, sin roles Supervisor/Planificador Día≠Noche, sin horarios
+  programables por Admin, sin dedupe real — cambio de arquitectura mayor,
+  requiere decisión explícita del usuario antes de tocar código real).
+- `NO_EXECUTION_REASON_LABELS` vive como const global (junto a
+  `STATUS_COLOR`/`WEEKDAY_ABBR_DASH`) porque tanto `startGreaseFlow()` como
+  `renderDashboard()` la necesitan — una sola copia, no duplicada.
+- Validación completa: unit 753/753 (+17 desde HEAD `34c1902`), Playwright
+  1666/1666 (repetido 2 veces, 1 corrida con 5 fallos transitorios de
+  `page.addStyleTag` bajo carga — confirmado flaky, no regresión real),
+  `typecheck` limpio, `lint:css` 0 errores (67 warnings, +2 sobre el
+  baseline de 65, misma clase de warning ya tolerada en todo el archivo),
+  `build:web`+`verify:dist` OK. SW `v53` → **v54**.
+- Nada tocó producción/Supabase: sin SQL ejecutado, sin bucket modificado,
+  sin usuarios reales, sin deploy. `supabase/migrations/0005_*` solo
+  preparada.
+  fuera del alcance pedido, señalado aquí para una sesión futura.

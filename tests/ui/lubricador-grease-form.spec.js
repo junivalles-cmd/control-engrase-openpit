@@ -23,6 +23,9 @@ const FIXTURE = `
         <div class="grease-flow-equipo-code">EQ-0001</div>
         <div class="grease-flow-equipo-model">Marca Modelo</div>
         <div class="grease-flow-equipo-meta">Registrado por Usuario de prueba · Turno Día</div>
+        <div class="grease-flow-turno-warn">⚠ Turno programado: Día · Registrando en turno Noche — quedará como "Realizado atrasado".</div>
+        <div class="grease-flow-vencido-warn">⚠ Este equipo está VENCIDO — no se engrasó en el ciclo esperado.</div>
+        <div class="grease-flow-carryover-warn">⚠ El turno Día no pudo ejecutar este engrase hoy — motivo: Condición insegura (Ana G.).</div>
       </div>
       <form id="grease-form" class="grease-flow-form">
         <div class="grease-flow-card">
@@ -67,6 +70,7 @@ const FIXTURE = `
         </div>
         <div class="grease-flow-final">
           <div class="modal-actions">
+            <button type="button" class="btn">No se pudo ejecutar</button>
             <button type="button" class="btn">Reportar anomalía</button>
             <button type="submit" class="btn btn-accent btn-grease-submit">Finalizar engrase</button>
           </div>
@@ -169,7 +173,10 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     // min-height 52px (btn-grease-submit) — más alto que el mínimo táctil general
     // (44px) — y ancho >= al del botón secundario.
     expect(submitBox.height).toBeGreaterThanOrEqual(48);
-    const cancelBox = await page.locator('#grease-form .grease-flow-final .btn:not(.btn-accent)').boundingBox();
+    // Lote occurrences/carryover: ahora hay 2 botones secundarios ("No se
+    // pudo ejecutar" + "Reportar anomalía") — .first() basta, el pedido
+    // solo pide que Finalizar no quede más angosto que un secundario.
+    const cancelBox = await page.locator('#grease-form .grease-flow-final .btn:not(.btn-accent)').first().boundingBox();
     expect(submitBox.width).toBeGreaterThanOrEqual(cancelBox.width);
   } else if (width && width >= 1024) {
     // En escritorio no debe convertirse en un botón gigante de ancho completo.

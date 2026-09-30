@@ -144,11 +144,31 @@ describe('BUG-CRÍTICO fix — un sync automático NO debe borrar el flujo de Re
     expect(logoutSrc).toContain('App.lubricadorGreaseFlowActive = false;');
   });
 
-  it('un guardado fallido (alert + return dentro del try) NO apaga el flag — el usuario sigue en el mismo formulario y puede reintentar', () => {
-    // El bloque catch/return de error nunca toca App.lubricadorGreaseFlowActive —
-    // solo se apaga en las 4 salidas reales verificadas arriba (Mis Engrases,
-    // "Volver", barra inferior, logout).
-    expect(flowSrc).not.toMatch(/lubricadorGreaseFlowActive/);
+  it('un guardado fallido de ENGRASE (alert + return dentro del try) NO apaga el flag — el usuario sigue en el mismo formulario y puede reintentar', () => {
+    // El bloque catch/return del guardado del engrase nunca toca
+    // App.lubricadorGreaseFlowActive — se apaga en 5 salidas reales: Mis
+    // Engrases, "Volver", barra inferior, logout (verificadas arriba) y,
+    // desde el lote occurrences/carryover, también "No se pudo ejecutar"
+    // (openNoExecutionForm(), ver el test siguiente) — pero NUNCA desde el
+    // catch de guardado fallido de un engrase en sí.
+    // Ancla en el comentario único de ESTE catch (no el de openNoExecutionForm,
+    // que también usa "catch (err)" pero para un error de validación distinto).
+    const iCatch = flowSrc.indexOf('Algo falló a mitad del guardado');
+    const iReturn = flowSrc.indexOf('return; // el borrador NO se descarta');
+    expect(iCatch).toBeGreaterThan(-1);
+    expect(iReturn).toBeGreaterThan(iCatch);
+    const catchBlock = flowSrc.slice(iCatch, iReturn);
+    expect(catchBlock).not.toMatch(/lubricadorGreaseFlowActive/);
+  });
+
+  it('"No se pudo ejecutar" (openNoExecutionForm, lote occurrences/carryover §1) es la 5ª salida real: apaga el flag SOLO después de guardar el lubrication_skips con éxito', () => {
+    const iFn = flowSrc.indexOf('function openNoExecutionForm');
+    expect(iFn).toBeGreaterThan(-1);
+    const noExecSrc = flowSrc.slice(iFn);
+    const iPutSkip = noExecSrc.indexOf("await DB.put('lubrication_skips'");
+    const iFlagOff = noExecSrc.indexOf('App.lubricadorGreaseFlowActive = false;');
+    expect(iPutSkip).toBeGreaterThan(-1);
+    expect(iFlagOff).toBeGreaterThan(iPutSkip);
   });
 
   it('cancelar/cerrar el modal de validación sin firmar NO llama a onDone() (irAMisEngrasesTrasRegistrar) — la pantalla "Validar ahora/después" sigue activa, el flag no se toca ahí', () => {

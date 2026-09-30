@@ -469,6 +469,21 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-activity-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; line-height: 1.1; }
 .dash-activity-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
 
+/* "Panel operativo" (lote occurrences/carryover, §3) — motivos de "no se
+   pudo ejecutar" de hoy (chips) y estado por ubicación (tabla compacta,
+   reutiliza .data-table ya existente). Este panel vive en un <section>,
+   no en un .panel (que trae overflow-x:auto por su cuenta, ver regla
+   existente arriba) — se agrega el mismo overflow-x:auto aquí para que
+   una ubicación con nombre largo nunca produzca scroll horizontal de
+   PÁGINA (solo de la tabla, si hiciera falta). */
+.dash-motivos-noexec-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.dash-motivo-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px;
+  border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text);
+}
+.dash-ubic-breakdown { margin-top: 6px; overflow-x: auto; }
+
 /* "Cumplimiento operativo" (Hoy/Semana/Turno Día|Noche) — 3 tarjetas
    iguales, independientes de computeFleetCompliance() histórico. */
 .dash-compliance-note { padding: 0 14px 8px; font-size: 12px; line-height: 1.4; }
@@ -965,8 +980,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .reg-select-title { font-size: 19px; margin: 0 0 4px; }
 .reg-select-subtitle { font-size: 13px; color: var(--text-dim); margin: 0 0 18px; }
-.reg-eq-select { width: 100%; font-size: 15px; padding: 14px 16px; min-height: 52px; }
 .reg-select-card .recents-row { justify-content: center; padding-top: 16px; padding-bottom: 0; }
+/* Selector de equipo compacto (lote occurrences/carryover, §2) — reemplaza
+   el <select> con TODOS los equipos por un buscador con resultados en
+   vivo. Propio (no .quick-find de la topbar): ancho completo y anclado a
+   la izquierda, no colapsado/angosto. */
+.reg-eq-search { position: relative; text-align: left; }
+.reg-eq-search input { width: 100%; font-size: 15px; padding: 14px 16px; min-height: 52px; }
+.reg-eq-search-results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 60;
+  max-height: 60vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4); padding: 5px;
+}
 
 /* ---------------- Gestor de listas simples (cuadrillas, ubicaciones, categorías) ---------------- */
 .simple-list { display: flex; flex-direction: column; padding: 4px 14px; }
@@ -1295,6 +1321,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: rgba(59,130,246,0.10); border: 1px solid #3B82F6; color: var(--text);
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
+/* Contexto de ocurrencia dentro de Registrar Engrase (lote occurrences/
+   carryover, §2) — mismo criterio visual que .duplicate-warning (fondo
+   suave + borde del color del semáforo), cada una con SU color para no
+   confundirse entre sí: turno distinto = mismo turquesa que
+   'hecho_atrasado'/hist-compliance-teal (informativo, no es un error);
+   vencido = rojo (ya era incumplimiento antes de abrir este formulario);
+   carryover = ámbar (turno anterior dejó pendiente esta ocurrencia). */
+.grease-flow-turno-warn, .grease-flow-vencido-warn, .grease-flow-carryover-warn {
+  margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+}
+.grease-flow-turno-warn { background: rgba(45,182,163,0.14); border: 1px solid #2DB6A3; color: var(--text); }
+.grease-flow-vencido-warn { background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--text); }
+.grease-flow-carryover-warn { background: rgba(232,163,61,0.12); border: 1px solid var(--amber); color: var(--text); }
 
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;
@@ -1614,6 +1653,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    de la grilla); ahora es un subsector propio ("Registro retroactivo") fuera del
    grid, así que necesita su propio margin-top para no pegarse a Tipo de grasa/
    Cantidad. */
+/* "Opciones avanzadas" (lote occurrences/carryover, §2) — el registro
+   retroactivo (uso poco frecuente, solo Planificador/Administrador) queda
+   colapsado por defecto en vez de siempre visible, para no competir con
+   los campos normales del engrase. Nativo (<details>), sin JS propio. */
+.reg-advanced summary {
+  cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-dim);
+  margin-top: var(--sp-3); list-style: none;
+}
+.reg-advanced summary::-webkit-details-marker { display: none; }
+.reg-advanced summary::before { content: '▸ '; }
+.reg-advanced[open] summary::before { content: '▾ '; }
 .retro-box { margin-top: var(--sp-3); border: 1px dashed var(--amber); border-radius: 10px; padding: 12px; background: rgba(230,126,34,0.06); }
 .retro-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
 .retro-toggle input { width: 20px; height: 20px; flex: none; }

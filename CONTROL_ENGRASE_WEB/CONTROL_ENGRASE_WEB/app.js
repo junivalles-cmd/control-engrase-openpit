@@ -2835,6 +2835,16 @@ async function openEditGreaseRecordForm(record) {
 // requieren atención" (nunca se usan para calcular ni se guardan — el dato
 // real sigue siendo el nombre completo en plan.assignedDays/WEEKDAY_NAMES).
 const WEEKDAY_ABBR_DASH = { 'Domingo': 'Dom', 'Lunes': 'Lun', 'Martes': 'Mar', 'Miércoles': 'Mié', 'Jueves': 'Jue', 'Viernes': 'Vie', 'Sábado': 'Sáb' };
+// Etiquetas de NO_EXECUTION_REASONS (operational-scope.js) — global porque
+// tanto startGreaseFlow() (formulario "No se pudo ejecutar") como
+// renderDashboard() (agregado "Motivos de no ejecución") las necesitan;
+// mismo criterio que STATUS_COLOR/WEEKDAY_ABBR_DASH arriba (una sola copia,
+// nunca duplicada por pantalla).
+const NO_EXECUTION_REASON_LABELS = {
+  REPARACION: 'Equipo en reparación', YA_ENGRASADO: 'Ya engrasado recientemente',
+  SIN_TIEMPO: 'No hubo tiempo', NO_DISPONIBLE: 'Equipo no disponible',
+  CONDICION_INSEGURA: 'Condición insegura', OTRO: 'Otro'
+};
 
 async function renderDashboard() {
   const c = $('#app-content');
@@ -2846,6 +2856,8 @@ async function renderDashboard() {
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
   const validations = await DB.allActive('grease_validations');
+  const assignments = await DB.allActive('lubrication_assignments');
+  const skips = await DB.allActive('lubrication_skips');
 
   // Filtros generales Ubicación/Familia (AND, se combinan entre sí): mismo
   // patrón ya usado en Matriz Semanal (App.matrizUbic/Tipo) — se guardan en
@@ -2959,6 +2971,46 @@ async function renderDashboard() {
     .sort((a, b) => new Date(a.date) - new Date(b.date)); // más antiguo pendiente primero
   const recordsConflictoValidacion = recordsParaValidacion.filter(r => isRecordInConflict(r, validations));
   const pendientesTurnoActual = recordsPendientesValidacion.filter(r => r.shiftId === currentShiftId());
+
+  // "Panel operativo" (lote occurrences/carryover, §3) — CERO cálculo de
+  // negocio nuevo: reusa ASSIGNMENT_STATUS/EXECUTION_TYPE/
+  // resolveRecordExecutionType() (operational-scope.js), el `statuses` ya
+  // calculado arriba (nunca se recalcula el semáforo) y
+  // findCarriedOverSkipForToday() (mismo módulo, ya usado en
+  // startGreaseFlow()) — todo respeta Ubicación/Familia vía
+  // `equipoIdsFiltrados`. Independiente de "Cumplimiento operativo"
+  // (arriba): eso responde "¿se ejecutó lo programado?"; esto responde
+  // "¿quién tiene trabajo pendiente/fuera de plan/sin poder ejecutar AHORA
+  // mismo?" — nunca se mezclan los dos conteos.
+  const assignmentsActivas = assignments.filter(a =>
+    a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING && equipoIdsFiltrados.has(a.equipmentId));
+  const recordsOutOfPlanHoy = recordsHoy.filter(r => resolveRecordExecutionType(r).value === EXECUTION_TYPE.OUT_OF_PLAN);
+  const todayISODash = todayDateISO();
+  const skipsHoy = skips.filter(s =>
+    s.active !== false && (s.date || '').slice(0, 10) === todayISODash && equipoIdsFiltrados.has(s.equipmentId));
+  // "Pendiente de turno anterior": la ocurrencia de hoy quedó marcada "no
+  // se pudo ejecutar" en un turno que YA NO es el actual — sigue
+  // 'pendiente' en la Matriz Semanal (ver comentario de
+  // findCarriedOverSkipForToday() en operational-scope.js), este KPI solo
+  // la hace visible sin tener que abrir cada equipo uno por uno.
+  const pendientesTurnoAnterior = equipos.filter(e => {
+    const carry = findCarriedOverSkipForToday(skipsHoy, { equipmentId: e.id, dateISO: todayISODash });
+    return carry && carry.shiftId !== turnoActual;
+  });
+  const motivosNoEjecucionHoy = {};
+  skipsHoy.forEach(s => { motivosNoEjecucionHoy[s.reason] = (motivosNoEjecucionHoy[s.reason] || 0) + 1; });
+  // Estado por ubicación — reagrupa el MISMO `statuses` (sin recalcular el
+  // semáforo), solo para las ubicaciones que de verdad tienen equipos
+  // dentro del filtro Ubicación/Familia vigente.
+  const estadoPorUbicacion = locations.map(loc => {
+    const deEsaUbic = statuses.filter(x => x.e.locationId === loc.id);
+    return {
+      location: loc, total: deEsaUbic.length,
+      verde: deEsaUbic.filter(x => x.s.code === 'VERDE').length,
+      amarillo: deEsaUbic.filter(x => x.s.code === 'AMARILLO').length,
+      rojo: deEsaUbic.filter(x => x.s.code === 'ROJO').length,
+    };
+  }).filter(u => u.total > 0);
 
   // Cola de atención unificada (reemplaza la tabla ancha de 9 columnas):
   // mismos conjuntos ya calculados arriba (vencidos/proximos/sinPlan/
@@ -3111,6 +3163,37 @@ async function renderDashboard() {
         ${dashComplianceCard(turnoActualLabel, cumplTurno)}
       </div>
     </div>
+
+    <section class="dash-section dash-section-secondary">
+      <h2 class="dash-section-title">Panel operativo</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Pendientes turno anterior', pendientesTurnoAnterior.length, pendientesTurnoAnterior.length ? 'amber' : 'neutral', null)}
+        ${dashActivityCard('Asignaciones activas', assignmentsActivas.length, assignmentsActivas.length ? 'amber' : 'neutral', null)}
+        ${dashActivityCard('Fuera de plan hoy', recordsOutOfPlanHoy.length, 'neutral', null)}
+        ${dashActivityCard('No se pudo ejecutar hoy', skipsHoy.length, skipsHoy.length ? 'red' : 'neutral', null)}
+      </div>
+      ${Object.keys(motivosNoEjecucionHoy).length ? `
+      <div class="dash-motivos-noexec">
+        <div class="dim" style="padding:8px 0 4px">Motivos de "no se pudo ejecutar" hoy:</div>
+        <div class="dash-motivos-noexec-list">
+          ${Object.entries(motivosNoEjecucionHoy).map(([reason, n]) => `<span class="dash-motivo-chip">${esc(NO_EXECUTION_REASON_LABELS[reason] || reason)}: <b>${n}</b></span>`).join('')}
+        </div>
+      </div>` : ''}
+      ${estadoPorUbicacion.length > 1 ? `
+      <div class="dash-ubic-breakdown">
+        <div class="dim" style="padding:10px 0 4px">Estado por ubicación:</div>
+        <table class="data-table">
+          <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
+          <tbody>${estadoPorUbicacion.map(u => `<tr>
+            <td>${esc(u.location.name)}</td>
+            <td>${u.total}</td>
+            <td style="color:var(--green)">${u.verde}</td>
+            <td style="color:var(--amber)">${u.amarillo}</td>
+            <td style="color:var(--red)">${u.rojo}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
+    </section>
 
     ${conProblemas.length ? `
     <div class="panel panel-alerta">
@@ -5579,19 +5662,68 @@ async function renderRegistrar() {
       <div class="reg-select-card">
         <h2 class="reg-select-title">Seleccionar equipo</h2>
         <p class="reg-select-subtitle">Busca y selecciona un equipo para registrar el engrase.</p>
-        <select id="reg-eq-select" class="input reg-eq-select">
-          <option value="">— Selecciona un equipo —</option>
-          ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
-        </select>
+        <div class="reg-eq-search">
+          <input type="text" id="reg-eq-search" class="input" placeholder="Busca por código, marca o modelo…" autocomplete="off"/>
+          <div id="reg-eq-search-results" class="reg-eq-search-results hidden"></div>
+        </div>
         ${recentsHTML}
       </div>
     </div>
     <div id="reg-flow-area"></div>
   `;
-  $('#reg-eq-select').addEventListener('change', (e) => {
-    if (e.target.value) startGreaseFlow(e.target.value, $('#reg-flow-area'));
-  });
+  wireRegEquipoSearch(equipos, $('#reg-flow-area'));
   $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startGreaseFlow(b.dataset.recentId, $('#reg-flow-area'))));
+}
+
+// Selector de equipo compacto (lote occurrences/carryover, §2) — escribir
+// para filtrar en vez de desplazarse por un <select> con TODOS los equipos
+// activos. Mismo patrón que wireQuickFind() (topbar), pero con su PROPIO
+// contenedor/posicionamiento (ancho completo, no anclado a la derecha como
+// el de la topbar) — no reutiliza .quick-find-results a propósito. Sin
+// listener en `document` (esta pantalla se vuelve a dibujar completa en
+// cada navegación — un listener global se acumularía); se cierra con
+// blur (con margen para que el click en un resultado alcance a disparar
+// antes) o Escape.
+function wireRegEquipoSearch(equipos, flowArea) {
+  const input = $('#reg-eq-search');
+  const caja = $('#reg-eq-search-results');
+  if (!input || !caja) return;
+  let resultados = [];
+  function buscar() {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { caja.classList.add('hidden'); caja.innerHTML = ''; return; }
+    resultados = equipos.filter(e =>
+      (e.code || '').toLowerCase().includes(q) ||
+      (e.shortCode || '').toLowerCase().includes(q) ||
+      `${e.brand} ${e.model}`.toLowerCase().includes(q)
+    ).slice(0, 8);
+    if (!resultados.length) {
+      caja.innerHTML = '<div class="qf-vacio">Ningún equipo coincide</div>';
+      caja.classList.remove('hidden');
+      return;
+    }
+    caja.innerHTML = resultados.map((e, i) => `
+      <button type="button" class="qf-item" data-i="${i}">
+        <span class="mono"><b>${esc(e.code)}</b>${e.shortCode ? ' · ' + esc(e.shortCode) : ''}</span>
+        <span class="dim">${esc(e.brand)} ${esc(e.model)}</span>
+      </button>`).join('');
+    caja.classList.remove('hidden');
+    $$('.qf-item', caja).forEach(b => b.addEventListener('mousedown', (ev) => {
+      ev.preventDefault(); // evita que el blur del input se dispare ANTES del click y oculte la caja
+      const eq = resultados[+b.dataset.i];
+      input.value = `${eq.code} · ${eq.brand} ${eq.model}`;
+      caja.classList.add('hidden');
+      startGreaseFlow(eq.id, flowArea);
+    }));
+  }
+  let temporizador;
+  input.addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(buscar, 150); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && resultados.length === 1) { ev.preventDefault(); $('.qf-item', caja)?.dispatchEvent(new MouseEvent('mousedown')); }
+    if (ev.key === 'Escape') { input.value = ''; caja.classList.add('hidden'); }
+  });
+  input.addEventListener('blur', () => { caja.classList.add('hidden'); });
+  input.addEventListener('focus', () => { if (resultados.length) caja.classList.remove('hidden'); });
 }
 
 // A dónde ir tras Finalizar Engrase (Validar ahora/después) — NUNCA usar
@@ -5646,6 +5778,22 @@ async function startGreaseFlow(equipmentId, target, options) {
   const draftId = `draft_${equipmentId}_${App.currentUser.id}`;
   const draft = await DB.get('grease_drafts', draftId);
 
+  // Contexto de ocurrencia (lote occurrences/carryover, §2): turno programado
+  // por el plan vs. turno en el que se está registrando de verdad, y si esta
+  // MISMA ocurrencia de hoy ya quedó marcada "no se pudo ejecutar" en un
+  // turno anterior (carryover) — ver src/core/operational-scope.js. Solo
+  // informativo aquí: NO bloquea el registro (si el turno no coincide, el
+  // engrase se guarda igual y plan-compliance.js ya lo cuenta como
+  // 'realizado_atrasado', no como incumplimiento).
+  const todayISOReg = todayDateISO();
+  const occurrenceKeyHoy = plan ? computeOccurrenceKey(plan, { dateISO: todayISOReg }) : null;
+  const skipsActivosReg = await DB.allActive('lubrication_skips');
+  const carriedOverSkip = occurrenceKeyHoy ? findCarriedOverSkipForToday(skipsActivosReg, { equipmentId, dateISO: todayISOReg }) : null;
+  const turnoActualReg = currentShiftId();
+  const turnoProgramadoReg = plan && plan.shiftId ? plan.shiftId : null;
+  const turnoDistintoReg = !!(turnoProgramadoReg && turnoProgramadoReg !== turnoActualReg);
+  const shiftLabel = (s) => s === 'shift_dia' ? 'Día' : 'Noche';
+
   const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
   const html = `
     <div class="grease-flow-panel">
@@ -5654,6 +5802,9 @@ async function startGreaseFlow(equipmentId, target, options) {
         <div class="grease-flow-equipo-code">${esc(equipment.code)}</div>
         <div class="grease-flow-equipo-model">${esc(equipment.brand)} ${esc(equipment.model)}</div>
         <div class="grease-flow-equipo-meta">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())} · ${currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche'}</div>
+        ${turnoDistintoReg ? `<div class="grease-flow-turno-warn">⚠ Turno programado: ${shiftLabel(turnoProgramadoReg)} · Registrando en turno ${shiftLabel(turnoActualReg)} — quedará como "Realizado atrasado".</div>` : ''}
+        ${estadoPrevio === 'ROJO' ? `<div class="grease-flow-vencido-warn">⚠ Este equipo está VENCIDO — no se engrasó en el ciclo esperado.</div>` : ''}
+        ${carriedOverSkip ? `<div class="grease-flow-carryover-warn">⚠ El turno ${shiftLabel(carriedOverSkip.shiftId)} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carriedOverSkip.reason] || carriedOverSkip.reason)}${carriedOverSkip.observacion ? ' · ' + esc(carriedOverSkip.observacion) : ''} (${esc(carriedOverSkip.userName)}).</div>` : ''}
         ${outOfPlan ? `<p class="dim" style="margin:6px 0 0">Este engrase no estaba programado para este momento.</p>` : ''}
       </div>
       ${outOfPlan ? `
@@ -5700,25 +5851,28 @@ async function startGreaseFlow(equipmentId, target, options) {
             <label>Cantidad utilizada (${GREASE_UNIT})<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
           </div>
           ${puedeRetroactivo ? `
-          <div class="retro-box">
-            <h5 class="grease-flow-retro-head">Registro retroactivo</h5>
-            <label class="retro-toggle">
-              <input type="checkbox" id="retro-check"/>
-              <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
-            </label>
-            <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
-              <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
-              <label>Turno en que se hizo
-                <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+          <details class="reg-advanced">
+            <summary>Opciones avanzadas</summary>
+            <div class="retro-box">
+              <h5 class="grease-flow-retro-head">Registro retroactivo</h5>
+              <label class="retro-toggle">
+                <input type="checkbox" id="retro-check"/>
+                <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
               </label>
-              <label class="span-2">Lo realizó
-                <select name="retroUser">
-                  ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
-                </select>
-                <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
-              </label>
+              <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
+                <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
+                <label>Turno en que se hizo
+                  <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+                </label>
+                <label class="span-2">Lo realizó
+                  <select name="retroUser">
+                    ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
+                  </select>
+                  <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
+                </label>
+              </div>
             </div>
-          </div>` : ''}
+          </details>` : ''}
         </div>
 
         <div class="grease-flow-card">
@@ -5765,6 +5919,7 @@ async function startGreaseFlow(equipmentId, target, options) {
 
         <div class="grease-flow-final">
           <div class="modal-actions">
+            <button type="button" class="btn" id="btn-no-ejecutado">No se pudo ejecutar</button>
             <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
             <button type="submit" class="btn btn-accent btn-grease-submit">${ic("check")}Finalizar engrase</button>
           </div>
@@ -5814,6 +5969,55 @@ async function startGreaseFlow(equipmentId, target, options) {
   }
 
   async function discardDraft() { try { await DB.delete('grease_drafts', draftId); } catch (e) {} }
+
+  // "No se pudo ejecutar" (lote occurrences/carryover, §1) — NUNCA crea un
+  // lubrication_record: guarda un lubrication_skips con motivo+observación
+  // y vuelve a una pantalla estable. El carryover al turno siguiente es
+  // automático (ver comentario de findCarriedOverSkipForToday() en
+  // operational-scope.js) — esta función solo registra el motivo, no
+  // reprograma nada del plan.
+  function openNoExecutionForm() {
+    openModal('No se pudo ejecutar este engrase', `
+      <div class="form-grid">
+        <label class="span-2">Motivo
+          <select id="noexec-reason">
+            ${NO_EXECUTION_REASONS.map(r => `<option value="${r}">${esc(NO_EXECUTION_REASON_LABELS[r])}</option>`).join('')}
+          </select>
+        </label>
+        <label class="span-2">Observación<textarea id="noexec-obs" rows="3" placeholder="Obligatoria si el motivo es &quot;Otro&quot;"></textarea></label>
+      </div>
+      <div class="modal-actions" style="margin-top:14px">
+        <button type="button" class="btn" id="noexec-cancel">Cancelar</button>
+        <button type="button" class="btn btn-accent" id="noexec-confirm">Confirmar</button>
+      </div>
+    `);
+    $('#noexec-cancel').addEventListener('click', closeModal);
+    $('#noexec-confirm').addEventListener('click', async () => {
+      const reason = $('#noexec-reason').value;
+      const observacion = $('#noexec-obs').value;
+      let skip;
+      try {
+        skip = buildNoExecutionRecord({
+          id: uid('skip'), equipmentId: equipment.id, planId: plan ? plan.id : null,
+          occurrenceKey: occurrenceKeyHoy, date: nowISO(), shiftId: turnoActualReg,
+          reason, observacion, userId: App.currentUser.id, userName: App.currentUser.name, now: nowISO()
+        });
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      await DB.put('lubrication_skips', skip);
+      await logAudit('ENGRASE_NO_EJECUTADO',
+        `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}`,
+        App.currentUser.name);
+      await discardDraft();
+      closeModal();
+      showInAppToast(`Registrado: no se pudo ejecutar — ${equipment.code}`);
+      App.lubricadorGreaseFlowActive = false; // el flujo terminó (sin engrase) — no debe sobrevivir a la sesión siguiente
+      Sync.fullSync();
+      redibujarPantallaActual();
+    });
+  }
 
   function restoreDraftIntoForm(d) {
     const form = $('#grease-form');
@@ -5878,7 +6082,15 @@ async function startGreaseFlow(equipmentId, target, options) {
     });
 
     $('#btn-check-all')?.addEventListener('click', () => {
-      $$('.chk-done').forEach(chk => {
+      // Acción explícita (lote occurrences/carryover, §2): "Marcar todos" ya
+      // no aplica de un solo toque — pide confirmación, para que no sea un
+      // atajo accidental que declare puntos como realizados sin haberlos
+      // engrasado de verdad. Si ya estaban todos marcados, no hay nada que
+      // confirmar (evita un confirm() sin sentido al tocarlo dos veces).
+      const puntos = $$('.chk-done');
+      if (puntos.every(c => c.checked)) return;
+      if (!confirm(`¿Marcar los ${puntos.length} puntos de engrase como realizados? Confírmalo solo si de verdad engrasaste todos.`)) return;
+      puntos.forEach(chk => {
         chk.checked = true;
         chk.closest('.checklist-item').querySelector('.chk-reason').classList.add('hidden');
       });
@@ -5894,6 +6106,7 @@ async function startGreaseFlow(equipmentId, target, options) {
       });
     });
     $('#btn-report-anomaly')?.addEventListener('click', () => openAnomalyForm(equipment.id, equipment.code));
+    $('#btn-no-ejecutado')?.addEventListener('click', () => openNoExecutionForm());
 
     // Autoguardado: cualquier cambio en el formulario programa un guardado de borrador local
     $('#grease-form').addEventListener('input', scheduleDraftSave);
@@ -5942,6 +6155,20 @@ async function startGreaseFlow(equipmentId, target, options) {
           alert('Selecciona el motivo de "No realizado" para: ' + item.querySelector('span').textContent);
           return;
         }
+      }
+
+      // Validación real (lote occurrences/carryover, §2): si TODOS los puntos
+      // del checklist quedaron marcados como realizados, la cantidad de
+      // grasa no puede ser 0 — sería contradictorio (se engrasó todo el
+      // equipo sin gastar nada de lubricante). Sin puntos configurados no
+      // hay nada que exigir aquí (mismo criterio que
+      // computeExecutionCompleteness() en operational-scope.js: sin
+      // checklist, siempre se considera completo).
+      const totalPuntosChecklist = $$('.checklist-item').length;
+      const qtyIngresada = parseFloat(fd.qty || 0);
+      if (totalPuntosChecklist > 0 && incomplete.length === 0 && !(qtyIngresada > 0)) {
+        alert(`Marcaste los ${totalPuntosChecklist} puntos de engrase como realizados, pero la cantidad de grasa es 0. Anota la cantidad real utilizada.`);
+        return;
       }
 
       // "Otro" como motivo de fuera de plan exige observación — nunca depender
