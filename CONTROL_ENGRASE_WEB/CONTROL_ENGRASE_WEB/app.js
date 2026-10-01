@@ -2512,8 +2512,8 @@ function boot() {
             }).join('');
           })()}
         </nav>
-        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span>Bloquear</span></button>` : ''}
-        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span>Cambiar usuario</span></button>` : ''}
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span class="menu-icon icon-lock"></span><span>Bloquear</span></button>` : ''}
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span class="menu-icon icon-repeat"></span><span>Cambiar usuario</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
         </button>
@@ -9415,7 +9415,7 @@ async function renderUsuarios() {
   c.innerHTML = `
     <div class="toolbar">
       <button class="btn btn-accent" id="btn-new-lubricador">${ic("plus")}Nuevo lubricador</button>
-      ${!isSupervisor ? `<button class="btn" id="btn-new-user">+ Otro tipo de usuario</button>` : ''}
+      ${!isSupervisor ? `<button class="btn" id="btn-new-user">${ic("plus")}Otro tipo de usuario</button>` : ''}
     </div>
     <div class="panel">
       <table class="data-table">
@@ -9592,7 +9592,7 @@ async function renderUsuariosSupabase(c) {
         <button class="btn btn-sm ${u.active ? 'btn-danger' : ''}" data-toggle="${esc(u.app_user_id)}" data-active="${u.active ? 'true' : 'false'}">
           ${u.active ? ic('trash') + 'Desactivar' : ic('check') + 'Activar'}
         </button>
-        <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">Reset password</button>
+        <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">${ic("rotate-ccw")}Reset password</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
 
