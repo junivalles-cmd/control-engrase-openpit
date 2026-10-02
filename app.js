@@ -6,7 +6,16 @@ const App = {
   currentUser: null,
   route: 'dashboard',
   configAlertYellow: 10,
-  pendingQrEquipmentId: null // equipo pendiente de mostrar tras escanear un QR (ver captureQrDeepLink)
+  pendingQrEquipmentId: null, // equipo pendiente de mostrar tras escanear un QR (ver captureQrDeepLink)
+  // Estado EXPLÍCITO del flujo Registrar Engrase del Lubricador (formulario →
+  // guardado → "Validar ahora/después" → validación si aplica). true desde
+  // startLubricadorGreaseFlow() hasta que el flujo termina de verdad (llega a
+  // Mis Engrases) o la persona lo cancela ("← Volver a mi turno"). Fuente
+  // principal para que onSyncStateChange() no interrumpa el flujo con un
+  // rerender automático — más confiable que inferirlo de selectores DOM
+  // (#grease-form/.grease-validate-choice), que igual se conservan como
+  // defensa secundaria.
+  lubricadorGreaseFlowActive: false
 };
 
 /* ============================================================
@@ -37,6 +46,12 @@ async function pickPhotoNative(source) {
 }
 
 const MAX_PHOTOS = 5;
+
+// Unidad operativa real del consumo de grasa. La interfaz mostraba "kg" desde
+// el inicio del proyecto, pero en campo siempre se digitó en libras — la
+// etiqueta era incorrecta, no el dato: `qty`/`recommendedQty` no cambian de
+// valor ni de significado, solo el texto que los acompaña (docs/DECISIONS.md).
+const GREASE_UNIT = 'lb';
 
 function photoFieldHTML() {
   return `
@@ -87,7 +102,7 @@ function addPhotoToField(container, dataUrl) {
   const slot = document.createElement('div');
   slot.className = 'photo-slot';
   slot.dataset.photo = dataUrl;
-  slot.innerHTML = `<img src="${dataUrl}"/><button type="button" class="photo-slot-remove" title="Quitar esta foto">✕</button>`;
+  slot.innerHTML = `<img src="${dataUrl}" alt="Foto agregada"/><button type="button" class="photo-slot-remove" title="Quitar esta foto">✕</button>`;
   slot.querySelector('.photo-slot-remove').addEventListener('click', () => {
     slot.remove();
     renderPhotoStrip(container);
@@ -218,7 +233,7 @@ async function printAllQRCodes(equipos) {
     <div class="grid">
       ${items.map(({ e, dataUrl }) => `
         <div class="label">
-          <img src="${dataUrl}"/>
+          <img src="${dataUrl}" alt="Código QR de ${esc(e.code)}"/>
           <h4>${esc(e.code)}${e.shortCode ? ' · ' + esc(e.shortCode) : ''}</h4>
           <p>${esc(e.brand)} ${esc(e.model)}</p>
         </div>`).join('')}
@@ -291,7 +306,7 @@ function openEquipmentQR(equipment) {
       <div style="text-align:center; padding:20px">
         <h2>${esc(equipment.code)}${equipment.shortCode ? ' · ' + esc(equipment.shortCode) : ''}</h2>
         <p>${esc(equipment.brand)} ${esc(equipment.model)}</p>
-        <img src="${$('#qr-canvas').toDataURL()}" style="width:260px"/>
+        <img src="${$('#qr-canvas').toDataURL()}" style="width:260px" alt="Código QR de ${esc(equipment.code)}"/>
       </div>`);
   });
 }
@@ -369,7 +384,30 @@ async function showEquipmentQrInfo(equipmentId) {
     : null;
   const location_ = (await DB.allActive('locations')).find(l => l.id === equipment.locationId);
   const needsGrease = s.code === 'ROJO' || s.code === 'AMARILLO';
-  const canRegister = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  const canRegisterRole = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  // Un Lubricador solo puede ejecutar equipos de su cuadrilla/ubicación, o con
+  // una asignación manual activa hacia su cuadrilla (§AO) — nunca cualquier
+  // equipo del sistema solo por escanear su QR.
+  let outOfScopeMsg = '';
+  let canRegister = canRegisterRole;
+  // §21 del lote "engrase fuera de plan": A) assignment a mi cuadrilla ->
+  // ASSIGNED, B) occurrence normal pendiente -> PLANNED (ambas abren igual,
+  // "Registrar engrase ahora" ya las detecta solo), C) sin ninguna pero
+  // dentro de mi scope -> ofrece "Registrar fuera de plan" en vez del botón
+  // normal, D) fuera de mi scope -> bloqueado (ya cubierto arriba/abajo).
+  let ofreceFueraDePlan = false;
+  if (canRegisterRole && App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    const { assignments } = await loadAssignmentContext();
+    canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
+    if (!canRegister) {
+      outOfScopeMsg = '<div class="qr-info-alert">Este equipo no pertenece a tu cuadrilla ni tiene una asignación activa para ti — no puedes registrar su engrase desde aquí.</div>';
+    } else {
+      const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+      const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+      if (existing.kind === 'NONE') ofreceFueraDePlan = true;
+    }
+  }
 
   openModal(`${esc(equipment.code)}${equipment.shortCode ? ' · ' + equipment.shortCode : ''}`, `
     <div class="qr-info-card">
@@ -389,9 +427,11 @@ async function showEquipmentQrInfo(equipmentId) {
       ${needsGrease
         ? `<div class="qr-info-alert">${s.code === 'ROJO' ? '🔴 Este equipo tiene el engrase vencido.' : '🟡 Este equipo está próximo a vencer.'}</div>`
         : `<div class="qr-info-ok">✓ Este equipo está al día, no necesita engrase ahora.</div>`}
+      ${outOfScopeMsg}
 
       <div class="modal-actions" style="flex-wrap:wrap">
-        ${canRegister ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
+        ${canRegister && !ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
+        ${ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-out-of-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
         ${App.currentUser.role !== 'LUBRICADOR' ? `<button class="btn" id="qr-info-detail">Ver ficha completa</button>` : ''}
       </div>
     </div>
@@ -400,7 +440,17 @@ async function showEquipmentQrInfo(equipmentId) {
   $('#qr-info-register')?.addEventListener('click', async () => {
     closeModal();
     if (App.currentUser.role === 'LUBRICADOR') await startLubricadorGreaseFlow(equipment.id);
-    else await startGreaseFlow(equipment.id, App.route);
+    // FIX: startGreaseFlow() espera un elemento DOM real o `undefined`
+    // (cae a navigate('registrar') + #reg-flow-area) — App.route es un
+    // string (ej. 'equipos') y nunca debió pasarse aquí: una asignación de
+    // propiedad sobre un string primitivo no lanza error, simplemente no
+    // hace nada, así que el formulario nunca aparecía para jefaturas desde
+    // este botón (bug documentado en docs/OPERATIONAL_SCOPE.md).
+    else await startGreaseFlow(equipment.id);
+  });
+  $('#qr-info-out-of-plan')?.addEventListener('click', async () => {
+    closeModal();
+    await startLubricadorGreaseFlow(equipment.id, { outOfPlan: true });
   });
   $('#qr-info-detail')?.addEventListener('click', () => {
     closeModal();
@@ -437,6 +487,27 @@ const NOTIF_ID_VENCIDOS_REC = 1006;    // recordatorio de vencidos a media jorna
 const NOTIF_ID_POR_ENGRASAR_REC = 1007; // recordatorio de lo que falta por engrasar
 const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (lunes)
 const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
+const NOTIF_ID_ASSIGNED = 1010;        // engrase asignado manualmente a mi cuadrilla
+const NOTIF_ID_ASSIGNED_REC = 1011;    // recordatorio de asignación todavía pendiente
+
+// Factorizada aparte (lote arquitectura de notificaciones, §15) para poder
+// cancelar TODAS las notificaciones locales programadas desde logout()
+// incluso sin App.currentUser (refreshLocalNotifications() exige un
+// usuario válido — logout() ya lo dejó en null para ese momento). Misma
+// lista que ya se cancelaba al inicio de refreshLocalNotifications(), sin
+// cambios.
+const LOCAL_NOTIF_IDS = [
+  { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
+  { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
+  { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
+  { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO },
+  { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC }
+];
+async function cancelAllLocalNotifications() {
+  const LN = window.Capacitor?.Plugins?.LocalNotifications;
+  if (!LN) return;
+  try { await LN.cancel({ notifications: LOCAL_NOTIF_IDS }); } catch (e) {}
+}
 
 /* Configuración por defecto de las notificaciones. El Administrador puede cambiar
    cada una por separado desde Configuración: activarla o apagarla, a qué hora suena,
@@ -638,7 +709,147 @@ async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
     ultimoUsuario: App.currentUser ? App.currentUser.name : (actual?.ultimoUsuario || ''),
     active: true
   }, App.currentUser ? App.currentUser.name : 'sistema'));
+  await refreshPushTokenDeviceScope();
   Sync.fullSync();
+}
+
+/* ============================================================
+   SCOPE OPERATIVO CENTRAL (dispositivos compartidos + cuadrillas +
+   ubicaciones + asignación manual de engrases) — ver
+   docs/OPERATIONAL_SCOPE.md. Las reglas de decisión viven, puras, en
+   src/core/operational-scope.js; aquí solo se conectan con IndexedDB/App,
+   nunca se reimplementan.
+   ============================================================ */
+
+// Scope vigente EN ESTE MOMENTO para el usuario/dispositivo actual. El turno
+// SIEMPRE viene de currentShiftId() en vivo, nunca de un valor guardado en
+// el dispositivo (ver §H del pedido — resolveOperationalScope() ya lo
+// garantiza, esto solo junta los datos que necesita).
+async function getCurrentOperationalScope() {
+  const deviceAssignment = await getDeviceAssignment();
+  const cuadrillas = await DB.allActive('cuadrillas');
+  return resolveOperationalScope({
+    currentUser: App.currentUser,
+    deviceAssignment,
+    cuadrillas,
+    shiftId: currentShiftId()
+  });
+}
+
+function todayDateISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Clave de ocurrencia (identidad de "este engrase pendiente hoy", ver
+// computeOccurrenceKey en operational-scope.js) del trabajo de un equipo
+// según su plan activo. null si el equipo no tiene plan configurado.
+function equipoOccurrenceKey(equipo, plansByEquipoId) {
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) return null;
+  return computeOccurrenceKey(plan, { dateISO: todayDateISO() });
+}
+
+async function loadAssignmentContext() {
+  const [assignments, cuadrillas, plans] = await Promise.all([
+    DB.allActive('lubrication_assignments'),
+    DB.allActive('cuadrillas'),
+    DB.allActive('lubrication_plans')
+  ]);
+  const plansByEquipoId = {};
+  plans.forEach(p => { plansByEquipoId[p.equipmentId] = p; });
+  return { assignments, cuadrillas, plansByEquipoId };
+}
+
+// Asigna manualmente el engrase PENDIENTE de `equipo` a `assignedCrewId`
+// (responsabilidad temporal — NUNCA mueve el equipo de ubicación, ver
+// moverEquipoDeUbicacion() más abajo para eso). Si ya había una asignación
+// activa para esta misma ocurrencia, la reasigna en vez de duplicarla.
+async function assignGreaseToCrew(equipo, assignedCrewId, notes) {
+  const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) throw new Error('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.');
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const existing = findActivePendingAssignment(assignments, occurrenceKey);
+  const crew = cuadrillas.find(cq => cq.id === assignedCrewId);
+  let saved;
+  if (existing) {
+    saved = reassignAssignment(existing, { newCrewId: assignedCrewId, now: nowISO() });
+    await logAudit('GREASE_REASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
+  } else {
+    saved = createAssignment({
+      existing, occurrenceKey, equipmentId: equipo.id, planId: plan.id,
+      assignedCrewId, assignedByUserId: App.currentUser.id, assignedByUserName: App.currentUser.name,
+      notes, now: nowISO(), uid
+    });
+    await logAudit('GREASE_ASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
+  }
+  await DB.put('lubrication_assignments', stamp(saved, App.currentUser.name));
+  Sync.fullSync();
+  return saved;
+}
+
+// Cancela una asignación PENDING: el equipo vuelve a su flujo normal (la
+// cuadrilla default de su ubicación), sin borrar el historial de que existió.
+async function cancelGreaseAssignment(assignment, equipo) {
+  const cancelled = cancelAssignment(assignment, { now: nowISO() });
+  await DB.put('lubrication_assignments', stamp(cancelled, App.currentUser.name));
+  await logAudit('GREASE_ASSIGNMENT_CANCELLED', esc(equipo ? equipo.code : assignment.equipmentId), App.currentUser.name);
+  Sync.fullSync();
+  return cancelled;
+}
+
+// Se llama al guardar un registro de engrase, con la occurrenceKey calculada
+// ANTES de que el plan se actualice (el horómetro base cambia al guardar, ver
+// startGreaseFlow) — si esa ocurrencia tenía una asignación manual PENDING la
+// cierra; si el equipo se engrasó dentro de su trabajo normal, no hace nada.
+async function completeGreaseAssignmentForOccurrence(equipo, occurrenceKey, recordId) {
+  if (!occurrenceKey) return null;
+  const assignments = await DB.allActive('lubrication_assignments');
+  const completed = completeAssignmentIfPending(assignments, { occurrenceKey, recordId, now: nowISO() });
+  if (!completed) return null;
+  await DB.put('lubrication_assignments', stamp(completed, App.currentUser.name));
+  await logAudit('GREASE_ASSIGNMENT_COMPLETED', esc(equipo.code), App.currentUser.name);
+  Sync.fullSync();
+  return completed;
+}
+
+// Mueve PERMANENTEMENTE un equipo a otra ubicación (distinto de asignar un
+// engrase puntual — ver §M del pedido). Solo ADMIN/PLANIFICADOR
+// (canMoveEquipment, validado también en la UI que llama a esto).
+async function moverEquipoDeUbicacion(equipo, newLocationId, locations) {
+  const anterior = locations.find(l => l.id === equipo.locationId);
+  const nueva = locations.find(l => l.id === newLocationId);
+  equipo.locationId = newLocationId;
+  await DB.put('equipment', stamp(equipo, App.currentUser.name));
+  await logAudit('EQUIPMENT_LOCATION_CHANGED',
+    `${esc(equipo.code)}: ${esc(anterior ? anterior.name : 'sin ubicación')} → ${esc(nueva ? nueva.name : newLocationId)}`,
+    App.currentUser.name);
+  Sync.fullSync();
+}
+
+// Snapshot del scope del DISPOSITIVO (cuadrilla/ubicación/turno asignado,
+// ver getDeviceAssignment()) para copiarlo sobre la fila push_tokens de LA
+// PERSONA. BUG REAL encontrado en este lote (auditoría de notify-vencidos/
+// notify-push): esos Edge Functions ya filtran Lubricador por
+// `disp.shiftId`/`disp.locationId`/`disp.cuadrillaId`, pero la fila que
+// saveOneSignalId() escribía nunca tenía esos campos (solo existían en la
+// fila APARTE del dispositivo, keyed por getDeviceId(), que jamás tiene un
+// `token` real) — en la práctica ese filtro nunca hacía nada: TODOS los
+// tokens de Lubricador recibían TODOS los avisos sin importar turno/zona/
+// cuadrilla. Corregido copiando el scope del dispositivo aquí; se vuelve a
+// llamar cada vez que cambia la suscripción Y cada vez que cambia la
+// asignación del dispositivo (ver saveDeviceAssignment()) para que nunca
+// quede desactualizado mientras la persona sigue conectada.
+async function currentDeviceScopeSnapshotForPush() {
+  const deviceAssignment = await getDeviceAssignment();
+  if (!deviceAssignment.cuadrillaId) return { cuadrillaId: '', locationId: '', shiftId: deviceAssignment.shiftId || '' };
+  const cuadrilla = await DB.get('cuadrillas', deviceAssignment.cuadrillaId).catch(() => null);
+  return {
+    cuadrillaId: deviceAssignment.cuadrillaId,
+    locationId: cuadrilla?.locationId || '',
+    shiftId: deviceAssignment.shiftId || ''
+  };
 }
 
 async function saveOneSignalId(subscriptionId, plataforma) {
@@ -646,12 +857,153 @@ async function saveOneSignalId(subscriptionId, plataforma) {
     // El id incluye la plataforma: así una misma persona puede recibir avisos en la app
     // del celular Y en el navegador de la computadora, sin que uno pise al otro.
     const plat = plataforma || (window.Capacitor ? 'android' : 'web');
+    const id = `tok_${App.currentUser.id}_${plat}`;
+    // notificationShift/notificationAvailability/receiveAllShifts (lote
+    // arquitectura de notificaciones, §2/§29): preferencias PROPIAS de la
+    // persona, nunca reseteadas por un simple cambio de subscription id —
+    // se preservan si ya existían, con default BOTH/AVAILABLE/false solo
+    // para una fila nueva.
+    const actual = await DB.get('push_tokens', id).catch(() => null);
+    const deviceScope = await currentDeviceScopeSnapshotForPush();
     await DB.put('push_tokens', stamp({
-      id: `tok_${App.currentUser.id}_${plat}`, userId: App.currentUser.id, userName: App.currentUser.name,
-      role: App.currentUser.role, token: subscriptionId, platform: plat, active: true
+      ...(actual || {}),
+      id, userId: App.currentUser.id, userName: App.currentUser.name,
+      role: App.currentUser.role, token: subscriptionId, platform: plat, active: true,
+      cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId,
+      notificationShift: actual?.notificationShift || 'BOTH',
+      notificationAvailability: actual?.notificationAvailability || 'AVAILABLE',
+      receiveAllShifts: actual?.receiveAllShifts || false
     }, App.currentUser.name));
     Sync.fullSync();
   } catch (e) { console.warn('No se pudo guardar el ID de notificaciones push', e); }
+}
+
+// Refresca el scope de dispositivo (cuadrillaId/locationId/shiftId) sobre
+// la fila push_tokens de QUIEN TENGA SESIÓN ABIERTA ahora mismo — se llama
+// desde saveDeviceAssignment() (cambia la cuadrilla/turno del dispositivo
+// mientras alguien sigue conectado en él) para que esa fila nunca quede
+// desactualizada hasta la próxima vez que cambie la suscripción. Si la
+// persona actual no tiene todavía un push_token (nunca activó push), no
+// hace nada — no se inventa una fila sin un subscription id real.
+async function refreshPushTokenDeviceScope() {
+  if (!App.currentUser) return;
+  try {
+    const plat = window.Capacitor ? 'android' : 'web';
+    const id = `tok_${App.currentUser.id}_${plat}`;
+    const actual = await DB.get('push_tokens', id).catch(() => null);
+    if (!actual || !actual.token) return;
+    const deviceScope = await currentDeviceScopeSnapshotForPush();
+    await DB.put('push_tokens', stamp({
+      ...actual, cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId
+    }, App.currentUser.name));
+  } catch (e) { console.warn('No se pudo actualizar el scope de push del dispositivo', e); }
+}
+
+// Preferencias de notificación PROPIAS (lote arquitectura de
+// notificaciones, §2/§21/§22/§29) — autoservicio: cada persona ajusta su
+// turno de notificación/disponibilidad; receiveAllShifts solo tiene efecto
+// real para ADMINISTRADOR (isUserEligibleForNotification() lo ignora para
+// cualquier otro rol, pero se guarda igual si se manda — sin inventar una
+// restricción de rol aquí, esa regla vive en notification-routing.js).
+// Actualiza TODAS las filas push_tokens de la persona (puede tener una por
+// plataforma: android Y web) — nunca solo la primera que encuentre.
+async function applyNotificationPreferencesToRows(rows, { notificationShift, notificationAvailability, receiveAllShifts }, stampedBy) {
+  for (const tok of rows) {
+    await DB.put('push_tokens', stamp({
+      ...tok,
+      notificationShift: notificationShift || tok.notificationShift || 'BOTH',
+      notificationAvailability: notificationAvailability || tok.notificationAvailability || 'AVAILABLE',
+      receiveAllShifts: receiveAllShifts !== undefined ? !!receiveAllShifts : !!tok.receiveAllShifts
+    }, stampedBy));
+  }
+  Sync.fullSync();
+}
+
+async function saveNotificationPreferences(prefs) {
+  if (!App.currentUser) throw new Error('No hay sesión activa.');
+  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+  if (!propios.length) throw new Error('Todavía no activaste las notificaciones push en este dispositivo — no hay nada que configurar.');
+  await applyNotificationPreferencesToRows(propios, prefs, App.currentUser.name);
+}
+
+// Un ADMINISTRADOR ajusta las preferencias de OTRA persona (Configuración →
+// Notificaciones push → "Editar" en la lista de dispositivos) — mismo
+// mecanismo de escritura que el autoservicio de arriba, apuntando a las
+// filas de la persona elegida en vez de App.currentUser. Nunca toca una
+// fila de DISPOSITIVO (sin userId, ver saveDeviceAssignment()) — solo las
+// filas de PERSONA del userId recibido.
+async function saveNotificationPreferencesForUser(targetUserId, prefs) {
+  if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') throw new Error('Solo un administrador puede editar las notificaciones de otra persona.');
+  const ajenos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
+  if (!ajenos.length) throw new Error('Esa persona todavía no activó las notificaciones push en ningún dispositivo.');
+  await applyNotificationPreferencesToRows(ajenos, prefs, App.currentUser.name);
+}
+
+// Modal de edición — mismos 3 campos que el autoservicio "Mis
+// notificaciones" (renderConfig()), prellenados con la primera fila activa
+// de esa persona (misma convención que usa el propio autoservicio: las
+// preferencias son iguales en todas sus plataformas).
+async function openEditUserNotificationPrefsModal(targetUserId, targetUserName) {
+  const suyos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
+  const actual = suyos[0] || {};
+  openModal(`Notificaciones de ${esc(targetUserName)}`, `
+    <form id="edit-user-notif-form" class="form-grid">
+      <label>Turno en el que recibe avisos
+        <select name="notificationShift">
+          <option value="BOTH" ${actual.notificationShift === 'BOTH' || !actual.notificationShift ? 'selected' : ''}>Ambos turnos</option>
+          <option value="DAY" ${actual.notificationShift === 'DAY' ? 'selected' : ''}>Solo Turno Día</option>
+          <option value="NIGHT" ${actual.notificationShift === 'NIGHT' ? 'selected' : ''}>Solo Turno Noche</option>
+        </select>
+      </label>
+      <label>Disponibilidad
+        <select name="notificationAvailability">
+          <option value="AVAILABLE" ${actual.notificationAvailability !== 'RESTING' ? 'selected' : ''}>Disponible</option>
+          <option value="RESTING" ${actual.notificationAvailability === 'RESTING' ? 'selected' : ''}>De descanso (no recibir avisos operativos)</option>
+        </select>
+      </label>
+      <label class="retro-toggle span-2">
+        <input type="checkbox" name="receiveAllShifts" ${actual.receiveAllShifts ? 'checked' : ''}/>
+        <span>Recibir alertas de todos los turnos (ignora el filtro de turno para esta persona)</span>
+      </label>
+      <div class="modal-actions span-2">
+        <button type="submit" class="btn btn-accent">Guardar</button>
+      </div>
+    </form>`);
+  $('#edit-user-notif-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await saveNotificationPreferencesForUser(targetUserId, {
+        notificationShift: fd.notificationShift,
+        notificationAvailability: fd.notificationAvailability,
+        receiveAllShifts: fd.receiveAllShifts === 'on'
+      });
+      closeModal();
+      showInAppToast(`✓ Notificaciones de ${targetUserName} guardadas`);
+      renderConfig();
+    } catch (e) { alert(e.message || 'No se pudo guardar.'); }
+  });
+}
+
+// Contexto de elegibilidad de QUIEN tiene sesión en ESTE dispositivo ahora
+// mismo (lote arquitectura de notificaciones, cierre §1/§9/§13) — objeto
+// listo para isUserEligibleForNotification() (notification-routing.js).
+// Nunca exige haber activado push: si la persona no tiene ninguna fila
+// push_tokens todavía (nunca activó notificaciones push), se usan los
+// defaults BOTH/AVAILABLE/false — NUNCA más restrictivo que el
+// comportamiento de siempre (las notificaciones LOCALES no dependen de
+// OneSignal). Si tiene varias filas (android+web), usa la primera — las
+// preferencias son las MISMAS en todas (ver saveNotificationPreferences()).
+async function currentUserEligibilityContext() {
+  if (!App.currentUser) return null;
+  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+  const prefs = propios[0] || {};
+  return {
+    active: true, role: App.currentUser.role,
+    notificationShift: prefs.notificationShift || 'BOTH',
+    notificationAvailability: prefs.notificationAvailability || 'AVAILABLE',
+    receiveAllShifts: !!prefs.receiveAllShifts
+  };
 }
 
 /* ---------- Push en NAVEGADOR (sin Capacitor) ----------
@@ -700,14 +1052,63 @@ async function initPushNotifications() {
   } catch (e) { console.warn('Notificaciones push no disponibles en esta plataforma', e); }
 }
 
+// BUG REAL corregido en este lote: buscaba la fila por `tok_${userId}`
+// (sin la plataforma), pero saveOneSignalId() SIEMPRE la guarda como
+// `tok_${userId}_${plataforma}` (android/web) — esa clave nunca existía,
+// así que DB.get() nunca encontraba nada y ESTA función jamás desactivó un
+// push_token real, en ningún logout, desde que se escribió. Corregido
+// buscando por el campo `userId` (que sí existe en la fila) en vez de
+// adivinar la clave — de paso, desactiva TODAS las plataformas de la
+// persona (android Y web), no solo una.
 async function disablePushForCurrentUser() {
   if (!App.currentUser) return;
   const userId = App.currentUser.id;
   const userName = App.currentUser.name;
   try {
-    const tok = await DB.get('push_tokens', `tok_${userId}`);
-    if (tok) { tok.active = false; await DB.put('push_tokens', stamp(tok, userName)); }
+    const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === userId && t.active !== false);
+    for (const tok of propios) {
+      await DB.put('push_tokens', stamp({ ...tok, active: false }, userName));
+    }
   } catch (e) {}
+}
+
+/* ============================================================
+   IDENTIDAD ONESIGNAL (lote arquitectura de notificaciones, §9-§13) —
+   ata la identidad de push al USUARIO Auth actual (App.currentUser.id,
+   que en AUTH_MODE='supabase' es profile.appUserId), NUNCA al
+   deviceId/cuadrillaId (esos siguen siendo del dispositivo, ver bloque de
+   arriba — no se tocan aquí). Así, en un dispositivo compartido, la
+   identidad de push SIEMPRE es la de quien tiene sesión iniciada, no la
+   de quien lo usó por última vez. Sin efecto mientras ONESIGNAL_APP_ID
+   esté vacío (feature apagada hoy) — mismo guard que el resto de este
+   bloque, nunca lanza si OneSignal no está disponible.
+   ============================================================ */
+function oneSignalHandle() {
+  return window.plugins?.OneSignal || window.OneSignal || null;
+}
+
+// Se llama SOLO al iniciar sesión con éxito (enterAppAsProfile()) — nunca
+// antes de resolver identidad (§10: "No enviar push antes de resolver
+// identidad" — aquí "enviar" es responsabilidad de la Edge Function/
+// servidor, pero la identidad SIEMPRE se asocia antes de cualquier otra
+// cosa que dependa de ella, como initPushNotifications()).
+async function bindOneSignalIdentity(userId) {
+  if (!ONESIGNAL_APP_ID || !userId) return;
+  const OneSignal = oneSignalHandle();
+  if (!OneSignal || typeof OneSignal.login !== 'function') return;
+  try { await OneSignal.login(String(userId)); } catch (e) { console.warn('No se pudo asociar la identidad de OneSignal', e); }
+}
+
+// Se llama SOLO en Cerrar sesión real (logout(), AUTH_MODE='supabase') —
+// NUNCA en Bloquear (lockApp() no la toca, la persona sigue siendo la
+// misma, §12) ni en Cambiar usuario de forma directa (confirmChangeUser()
+// ya delega en logout() para la salida; el login siguiente vuelve a
+// asociar con bindOneSignalIdentity(), ver §11).
+async function clearOneSignalIdentity() {
+  if (!ONESIGNAL_APP_ID) return;
+  const OneSignal = oneSignalHandle();
+  if (!OneSignal || typeof OneSignal.logout !== 'function') return;
+  try { await OneSignal.logout(); } catch (e) { console.warn('No se pudo retirar la identidad de OneSignal', e); }
 }
 
 async function refreshAppBadge() {
@@ -790,17 +1191,16 @@ function wireLocalNotificationTaps() {
 
 async function refreshLocalNotifications() {
   const LN = window.Capacitor?.Plugins?.LocalNotifications;
-  if (!LN || !App.currentUser) return;
+  if (!LN) return;
+  // Se cancelan todas primero, INCLUSO sin usuario válido (§15: al cambiar
+  // de usuario/cerrar sesión, las notificaciones de la persona anterior
+  // deben desaparecer de inmediato, no quedar "pegadas" hasta el próximo
+  // login) — antes este cancel vivía DESPUÉS del guard de App.currentUser,
+  // así que nunca corría en ese caso.
+  await cancelAllLocalNotifications();
+  if (!App.currentUser) return;
   try {
     const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
-
-    // Se cancelan todas primero: si el admin apaga un aviso, deja de sonar
-    await LN.cancel({ notifications: [
-      { id: NOTIF_ID_DAILY_TASKS }, { id: NOTIF_ID_COMPLIANCE }, { id: NOTIF_ID_WEEKDAY_PLAN },
-      { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
-      { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
-      { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO }
-    ]});
     if (!settings.enabled) return;
 
     const perm = await LN.checkPermissions();
@@ -814,6 +1214,19 @@ async function refreshLocalNotifications() {
     const equipos = await DB.allActive('equipment');
     const statuses = await computeAllStatuses(equipos);
     const notifications = [];
+
+    // Migración al routing central (lote arquitectura de notificaciones,
+    // cierre §8/§9 del pedido de cierre): cada tipo programado de abajo ya
+    // NO decide solo por rol (`cfg.roles.includes(rol)`) — pasa por
+    // isUserEligibleForNotification() (notification-routing.js), la MISMA
+    // regla que usan los Edge Functions para push remoto. Disponibilidad
+    // RESTING o turno de notificación incompatible apagan CUALQUIER tipo
+    // programado de esta función, sin excepción por tipo.
+    const personaElegible = await currentUserEligibilityContext();
+    const turnoReal = currentShiftId();
+    const elegiblePara = (cfg) => isUserEligibleForNotification({
+      user: personaElegible, rolesPermitidos: cfg.roles, currentShiftId: turnoReal
+    });
 
     // Filtro base: turno y cuadrilla del lubricador, y equipos con avisos pausados
     const relevantes = statuses.filter(x => {
@@ -835,7 +1248,7 @@ async function refreshLocalNotifications() {
 
     // ── 1) Engrases VENCIDOS ──────────────────────────────────────
     const cfgV = settings.vencidos;
-    if (cfgV.enabled && cfgV.roles.includes(rol) && (!cfgV.soloSiHay || vencidos.length)) {
+    if (cfgV.enabled && elegiblePara(cfgV) && (!cfgV.soloSiHay || vencidos.length)) {
       const h = horaAjustadaAlTurno(settings, cfgV.hour, cfgV.minute);
       const lista = vencidos.slice(0, 5).map(x => x.e.code).join(', ');
       const titulo = vencidos.length ? `🔴 ${vencidos.length} equipo(s) con engrase VENCIDO` : 'Sin engrases vencidos';
@@ -888,7 +1301,7 @@ async function refreshLocalNotifications() {
 
     // ── 2) Equipos POR ENGRASAR hoy ───────────────────────────────
     const cfgP = settings.porEngrasar;
-    if (cfgP.enabled && cfgP.roles.includes(rol) && (!cfgP.soloSiHay || porEngrasar.length)) {
+    if (cfgP.enabled && elegiblePara(cfgP) && (!cfgP.soloSiHay || porEngrasar.length)) {
       const h = horaAjustadaAlTurno(settings, cfgP.hour, cfgP.minute);
       const lista = porEngrasar.slice(0, 5).map(x => x.e.code).join(', ');
       const titulo = porEngrasar.length ? `🟡 ${porEngrasar.length} equipo(s) por engrasar hoy` : 'Sin engrases programados';
@@ -917,7 +1330,7 @@ async function refreshLocalNotifications() {
 
     // ── 3) Resumen de CUMPLIMIENTO ────────────────────────────────
     const cfgC = settings.cumplimiento;
-    if (cfgC.enabled && cfgC.roles.includes(rol)) {
+    if (cfgC.enabled && elegiblePara(cfgC)) {
       const totalV = statuses.filter(x => x.s.code === 'ROJO').length;
       const totalA = statuses.filter(x => x.s.code === 'AMARILLO').length;
       const compliance = equipos.length ? Math.round(((equipos.length - totalV) / equipos.length) * 100) : 100;
@@ -936,7 +1349,7 @@ async function refreshLocalNotifications() {
 
     // ── 4) Resumen SEMANAL (lunes) ────────────────────────────────
     const cfgS = settings.resumenSemanal;
-    if (cfgS && cfgS.enabled && cfgS.roles.includes(rol)) {
+    if (cfgS && cfgS.enabled && elegiblePara(cfgS)) {
       const hace7 = Date.now() - 7 * 86400000;
       const recs = (await DB.allActive('lubrication_records')).filter(r => new Date(r.date).getTime() >= hace7);
       const puntosFallidos = {};
@@ -954,6 +1367,67 @@ async function refreshLocalNotifications() {
         extra: { tipo: 'semanal', ruta: 'reportes' },
         schedule: { at: proximoDiaSemana(cfgS.diaSemana ?? 1, cfgS.hour, cfgS.minute), every: 'week', repeats: true }
       });
+    }
+
+    // ── 5) Asignaciones manuales PENDIENTES para la cuadrilla de este
+    // dispositivo (§2 del cierre de lote — ver docs/OPERATIONAL_SCOPE.md) ──
+    // Todo el ciclo de vida (crear/reasignar/cancelar/completar) se resuelve
+    // SOLO recalculando desde cero cada vez que esta función corre, sin
+    // rastrear estado propio: arriba se cancelan TODAS las notificaciones
+    // conocidas (incluidas estas dos IDs) antes de reprogramar, así que una
+    // asignación que dejó de estar PENDING para la cuadrilla de este
+    // dispositivo (completada, cancelada, o reasignada a otra cuadrilla)
+    // simplemente deja de calificar aquí y no se reprograma — nunca hace
+    // falta "cancelarla" a mano. Mismo patrón agrupado que vencidos/
+    // porEngrasar arriba (una notificación por tipo, nunca una por fila).
+    // Migrado al routing central (cierre §3): RESTING sigue apagando este
+    // aviso aunque sea Lubricador con asignación real — sin `rolesPermitidos`
+    // porque el rol ya está fijo (LUBRICADOR) en el `if` de abajo.
+    if (rol === 'LUBRICADOR' && isUserEligibleForNotification({ user: personaElegible, currentShiftId: turnoReal })) {
+      const scopeNotif = await getCurrentOperationalScope();
+      if (scopeNotif.kind === 'DEVICE_SCOPED') {
+        // Mismo criterio EXACTO que "ASIGNADOS A MI CUADRILLA" en Mi Turno
+        // (renderLubricadorHome) — reutiliza classifyEquipmentWork() en vez
+        // de repetir el filtro PENDING+assignedCrewId por separado.
+        const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+        const { assigned: misAsignaciones } = classifyEquipmentWork({
+          scope: scopeNotif, equipos, cuadrillas, assignments,
+          equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+        });
+        if (misAsignaciones.length) {
+          const equiposAsignados = misAsignaciones
+            .map(a => equipos.find(e => e.id === a.equipmentId))
+            .filter(Boolean);
+          const listaAsig = equiposAsignados.slice(0, 5).map(e => e.code).join(', ');
+          const tituloAsig = `🟣 ${misAsignaciones.length} engrase(s) asignado(s) a tu cuadrilla`;
+          const cuerpoAsig = `${listaAsig}${equiposAsignados.length > 5 ? ` y ${equiposAsignados.length - 5} más` : ''}. Fuera de tu ubicación normal.`;
+          const extraAsig = {
+            tipo: 'asignacion',
+            equipoId: equiposAsignados.length === 1 ? equiposAsignados[0].id : '',
+            ruta: 'turno'
+          };
+          // Aviso inicial: casi inmediato (esto corre cuando llegó la
+          // asignación por sync o al abrir la app — no es un aviso diario a
+          // hora fija como vencidos/porEngrasar).
+          notifications.push({
+            id: NOTIF_ID_ASSIGNED, title: tituloAsig, body: cuerpoAsig,
+            extra: extraAsig, schedule: { at: new Date(Date.now() + 3000) }
+          });
+          registrarAvisoEnviado('asignacion', tituloAsig, cuerpoAsig, rol);
+          // Recordatorio: si sigue pendiente 2 horas después de la última vez
+          // que se recalculó (sync/apertura de app), vuelve a sonar. Al
+          // recalcularse de nuevo con la asignación todavía activa, el
+          // recordatorio simplemente se reprograma más adelante (nunca se
+          // acumulan varios).
+          notifications.push({
+            id: NOTIF_ID_ASSIGNED_REC,
+            title: `🟣 Recordatorio: ${misAsignaciones.length} engrase(s) asignado(s) siguen pendientes`,
+            body: listaAsig,
+            extra: extraAsig,
+            schedule: { at: new Date(Date.now() + 2 * 60 * 60 * 1000) }
+          });
+        }
+      }
     }
 
     if (notifications.length) await LN.schedule({ notifications });
@@ -979,6 +1453,10 @@ async function notificarEngraseRealizado(record, equipment) {
     const settings = mergeNotifSettings(await DB.get('settings', 'notifications'));
     const cfg = settings.engraseRealizado;
     if (!settings.enabled || !cfg.enabled) return;
+    // §27/§6 (cierre): un engrase FUERA DE PLAN completado nunca dispara
+    // este aviso — mismo criterio ya aplicado al push remoto real
+    // (supabase/functions/notify-push, shouldNotifyOutOfPlanCompletion()).
+    if (!shouldNotifyOutOfPlanCompletion() && record.operationalSnapshot?.executionType === 'OUT_OF_PLAN') return;
 
     // Si está marcado "solo críticos", avisa únicamente cuando el equipo venía VENCIDO
     // o quedaron puntos sin engrasar — así no se satura a nadie con avisos de rutina.
@@ -1027,18 +1505,46 @@ function esc(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+// El media query CSS prefers-reduced-motion (styles.css) ya apaga toda
+// transición/animación DECLARADA EN CSS, pero Chart.js anima sus gráficos
+// (Reportes → Tendencia/Consumo) dibujando directo en <canvas>, fuera del
+// alcance de CSS — necesita apagarse desde JS.
+function prefersReducedMotion() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 /* fmt() se movió a src/core/lubrication-status.js (sigue disponible como
    global, ver docs/MODULARIZATION.md). */
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+// Mejora: intervalo de auto-sync configurable por el Administrador desde
+// Configuración → Sincronización. Opciones FIJAS (nunca texto libre, nunca
+// menor a 30s) — cualquier otro valor (sin configurar, corrupto, de una
+// versión futura con más opciones) cae al default. Vive en el mismo
+// documento `settings/general` que ya sincroniza entre TODOS los
+// dispositivos (nunca solo en app_config, que es local a este teléfono) —
+// no requiere store nuevo ni subir DB_VERSION.
+const SYNC_INTERVAL_OPTIONS = [30, 60, 120, 300, 600];
+const SYNC_INTERVAL_DEFAULT = 120;
+function normalizeSyncInterval(value) {
+  return SYNC_INTERVAL_OPTIONS.includes(value) ? value : SYNC_INTERVAL_DEFAULT;
+}
+function syncIntervalLabel(seconds) {
+  if (seconds < 60) return `Cada ${seconds} segundos`;
+  const mins = seconds / 60;
+  return `Cada ${mins} minuto${mins === 1 ? '' : 's'}`;
+}
+
 // Configuración general editable por el Administrador (horarios de turno, umbrales, etc.)
 // Se carga en memoria al arrancar y se puede recargar cuando el admin la cambia.
-App.generalSettings = { shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95 };
+App.generalSettings = { shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95, syncIntervalSeconds: SYNC_INTERVAL_DEFAULT };
 
 async function loadGeneralSettings() {
   const s = await DB.get('settings', 'general');
   if (s) Object.assign(App.generalSettings, s);
+  // Normaliza SIEMPRE, incluso si `s` no traía el campo (documento viejo,
+  // nunca configurado) o traía un valor fuera de las opciones válidas.
+  App.generalSettings.syncIntervalSeconds = normalizeSyncInterval(App.generalSettings.syncIntervalSeconds);
 }
 
 /* currentShiftId() se movió a src/core/shifts.js (sigue disponible como
@@ -1047,7 +1553,7 @@ async function loadGeneralSettings() {
 /* WEEKDAY_NAMES, mostRecentAssignedDate(), weekdayStatusFor() y statusFor()
    se movieron a src/core/lubrication-status.js (siguen disponibles como
    globales, ver docs/MODULARIZATION.md). */
-const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']; // Domingo se deja libre/rotativo, igual que en el plan en papel
+const SCHEDULE_WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
 // Calcula el estado de una lista de equipos leyendo planes/registros UNA sola vez,
 // en vez de una vez por cada equipo (antes: N equipos = N consultas completas a la BD).
@@ -1216,9 +1722,12 @@ const THEMES = [
   { id: 'graphite', label: 'Grafito', color: '#9CA3AF' }
 ];
 
+// Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO.
+// Si el usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa
+// gana siempre — Object.assign la sobrescribe sobre este valor por defecto.
 function getTheme() {
-  try { return Object.assign({ accent: 'amber', mode: 'dark' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
-  catch { return { accent: 'amber', mode: 'dark' }; }
+  try { return Object.assign({ accent: 'amber', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
+  catch { return { accent: 'amber', mode: 'light' }; }
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme.accent);
@@ -1294,15 +1803,23 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   wirePushListeners();
   wireLocalNotificationTaps();
-  Sync.startAuto();
+  Sync.startAuto(App.generalSettings.syncIntervalSeconds);
   updateConnBadge();
 
-  const saved = sessionStorage.getItem('engrase_user');
-  if (saved) {
-    App.currentUser = JSON.parse(saved);
-    boot();
+  // AUTH_MODE='supabase': flujo de login/PIN completamente separado (ver
+  // renderAuthGateSupabase() más abajo) — nunca toca sessionStorage
+  // 'engrase_user' (eso es exclusivamente del login PIN legacy). Con
+  // AUTH_MODE='legacy' (default) este branch nunca se toma.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    renderAuthGateSupabase();
   } else {
-    renderLogin();
+    const saved = sessionStorage.getItem('engrase_user');
+    if (saved) {
+      App.currentUser = JSON.parse(saved);
+      boot();
+    } else {
+      renderLogin();
+    }
   }
 });
 
@@ -1417,11 +1934,41 @@ function onSyncStateChange(state) {
   // del lubricador hasta que él cambiaba de pantalla a mano.
   const pantallasQueSeRefrescan = ['turno', 'dashboard', 'equipos', 'anomalias', 'historial', 'matriz', 'plan', 'horometros'];
   if (state.status === 'ok' && state.pulled > 0 && pantallasQueSeRefrescan.includes(App.route)) {
-    // No se redibuja si hay una ventana abierta: le borraría lo que está escribiendo
-    if (!document.querySelector('#modal-overlay.open')) redibujarPantallaActual();
+    // No se redibuja si hay una ventana abierta: le borraría lo que está escribiendo.
+    // BUG-CRÍTICO (doble guardado en Registrar Engrase): el flujo de Finalizar Engrase
+    // del Lubricador (startLubricadorGreaseFlow/startGreaseFlow) NO cambia App.route —
+    // se queda en 'turno' mientras el formulario está abierto Y mientras se muestra la
+    // pantalla "Validar ahora/después" (y la validación, si aplica) tras guardar. 'turno'
+    // SÍ está en la lista de arriba, así que un sync automático (cada 20s, al reconectar,
+    // al volver a la app) que trajera CUALQUIER cambio de CUALQUIER parte del sistema
+    // hacía redibujarPantallaActual() → renderLubricadorHome(), reemplazando #app-content
+    // entero — el formulario en curso o la confirmación recién guardada desaparecían sin
+    // aviso (el usuario veía "Mi Turno" en vez de su confirmación y, pensando que no se
+    // guardó, repetía la operación → 2 lubrication_record). El guardado en sí YA era
+    // correcto/idempotente (enviandoEngrase); el problema era que la UI se borraba antes
+    // de que la persona la viera.
+    //
+    // Fuente PRINCIPAL: App.lubricadorGreaseFlowActive, un estado explícito (no inferido
+    // de selectores DOM) que startLubricadorGreaseFlow() enciende al entrar y solo se
+    // apaga al terminar de verdad (Mis Engrases) o al cancelar ("← Volver a mi turno") —
+    // sigue true durante formulario, guardado, "Validar ahora/después" y el modal de
+    // validación. El guard DOM anterior se conserva como defensa secundaria (por si algún
+    // camino nuevo olvida tocar el flag), no como fuente principal.
+    if (!App.lubricadorGreaseFlowActive &&
+        !document.querySelector('#modal-overlay.open') && !document.querySelector('#grease-form') && !document.querySelector('.grease-validate-choice')) {
+      redibujarPantallaActual();
+    }
   }
   if (state.status === 'ok' && state.newAnomalies && state.newAnomalies.length) {
     notifyNewAnomalies(state.newAnomalies);
+  }
+  // Recalcula avisos locales (incluida una asignación manual nueva/cancelada/
+  // reasignada llegada por sync, §2 del cierre de lote) SOLO cuando de verdad
+  // llegó algo nuevo — nunca en cada tick del timer sin cambios, para no
+  // convertir esto en un polling adicional (ya reutiliza el mismo ciclo de
+  // sync existente, con su propio intervalo configurable).
+  if (state.status === 'ok' && state.pulled > 0) {
+    refreshLocalNotifications();
   }
 }
 
@@ -1444,15 +1991,30 @@ async function notifyNewAnomalies(anomalies) {
   const relevantRoles = ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'];
   const isRelevantRole = relevantRoles.includes(App.currentUser.role);
   const equipos = isRelevantRole ? await DB.allActive('equipment') : [];
+  // Migrado al routing central (lote arquitectura de notificaciones, cierre
+  // §7): antes esta función avisaba de CUALQUIER severidad (solo cambiaba
+  // el texto entre "crítica"/genérico) — nunca correspondía con §28
+  // (Media/Baja van a resumen/pantalla normal, nunca push/local
+  // individual). Se calcula UNA vez, no por anomalía: la disponibilidad/
+  // turno de la persona no cambia entre una anomalía y la siguiente del
+  // mismo lote.
+  const personaElegibleAnom = isRelevantRole ? await currentUserEligibilityContext() : null;
+  const elegibleAhoraAnom = isRelevantRole && isUserEligibleForNotification({
+    user: personaElegibleAnom, rolesPermitidos: relevantRoles, currentShiftId: currentShiftId()
+  });
 
   for (const a of anomalies) {
     if (seen.has(a.id)) continue;
     markAnomalyNotified(a.id);
     if (a.createdBy === App.currentUser.name) continue; // no avisarle a quien la reportó
-    if (!isRelevantRole) continue; // por ahora solo Admin/Supervisor/Planificador reciben el aviso, para no saturar a los lubricadores
+    if (!elegibleAhoraAnom) continue; // rol no relevante, RESTING, o turno de notificación incompatible
+    // §28: solo Crítica/Alta son un aviso individual inmediato — Media/Baja
+    // quedan para la pantalla de Anomalías/Dashboard, nunca un push/local
+    // aparte (evita saturar con anomalías menores).
+    if (routeAnomalyEvent(a.criticality) === 'SUMMARY') continue;
 
     const eq = equipos.find(e => e.id === a.equipmentId);
-    const title = a.criticality === 'Crítica' || a.criticality === 'Alta' ? '⚠ Anomalía crítica reportada' : 'Nueva anomalía reportada';
+    const title = a.criticality === 'Crítica' ? '⚠ Anomalía crítica reportada' : '⚠ Anomalía de alta prioridad reportada';
     const body = `${eq ? eq.code : 'Equipo'} · ${esc(a.component)} · Reportado por ${esc(a.createdBy)}`;
 
     const LN = window.Capacitor?.Plugins?.LocalNotifications;
@@ -1499,6 +2061,20 @@ function updateConnBadge() {
   } else if (lastSyncState.status === 'syncing') {
     b.textContent = 'SINCRONIZANDO…';
     b.className = 'conn-badge conn-warn';
+  } else if (lastSyncState.status === 'offline') {
+    // navigator.onLine ya dio false ANTES de llegar aquí (mismo caso que el
+    // chequeo de arriba) — se cubre igual por si algo más adelante llega a
+    // notificar este status directamente.
+    b.textContent = 'SIN INTERNET · GUARDANDO LOCAL';
+    b.className = 'conn-badge conn-off';
+  } else if (lastSyncState.status === 'backend_unreachable') {
+    // Distinto de "SIN INTERNET": el dispositivo SÍ cree tener conexión
+    // (navigator.onLine=true) pero el servidor no respondió a tiempo — ver
+    // Bloque B (conectividad real), hallazgo real del piloto Android.
+    // Nunca se confunde con "SINCRONIZADO"; el trabajo local sigue intacto.
+    b.textContent = 'SIN CONEXIÓN CON EL SERVIDOR';
+    b.className = 'conn-badge conn-off';
+    b.title = 'No se pudo contactar al servidor a tiempo. Tus cambios siguen guardados en este dispositivo — se reintenta solo en la próxima sincronización.';
   } else if (lastSyncState.status === 'error') {
     b.textContent = 'ERROR DE SINCRONIZACIÓN';
     b.className = 'conn-badge conn-off';
@@ -1507,9 +2083,22 @@ function updateConnBadge() {
     b.textContent = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;
     b.className = 'conn-badge conn-warn';
     b.title = 'Falló: ' + lastSyncState.errors.join(', ') + ' — se reintenta solo en la próxima sincronización.';
-  } else {
+  } else if (lastSyncState.status === 'AUTH_REQUIRED' || lastSyncState.status === 'AUTH_FORBIDDEN') {
+    // Solo posible en AUTH_MODE='supabase' (inerte en 'legacy', ver
+    // sync.js) — nunca debe leerse como "SINCRONIZADO" solo porque
+    // navigator.onLine es true.
+    b.textContent = lastSyncState.status === 'AUTH_REQUIRED' ? 'SESIÓN REQUERIDA' : 'SIN PERMISO PARA SINCRONIZAR';
+    b.className = 'conn-badge conn-off';
+  } else if (lastSyncState.status === 'ok') {
     b.textContent = 'SINCRONIZADO';
     b.className = 'conn-badge conn-ok';
+  } else {
+    // Estado inicial (nunca se ha sincronizado todavía en esta sesión) —
+    // antes cualquier status desconocido caía aquí y decía "SINCRONIZADO"
+    // sin haber sincronizado nunca; ahora los status reales de arriba están
+    // todos cubiertos explícitamente y este es solo el arranque en frío.
+    b.textContent = 'SINCRONIZANDO…';
+    b.className = 'conn-badge conn-warn';
   }
 }
 
@@ -1609,13 +2198,270 @@ async function renderLogin() {
   $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 }
 
+// Modal de confirmación de "Cerrar sesión" (pre-cutover, ver
+// docs/SESSION_HANDOFF.md) — antes disparaba logout() directo desde el
+// click, sin ningún alert()/confirm() nativo ni modal propio. Nunca
+// destructivo por accidente: un solo toque en el botón del sidebar ya no
+// cierra la sesión de inmediato.
+function confirmLogout() {
+  openModal('¿Cerrar sesión en este dispositivo?', `
+    <p>Después tendrás que ingresar nuevamente tu usuario y contraseña.</p>
+    <p class="dim">El acceso rápido mediante PIN de esta sesión se eliminará.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirm-logout-cancel">Cancelar</button>
+      <button type="button" class="btn btn-danger" id="confirm-logout-confirm">Cerrar sesión</button>
+    </div>
+  `);
+  $('#confirm-logout-cancel').addEventListener('click', closeModal);
+  $('#confirm-logout-confirm').addEventListener('click', () => { closeModal(); logout(); });
+}
+
+// "Cambiar usuario" — distinto de Bloquear (mantiene todo intacto) y de
+// Cerrar sesión (mismo texto que esa acción para quien lo lee, pero pensado
+// para el flujo "otra persona va a usar este teléfono ahora", no para dejar
+// de trabajar). Arquitectura de una sola sesión Auth activa por dispositivo
+// (ver docs/SESSION_HANDOFF.md, "auditar arquitectura antes de PIN
+// multiusuario" — NO se implementó un almacén de varios refresh_tokens en
+// este lote): en la práctica es la MISMA operación de fondo que Cerrar
+// sesión (Auth.signOut() + borrar el PIN de este dispositivo), la próxima
+// persona entra con SU usuario/contraseña y configura SU propio PIN — nunca
+// pisa el PIN de la persona anterior hasta que de verdad haga login.
+// `App.currentUser` puede venir null (se llama también desde el propio
+// gate/login, no solo desde dentro de la app).
+function confirmChangeUser() {
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
+  const nombreActual = App.currentUser ? esc(App.currentUser.name) : 'este usuario';
+  openModal('Cambiar de usuario', `
+    <p>Vas a salir de la sesión de <b>${nombreActual}</b> en este dispositivo para que otra persona entre con su propio usuario y contraseña.</p>
+    <p class="dim">El PIN configurado aquí se reemplaza por el de la persona nueva cuando lo configure — la cuadrilla/ubicación de este dispositivo NO cambia.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirm-change-user-cancel">Cancelar</button>
+      <button type="button" class="btn btn-accent" id="confirm-change-user-confirm">Cambiar usuario</button>
+    </div>
+  `);
+  $('#confirm-change-user-cancel').addEventListener('click', closeModal);
+  $('#confirm-change-user-confirm').addEventListener('click', () => { closeModal(); logout(); });
+}
+
 function logout() {
   clearAppBadge();
   disablePushForCurrentUser();
+  // Retira la identidad de OneSignal de ESTA persona (lote arquitectura de
+  // notificaciones, §13) — solo tiene sentido en modo supabase (identidad
+  // Auth real); el login PIN legacy nunca asoció una. NUNCA se llama desde
+  // lockApp() (§12: bloquear conserva la identidad, sigue siendo la misma
+  // persona) ni cambia nada del deviceId/cuadrillaId del dispositivo.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) clearOneSignalIdentity();
+  // Cancela de inmediato las notificaciones locales de la persona que se
+  // va (§15) — sin esto, quedarían programadas hasta que alguien más
+  // inicie sesión y refreshLocalNotifications() las recalcule.
+  cancelAllLocalNotifications();
   stopInactivityTimer();
-  sessionStorage.removeItem('engrase_user');
   App.currentUser = null;
+  App.lubricadorGreaseFlowActive = false; // salida explícita — no debe sobrevivir a la sesión siguiente
+  // AUTH_MODE='supabase': CERRAR SESIÓN real — distinto de "Bloquear"
+  // (lockApp() más abajo). Borra auth_tokens + profile snapshot + PIN
+  // rápido configurado (P0-2): la próxima vez exige Usuario + Contraseña
+  // de nuevo, nunca queda un PIN "huérfano" de una sesión ya cerrada.
+  // NUNCA toca IndexedDB operativo (engrases pendientes, anomalías,
+  // catálogos siguen intactos — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §25).
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    Auth.signOut().then(() => QuickUnlock.disable()).then(() => renderAuthGateSupabase());
+    return;
+  }
+  sessionStorage.removeItem('engrase_user');
   renderLogin();
+}
+
+// "Bloquear" — a propósito NUNCA llama a Auth.signOut() ni
+// QuickUnlock.disable(): la sesión Auth y el PIN configurado siguen
+// intactos, listos para desbloquear de nuevo (ver renderAuthGateSupabase(),
+// que se llama exactamente igual al arrancar la app y al bloquear — nunca
+// reingresa en silencio). Solo existe en AUTH_MODE='supabase' — el login
+// PIN legacy no distingue "bloquear" de "cerrar sesión".
+function lockApp() {
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
+  clearAppBadge();
+  stopInactivityTimer();
+  App.currentUser = null;
+  App.lubricadorGreaseFlowActive = false;
+  renderAuthGateSupabase();
+}
+
+/* ============================================================
+   LOGIN / DESBLOQUEO — AUTH_MODE='supabase' (P0-2). Módulo de pantallas
+   separado del login PIN legacy de arriba — mientras AUTH_MODE sea
+   'legacy' (default), nada de esto se ejecuta (ver el branch del listener
+   de DOMContentLoaded). La identidad real SIEMPRE viene de Auth (Supabase
+   Auth + app_profiles, ver src/core/auth.js) — este bloque solo decide qué
+   pantalla mostrar y traduce Auth.getProfile()/el snapshot al shape
+   mínimo que ya usa el resto de app.js.
+   ============================================================ */
+
+// Mismo patrón que doLogin() (legacy) al armar App.currentUser — sin
+// inventar campos que Auth/app_profiles no tiene (shiftId/cuadrillaId/
+// locationId: fuera de alcance de P0-2, las personas Auth reales no están
+// ligadas al store "users" legacy, ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §17).
+function currentUserFromAuthProfile(profile) {
+  return { id: profile.appUserId, name: profile.displayName, role: profile.role, username: profile.appUserId };
+}
+
+function enterAppAsProfile(profile) {
+  App.currentUser = currentUserFromAuthProfile(profile);
+  bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
+  boot();
+}
+
+// Punto de entrada único para AUTH_MODE='supabase': se llama al arrancar Y
+// cada vez que se bloquea (lockApp()) — SIEMPRE vuelve a pedir PIN o
+// contraseña, nunca reingresa en silencio (ese es el punto del "quick
+// unlock": nunca queda una sesión abierta indefinidamente en pantalla,
+// aunque el token siga vigente). Auth.restoreSession() ya refresca/valida
+// la sesión real en segundo plano; sync.js decide aparte, con su propio
+// gate (sin cambios de esta tarea), si eso alcanza para sincronizar — esta
+// pantalla NUNCA decide sync, solo qué pantalla mostrar.
+async function renderAuthGateSupabase() {
+  await Auth.restoreSession();
+  const snapshot = await DB.getAuthProfileSnapshot();
+  if (snapshot && isValidProfile(snapshot)) {
+    const configured = await QuickUnlock.isConfigured(snapshot.appUserId);
+    if (configured) return renderQuickUnlockScreen(snapshot);
+  }
+  return renderSupabaseLoginForm();
+}
+
+function renderSupabaseLoginForm() {
+  const online = navigator.onLine;
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        ${!online ? '<p class="login-hint">Sin conexión — se necesita Internet para iniciar sesión la primera vez. Si ya configuraste un PIN rápido antes, vuelve a intentarlo con señal.</p>' : ''}
+        <form id="supabase-login-form" class="form-grid">
+          <label>Usuario<input required name="username" autocomplete="username" ${online ? '' : 'disabled'}/></label>
+          <label>Contraseña<input required type="password" name="password" autocomplete="current-password" ${online ? '' : 'disabled'}/></label>
+          <div id="supabase-login-error" class="login-error"></div>
+          <button type="submit" class="btn btn-accent" ${online ? '' : 'disabled'}>Entrar</button>
+        </form>
+      </div>
+    </div>`;
+  $('#supabase-login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    $('#supabase-login-error').textContent = '';
+    try {
+      const { user: profile } = await Auth.signIn(fd.username, fd.password);
+      const configured = await QuickUnlock.isConfigured(profile.appUserId);
+      if (!configured) return offerQuickUnlockSetup(profile);
+      enterAppAsProfile(profile);
+    } catch (e) {
+      $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+    }
+  });
+}
+
+function renderQuickUnlockScreen(snapshot) {
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        <p class="login-hint">${esc(snapshot.displayName)}</p>
+        <div id="quick-unlock-area" class="form-grid">
+          <input id="quick-unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="PIN" maxlength="6"/>
+          <button type="button" id="quick-unlock-submit" class="btn btn-accent">Entrar</button>
+        </div>
+        <div id="quick-unlock-error" class="login-error"></div>
+        <button type="button" id="quick-unlock-use-password" class="btn">Usar contraseña</button>
+      </div>
+    </div>`;
+
+  $('#quick-unlock-use-password').addEventListener('click', () => renderSupabaseLoginForm());
+
+  const doUnlock = async () => {
+    const pin = $('#quick-unlock-pin').value.trim();
+    const res = await QuickUnlock.attemptUnlock(snapshot.appUserId, pin);
+    if (res.ok) { enterAppAsProfile(snapshot); return; }
+    if (res.reason === 'LOCKED') {
+      const mins = Math.ceil(res.remainingMs / 60000);
+      $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
+    } else {
+      $('#quick-unlock-error').textContent = res.attemptsLeft != null
+        ? `PIN incorrecto. Te quedan ${res.attemptsLeft} intento(s).`
+        : 'PIN incorrecto.';
+    }
+    $('#quick-unlock-pin').value = '';
+    $('#quick-unlock-pin').focus();
+  };
+  $('#quick-unlock-submit').addEventListener('click', doUnlock);
+  $('#quick-unlock-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doUnlock(); });
+
+  // Si ya estaba bloqueado desde antes (recarga de página durante el
+  // bloqueo), avisar de una vez en vez de esperar el primer intento.
+  QuickUnlock.isLockedOut(snapshot.appUserId).then(async (locked) => {
+    if (!locked) return;
+    const remainingMs = await QuickUnlock.getLockRemainingMs(snapshot.appUserId);
+    const mins = Math.ceil(remainingMs / 60000);
+    $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
+  });
+}
+
+// Se ofrece UNA vez, justo después de un login real exitoso (online,
+// perfil activo) — nunca antes (ver principio de seguridad en
+// src/core/quick-unlock.js). "Ahora no" entra normalmente sin configurar
+// nada; puede configurarse/cambiarse/desactivarse después desde
+// Configuración (ver renderConfig()).
+function offerQuickUnlockSetup(profile) {
+  document.body.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        <p class="login-hint">¿Configurar un PIN rápido (4 o 6 dígitos) para entrar sin escribir tu contraseña cada vez, incluso sin Internet?</p>
+        <form id="quick-unlock-setup-form" class="form-grid">
+          <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+          <div id="quick-unlock-setup-error" class="login-error"></div>
+          <button type="submit" class="btn btn-accent">Configurar PIN</button>
+        </form>
+        <button type="button" id="quick-unlock-setup-skip" class="btn">Ahora no</button>
+      </div>
+    </div>`;
+  $('#quick-unlock-setup-skip').addEventListener('click', () => enterAppAsProfile(profile));
+  $('#quick-unlock-setup-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await QuickUnlock.configure(profile.appUserId, fd.pin);
+      enterAppAsProfile(profile);
+    } catch (e) {
+      $('#quick-unlock-setup-error').textContent = e.message;
+    }
+  });
+}
+
+// Configurar/Cambiar desde Configuración (ver renderConfig()) — ya dentro
+// de la app, con sesión activa confirmada por Auth.isAuthenticated()
+// (nunca se ofrece esto sin eso, ver quickUnlockAvailable en renderConfig()).
+// changePin() reutiliza exactamente las mismas reglas de configure()
+// (formato, PIN trivial) — nunca duplica esa validación.
+function quickUnlockConfigureModal(mode) {
+  openModal(mode === 'change' ? 'Cambiar PIN rápido' : 'Configurar PIN rápido', `
+    <form id="quick-unlock-modal-form" class="form-grid">
+      <label>PIN (4 o 6 dígitos)<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+    </form>`);
+  $('#quick-unlock-modal-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      const appUserId = Auth.getProfile().appUserId;
+      await QuickUnlock.changePin(appUserId, fd.pin);
+      await logAudit(mode === 'change' ? 'QUICK_UNLOCK_CAMBIADO' : 'QUICK_UNLOCK_CONFIGURADO', App.currentUser.name, App.currentUser.name);
+      showInAppToast('✓ PIN rápido guardado');
+      closeModal();
+      renderConfig();
+    } catch (e) {
+      showInAppToast('✗ ' + e.message);
+    }
+  });
 }
 
 /* ---------- Cierre de sesión por inactividad ----------
@@ -1672,25 +2518,34 @@ function startInactivityTracking() {
 }
 
 /* ---------- shell principal ---------- */
+// Orden por prioridad operativa (no altera rutas/permisos, solo navegación):
+// 1) operación diaria, 2) consulta/control, 3) administración — el grupo se
+// usa únicamente para pintar un separador MUY discreto entre bloques (ver
+// boot(), ".menu-sep"), nunca para ocultar ni reordenar por rol.
 const MENU = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-  { id: 'equipos', label: 'Equipos', icon: 'truck' },
-  { id: 'plan', label: 'Plan de Engrase', icon: 'list' },
-  { id: 'matriz', label: 'Matriz Semanal', icon: 'grid' },
-  { id: 'turno', label: 'Engrase del Turno', icon: 'clock' },
-  { id: 'registrar', label: 'Registrar Engrase', icon: 'check' },
-  { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge' },
-  { id: 'anomalias', label: 'Anomalías', icon: 'alert' },
-  { id: 'lubricantes', label: 'Lubricantes', icon: 'drop' },
-  { id: 'historial', label: 'Historial', icon: 'history' },
-  { id: 'reportes', label: 'Reportes', icon: 'report' },
-  { id: 'usuarios', label: 'Usuarios', icon: 'users' },
-  { id: 'config', label: 'Configuración', icon: 'gear' },
-  { id: 'ayuda', label: 'Ayuda', icon: 'help' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'grid', group: 'op' },
+  { id: 'plan', label: 'Plan de Engrase', icon: 'list', group: 'op' },
+  { id: 'matriz', label: 'Matriz Semanal', icon: 'matrix', group: 'op' },
+  { id: 'turno', label: 'Engrase del Turno', icon: 'clock', group: 'op' },
+  { id: 'registrar', label: 'Registrar Engrase', icon: 'check', group: 'op' },
+  { id: 'horometros', label: 'Actualizar Horómetros', icon: 'gauge', group: 'op' },
+  { id: 'anomalias', label: 'Anomalías', icon: 'alert', group: 'op' },
+  { id: 'equipos', label: 'Equipos', icon: 'truck', group: 'con' },
+  { id: 'historial', label: 'Historial', icon: 'history', group: 'con' },
+  { id: 'reportes', label: 'Reportes', icon: 'report', group: 'con' },
+  { id: 'lubricantes', label: 'Lubricantes', icon: 'drop', group: 'con' },
+  { id: 'usuarios', label: 'Usuarios', icon: 'users', group: 'adm' },
+  { id: 'config', label: 'Configuración', icon: 'gear', group: 'adm' },
+  { id: 'ayuda', label: 'Ayuda', icon: 'help', group: 'adm' },
 ];
 
 function boot() {
-  Sync.fullSync();
+  wireEvidenceImgFallbackOnce();
+  // runAutoCycle() (no fullSync() directo): además del sync incremental de
+  // siempre, revisa si hay una ventana de full refresh 07:00/19:00
+  // pendiente de HOY — es el catch-up real al abrir la app (ver
+  // docs/SESSION_HANDOFF.md, nunca bloquea esta pantalla: corre aparte).
+  Sync.runAutoCycle();
   refreshLocalNotifications();
   refreshAppBadge();
   startInactivityTracking();
@@ -1713,12 +2568,22 @@ function boot() {
           </div>
         </div>
         <nav class="menu">
-          ${MENU.filter(m => allowed.includes(m.id)).map(m => `
+          ${(() => {
+            const items = MENU.filter(m => allowed.includes(m.id));
+            let prevGroup = null;
+            return items.map(m => {
+              const sep = (prevGroup !== null && m.group !== prevGroup) ? '<div class="menu-sep" aria-hidden="true"></div>' : '';
+              prevGroup = m.group;
+              return `${sep}
             <button class="menu-item" data-route="${m.id}">
               <span class="menu-icon icon-${m.icon}"></span>
               <span>${m.label}</span>
-            </button>`).join('')}
+            </button>`;
+            }).join('');
+          })()}
         </nav>
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span class="menu-icon icon-lock"></span><span>Bloquear</span></button>` : ''}
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span class="menu-icon icon-repeat"></span><span>Cambiar usuario</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
         </button>
@@ -1759,7 +2624,9 @@ function boot() {
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
-  $('#btn-logout').addEventListener('click', logout);
+  $('#btn-logout').addEventListener('click', confirmLogout);
+  $('#btn-lock-app')?.addEventListener('click', lockApp);
+  $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
@@ -1783,7 +2650,9 @@ function updateShiftBadge() {
 function navigate(route) {
   App.route = route;
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
-    b.classList.toggle('active', b.dataset.route === route);
+    const active = b.dataset.route === route;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   const item = MENU.find(m => m.id === route);
   // Estos dos elementos SOLO existen en la interfaz de escritorio. La del lubricador no
@@ -1834,13 +2703,15 @@ function bootLubricador() {
         </div>
         <div class="lub-topbar-right">
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
-          <button class="icon-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}</button>
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
+          <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
       <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
       <main id="app-content" class="lub-content"></main>
       <nav class="lub-bottom-nav">
-        <button class="lub-nav-item active" data-route="turno"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
+        <button class="lub-nav-item active" data-route="turno" aria-current="page"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
         <button class="lub-nav-item" data-route="anomalias"><span class="menu-icon icon-alert"></span><span>Anomalías</span></button>
         <button class="lub-nav-item" data-route="historial"><span class="menu-icon icon-history"></span><span>Mis Engrases</span></button>
         <button class="lub-nav-item" data-route="ayuda"><span class="menu-icon icon-help"></span><span>Ayuda</span></button>
@@ -1852,10 +2723,21 @@ function bootLubricador() {
   shiftLabel();
   setInterval(shiftLabel, 60000);
 
-  $('#btn-logout').addEventListener('click', logout);
+  $('#btn-logout').addEventListener('click', confirmLogout);
+  $('#btn-lock-app')?.addEventListener('click', lockApp);
+  $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
-    $$('.lub-nav-item').forEach(x => x.classList.remove('active'));
+    // La barra inferior vive FUERA de #app-content (nunca se borra al entrar a
+    // Registrar Engrase) — tocar cualquiera de estas 4 secciones es una salida
+    // EXPLÍCITA del flujo hacia una pantalla estable, sea cual sea la pantalla
+    // que estuviera mostrando #app-content en ese momento (formulario o
+    // "Validar ahora/después" incluidos). Sin este reset, el flag se quedaba en
+    // true para siempre y el sync dejaba de refrescar Anomalías/Mis Engrases/
+    // Ayuda/Mi Turno hasta recargar la app entera.
+    App.lubricadorGreaseFlowActive = false;
+    $$('.lub-nav-item').forEach(x => { x.classList.remove('active'); x.removeAttribute('aria-current'); });
     b.classList.add('active');
+    b.setAttribute('aria-current', 'page');
     App.route = b.dataset.route;
     if (b.dataset.route === 'turno') renderLubricadorHome();
     else if (b.dataset.route === 'anomalias') renderAnomalias();
@@ -1874,43 +2756,73 @@ async function renderLubricadorHome() {
   c.innerHTML = `<div class="loading">Cargando tu turno…</div>`;
   const equipos = await DB.allActive('equipment');
   const locations = await DB.allActive('locations');
-  const shift = currentShiftId();
-  const myCuadrilla = App.currentUser.cuadrillaId;
 
-  // Si el equipo tiene cuadrilla asignada, solo se lo mostramos a lubricadores de esa
-  // misma cuadrilla (para que dos cuadrillas no engrasen el mismo equipo). Los equipos
-  // sin cuadrilla asignada se muestran a todos, para no dejar nada fuera de la vista.
-  const equiposTurno = equiposDeEstaPersona(equipos, App.currentUser);
-  const statuses = await computeAllStatuses(equiposTurno);
-  const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
-  statuses.sort((a, b) => order[a.s.code] - order[b.s.code]);
-
+  const scope = await getCurrentOperationalScope();
   const cuadrillas = await DB.allActive('cuadrillas');
-  const myCuadrillaName = (cuadrillas.find(cq => cq.id === myCuadrilla) || {}).name;
+  const myCrew = cuadrillas.find(cq => cq.id === scope.crewId);
+
+  // Dispositivo sin cuadrilla asignada (§G del pedido): NUNCA cae a la lista
+  // global de equipos — se muestra un mensaje claro y se pide contactar a
+  // un Planificador/Administrador para asignarlo desde "Dispositivo
+  // operativo" en Configuración.
+  if (scope.kind === 'DEVICE_UNASSIGNED') {
+    c.innerHTML = `
+      <div class="lub-header-row"><div><h2 class="lub-heading">Este dispositivo no tiene cuadrilla</h2></div></div>
+      <div class="empty-state">
+        Este teléfono/tablet todavía no está asignado a ninguna cuadrilla, así que no se le puede mostrar ningún equipo.
+        Pide a un Administrador o Planificador que lo configure en <b>Configuración → Dispositivo operativo</b>.
+      </div>
+      <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>`;
+    $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
+    return;
+  }
+
+  const { assignments, plansByEquipoId } = await loadAssignmentContext();
+  const { normal, assigned } = classifyEquipmentWork({
+    scope, equipos, cuadrillas, assignments,
+    equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+  });
+
+  const statusesNormal = await computeAllStatuses(normal);
+  const equiposAsignados = assigned.map(a => equipos.find(e => e.id === a.equipmentId)).filter(Boolean);
+  const statusesAssigned = await computeAllStatuses(equiposAsignados);
+  const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
+  // Prioridad (§T): asignados a mi cuadrilla > vencidos > pendientes de turno > al día.
+  statusesNormal.sort((a, b) => order[a.s.code] - order[b.s.code]);
+  statusesAssigned.sort((a, b) => order[a.s.code] - order[b.s.code]);
+
+  const eqButtonHTML = (e, s) => `
+    <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
+      <div class="lub-eq-top">
+        <span class="lub-eq-code">${esc(e.code)}</span>
+        <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
+      </div>
+      <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+      <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
+      <div class="lub-eq-bottom">
+        <span class="mono">${fmt(e.hourmeter)} h</span>
+        ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
+      </div>
+    </button>`;
 
   c.innerHTML = `
     <div class="lub-header-row">
       <div>
-        <h2 class="lub-heading">Equipos del turno ${shift === 'shift_dia' ? 'Día' : 'Noche'}</h2>
-        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCuadrillaName ? ' · ' + myCuadrillaName : ''}</p>
+        <h2 class="lub-heading">Equipos asignados</h2>
+        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}</p>
       </div>
-      <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
+      <div class="lub-header-actions">
+        <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
+        <button class="btn lub-outofplan-btn" id="lub-out-of-plan">${ic("plus")}Fuera de plan</button>
+      </div>
     </div>
     ${await recentEquiposHTML()}
+    ${statusesAssigned.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ASIGNADOS A MI CUADRILLA</span></div>
+    <div class="lub-eq-list">${statusesAssigned.map(({ e, s }) => eqButtonHTML(e, s)).join('')}</div>` : ''}
+    ${scope.kind === 'GLOBAL' ? '' : '<div class="lub-section-head"><span class="dim">Trabajo normal de mi cuadrilla</span></div>'}
     <div class="lub-eq-list">
-      ${statuses.map(({ e, s }) => `
-        <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
-          <div class="lub-eq-top">
-            <span class="lub-eq-code">${esc(e.code)}</span>
-            <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
-          </div>
-          <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-          <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
-          <div class="lub-eq-bottom">
-            <span class="mono">${fmt(e.hourmeter)} h</span>
-            ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
-          </div>
-        </button>`).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCuadrillaName ? ' para ' + myCuadrillaName : ''}.</div>`}
+      ${statusesNormal.map(({ e, s }) => eqButtonHTML(e, s)).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCrew ? ' para ' + esc(myCrew.name) : ''}.</div>`}
     </div>
     <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
@@ -1918,17 +2830,132 @@ async function renderLubricadorHome() {
   $$('.lub-eq-btn', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-scan-qr').addEventListener('click', () => openQrScanner());
+  $('#lub-out-of-plan').addEventListener('click', () => openOutOfPlanEquipmentPicker());
   $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.recentId)));
 }
 
-async function startLubricadorGreaseFlow(equipmentId) {
+async function startLubricadorGreaseFlow(equipmentId, options) {
   const c = $('#app-content');
   if (!c) return;
+  App.lubricadorGreaseFlowActive = true;
   c.innerHTML = `<button class="btn lub-back" id="lub-back">← Volver a mi turno</button><div id="lub-flow"></div>`;
-  $('#lub-back').addEventListener('click', renderLubricadorHome);
-  await startGreaseFlow(equipmentId, $('#lub-flow'));
+  $('#lub-back').addEventListener('click', () => {
+    App.lubricadorGreaseFlowActive = false; // cancelación explícita: vuelve a una pantalla estable
+    renderLubricadorHome();
+  });
+  await startGreaseFlow(equipmentId, $('#lub-flow'), options);
 }
 
+/* ============================================================
+   ENGRASE FUERA DE PLAN (§3-§6 del lote correspondiente) — botón
+   "+ Fuera de plan" en Mi Turno, NUNCA una pestaña nueva de la barra
+   inferior. Antes de abrir el flujo, SIEMPRE se detecta si el equipo ya
+   tiene trabajo pendiente (ASSIGNED > PLANNED > ninguno, §5/§15) — un
+   engrase fuera de plan JAMÁS permite saltarse el scope operativo del
+   Lubricador (canLubricadorExecuteEquipment sigue siendo la única puerta).
+   ============================================================ */
+async function openOutOfPlanEquipmentPicker() {
+  const equipos = await DB.allActive('equipment');
+  let candidatos = equipos;
+
+  if (App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    if (scope.kind !== 'DEVICE_SCOPED') { candidatos = []; } else {
+      const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+      const { normal, assigned } = classifyEquipmentWork({
+        scope, equipos, cuadrillas, assignments,
+        equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
+      });
+      const asignadosEq = assigned.map(a => equipos.find(e => e.id === a.equipmentId)).filter(Boolean);
+      candidatos = [...normal, ...asignadosEq];
+      // Un PM puede pasar en cualquier momento, no solo cuando el equipo ya
+      // está vencido/próximo — se agrega el resto de la ubicación de la
+      // cuadrilla aunque hoy no le "toque" nada (nunca toda la flota, ver §4).
+      const idsYa = new Set(candidatos.map(e => e.id));
+      equipos.filter(e => e.locationId === scope.crewLocationId && !idsYa.has(e.id)).forEach(e => candidatos.push(e));
+    }
+  }
+
+  openModal('Engrase fuera de plan', `
+    <p class="dim">Busca el equipo. Si ya tiene un engrase pendiente o asignado, se abrirá directo — "Fuera de plan" es solo para trabajo que no estaba programado ahora (PM, correctivo, oportunidad).</p>
+    <input type="search" id="oop-search" class="input" placeholder="Buscar por código, marca o modelo…" autocomplete="off"/>
+    <div id="oop-results" class="hist-eq-results" style="position:static; margin-top:8px; max-height:320px; overflow-y:auto"></div>
+    <div class="modal-actions"><button type="button" class="btn" id="oop-scan-qr">${ic("qr")}Escanear QR</button></div>
+  `);
+  const box = $('#oop-results');
+  function pintar(lista) {
+    box.innerHTML = lista.slice(0, 30).map(e => `
+      <button type="button" class="hist-eq-result" data-id="${e.id}">
+        <span class="mono"><b>${esc(e.code)}</b></span>
+        <span class="dim">${esc(e.brand)} ${esc(e.model)}</span>
+      </button>`).join('') || '<div class="empty-state">Ningún equipo coincide, o este dispositivo no tiene equipos visibles.</div>';
+    $$('.hist-eq-result', box).forEach(b => b.addEventListener('click', () => {
+      closeModal();
+      handleOutOfPlanEquipoSelected(b.dataset.id);
+    }));
+  }
+  pintar(candidatos);
+  $('#oop-search').addEventListener('input', () => {
+    const q = $('#oop-search').value.trim().toLowerCase();
+    pintar(!q ? candidatos : candidatos.filter(e =>
+      (e.code || '').toLowerCase().includes(q) || (e.brand || '').toLowerCase().includes(q) || (e.model || '').toLowerCase().includes(q)));
+  });
+  $('#oop-scan-qr').addEventListener('click', () => {
+    closeModal();
+    openQrScanner();
+  });
+}
+
+// Decide, para UN equipo elegido desde "+ Fuera de plan" (o desde QR, ver
+// §21), si ya hay trabajo pendiente que abrir en vez de crear uno fuera de
+// plan — nunca duplica occurrence/assignment (§5).
+async function handleOutOfPlanEquipoSelected(equipmentId) {
+  const equipo = await DB.get('equipment', equipmentId);
+  if (!equipo || equipo.active === false) { alert('Este equipo no está activo, o este dispositivo aún no lo ha sincronizado.'); return; }
+
+  if (App.currentUser.role === 'LUBRICADOR') {
+    const scope = await getCurrentOperationalScope();
+    const { assignments } = await loadAssignmentContext();
+    if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
+      alert('Este equipo no está asignado a su cuadrilla.');
+      return;
+    }
+  }
+
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+  const { assignments } = await loadAssignmentContext();
+  const s = await statusFor(equipo);
+  const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+
+  if (existing.kind !== 'NONE') {
+    openModal('Este equipo ya tiene un engrase pendiente', `
+      <p class="dim">${existing.kind === 'ASSIGNED'
+        ? 'Hay una asignación manual activa para este equipo — ábrelo desde ahí, no hace falta registrarlo como fuera de plan.'
+        : 'Este equipo ya tiene su engrase normal pendiente. Regístralo como cualquier otro, no como fuera de plan.'}</p>
+      <div class="modal-actions"><button type="button" class="btn btn-accent" id="oop-open-pending">${ic("check")}Abrir trabajo pendiente</button></div>
+    `);
+    $('#oop-open-pending').addEventListener('click', () => {
+      closeModal();
+      if (App.currentUser.role === 'LUBRICADOR') startLubricadorGreaseFlow(equipmentId);
+      // Sin `target`: cae a navigate('registrar') + #reg-flow-area, el mismo
+      // patrón real que usa esta pantalla para cualquier otro equipo (ver
+      // renderRegistrar()) — nunca un `target` string como App.route, que
+      // startGreaseFlow() no sabe interpretar como contenedor DOM.
+      else startGreaseFlow(equipmentId);
+    });
+    return;
+  }
+
+  if (App.currentUser.role === 'LUBRICADOR') startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
+  else startGreaseFlow(equipmentId, undefined, { outOfPlan: true });
+}
+
+// "Mis Engrases" — trabajo YA realizado por este lubricador (distinto de
+// "Mi Turno" = trabajo por hacer, ver renderLubricadorHome). Es el destino
+// SIEMPRE correcto tras Finalizar Engrase (ver irAMisEngrasesTrasRegistrar).
+// Misma vista de tarjetas de siempre, ahora con Turno/Cantidad/Lubricador y
+// el estado de validación real (grease_validations) + su acción — sin
+// crear una segunda versión de esta pantalla.
 async function renderLubricadorHistorial() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -1937,17 +2964,38 @@ async function renderLubricadorHistorial() {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 30);
   const equipos = await DB.allActive('equipment');
+  const validations = await DB.allActive('grease_validations');
   const todayStr = new Date().toDateString();
+  const ahora = new Date(); // una sola vez por render — nunca fecha de sync/apertura de pantalla
   c.innerHTML = `
     <h2 class="lub-heading">Mis últimos engrases</h2>
     <div class="lub-record-list">
       ${records.map(r => {
         const eq = equipos.find(e => e.id === r.equipmentId);
         const editable = new Date(r.date).toDateString() === todayStr;
+        const activasEsteRegistro = findActiveValidations(r.id, validations);
+        const valStatus = validationStatusForRecord(r, validations, ahora, App.generalSettings);
+        // Vencida: NO se ofrece "Validar" (no crear firma retroactiva desde
+        // aquí una vez pasado el plazo, ver MAX_VALIDATION_SHIFTS).
+        const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
+          activasEsteRegistro.length === 0
+            ? `<button type="button" class="btn btn-sm lub-validar-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Validar</button>`
+            : activasEsteRegistro.length === 1
+              ? `<button type="button" class="btn btn-sm lub-ver-validacion-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Ver validación</button>`
+              : `<button type="button" class="btn btn-sm lub-ver-conflicto-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Ver conflicto</button>`;
         return `<div class="lub-record-card">
           <div class="lub-eq-top"><span class="lub-eq-code">${eq ? eq.code : '—'}</span><span class="dim">${fmtDate(r.date)}</span></div>
           <div class="lub-eq-model">${eq ? eq.brand + ' ' + eq.model : ''}</div>
           <div class="lub-eq-bottom"><span class="mono">${fmt(r.hourmeter)} h</span><span>${esc(r.condition)}</span></div>
+          <div class="lub-record-meta dim">
+            <span>Turno ${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</span>
+            <span>${fmt(r.qty, 1)} ${GREASE_UNIT}</span>
+            <span>${esc(r.userName)}</span>
+          </div>
+          <div class="lub-record-validacion">
+            ${validationBadgeHTML(valStatus)}
+            ${valAction}
+          </div>
           ${editable ? `<button class="btn btn-sm lub-edit-record" data-id="${r.id}" style="margin-top:8px; width:100%">✏ Editar este engrase</button>` : `<div class="dim" style="margin-top:6px; font-size:11px">Solo se puede editar el mismo día que se registró.</div>`}
         </div>`;
       }).join('') || `<div class="empty-state">Aún no has registrado engrases.</div>`}
@@ -1955,6 +3003,23 @@ async function renderLubricadorHistorial() {
   $$('.lub-edit-record', c).forEach(btn => {
     btn.addEventListener('click', async () => openEditGreaseRecordForm(await DB.get('lubrication_records', btn.dataset.id)));
   });
+  $$('.lub-validar-btn', c).forEach(b => b.addEventListener('click', async () => {
+    const rec = await DB.get('lubrication_records', b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (rec && eq) openValidationModal(rec, eq, () => renderLubricadorHistorial());
+  }));
+  $$('.lub-ver-validacion-btn', c).forEach(b => b.addEventListener('click', async () => {
+    const validation = findActiveValidation(b.dataset.rec, validations);
+    const rec = records.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
+  }));
+  $$('.lub-ver-conflicto-btn', c).forEach(b => b.addEventListener('click', async () => {
+    const activas = findActiveValidations(b.dataset.rec, validations);
+    const rec = records.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (activas.length > 1 && eq) await openValidationConflictModal(activas, eq, rec ? rec.date : null);
+  }));
 }
 
 /* ---------- Editar un engrase ya registrado (mismo día, para corregir errores) ---------- */
@@ -1976,7 +3041,7 @@ async function openEditGreaseRecordForm(record) {
         <label>Tipo de grasa
           <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === record.greaseType ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
         </label>
-        <label>Cantidad (kg)<input type="number" step="0.1" name="qty" value="${record.qty}"/></label>
+        <label>Cantidad (${GREASE_UNIT})<input type="number" step="0.1" name="qty" value="${record.qty}"/></label>
       </div>
       ${details.length ? `
       <div class="checklist-head"><h4>Checklist</h4></div>
@@ -2054,23 +3119,76 @@ async function openEditGreaseRecordForm(record) {
 /* ============================================================
    DASHBOARD
    ============================================================ */
+// Abreviaturas de día SOLO para presentación compacta en "Equipos que
+// requieren atención" (nunca se usan para calcular ni se guardan — el dato
+// real sigue siendo el nombre completo en plan.assignedDays/WEEKDAY_NAMES).
+const WEEKDAY_ABBR_DASH = { 'Domingo': 'Dom', 'Lunes': 'Lun', 'Martes': 'Mar', 'Miércoles': 'Mié', 'Jueves': 'Jue', 'Viernes': 'Vie', 'Sábado': 'Sáb' };
+// Etiquetas de NO_EXECUTION_REASONS (operational-scope.js) — global porque
+// tanto startGreaseFlow() (formulario "No se pudo ejecutar") como
+// renderDashboard() (agregado "Motivos de no ejecución") las necesitan;
+// mismo criterio que STATUS_COLOR/WEEKDAY_ABBR_DASH arriba (una sola copia,
+// nunca duplicada por pantalla).
+const NO_EXECUTION_REASON_LABELS = {
+  REPARACION: 'Equipo en reparación', YA_ENGRASADO: 'Ya engrasado recientemente',
+  SIN_TIEMPO: 'No hubo tiempo', NO_DISPONIBLE: 'Equipo no disponible',
+  CONDICION_INSEGURA: 'Condición insegura', OTRO: 'Otro'
+};
+
 async function renderDashboard() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   c.innerHTML = `<div class="loading">Calculando indicadores…</div>`;
-  const equipos = await DB.allActive('equipment');
   const records = await DB.allActive('lubrication_records');
   const anomalies = await DB.allActive('anomalies');
+  const plans = await DB.allActive('lubrication_plans');
+  const types = await DB.allActive('equipment_types');
+  const locations = await DB.allActive('locations');
+  // TODAS (no solo activas) — SOLO para el lookup de nombres de abajo
+  // (typePorId/locPorId, puro texto en pantalla). `types`/`locations` de
+  // arriba siguen activas-solo a propósito: alimentan los <select> de
+  // filtro Ubicación/Familia, donde SÍ no debe poder elegirse algo ya
+  // desactivado. BUG REAL encontrado (DATA-PENDING-A02, docs/BUG_REGISTER.md):
+  // un equipo cuya ubicación/familia se desactiva DESPUÉS sigue mostrando
+  // "—" para siempre en vez de su nombre real, aunque el dato en `equipment`
+  // nunca cambió — por construir este lookup desde la lista YA FILTRADA.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
+  const validations = await DB.allActive('grease_validations');
+  const assignments = await DB.allActive('lubrication_assignments');
+  const skips = await DB.allActive('lubrication_skips');
+
+  // Filtros generales Ubicación/Familia (AND, se combinan entre sí): mismo
+  // patrón ya usado en Matriz Semanal (App.matrizUbic/Tipo) — se guardan en
+  // App para sobrevivir el re-render al cambiar, y filtran `equipos` UNA vez
+  // aquí arriba, así todo lo que se deriva de él (KPIs, sin plan, atención,
+  // mayor tiempo sin engrasar, semáforo) queda consistente entre sí.
+  if (App.dashUbic === undefined) App.dashUbic = '';
+  if (App.dashFamilia === undefined) App.dashFamilia = '';
+  let equipos = await DB.allActive('equipment');
+  if (App.dashUbic) equipos = equipos.filter(e => e.locationId === App.dashUbic);
+  if (App.dashFamilia) equipos = equipos.filter(e => e.typeId === App.dashFamilia);
 
   const statuses = await computeAllStatuses(equipos);
   const counts = { VERDE: 0, AMARILLO: 0, ROJO: 0, GRIS: 0 };
   statuses.forEach(x => counts[x.s.code]++);
+  // BUG REAL encontrado y corregido en este lote: `turnoActual` se declaraba
+  // mucho más abajo (sección "Cumplimiento operativo"), pero
+  // `pendientesTurnoAnterior` (Panel operativo, unas líneas abajo) ya lo
+  // usaba dentro de `carry && carry.shiftId !== turnoActual` — el `&&`
+  // cortocircuitaba y NUNCA llegaba a leer `turnoActual` mientras
+  // `carry` fuera null (sin ningún skip real hoy, el caso de prueba más
+  // común), así que nunca se notó. En cuanto existiera un carryover REAL
+  // (justo el escenario que esta sección existe para mostrar), `carry` se
+  // vuelve verdadero y la lectura de `turnoActual` caía en su "temporal
+  // dead zone" (`const` usado antes de su declaración) -> ReferenceError,
+  // reventando TODO el render del Dashboard. Se sube la declaración aquí
+  // (no depende de nada calculado entre medio) para que exista desde el
+  // principio de la función.
+  const turnoActual = currentShiftId();
 
   const today = new Date().toDateString();
   const doneToday = records.filter(r => new Date(r.createdAt).toDateString() === today).length;
   const openAnomalies = anomalies.filter(a => a.status !== 'Cerrada').length;
-
-  const compliance = equipos.length ? Math.round(((counts.VERDE + counts.AMARILLO) / equipos.length) * 100) : 0;
 
   const attention = statuses
     .filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
@@ -2079,6 +3197,21 @@ async function renderDashboard() {
   // Equipos cuyo plan tiene datos imposibles: no salen como vencidos ni como al día,
   // así que sin este aviso quedarían invisibles y nadie los corregiría nunca.
   const conProblemas = statuses.filter(x => x.s.alerta);
+
+  // Equipos SIN NINGÚN plan configurado (ni "Día y turno de la semana" ni "Horas de
+  // operación") — distinto del balde GRIS de statusFor()/counts.GRIS, que también
+  // mezcla equipos detenidos y planes mal configurados. Prioridad de planificación
+  // día/turno > horas > sin plan: como cada equipo tiene a lo sumo 1 plan, basta con
+  // que NO exista ningún plan asociado (sea cual sea su tipo) para contar aquí — ya
+  // filtrados por DB.allActive('equipment') (equipos activos, mismo criterio que el
+  // resto del Dashboard, sin agregar un filtro nuevo por e.status).
+  const planPorEquipoId = new Set(plans.map(p => p.equipmentId));
+  const sinPlan = equipos.filter(e => !planPorEquipoId.has(e.id));
+
+  // Equipos CON plan pero no operativos: no cuentan como vencidos/próximos
+  // (statusFor() ya los manda a GRIS/DETENIDO) ni como sin plan — son un
+  // estado propio, igual criterio que PAUSADO en la Matriz Semanal.
+  const pausados = equipos.filter(e => e.status !== 'Operativo' && planPorEquipoId.has(e.id));
 
   // Días desde el último engrase registrado de cada equipo (sea cual sea su tipo de control)
   const lastRecordByEquipo = {};
@@ -2093,23 +3226,318 @@ async function renderDashboard() {
     return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
   }
 
+  // "Mayor tiempo sin engrasar": SOLO días de calendario desde el último
+  // registro — nunca se mezcla con vencimiento por horómetro (ROJO/AMARILLO
+  // ya es otro criterio, ver counts arriba). Prioriza equipos Operativos
+  // (los detenidos/en mantenimiento no sorprenden por no tener engrase
+  // reciente); "nunca engrasado" (null) se trata como el caso más urgente.
+  const tiempoSinEngrase = [...equipos].sort((a, b) => {
+    const opA = a.status === 'Operativo' ? 0 : 1, opB = b.status === 'Operativo' ? 0 : 1;
+    if (opA !== opB) return opA - opB;
+    const dA = daysSinceLastGrease(a.id), dB = daysSinceLastGrease(b.id);
+    return (dB === null ? Infinity : dB) - (dA === null ? Infinity : dA);
+  }).slice(0, 10);
+  // Resumen en vivo del header del panel ("Máximo: 11 d · A-02") — SIEMPRE
+  // calculado del propio tiempoSinEngrase, nunca hardcodeado. Si el primero
+  // de la lista nunca fue engrasado (dias === null) no hay un "máximo en
+  // días" real que mostrar, así que se omite el resumen.
+  const tiempoSinEngraseTop = tiempoSinEngrase[0] || null;
+  const tiempoSinEngraseMaxDias = tiempoSinEngraseTop ? daysSinceLastGrease(tiempoSinEngraseTop.id) : null;
+  const tiempoSinEngraseMaxCode = tiempoSinEngraseTop ? tiempoSinEngraseTop.code : null;
+  // Datos de apoyo para el rediseño operativo del Dashboard (solo
+  // presentación — ningún cálculo de negocio nuevo, reutiliza `statuses`/
+  // `attention`/`equipos` ya filtrados por Ubicación/Familia arriba).
+  const typePorId = {}; typesAll.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locationsAll.forEach(l => locPorId[l.id] = l);
+  const alDia = statuses.filter(x => x.s.code === 'VERDE');
+  const proximos = attention.filter(x => x.s.code === 'AMARILLO'); // `attention` ya viene ordenado por urgencia
+  const vencidos = attention.filter(x => x.s.code === 'ROJO'); // idem: más vencido (remaining más negativo) primero
+  // "Realizados hoy" respeta Ubicación/Familia en la LISTA del modal — el
+  // número del KPI (`doneToday`, arriba) se mantiene intacto tal cual ya se
+  // calculaba, sin cambiar esa fórmula.
+  const equipoIdsFiltrados = new Set(equipos.map(e => e.id));
+  const recordsHoy = records.filter(r => new Date(r.createdAt).toDateString() === today && equipoIdsFiltrados.has(r.equipmentId));
+
+  // "Pendientes de validación"/"Conflictos de validación" — KPIs secundarios,
+  // lectura REAL de grease_validations (entidad separada, ver
+  // docs/GREASE_VALIDATION_AUDIT.md). A propósito NO se acota a "hoy": la
+  // validación ahora puede diferirse (Validar ahora/Validar después) y
+  // regularizarse horas o incluso días después, así que un pendiente de
+  // ayer no debe desaparecer del KPI ni de la lista solo por cruzar la
+  // medianoche — usa `records` completo (ya en memoria), filtrado por los
+  // equipos que respetan Ubicación/Familia. Concepto DISTINTO de
+  // "Cumplimiento operativo" (trabajo programado ejecutado) — esto es sobre
+  // CONFIRMAR lo ya ejecutado, no sobre si se ejecutó. Ambos usan las
+  // funciones CENTRALES de src/core/grease-validation.js
+  // (isRecordPendingValidation()/isRecordInConflict(), que a su vez
+  // dependen de isRecordSubjectToValidation()) — MISMA regla que Historial/
+  // Mis Engrases/Reportes, sin excepción propia del Dashboard: mientras
+  // GREASE_VALIDATION_ENABLED_FROM siga en null, ningún registro es
+  // "sujeto" todavía, así que ambos conteos dan 0 (ver
+  // docs/GREASE_VALIDATION_AUDIT.md §14) — nunca 0 se fuerza a mano aquí,
+  // sale solo de la función central.
+  const ahoraValidacion = new Date(); // una sola vez — nunca fecha de sync/apertura de pantalla
+  const recordsParaValidacion = records.filter(r => equipoIdsFiltrados.has(r.equipmentId));
+  const recordsPendientesValidacion = recordsParaValidacion
+    .filter(r => isRecordPendingValidation(r, validations, ahoraValidacion, App.generalSettings))
+    .sort((a, b) => new Date(a.date) - new Date(b.date)); // más antiguo pendiente primero
+  const recordsConflictoValidacion = recordsParaValidacion.filter(r => isRecordInConflict(r, validations));
+  const pendientesTurnoActual = recordsPendientesValidacion.filter(r => r.shiftId === currentShiftId());
+
+  // "Panel operativo" (lote occurrences/carryover, §3) — CERO cálculo de
+  // negocio nuevo: reusa ASSIGNMENT_STATUS/EXECUTION_TYPE/
+  // resolveRecordExecutionType() (operational-scope.js), el `statuses` ya
+  // calculado arriba (nunca se recalcula el semáforo) y
+  // findCarriedOverSkipForToday() (mismo módulo, ya usado en
+  // startGreaseFlow()) — todo respeta Ubicación/Familia vía
+  // `equipoIdsFiltrados`. Independiente de "Cumplimiento operativo"
+  // (arriba): eso responde "¿se ejecutó lo programado?"; esto responde
+  // "¿quién tiene trabajo pendiente/fuera de plan/sin poder ejecutar AHORA
+  // mismo?" — nunca se mezclan los dos conteos.
+  const assignmentsActivas = assignments.filter(a =>
+    a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING && equipoIdsFiltrados.has(a.equipmentId));
+  const recordsOutOfPlanHoy = recordsHoy.filter(r => resolveRecordExecutionType(r).value === EXECUTION_TYPE.OUT_OF_PLAN);
+  const todayISODash = todayDateISO();
+  const skipsHoy = skips.filter(s =>
+    s.active !== false && (s.date || '').slice(0, 10) === todayISODash && equipoIdsFiltrados.has(s.equipmentId));
+  // "Pendiente de turno anterior": la ocurrencia de hoy quedó marcada "no
+  // se pudo ejecutar" en un turno que YA NO es el actual — sigue
+  // 'pendiente' en la Matriz Semanal (ver comentario de
+  // findCarriedOverSkipForToday() en operational-scope.js), este KPI solo
+  // la hace visible sin tener que abrir cada equipo uno por uno.
+  // BUG REAL encontrado y corregido en este lote (auditoría de no-double-
+  // count, §15): antes NO se excluía un equipo que YA se engrasó más tarde
+  // el mismo día (Realizado atrasado) — el skip seguía existiendo, así que
+  // ese equipo aparecía como "pendiente" aquí Y como "realizado" en
+  // Cumplimiento operativo/Historial a la vez. Ahora se excluye cualquier
+  // equipo con un lubrication_record real de HOY, sin importar el turno.
+  const pendientesTurnoAnterior = equipos.filter(e => {
+    const carry = findCarriedOverSkipForToday(skipsHoy, { equipmentId: e.id, dateISO: todayISODash });
+    if (!carry || carry.shiftId === turnoActual) return false;
+    const yaEngrasadoHoy = records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today);
+    return !yaEngrasadoHoy;
+  });
+  const motivosNoEjecucionHoy = {};
+  skipsHoy.forEach(s => { motivosNoEjecucionHoy[s.reason] = (motivosNoEjecucionHoy[s.reason] || 0) + 1; });
+  // Estado por ubicación — reagrupa el MISMO `statuses` (sin recalcular el
+  // semáforo), solo para las ubicaciones que de verdad tienen equipos
+  // dentro del filtro Ubicación/Familia vigente.
+  const estadoPorUbicacion = locations.map(loc => {
+    const deEsaUbic = statuses.filter(x => x.e.locationId === loc.id);
+    return {
+      location: loc, total: deEsaUbic.length,
+      verde: deEsaUbic.filter(x => x.s.code === 'VERDE').length,
+      amarillo: deEsaUbic.filter(x => x.s.code === 'AMARILLO').length,
+      rojo: deEsaUbic.filter(x => x.s.code === 'ROJO').length,
+    };
+  }).filter(u => u.total > 0);
+
+  // Cola de atención unificada (reemplaza la tabla ancha de 9 columnas):
+  // mismos conjuntos ya calculados arriba (vencidos/proximos/sinPlan/
+  // pausados) — sin cálculo de negocio nuevo, solo se arma un texto legible
+  // por fila (motivo/plan aplicable/urgencia) a partir de datos que
+  // statusFor()/weekdayStatusFor() ya devuelven (x.s.plan/remaining/
+  // scheduleDate). Orden fijo por prioridad: Vencidos > Próximos > Sin
+  // plan > Pausados (solo si hay alguno).
+  const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
+
+  // KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — realizados/
+  // programados, SOLO planes "Día y turno de la semana". Planes por Horas
+  // se EXCLUYEN a propósito (auditado antes de implementar, ver
+  // docs/PLAN_COMPLIANCE_ANTICIPADO.md): su vencimiento depende del uso real
+  // del equipo (horómetro), no de un calendario — no hay forma de saber si
+  // a un equipo por horas "le tocaba" hoy/esta semana/este turno sin
+  // proyectar horas→tiempo (calcular un intervalo promedio de uso del
+  // equipo), y eso está explícitamente prohibido. "Programado" aquí
+  // siempre significa un día/turno REAL ya definido en
+  // `plan.assignedDays`/`plan.shiftId`, nunca un valor inventado.
+  // Independiente de `computeFleetCompliance()` (histórico por registro) —
+  // no se mezclan. Movido ARRIBA de `colaAtencion` (rediseño de jerarquía,
+  // cierre Parte D) porque `colaAtencion` ahora necesita `progHoy`/
+  // `hechoHoy` para el bucket "Pendiente hoy" — antes se calculaban
+  // DESPUÉS de construir la cola, así que no estaban disponibles ahí.
+  const nowTs = new Date();
+  const hoyWeekday = WEEKDAY_NAMES[nowTs.getDay()];
+  const turnoActualLabel = turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
+  // Universo evaluable: equipos operativos (un equipo pausado no "debía"
+  // engrasarse) con plan Día/Turno, ya filtrados por Ubicación/Familia
+  // arriba (derivan de `equipos`).
+  const equiposDT = equipos.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+  function turnoOk(plan, shiftId) { return !plan.shiftId || plan.shiftId === shiftId; }
+  function hechoEnFecha(equipmentId, plan, fechaStr) {
+    return records.some(r => r.equipmentId === equipmentId && new Date(r.date).toDateString() === fechaStr && turnoOk(plan, r.shiftId));
+  }
+
+  // Hoy: equipos cuyo plan tiene HOY como día asignado.
+  const progHoy = equiposDT.filter(e => (planByEquipoId[e.id].assignedDays || []).includes(hoyWeekday));
+  const hechoHoy = progHoy.filter(e => hechoEnFecha(e.id, planByEquipoId[e.id], today));
+  // "Pendientes hoy" (KPI principal nuevo, cierre Parte D §4/§24): MISMO
+  // universo ya usado para "Cumplimiento Hoy" (progHoy/hechoHoy) — nunca
+  // una fórmula nueva, solo la diferencia de dos listas ya calculadas.
+  // Se reusa a propósito (en vez de derivar de `counts.AMARILLO`, que
+  // mezcla esto con lo próximo a vencer por horómetro) para que el número
+  // de esta tarjeta y el de "Cumplimiento Hoy" sean SIEMPRE consistentes
+  // entre sí (mismo denominador).
+  const pendientesHoyIds = new Set(progHoy.map(e => e.id)); hechoHoy.forEach(e => pendientesHoyIds.delete(e.id));
+  const pendientesHoyList = progHoy.filter(e => pendientesHoyIds.has(e.id));
+
+  // Turno actual: de lo programado hoy, lo que aplica al turno en curso
+  // (plan sin turno fijo = aplica a ambos) y tiene un registro hecho
+  // específicamente en ESE turno hoy (no en cualquier turno del día).
+  const progTurno = progHoy.filter(e => turnoOk(planByEquipoId[e.id], turnoActual));
+  const hechoTurno = progTurno.filter(e => records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today && r.shiftId === turnoActual));
+
+  // Semana: días de Lunes a HOY (nunca días futuros de la semana — eso sería
+  // proyectar); por cada equipo con plan Día/Turno se cuentan los días ya
+  // transcurridos que coinciden con su `assignedDays`.
+  function startOfWeek(d) {
+    const day = d.getDay(); // 0=Domingo..6=Sábado
+    const diff = (day === 0 ? -6 : 1) - day; // retrocede hasta el Lunes
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  }
+  const diasTranscurridosSemana = [];
+  for (let d = startOfWeek(nowTs); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));
+  let progSemana = 0, hechoSemana = 0;
+  equiposDT.forEach(e => {
+    const plan = planByEquipoId[e.id];
+    diasTranscurridosSemana.forEach(d => {
+      if ((plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) {
+        progSemana++;
+        if (hechoEnFecha(e.id, plan, d.toDateString())) hechoSemana++;
+      }
+    });
+  });
+
+  function cumplimientoPct(x, y) { return y ? Math.round((x / y) * 100) : null; }
+  const cumplHoy = { x: hechoHoy.length, y: progHoy.length, pct: cumplimientoPct(hechoHoy.length, progHoy.length) };
+  const cumplTurno = { x: hechoTurno.length, y: progTurno.length, pct: cumplimientoPct(hechoTurno.length, progTurno.length) };
+  const cumplSemana = { x: hechoSemana, y: progSemana, pct: cumplimientoPct(hechoSemana, progSemana) };
+
+  function planLabelFor(plan) {
+    if (!plan) return '—';
+    if (plan.controlType === 'Horas de operación') return `Cada ${fmt(plan.frequency || 0)} h`;
+    // Presentación compacta (WEEKDAY_ABBR_DASH, ver drawColaAtencion): la
+    // fila ya antepone "Plan:" — aquí solo van los días, abreviados
+    // ("Lun · Jue · Sáb" en vez de "Día: Lunes/Jueves/Sábado"). El dato
+    // completo (plan.assignedDays con nombres completos) no se toca.
+    if (plan.controlType === 'Día y turno de la semana') {
+      return (plan.assignedDays || []).length ? plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ') : '—';
+    }
+    return '—';
+  }
+  function motivoFor(x) {
+    if (x.s.nextHour !== undefined) return x.s.code === 'ROJO' ? 'Vencido por horómetro' : 'Próximo por horómetro';
+    return x.s.code === 'ROJO' ? 'Vencido por día/turno' : 'Programado hoy';
+  }
+  function urgenciaFor(x) {
+    if (x.s.remaining !== undefined && x.s.remaining !== null) {
+      return x.s.remaining < 0 ? `Atraso: ${fmt(Math.abs(x.s.remaining))} h` : `Restante: ${fmt(x.s.remaining)} h`;
+    }
+    if (x.s.scheduleDate) return `Día: ${WEEKDAY_NAMES[x.s.scheduleDate.getDay()]}`;
+    return '—';
+  }
+  // "Próximos" (KPI + cola de atención) ahora EXCLUYE lo que ya se cuenta
+  // como "Pendiente hoy" (§15 del pedido — "no double count"): antes
+  // `proximos` (counts.AMARILLO) mezclaba "próximo a vencer por
+  // horómetro" CON "programado hoy por día/turno, todavía sin hacer" en
+  // un solo balde — ahora que "Pendientes hoy" es su PROPIA tarjeta
+  // (arriba), dejarlo también aquí duplicaría el mismo equipo en 2 KPIs
+  // principales a la vez. `x.s.label === 'PROGRAMADO HOY'` es el MISMO
+  // campo que weekdayStatusFor() (lubrication-status.js) ya pone — no se
+  // inventa un criterio nuevo, solo se usa para filtrar.
+  const proximosSinHoy = proximos.filter(x => x.s.label !== 'PROGRAMADO HOY');
+  const colaAtencion = [
+    ...vencidos.map(x => ({ estado: 'Vencido', tone: 'red', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    // Pendiente turno anterior (§6/§25 del pedido): MISMA lista ya
+    // calculada para el bloque dedicado de la sección E — se reusa aquí
+    // tal cual, sin recalcular.
+    ...pendientesTurnoAnterior.map(e => ({ estado: 'Turno anterior', tone: 'amber', e, motivo: 'Pendiente del turno anterior (carryover)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: planByEquipoId[e.id] || null })),
+    ...pendientesHoyList.map(e => ({ estado: 'Pendiente hoy', tone: 'amber', e, motivo: 'Programado hoy', plan: planLabelFor(planByEquipoId[e.id]), urgencia: `Día: ${hoyWeekday}`, planObj: planByEquipoId[e.id] || null })),
+    ...proximosSinHoy.map(x => ({ estado: 'Próximo', tone: 'amber', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
+    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'red', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
+    ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
+  ];
+
   const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
+  // Rediseño estructural del Dashboard (cierre Parte D, pedido explícito):
+  // MISMAS fuentes de datos/fórmulas/filtros de siempre — el cambio es
+  // JERARQUÍA + DISTRIBUCIÓN (§1/§17). Orden A-I pedido:
+  //   A. Cabecera+filtros (ya existía, sin cambios)
+  //   B. KPI principales (Vencidos/Pendientes hoy/Próximos/Realizados hoy/
+  //      Pendientes de validación/Cumplimiento hoy) — antes repartidos
+  //      entre "Estado de lubricación"/"Actividad"/"Cumplimiento operativo"
+  //   C. Cumplimiento (Hoy/Semana/Turno) — ya existía, solo se mueve arriba
+  //   D. Requieren atención — ya existía (al fondo), ahora justo después
+  //      de B/C; "con el plan mal configurado" (conProblemas) queda junto
+  //      a esta sección por ser igual de urgente
+  //   E. Pendientes del turno anterior — antes mezclado dentro de "Panel
+  //      operativo", ahora su propia sección (§7: "no convertirla en KPI")
+  //   F. Estado por ubicación — idem, separado de "Panel operativo"
+  //   G. Assignments activas + Fuera de plan + No ejecutados — el resto de
+  //      lo que era "Panel operativo"
+  //   H. Mayor tiempo sin engrasar — ya existía, se mueve más abajo
+  //   I. Indicadores secundarios (Al día/Sin plan/Pausados/Anomalías
+  //      abiertas/Total equipos) — antes "Estado de lubricación"/
+  //      "Actividad", ahora al final con menor peso visual (dashActivityCard
+  //      en vez de dashHeroCard)
   c.innerHTML = `
-    <div class="kpi-grid">
-      ${kpiCard('TOTAL EQUIPOS', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'equipos' : null)}
-      ${kpiCard('AL DÍA', counts.VERDE, 'green', allowedRoutes.includes('equipos') ? 'equipos' : null)}
-      ${kpiCard('PRÓXIMOS A ENGRASE', counts.AMARILLO, 'amber', 'attention')}
-      ${kpiCard('ENGRASE VENCIDO', counts.ROJO, 'red', 'attention')}
-      ${kpiCard('REALIZADOS HOY', doneToday, 'neutral', allowedRoutes.includes('historial') ? 'historial' : null)}
-      ${kpiCard('ANOMALÍAS ABIERTAS', openAnomalies, 'amber', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+    <div class="layout-wide">
+    <div class="toolbar dash-filters-row">
+      <label class="filter-label">Ubicación
+        <select id="dash-ubic" class="input input-sm">
+          <option value="">Todas</option>
+          ${locations.map(l => `<option value="${l.id}" ${App.dashUbic === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="filter-label">Familia
+        <select id="dash-familia" class="input input-sm">
+          <option value="">Todas</option>
+          ${types.map(t => `<option value="${t.id}" ${App.dashFamilia === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+        </select>
+      </label>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Cumplimiento de engrase</h3>
-        <span class="pill">${compliance}% · objetivo ≥ ${App.generalSettings.complianceTarget}%</span>
+    <section class="dash-section">
+      <h2 class="dash-section-title">Qué requiere acción</h2>
+      <div class="dash-hero-grid">
+        ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
+        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', null)}
+        ${dashHeroCard('Próximos', proximosSinHoy.length, proximosSinHoy.length ? 'amber' : 'neutral', 'proximos')}
+        ${dashHeroCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
+        ${dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)}
+        <div class="dash-hero-card tone-${cumplHoy.pct === null ? 'neutral' : cumplHoy.pct >= App.generalSettings.complianceTarget ? 'green' : cumplHoy.pct >= 80 ? 'amber' : 'red'}">
+          <div class="dash-hero-value">${cumplHoy.pct === null ? '—' : cumplHoy.pct + '%'}</div>
+          <div class="dash-hero-label">Cumplimiento hoy</div>
+        </div>
       </div>
-      <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+      ${recordsConflictoValidacion.length > 0 ? `<div class="dash-activity-row" style="margin-top:8px">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''}
+    </section>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
+      <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
+      <div class="dash-compliance-grid">
+        ${dashComplianceCard('Hoy', cumplHoy)}
+        ${dashComplianceCard('Semana', cumplSemana)}
+        ${dashComplianceCard(turnoActualLabel, cumplTurno)}
+      </div>
+    </div>
+
+    <div class="panel" id="dash-attention-panel">
+      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
+      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
+      <div class="toolbar" style="padding:0 14px 10px">
+        <label class="filter-label">Turno
+          <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+        </label>
+        <label class="filter-label">Día asignado
+          <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
+        </label>
+      </div>
+      <div class="dash-cola-atencion" id="dash-cola-atencion"></div>`}
     </div>
 
     ${conProblemas.length ? `
@@ -2127,30 +3555,77 @@ async function renderDashboard() {
       </table>
     </div>` : ''}
 
-    <div class="panel" id="dash-attention-panel">
-      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
-      ${attention.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
-      <div class="toolbar" style="padding:0 14px 10px">
-        <label class="filter-label">Turno
-          <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
-        </label>
-        <label class="filter-label">Día asignado
-          <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
-        </label>
-      </div>
-      <table class="data-table" id="att-table">
-        <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Control</th><th>Horómetro</th><th>Próximo / Día asignado</th><th>Restante / Atraso</th><th>Días sin engrase</th></tr></thead>
-        <tbody id="att-tbody"></tbody>
-      </table>`}
+    <div class="panel" id="dash-pendientes-anterior-panel">
+      <div class="panel-head"><h3>Pendientes del turno anterior</h3></div>
+      ${pendientesTurnoAnterior.length ? `
+      <div class="dash-pendientes-anterior-list">
+        <div class="dim" style="padding:0 14px 4px">${pendientesTurnoAnterior.length} equipo(s) — distinto de "Vencidos" (histórico): esto es de HOY, heredado del turno que ya terminó.</div>
+        <div class="dash-motivos-noexec-list" style="padding:0 14px 10px">
+          ${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join('')}
+        </div>
+      </div>` : `<div class="empty-state">Ninguno — nada heredado del turno anterior.</div>`}
     </div>
 
-    <div class="panel">
-      <div class="panel-head"><h3>Semáforo de equipos</h3></div>
-      <div class="cards-grid">
-        ${statuses.map(x => equipmentCard(x.e, x.s, anomalies.filter(a => a.equipmentId === x.e.id && a.status !== 'Cerrada'))).join('')}
+    ${estadoPorUbicacion.length > 1 ? `
+    <div class="panel" id="dash-ubic-panel">
+      <div class="panel-head"><h3>Estado por ubicación</h3></div>
+      <div class="dash-ubic-breakdown">
+        <table class="data-table">
+          <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
+          <tbody>${estadoPorUbicacion.map(u => `<tr>
+            <td>${esc(u.location.name)}</td>
+            <td>${u.total}</td>
+            <td style="color:var(--green)">${u.verde}</td>
+            <td style="color:var(--amber)">${u.amarillo}</td>
+            <td style="color:var(--red)">${u.rojo}</td>
+          </tr>`).join('')}</tbody>
+        </table>
       </div>
+    </div>` : ''}
+
+    <section class="dash-section dash-section-secondary" id="dash-panel-operativo">
+      <h2 class="dash-section-title">Asignaciones · Fuera de plan · No ejecutados</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Asignaciones activas', assignmentsActivas.length, assignmentsActivas.length ? 'amber' : 'neutral', null)}
+        ${dashActivityCard('Fuera de plan hoy', recordsOutOfPlanHoy.length, 'neutral', null)}
+        ${dashActivityCard('No ejecutados hoy', skipsHoy.length, skipsHoy.length ? 'red' : 'neutral', null)}
+      </div>
+      ${Object.keys(motivosNoEjecucionHoy).length ? `
+      <div class="dash-motivos-noexec">
+        <div class="dim" style="padding:8px 0 4px">Motivos de "no se pudo ejecutar" hoy (informativo — nunca se cuenta como realizado):</div>
+        <div class="dash-motivos-noexec-list">
+          ${Object.entries(motivosNoEjecucionHoy).map(([reason, n]) => `<span class="dash-motivo-chip">${esc(NO_EXECUTION_REASON_LABELS[reason] || reason)}: <b>${n}</b></span>`).join('')}
+        </div>
+      </div>` : ''}
+    </section>
+
+    <div class="panel" id="dash-tiempo-sin-engrase-panel">
+      <div class="panel-head dash-exc-head">
+        <h3>Mayor tiempo sin engrasar</h3>
+        ${tiempoSinEngrase.length > 1 ? `<button type="button" class="link-btn" id="dash-tiempo-ver-todos">Ver todos</button>` : ''}
+      </div>
+      <div class="dash-exc-sub">
+        <span class="dim">Equipos ordenados por días desde el último engrase.</span>
+        ${tiempoSinEngraseMaxDias !== null ? `<span class="dash-exc-summary">Máximo: ${tiempoSinEngraseMaxDias} d · <span class="mono">${esc(tiempoSinEngraseMaxCode)}</span></span>` : ''}
+      </div>
+      ${tiempoSinEngrase.length === 0 ? `<div class="empty-state">Sin equipos para mostrar.</div>` : `
+      <div class="dash-exc-list">
+        ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0)).join('')}
+      </div>
+      `}
     </div>
-    ${colorLegendHTML()}
+
+    <section class="dash-section dash-section-secondary">
+      <h2 class="dash-section-title">Indicadores secundarios</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')}
+        ${dashActivityCard('Sin plan', sinPlan.length, sinPlan.length ? 'red' : 'neutral', 'sin-plan')}
+        ${dashActivityCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
+        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+        ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
+      </div>
+    </section>
+    </div>
   `;
 
   $$('.arreglar-plan', c).forEach(btn => {
@@ -2161,69 +3636,285 @@ async function renderDashboard() {
     });
   });
 
+  // Modales de listado del Dashboard (Al día/Próximos/Vencidos/Total
+  // equipos): mismo patrón que openSinPlanModal()/openPausadosModal()
+  // (abajo), con 3 acciones reutilizables por fila (dashListRowActionsHTML).
+  function openDashStatusModal(title, desc, list) {
+    openModal(title, `
+      <p class="dim">${desc}</p>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${list.map(x => `<tr>
+          <td class="mono">${esc(x.e.code)}</td>
+          <td>${esc((typePorId[x.e.typeId] || {}).name || '—')}</td>
+          <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
+          <td>${esc((locPorId[x.e.locationId] || {}).name || '—')}</td>
+          <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
+          ${dashListRowActionsHTML(x.e.id)}
+        </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+      </table>
+    `);
+    makeTablesResponsive($('.modal-body'));
+    wireDashListActions($('.modal-body'));
+  }
+
+  function openRealizadosHoyModal() {
+    openModal('Engrases realizados hoy', `
+      <p class="dim">${recordsHoy.length} engrase(s) hoy, según los filtros de Ubicación/Familia actuales.</p>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Hora</th><th></th></tr></thead>
+        <tbody>${recordsHoy.map(r => {
+          const eq = equipos.find(e => e.id === r.equipmentId);
+          if (!eq) return '';
+          return `<tr>
+            <td class="mono">${esc(eq.code)}</td>
+            <td>${esc((typePorId[eq.typeId] || {}).name || '—')}</td>
+            <td>${esc(eq.brand)} ${esc(eq.model)}</td>
+            <td>${esc((locPorId[eq.locationId] || {}).name || '—')}</td>
+            <td>${fmtDate(r.date)}</td>
+            ${dashListRowActionsHTML(eq.id)}
+          </tr>`;
+        }).join('') || '<tr><td colspan="6" class="empty-state">Sin engrases hoy.</td></tr>'}</tbody>
+      </table>
+    `);
+    makeTablesResponsive($('.modal-body'));
+    wireDashListActions($('.modal-body'));
+  }
+
+  // Lista de engrasados SIN firma (cualquier fecha, no solo hoy — la
+  // validación ahora puede diferirse, ver Finalizar engrase) — acción
+  // "Validar" abre el mismo modal real de Historial (openValidationModal),
+  // que persiste en grease_validations (ver
+  // docs/GREASE_VALIDATION_AUDIT.md). Re-renderiza el Dashboard al
+  // confirmar para que el KPI baje en vivo. Ordenada por más antiguo
+  // primero (recordsPendientesValidacion ya viene ordenada así).
+  function openPendientesValidacionModal() {
+    const turnoActualLabel = currentShiftId() === 'shift_dia' ? 'Día' : 'Noche';
+    const filaHTML = (r) => {
+      const eq = equipos.find(e => e.id === r.equipmentId);
+      return eq ? pendienteValidacionRowHTML(r, eq) : '';
+    };
+    openModal('Pendientes de validación', `
+      <p class="dim">${recordsPendientesValidacion.length} engrase(s) todavía sin firma, según los filtros de Ubicación/Familia actuales. Más antiguo primero.</p>
+      <div class="dash-tiempo-modal-list">
+        ${recordsPendientesValidacion.map(filaHTML).join('') || '<div class="empty-state">Sin pendientes.</div>'}
+      </div>
+      ${pendientesTurnoActual.length > 0 && pendientesTurnoActual.length < recordsPendientesValidacion.length ? `
+      <div class="dash-tiempo-modal-sub">
+        <div class="panel-head"><h4>Pendientes del turno actual (${turnoActualLabel})</h4></div>
+        <div class="dash-tiempo-modal-list">${pendientesTurnoActual.map(filaHTML).join('')}</div>
+      </div>` : ''}
+    `);
+    $$('.dash-validar-btn', $('.modal-body')).forEach(b => b.addEventListener('click', async () => {
+      const rec = recordsPendientesValidacion.find(r => r.id === b.dataset.rec);
+      const eq = equipos.find(e => e.id === b.dataset.eq);
+      if (rec && eq) openValidationModal(rec, eq, () => renderDashboard());
+    }));
+  }
+
+  // Lista de engrasados de hoy con 2+ firmas activas para el mismo registro
+  // (doble validación offline/multidispositivo, ver
+  // docs/GREASE_VALIDATION_AUDIT.md §10). "Ver conflicto" abre
+  // openValidationConflictModal() con TODAS las activas — nunca elige ni
+  // oculta ninguna.
+  function openConflictosValidacionModal() {
+    openModal('Conflictos de validación', `
+      <p class="dim">${recordsConflictoValidacion.length} engrase(s) de hoy con más de una firma activa para el mismo registro, según los filtros de Ubicación/Familia actuales.</p>
+      <div class="dash-tiempo-modal-list">
+        ${recordsConflictoValidacion.map(r => {
+          const eq = equipos.find(e => e.id === r.equipmentId);
+          if (!eq) return '';
+          return `<div class="dash-tiempo-modal-row">
+            <div class="dash-op-line1"><span class="mono">${esc(eq.code)}</span></div>
+            <div class="dash-op-line2">${esc(eq.brand)} ${esc(eq.model)} · ${fmtDate(r.date)}</div>
+            <div class="dash-list-actions compact">
+              <button type="button" class="btn btn-sm dash-ver-conflicto-btn" data-rec="${r.id}">Ver conflicto</button>
+            </div>
+          </div>`;
+        }).join('') || '<div class="empty-state">Sin conflictos.</div>'}
+      </div>
+    `);
+    $$('.dash-ver-conflicto-btn', $('.modal-body')).forEach(b => b.addEventListener('click', async () => {
+      const activas = findActiveValidations(b.dataset.rec, validations);
+      const rec = recordsConflictoValidacion.find(r => r.id === b.dataset.rec);
+      const eq = rec ? equipos.find(e => e.id === rec.equipmentId) : null;
+      if (activas.length > 1) await openValidationConflictModal(activas, eq, rec ? rec.date : null);
+    }));
+  }
+
+  function openTiempoSinEngraseModal(rows) {
+    // Mismo patrón visual compacto que el panel (tiempoExcepcionRowHTML), no
+    // una tabla distinta ni tarjetas — ya viene ordenado por días
+    // descendente. "Registrar" no aplica aquí: esta lista es para
+    // priorizar/navegar a Historial, no para reemplazar Registrar Engrase.
+    openModal(`Mayor tiempo sin engrasar (${rows.length})`, `
+      <div class="dash-exc-list">
+        ${rows.map(({ e, last, dias }, idx) => tiempoExcepcionRowHTML(e, last, dias, locPorId, idx === 0)).join('')}
+      </div>
+    `);
+    $$('.dash-exc-hist-btn', $('.modal-body')).forEach(btn => {
+      btn.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
+    });
+  }
+
   $$('.kpi-clickable', c).forEach(card => {
     card.addEventListener('click', () => {
       const action = card.dataset.kpiAction;
-      if (action === 'attention') {
-        $('#dash-attention-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else if (action === 'anomalias') {
+      if (action === 'anomalias') {
         navigate('anomalias');
-      } else if (action === 'equipos') {
-        navigate('equipos');
-      } else if (action === 'historial') {
-        navigate('historial');
+      } else if (action === 'sin-plan') {
+        openSinPlanModal(sinPlan, typesAll, locationsAll);
+      } else if (action === 'pausados') {
+        openPausadosModal(pausados, typesAll, locationsAll);
+      } else if (action === 'al-dia') {
+        openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
+      } else if (action === 'proximos') {
+        openDashStatusModal('Próximos a engrase', `${proximosSinHoy.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximosSinHoy);
+      } else if (action === 'vencidos') {
+        openDashStatusModal('Equipos vencidos', `${vencidos.length} equipo(s) vencidos, los más atrasados primero.`, vencidos);
+      } else if (action === 'total-equipos') {
+        openDashStatusModal('Total de equipos', `${statuses.length} equipo(s) según los filtros actuales.`, statuses);
+      } else if (action === 'realizados-hoy') {
+        openRealizadosHoyModal();
+      } else if (action === 'pendientes-validacion') {
+        openPendientesValidacionModal();
+      } else if (action === 'conflictos-validacion') {
+        openConflictosValidacionModal();
       }
     });
   });
 
-  function drawAttentionTable() {
-    const tbody = $('#att-tbody');
-    if (!tbody) return;
+  $('#dash-tiempo-ver-todos')?.addEventListener('click', () => {
+    openTiempoSinEngraseModal(tiempoSinEngrase.map(e => ({ e, last: lastRecordByEquipo[e.id], dias: daysSinceLastGrease(e.id) })));
+  });
+  // "Historial" es la acción PRINCIPAL visible de la fila — Registrar se
+  // quitó a propósito: esta lista es para priorizar, no reemplaza Registrar
+  // Engrase.
+  $$('.dash-exc-hist-btn', c).forEach(btn => {
+    btn.addEventListener('click', () => { App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
+  });
+
+  $('#dash-ubic')?.addEventListener('change', e => { App.dashUbic = e.target.value; renderDashboard(); });
+  $('#dash-familia')?.addEventListener('change', e => { App.dashFamilia = e.target.value; renderDashboard(); });
+
+  // Cola compacta (reemplaza la tabla ancha de 9 columnas): una fila
+  // horizontal en desktop, la misma información en tarjeta vertical en
+  // móvil vía CSS (sin duplicar markup) — sin scroll horizontal.
+  //
+  // "Programación" compacta (SOLO presentación, misma urgencia/motivo ya
+  // calculados arriba en urgenciaFor()/motivoFor() — no se recalcula nada):
+  // un plan por horómetro ya trae la urgencia lista ("Atraso: Xh"/
+  // "Restante: Xh"); un plan Día/turno tenía 3 expresiones largas
+  // redundantes (urgencia "Día: Sábado" + motivo "Programado hoy"/"Vencido
+  // por día/turno") — se combinan en un solo texto corto ("HOY · SÁB" /
+  // "VENCIDO · SÁB") usando WEEKDAY_ABBR_DASH.
+  function progCompactaFor(item) {
+    if (item.urgencia.startsWith('Día: ')) {
+      const dia = WEEKDAY_ABBR_DASH[item.urgencia.slice(5)] || item.urgencia.slice(5);
+      const cuando = item.motivo.startsWith('Vencido') ? 'VENCIDO' : 'HOY';
+      return `${cuando} · ${dia}`;
+    }
+    return item.urgencia; // ya compacto: "Atraso: Xh" / "Restante: Xh" / "—"
+  }
+
+  function drawColaAtencion() {
+    const cont = $('#dash-cola-atencion');
+    if (!cont) return;
     const turnoFilter = $('#att-turno').value;
     const diaFilter = $('#att-dia').value;
 
-    const filtered = attention.filter(x => {
-      if (turnoFilter && x.e.shiftId !== turnoFilter) return false;
+    const filtered = colaAtencion.filter(item => {
+      if (turnoFilter && item.e.shiftId !== turnoFilter) return false;
       if (diaFilter) {
-        if (!x.s.plan || !x.s.plan.assignedDays || !x.s.plan.assignedDays.includes(diaFilter)) return false;
+        if (!item.planObj || !item.planObj.assignedDays || !item.planObj.assignedDays.includes(diaFilter)) return false;
       }
       return true;
     });
 
-    tbody.innerHTML = filtered.map(x => {
-      const isWeekday = !!x.s.scheduleDate;
-      const isHours = x.s.nextHour !== undefined;
-      let controlLabel = '—', nextCol = '—', restCol = '—';
-      if (isHours) {
-        controlLabel = 'Por horas';
-        nextCol = fmt(x.s.nextHour) + ' h';
-        restCol = x.s.remaining !== undefined && x.s.remaining !== null
-          ? (x.s.remaining < 0 ? '+' + fmt(Math.abs(x.s.remaining)) + ' h atraso' : fmt(x.s.remaining) + ' h')
-          : '—';
-      } else if (isWeekday) {
-        controlLabel = 'Día/turno';
-        nextCol = WEEKDAY_NAMES[x.s.scheduleDate.getDay()];
-        const diffDays = Math.floor((new Date().setHours(0, 0, 0, 0) - x.s.scheduleDate.getTime()) / 86400000);
-        restCol = x.s.code === 'ROJO' ? `${diffDays} día(s) atraso` : (x.s.code === 'AMARILLO' ? 'Programado hoy' : '—');
-      }
-      const dsg = daysSinceLastGrease(x.e.id);
-      return `<tr>
-        <td><span class="dot" style="background:${STATUS_COLOR[x.s.code]}"></span> ${x.s.label}</td>
-        <td class="mono">${esc(x.e.code)}</td>
-        <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
-        <td>${x.e.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-        <td>${controlLabel}</td>
-        <td class="mono">${isHours ? fmt(x.e.hourmeter) + ' h' : '—'}</td>
-        <td class="mono">${nextCol}</td>
-        <td class="mono" style="color:${STATUS_COLOR[x.s.code]}">${restCol}</td>
-        <td class="mono">${dsg === null ? 'Nunca registrado' : dsg + ' día(s)'}</td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="9" class="empty-state">Sin equipos para este filtro.</td></tr>`;
-    makeTablesResponsive($('#dash-attention-panel'));
+    // Filas planas (sin líneas fijas de igual flex-grow — eso era la causa
+    // de los huecos horizontales en desktop): CSS decide cuántas líneas usar
+    // según el ancho real (flex-wrap en móvil, una sola fila en desktop).
+    cont.innerHTML = filtered.map(item => `
+      <div class="dash-cola-row">
+        <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
+        <span class="dash-cola-code mono">${esc(item.e.code)}</span>
+        <span class="dash-cola-meta dim">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</span>
+        <span class="dash-cola-prog-tag" style="color:${item.tone === 'red' ? 'var(--red)' : item.tone === 'amber' ? 'var(--amber)' : 'var(--text-dim)'}">${esc(progCompactaFor(item))}</span>
+        <span class="dash-cola-plan dim">Plan: ${esc(item.plan)}</span>
+        <div class="dash-cola-actions">
+          <button type="button" class="btn btn-sm dash-cola-hist" data-id="${item.e.id}">Historial</button>
+          <button type="button" class="btn btn-sm btn-accent dash-cola-reg" data-id="${item.e.id}">Registrar</button>
+        </div>
+      </div>`).join('') || `<div class="empty-state">Sin equipos para este filtro.</div>`;
+
+    $$('.dash-cola-hist', cont).forEach(b => b.addEventListener('click', () => { App.dashJumpEquipoId = b.dataset.id; navigate('historial'); }));
+    $$('.dash-cola-reg', cont).forEach(b => b.addEventListener('click', () => startGreaseFlow(b.dataset.id)));
   }
-  drawAttentionTable();
-  $('#att-turno')?.addEventListener('change', drawAttentionTable);
-  $('#att-dia')?.addEventListener('change', drawAttentionTable);
+  drawColaAtencion();
+  $('#att-turno')?.addEventListener('change', drawColaAtencion);
+  $('#att-dia')?.addEventListener('change', drawColaAtencion);
+}
+
+// KPI "Equipos sin plan" del Dashboard: listado en modal (no crea una OT ni una
+// pantalla nueva), con código/familia/modelo/ubicación/estado de cada equipo.
+function openSinPlanModal(list, types, locations) {
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  openModal('Equipos sin plan de engrase', `
+    <p class="dim">${list.length} equipo(s) activo(s) sin plan por día/turno ni por horas — no se están controlando.</p>
+    <table class="data-table">
+      <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th></tr></thead>
+      <tbody>${list.map(e => `<tr>
+        <td class="mono">${esc(e.code)}</td>
+        <td>${esc((typePorId[e.typeId] || {}).name || '—')}</td>
+        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td>${esc((locPorId[e.locationId] || {}).name || '—')}</td>
+        <td>${esc(e.status)}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+    </table>
+  `);
+  makeTablesResponsive($('.modal-body'));
+}
+
+// KPI "Pausados" del Dashboard: equipos CON plan pero no operativos (mismo
+// criterio que PAUSADO en Matriz Semanal, ver src/core/weekly-matrix.js).
+function openPausadosModal(list, types, locations) {
+  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  openModal('Equipos pausados', `
+    <p class="dim">${list.length} equipo(s) con plan configurado, pero no operativos — no cuentan como vencidos ni próximos mientras estén así.</p>
+    <table class="data-table">
+      <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Estado</th></tr></thead>
+      <tbody>${list.map(e => `<tr>
+        <td class="mono">${esc(e.code)}</td>
+        <td>${esc((typePorId[e.typeId] || {}).name || '—')}</td>
+        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td>${esc((locPorId[e.locationId] || {}).name || '—')}</td>
+        <td>${esc(e.status)}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin equipos.</td></tr>'}</tbody>
+    </table>
+  `);
+  makeTablesResponsive($('.modal-body'));
+}
+
+// Fila de acciones reutilizada en los modales de listado del Dashboard
+// rediseñado (Al día/Próximos/Vencidos/Total equipos/Realizados hoy/Mayor
+// tiempo sin engrasar) — mismas 3 acciones, sin duplicar el flujo real de
+// cada una: Ver equipo (openEquipmentDetail ya existente), Ver historial
+// (Historial con el equipo preseleccionado vía App.dashJumpEquipoId) y
+// Registrar engrase (startGreaseFlow ya existente, mismo botón que usa
+// Equipos/Engrase del Turno).
+function dashListRowActionsHTML(equipmentId) {
+  return `<td class="dash-list-actions">
+    <button type="button" class="btn btn-sm dash-list-ver-eq" data-id="${equipmentId}">Ver equipo</button>
+    <button type="button" class="btn btn-sm dash-list-ver-hist" data-id="${equipmentId}">Historial</button>
+    <button type="button" class="btn btn-sm dash-list-registrar" data-id="${equipmentId}">Registrar</button>
+  </td>`;
+}
+function wireDashListActions(root) {
+  $$('.dash-list-ver-eq', root).forEach(b => b.addEventListener('click', () => { closeModal(); openEquipmentDetail(b.dataset.id); }));
+  $$('.dash-list-ver-hist', root).forEach(b => b.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = b.dataset.id; navigate('historial'); }));
+  $$('.dash-list-registrar', root).forEach(b => b.addEventListener('click', () => { closeModal(); startGreaseFlow(b.dataset.id); }));
 }
 
 function colorLegendHTML() {
@@ -2240,6 +3931,92 @@ function kpiCard(label, value, tone, action) {
   return `<div class="kpi-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
     <div class="kpi-value">${fmt(value)}</div>
     <div class="kpi-label">${label}</div>
+  </div>`;
+}
+
+// Tarjetas del rediseño del Dashboard operativo: mayor jerarquía visual para
+// "Estado de lubricación" (dashHeroCard) y una fila discreta para
+// "Actividad" (dashActivityCard) — mismo mecanismo data-kpi-action/
+// kpi-clickable que kpiCard(), solo cambia la presentación (styles.css).
+function dashHeroCard(label, value, tone, action) {
+  return `<div class="dash-hero-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+    <div class="dash-hero-value">${fmt(value)}</div>
+    <div class="dash-hero-label">${label}</div>
+  </div>`;
+}
+// Tarjetas SECUNDARIAS de "Actividad" — número arriba (más visible), label
+// debajo (mismo orden visual que dashHeroCard, pero más chicas: son de
+// menor jerarquía que Al día/Próximos/Vencidos/Sin plan/Pausados).
+function dashActivityCard(label, value, tone, action) {
+  return `<div class="dash-activity-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+    <span class="dash-activity-value">${fmt(value)}</span>
+    <span class="dash-activity-label">${label}</span>
+  </div>`;
+}
+
+// Tarjeta de "Cumplimiento operativo" (Hoy/Semana/Turno actual): % +
+// "X de Y programados" + barra — estado neutro y sin % cuando y=0 (nunca
+// NaN/Infinity). `c` = { x, y, pct } ya calculado en renderDashboard().
+function dashComplianceCard(label, c) {
+  return `<div class="dash-compliance-card">
+    <div class="dash-compliance-label">${label}</div>
+    <div class="dash-compliance-pct">${c.pct === null ? '—' : c.pct + '%'}</div>
+    <div class="dash-compliance-frac">${c.y === 0 ? 'Sin engrases programados' : `${c.x} de ${c.y} programados`}</div>
+    <div class="progress-track"><div class="progress-fill" style="width:${c.pct === null ? 0 : c.pct}%; background:${c.pct === null ? 'var(--text-dim)' : c.pct >= App.generalSettings.complianceTarget ? 'var(--green)' : c.pct >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+  </div>`;
+}
+
+// Tiempo transcurrido desde el engrase hasta AHORA — solo para mostrar en
+// "Pendientes de validación" (nunca se usa para Cumplimiento ni para
+// vencimiento por horómetro, son conceptos separados).
+function tiempoPendienteDesde(dateISO) {
+  const horas = Math.floor((Date.now() - new Date(dateISO).getTime()) / 3600000);
+  if (horas < 1) return 'Menos de 1 h';
+  if (horas < 24) return `${horas} h`;
+  const dias = Math.floor(horas / 24);
+  const horasResto = horas % 24;
+  return horasResto ? `${dias} d ${horasResto} h` : `${dias} d`;
+}
+
+// Fila de "Pendientes de validación": código+tiempo pendiente (línea 1),
+// modelo (línea 2), fecha/turno/lubricador (línea 3) — mismo patrón
+// .dash-op-line* que el resto del Dashboard, con Validar como única acción.
+function pendienteValidacionRowHTML(r, eq) {
+  return `<div class="dash-tiempo-modal-row">
+    <div class="dash-op-line1">
+      <span class="mono">${esc(eq.code)}</span>
+      <span class="dash-pendiente-tiempo">${tiempoPendienteDesde(r.date)}</span>
+    </div>
+    <div class="dash-op-line2">${esc(eq.brand)} ${esc(eq.model)}</div>
+    <div class="dash-op-line3 dim">${fmtDate(r.date)} · Turno ${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'} · ${esc(r.userName || '—')}</div>
+    <div class="dash-list-actions compact">
+      <button type="button" class="btn btn-sm dash-validar-btn" data-rec="${r.id}" data-eq="${eq.id}">Validar</button>
+    </div>
+  </div>`;
+}
+
+// Lista/ranking operativo compacto (estilo Fiix/UpKeep/Fracttal: KPI/resumen
+// → lista → drill-down), NO ranking con números #1/#2/#3 ni tarjetas. El dato
+// clave (días) se presenta como bloque destacado (número + etiqueta corta),
+// no un texto aislado — con "Historial" como acción PRINCIPAL visible (antes
+// solo la fila entera era clickable, sin ningún control visible). isMax (el
+// más urgente, ya viene primero por el sort de tiempoSinEngrase) recibe un
+// acento ámbar discreto vía CSS (borde + número), nunca una tarjeta aparte.
+// Reutilizada también en "Ver todos" (mismo patrón visual, nunca otra tabla).
+function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
+  return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
+    <div class="dash-exc-main">
+      <div class="dash-exc-line1"><span class="dash-exc-code mono">${esc(e.code)}</span></div>
+      <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
+      <div class="dash-exc-line3 dim">Último engrase: ${last ? fmtDate(last) : 'Sin registro'}</div>
+    </div>
+    <div class="dash-exc-side">
+      <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">
+        <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? '—' : dias}</span>
+        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : 'días sin engrasar'}</span>
+      </div>
+      <button type="button" class="btn btn-sm dash-exc-hist-btn" data-id="${e.id}">Historial</button>
+    </div>
   </div>`;
 }
 
@@ -2290,6 +4067,7 @@ async function renderEquipos() {
   });
 
   c.innerHTML = `
+    <div class="layout-wide">
     <div class="toolbar">
       <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
       ${canEdit ? `<button class="btn btn-accent" id="eq-new">${ic("plus")}Nuevo equipo</button>` : ''}
@@ -2306,6 +4084,7 @@ async function renderEquipos() {
     </div>
     <div id="eq-recents"></div>
     <div class="cards-grid" id="eq-list"></div>
+    </div>
   `;
   $('#eq-recents').innerHTML = await recentEquiposHTML();
   $$('.recents-chip', $('#eq-recents')).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.recentId)));
@@ -2605,6 +4384,12 @@ async function openEquipmentDetail(id) {
         <button class="btn" id="btn-pausar-avisos">${ic("clock")}${avisosPausados(e) ? 'Reanudar avisos' : 'Pausar avisos'}</button>` : ''}
       ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) && s.plan && s.plan.controlType === 'Día y turno de la semana' ? `
         <button class="btn" id="btn-reprogramar">${ic("clock")}Reprogramar esta semana</button>` : ''}
+      ${canManageAssignments(App.currentUser.role) && (s.code === 'ROJO' || s.code === 'AMARILLO') ? `
+        <button class="btn" id="btn-asignar-cuadrilla">${ic("clock")}Asignar a cuadrilla</button>` : ''}
+      ${canMoveEquipment(App.currentUser.role) ? `
+        <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
+      ${canRegisterOutOfPlan(App.currentUser.role) ? `
+        <button class="btn" id="btn-fuera-de-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
       <button class="btn" id="btn-view-hist">Ver historial</button>
     </div>
   `);
@@ -2613,6 +4398,9 @@ async function openEquipmentDetail(id) {
     const locations = await DB.allActive('locations');
     openEquipmentForm(e, types, locations);
   });
+  $('#btn-asignar-cuadrilla')?.addEventListener('click', () => { closeModal(); openAssignGreaseModal(e); });
+  $('#btn-mover-ubicacion')?.addEventListener('click', () => { closeModal(); openMoveEquipmentLocationModal(e); });
+  $('#btn-fuera-de-plan')?.addEventListener('click', () => { closeModal(); handleOutOfPlanEquipoSelected(e.id); });
   $('#btn-delete-eq')?.addEventListener('click', async () => {
     if (!confirm(`¿Eliminar el equipo ${esc(e.code)}${e.shortCode ? ' (' + e.shortCode + ')' : ''}? Esta acción es un borrado lógico: el equipo deja de aparecer en la app pero su historial de engrases y anomalías se conserva en la auditoría. No se puede deshacer desde la interfaz.`)) return;
     await deleteEquipmentCascade(e);
@@ -2724,6 +4512,102 @@ async function openEquipmentDetail(id) {
       const sel = $('#hist-equipo');
       if (sel) { sel.value = e.id; sel.dispatchEvent(new Event('change')); }
     }, 50);
+  });
+}
+
+/* ---------- Asignar/reasignar/cancelar el engrase pendiente de un equipo a
+   otra cuadrilla (responsabilidad temporal, NUNCA mueve el equipo — ver
+   openMoveEquipmentLocationModal() para eso). Solo ADMIN/PLANIFICADOR/
+   SUPERVISOR, ver canManageAssignments(). ---------- */
+async function openAssignGreaseModal(equipo) {
+  const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
+  const plan = plansByEquipoId[equipo.id];
+  if (!plan) { alert('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.'); return; }
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const current = findActivePendingAssignment(assignments, occurrenceKey);
+  const currentCrew = current ? cuadrillas.find(cq => cq.id === current.assignedCrewId) : null;
+  const opciones = cuadrillas.filter(cq => cq.active !== false);
+
+  openModal(`Asignar engrase · ${esc(equipo.code)}`, `
+    ${current
+      ? `<p class="dim">Actualmente asignado a <b>${esc(currentCrew ? currentCrew.name : current.assignedCrewId)}</b>.</p>`
+      : '<p class="dim">Este engrase sigue su flujo normal (sin asignación manual todavía).</p>'}
+    <form id="assign-crew-form">
+      <label>Asignar a cuadrilla
+        <select name="crewId" required>
+          <option value="">— Selecciona —</option>
+          ${opciones.map(cq => `<option value="${cq.id}" ${current && current.assignedCrewId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Notas (opcional)<textarea name="notes" rows="2">${current ? esc(current.notes || '') : ''}</textarea></label>
+      <div class="modal-actions">
+        ${current ? `<button type="button" class="btn btn-danger" id="btn-cancel-assign">Cancelar asignación</button>` : ''}
+        <button type="submit" class="btn btn-accent">${ic("check")}${current ? 'Reasignar' : 'Asignar'}</button>
+      </div>
+    </form>
+  `);
+  $('#assign-crew-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    if (!fd.crewId) { alert('Selecciona una cuadrilla.'); return; }
+    try {
+      await assignGreaseToCrew(equipo, fd.crewId, fd.notes);
+      showInAppToast(`✓ ${esc(equipo.code)} asignado`);
+      closeModal();
+      navigate(App.route);
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar este engrase.');
+    }
+  });
+  $('#btn-cancel-assign')?.addEventListener('click', async () => {
+    if (!confirm('¿Cancelar esta asignación? El engrase vuelve a su flujo normal.')) return;
+    await cancelGreaseAssignment(current, equipo);
+    showInAppToast('✓ Asignación cancelada');
+    closeModal();
+    navigate(App.route);
+  });
+}
+
+/* ---------- Mover PERMANENTEMENTE un equipo a otra ubicación — distinto de
+   asignar un engrase puntual (ver openAssignGreaseModal()). Solo ADMIN/
+   PLANIFICADOR, ver canMoveEquipment(). ---------- */
+async function openMoveEquipmentLocationModal(equipo) {
+  const locations = await DB.allActive('locations');
+  const { assignments, plansByEquipoId } = await loadAssignmentContext();
+  const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
+  const activeAssignment = occurrenceKey ? findActivePendingAssignment(assignments, occurrenceKey) : null;
+
+  openModal(`Mover ubicación · ${esc(equipo.code)}`, `
+    <p class="dim">Esto mueve <b>permanentemente</b> el equipo a otra ubicación — distinto de asignar un engrase puntual a otra cuadrilla. Queda registrado en la auditoría.</p>
+    ${activeAssignment ? '<div class="qr-info-alert">Este equipo tiene una asignación manual de engrase pendiente.</div>' : ''}
+    <form id="move-eq-form">
+      <label>Nueva ubicación
+        <select name="locationId" required>
+          <option value="">— Selecciona —</option>
+          ${locations.map(l => `<option value="${l.id}" ${l.id === equipo.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
+      </label>
+      ${activeAssignment ? `
+      <label class="check-row" style="margin-top:8px">
+        <input type="checkbox" class="chk-done" name="cancelAssignment" checked/>
+        <span class="check-row-text">Cancelar la asignación pendiente al mover (recomendado)</span>
+      </label>` : ''}
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("check")}Mover</button></div>
+    </form>
+  `);
+  $('#move-eq-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const locationId = fd.get('locationId');
+    if (!locationId) { alert('Selecciona una ubicación.'); return; }
+    if (locationId === equipo.locationId) { closeModal(); return; }
+    if (activeAssignment && fd.get('cancelAssignment')) {
+      await cancelGreaseAssignment(activeAssignment, equipo);
+    }
+    await moverEquipoDeUbicacion(equipo, locationId, locations);
+    showInAppToast(`✓ ${esc(equipo.code)} movido de ubicación`);
+    closeModal();
+    navigate(App.route);
   });
 }
 
@@ -2872,6 +4756,11 @@ async function renderPlan() {
   // Planificador con las herramientas completas — configurar el plan de engrase es
   // literalmente su trabajo principal, no tenía sentido limitarlo a solo uno por uno.
   const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  // Asignar a cuadrilla es una acción DISTINTA de editar el plan (canEdit) —
+  // SUPERVISOR también puede asignar, aunque no configure planes (§AB).
+  const canAssign = canManageAssignments(App.currentUser.role);
+  const statusByEquipoId = {};
+  if (canAssign) (await computeAllStatuses(equipos)).forEach(({ e, s }) => { statusByEquipoId[e.id] = s; });
   let bulkMode = false;
   const selected = new Set();
 
@@ -2892,7 +4781,7 @@ async function renderPlan() {
     <div class="panel">
       <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
       <table class="data-table">
-        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
+        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th>${canAssign ? '<th></th>' : ''}</tr></thead>
         <tbody>
           ${(await Promise.all(equipos.map(async e => {
             const plan = plans.find(p => p.equipmentId === e.id);
@@ -2900,6 +4789,8 @@ async function renderPlan() {
             // completa por cada equipo: con 300 equipos eran 300 lecturas de 4.500 puntos).
             const points = plan ? (puntosPorPlan[plan.id] || []) : [];
             const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
+            const st = statusByEquipoId[e.id];
+            const puedeAsignar = canAssign && plan && st && (st.code === 'ROJO' || st.code === 'AMARILLO');
             return `<tr data-row-id="${e.id}">
               ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${e.id}"/></td>` : ''}
               <td class="mono">${esc(e.code)}</td>
@@ -2909,6 +4800,7 @@ async function renderPlan() {
               <td class="mono">${plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—'}</td>
               <td>${points.length}</td>
               <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">${ic("edit")}Configurar</button></td>
+              ${canAssign ? `<td>${puedeAsignar ? `<button class="btn btn-sm" data-assign-eq="${e.id}">${ic("clock")}Asignar a cuadrilla</button>` : ''}</td>` : ''}
             </tr>`;
           }))).join('')}
         </tbody>
@@ -2932,6 +4824,12 @@ async function renderPlan() {
 
   $$('button[data-eq]', c).forEach(btn => {
     btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
+  });
+  $$('button[data-assign-eq]', c).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const eq = equipos.find(x => x.id === btn.dataset.assignEq);
+      if (eq) openAssignGreaseModal(eq);
+    });
   });
 
   if (!canEdit) return;
@@ -3344,6 +5242,11 @@ async function openPlanForm(equipmentId, planId, lubricants) {
   const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
   const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
   const assignedDays = (plan && plan.assignedDays) || [];
+  // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+  // la miniatura de un punto puede venir de otro dispositivo (URL/path de
+  // Storage, no base64 local) — se resuelve ANTES de armar el HTML, igual
+  // que Reportes/firma de validación.
+  const pointPhotoSrcs = await Promise.all(points.map(p => resolveEvidenceSrc(p.photo)));
 
   openModal(`Plan de engrase · ${esc(equipment.code)}`, `
     <form id="plan-form" class="form-grid">
@@ -3384,7 +5287,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     </form>
     <div class="panel-head" style="margin-top:16px"><h3>Puntos de engrase</h3></div>
     <div id="points-list">
-      ${points.map(p => pointRow(p, lubricants)).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
+      ${points.map((p, i) => pointRow(p, lubricants, pointPhotoSrcs[i])).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
     </div>
     <div class="row-actions" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-sm" id="btn-add-point" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>${ic("plus")}Agregar punto</button>
@@ -3477,11 +5380,11 @@ async function openPlanForm(equipmentId, planId, lubricants) {
   }));
 }
 
-function pointRow(p, lubricants) {
+function pointRow(p, lubricants, resolvedPhotoSrc) {
   const lub = lubricants.find(l => l.id === p.greaseType);
   return `<div class="point-row">
-    ${p.photo ? photoThumbHTML(p.photo, p.point) : ''}
-    <div><b>${esc(p.point)}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} kg</div></div>
+    ${p.photo ? photoThumbHTML(resolvedPhotoSrc !== undefined ? resolvedPhotoSrc : p.photo, p.point) : ''}
+    <div><b>${esc(p.point)}</b><div class="dim">${lub ? lub.name : ''} · ${p.recommendedQty} ${GREASE_UNIT}</div></div>
     <div class="row-actions">
       <button class="btn btn-sm point-edit" data-id="${p.id}">${ic("edit")}Editar</button>
       <button class="btn btn-sm btn-danger point-del" data-id="${p.id}">${ic("trash")}Eliminar</button>
@@ -3638,7 +5541,7 @@ function openPointForm(planId, pointId, lubricants) {
             <label>Tipo de grasa
               <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === p.greaseType ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
             </label>
-            <label>Cantidad recomendada (kg)<input type="number" step="0.1" name="recommendedQty" value="${p.recommendedQty}"/></label>
+            <label>Cantidad recomendada (${GREASE_UNIT})<input type="number" step="0.1" name="recommendedQty" value="${p.recommendedQty}"/></label>
             <label>Sistema<input name="system" value="${esc(p.system)}" placeholder="General"/></label>
             <label>Componente<input name="component" value="${esc(p.component)}" placeholder="Opcional"/></label>
             <label class="span-2">Observaciones<input name="notes" value="${esc(p.notes || '')}" placeholder="Opcional"/></label>
@@ -3693,6 +5596,12 @@ async function renderMatrizSemanal() {
   const records = await DB.allActive('lubrication_records');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
+  // TODAS (no solo activas) — solo para el modal "Equipos sin plan" de abajo
+  // (mismo bug real que renderDashboard, ver DATA-PENDING-A02 en
+  // docs/BUG_REGISTER.md). `types`/`locations` de arriba siguen
+  // activas-solo: alimentan los <select> de filtro de esta pantalla.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
 
   // Semana visible (se puede navegar hacia atrás/adelante)
   if (!App.matrizOffset) App.matrizOffset = 0;
@@ -3700,8 +5609,16 @@ async function renderMatrizSemanal() {
   const lunes = new Date(hoy);
   lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + (App.matrizOffset * 7));
   const dias = [];
-  for (let i = 0; i < 6; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
-  const finSemana = new Date(dias[5]); finSemana.setHours(23, 59, 59, 999);
+  for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  const finSemana = new Date(dias[6]); finSemana.setHours(23, 59, 59, 999);
+
+  // Presentación compacta del rango — SOLO formato de texto, misma semana
+  // calculada arriba (nunca se recalculan los días). "21–27 Sep" o, si la
+  // semana cruza de mes, "29 Sep – 5 Oct".
+  const MESES_ABBR_MTZ = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const rangoCompacto = dias[0].getMonth() === dias[6].getMonth()
+    ? `${dias[0].getDate()}–${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]}`
+    : `${dias[0].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]} – ${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[6].getMonth()]}`;
 
   const filtroTurno = App.matrizTurno || '';
   const filtroTipo = App.matrizTipo || '';
@@ -3713,6 +5630,11 @@ async function renderMatrizSemanal() {
     if (filtroUbic && e.locationId !== filtroUbic) return false;
     return true;
   });
+  // Equipos SIN NINGÚN plan (ni día/turno ni horas), dentro de los mismos
+  // filtros turno/tipo/ubicación — no aparecen como filas en esta matriz (no
+  // tienen días asignados), así que se resumen en un aviso aparte (D, mismo
+  // criterio y modal que el KPI del Dashboard, sin duplicar lógica).
+  const sinPlan = visibles.filter(e => !plans.some(p => p.equipmentId === e.id));
   // Solo equipos con plan por día/turno (los que tienen días asignados)
   visibles = visibles.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
@@ -3723,16 +5645,39 @@ async function renderMatrizSemanal() {
   // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
   // datos ya cargados (plans, records, hoy).
 
+  // "Hecho" para efectos de cumplimiento incluye las 3 variantes reales de
+  // trabajo completado (a tiempo, atrasado en otro turno, o adelantado por
+  // fuera de plan) — antes solo se contaba 'hecho' a secas, así que
+  // hecho_adelantado (ya existía) y hecho_atrasado (nuevo) quedaban
+  // invisibles en el % de cumplimiento aunque el trabajo SÍ se hizo.
+  const TIPOS_HECHO = ['hecho', 'hecho_atrasado', 'hecho_adelantado'];
+  const esTipoHecho = tipo => TIPOS_HECHO.includes(tipo);
+
+  // Resumen por turno (D/N) para el subtítulo del header azul — SOLO reusa
+  // estadoCelda()/la MISMA fórmula de cumplimiento ya usada arriba (hechas/
+  // (hechas+no_realizado+pendiente)), aplicada al subconjunto de ese turno.
+  // No es un cálculo nuevo, es el mismo agregado con un `lista` distinto.
+  function resumenTurno(lista) {
+    const contarT = tipo => lista.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
+    const hechasT = lista.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
+    const yaVencidasT = hechasT + contarT('no_realizado') + contarT('pendiente');
+    return { equipos: lista.length, pct: yaVencidasT ? Math.round((hechasT / yaVencidasT) * 100) : 100 };
+  }
+
   const tablaTurno = (titulo, lista) => {
     if (!lista.length) return '';
+    const r = resumenTurno(lista);
     return `
       <div class="matriz-wrap">
         <table class="matriz">
           <thead>
-            <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}</th></tr>
+            <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}<div class="matriz-titulo-resumen">${r.equipos} equipo${r.equipos === 1 ? '' : 's'} · ${r.pct}%</div></th></tr>
             <tr>
               <th class="matriz-eq">Equipo / No.</th>
-              ${dias.map(d => `<th>${WEEKDAY_NAMES[d.getDay()]}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
+              ${dias.map(d => {
+                const esHoy = d.toDateString() === hoy.toDateString();
+                return `<th${esHoy ? ' class="is-today"' : ''}>${WEEKDAY_NAMES[d.getDay()]}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div>${esHoy ? '<div class="matriz-hoy-tag">HOY</div>' : ''}</th>`;
+              }).join('')}
             </tr>
           </thead>
           <tbody>
@@ -3740,12 +5685,22 @@ async function renderMatrizSemanal() {
               <tr>
                 <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
                 ${dias.map(d => {
+                  const esHoy = d.toDateString() === hoy.toDateString();
+                  const hoyCls = esHoy ? ' is-today' : '';
                   const s = estadoCelda(eq, d, plans, records, hoy);
-                  if (s.tipo === 'hecho') return `<td class="celda-hecho" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
-                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
-                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
-                  if (s.tipo === 'futuro') return `<td class="celda-futuro" title="Programado para este día"></td>`;
-                  return '<td></td>';
+                  if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
+                  // Corrección real (lote occurrences/carryover): estas dos celdas
+                  // NUNCA se habían wireado aquí — caían al <td> en blanco del
+                  // final, sin etiqueta ni color, aunque estadoCelda() ya las
+                  // distinguía desde antes (hecho_adelantado) o recién ahora
+                  // (hecho_atrasado).
+                  if (s.tipo === 'hecho_atrasado') return `<td class="celda-hecho-atrasado${hoyCls}" title="Realizado atrasado (turno distinto al planificado) por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ATRASADO</td>`;
+                  if (s.tipo === 'hecho_adelantado') return `<td class="celda-hecho-adelantado${hoyCls}" title="Satisfecho por adelantado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ADELANTADO</td>`;
+                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
+                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
+                  if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
+                  if (s.tipo === 'futuro') return `<td class="celda-futuro${hoyCls}" title="Programado para este día"></td>`;
+                  return `<td class="${hoyCls.trim()}"></td>`;
                 }).join('')}
               </tr>`).join('')}
           </tbody>
@@ -3759,10 +5714,11 @@ async function renderMatrizSemanal() {
   // Conteos de la semana visible
   const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
   const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo !== 'vacio').length, 0);
-  const hechas = contar('hecho');
+  const hechas = visibles.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
   const futuras = contar('futuro');
+  const pausadas = contar('pausado');
   // El cumplimiento se mide solo sobre lo que YA debió hacerse (lo de más adelante en
   // la semana todavía no cuenta en contra). Antes lo futuro bajaba el porcentaje
   // injustamente: un lunes marcaba 17% aunque no se hubiera incumplido nada.
@@ -3770,16 +5726,20 @@ async function renderMatrizSemanal() {
   const pct = yaVencidas ? Math.round((hechas / yaVencidas) * 100) : 100;
 
   c.innerHTML = `
-    <div class="toolbar">
-      <button class="btn btn-sm" id="mtz-prev">← Semana anterior</button>
-      <span class="matriz-rango">${dias[0].getDate()}/${dias[0].getMonth() + 1} — ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}${App.matrizOffset === 0 ? ' (semana actual)' : ''}</span>
-      <button class="btn btn-sm" id="mtz-next">Semana siguiente →</button>
+    <div class="layout-wide">
+    <div class="toolbar mtz-nav-row">
+      <button class="btn btn-sm mtz-nav-btn" id="mtz-prev" aria-label="Semana anterior" title="Semana anterior">‹<span class="mtz-nav-label"> Semana anterior</span></button>
+      <span class="matriz-rango">${rangoCompacto}${App.matrizOffset === 0 ? ' · Semana actual' : ''}</span>
+      <button class="btn btn-sm mtz-nav-btn" id="mtz-next" aria-label="Semana siguiente" title="Semana siguiente"><span class="mtz-nav-label">Semana siguiente </span>›</button>
       ${App.matrizOffset !== 0 ? `<button class="btn btn-sm" id="mtz-hoy">Ir a hoy</button>` : ''}
       <button class="btn btn-sm btn-accent" id="mtz-print">${ic("print")}Imprimir</button>
       <button class="btn btn-sm" id="mtz-excel">${ic("download")}Descargar Excel</button>
     </div>
 
-    <div class="toolbar">
+    <div class="mtz-filters-toggle-row">
+      <button type="button" class="btn btn-sm" id="mtz-filters-toggle" aria-expanded="false" aria-controls="mtz-filters-panel">Filtros <span class="mtz-toggle-chevron">▾</span></button>
+    </div>
+    <div class="toolbar mtz-filters-row mtz-collapsible-mobile mtz-collapsed-mobile" id="mtz-filters-panel">
       <label class="filter-label">Turno
         <select id="mtz-turno" class="input input-sm">
           <option value="">Ambos</option>
@@ -3806,28 +5766,58 @@ async function renderMatrizSemanal() {
       ${kpiCard('REALIZADOS', hechas, 'green')}
       ${kpiCard('NO REALIZADOS', noRealizadas, noRealizadas ? 'red' : 'neutral')}
       ${kpiCard('PENDIENTES HOY', pendientes, pendientes ? 'amber' : 'neutral')}
+      ${kpiCard('PAUSADOS', pausadas, 'neutral')}
       ${kpiCard('CUMPLIMIENTO %', pct, pct >= App.generalSettings.complianceTarget ? 'green' : 'red')}
     </div>
+
+    ${sinPlan.length ? `
+    <button type="button" class="mtz-sin-plan-note" id="mtz-sin-plan-btn">
+      ${ic('alert')}${sinPlan.length} equipo(s) sin plan de engrase — no aparecen en esta matriz
+    </button>` : ''}
 
     ${visibles.length ? `
       ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
       ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
-      <div class="color-legend">
+      <div class="mtz-legend-toggle-row">
+        <button type="button" class="btn btn-sm" id="mtz-legend-toggle" aria-expanded="false" aria-controls="mtz-legend">Ver leyenda <span class="mtz-toggle-chevron">▾</span></button>
+      </div>
+      <div class="color-legend mtz-collapsible-mobile mtz-collapsed-mobile" id="mtz-legend">
         <span class="color-legend-item"><span class="dot" style="background:#00B050"></span>Realizado</span>
         <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado (día ya pasado)</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente hoy</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183; opacity:0.5"></span>Programado más adelante</span>
+        <span class="color-legend-item"><span class="dot" style="background:var(--gray-status)"></span>Pausado (equipo no operativo)</span>
         <span class="color-legend-item"><span class="dot" style="background:var(--border)"></span>No le toca ese día</span>
       </div>`
     : `<div class="panel"><div class="empty-state">No hay equipos con plan por "Día y turno de la semana" que coincidan con estos filtros.<br/>Esta vista solo muestra equipos con días asignados — configúralos en Plan de Engrase.</div></div>`}
+    </div>
   `;
 
+  $('#mtz-sin-plan-btn')?.addEventListener('click', () => openSinPlanModal(sinPlan, typesAll, locationsAll));
+  $('#mtz-filters-toggle')?.addEventListener('click', (e) => {
+    const abierto = $('#mtz-filters-panel').classList.toggle('mtz-collapsed-mobile') === false;
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+  });
+  $('#mtz-legend-toggle')?.addEventListener('click', (e) => {
+    const abierto = $('#mtz-legend').classList.toggle('mtz-collapsed-mobile') === false;
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+  });
   $('#mtz-prev').addEventListener('click', () => { App.matrizOffset--; renderMatrizSemanal(); });
   $('#mtz-next').addEventListener('click', () => { App.matrizOffset++; renderMatrizSemanal(); });
   $('#mtz-hoy')?.addEventListener('click', () => { App.matrizOffset = 0; renderMatrizSemanal(); });
   $('#mtz-turno').addEventListener('change', e => { App.matrizTurno = e.target.value; renderMatrizSemanal(); });
   $('#mtz-tipo').addEventListener('change', e => { App.matrizTipo = e.target.value; renderMatrizSemanal(); });
   $('#mtz-ubic').addEventListener('change', e => { App.matrizUbic = e.target.value; renderMatrizSemanal(); });
+
+  // Al entrar (o cambiar de semana/filtro), desliza cada tabla hasta la
+  // columna HOY si está dentro de la semana mostrada — sin esto quedaba
+  // fuera de vista a la derecha del scroll horizontal en móvil, obligando a
+  // deslizar a ciegas para encontrarla. Nunca toca el layout de la tabla
+  // (sigue siendo tabla, sigue siendo scroll horizontal).
+  $$('.matriz-wrap').forEach((wrap) => {
+    const hoyTh = wrap.querySelector('th.is-today');
+    if (hoyTh) hoyTh.scrollIntoView({ block: 'nearest', inline: 'center' });
+  });
 
   $('#mtz-print').addEventListener('click', () => {
     const win = window.open('', '_blank');
@@ -3845,7 +5835,10 @@ async function renderMatrizSemanal() {
       table.matriz{width:100%;border-collapse:collapse;margin-bottom:18px;page-break-inside:avoid}
       table.matriz th,table.matriz td{border:1px solid #333;padding:5px 6px;text-align:center;font-size:10px}
       .matriz-titulo{background:#1F3864 !important;color:#fff !important;font-size:12px;padding:7px;letter-spacing:.5px}
+      .matriz-titulo-resumen{font-weight:normal;font-size:9px;letter-spacing:normal;text-transform:none;opacity:.85;margin-top:2px}
       table.matriz thead tr:nth-child(2) th{background:#F2F2F2 !important;font-weight:bold}
+      table.matriz thead tr:nth-child(2) th.is-today{background:#FCEBC9 !important}
+      .matriz-hoy-tag{font-size:7.5px;color:#C55A11;font-weight:bold}
       .matriz-eq{text-align:left !important;font-weight:bold;white-space:nowrap;background:#F2F2F2 !important}
       .matriz-fecha{font-weight:normal;font-size:8.5px;color:#666}
       /* Doble seguro: además del color de fondo, cada celda lleva un símbolo y un borde
@@ -3862,7 +5855,7 @@ async function renderMatrizSemanal() {
       .lg{width:14px;height:11px;border:1px solid #333;display:inline-block}
       .matriz-wrap{overflow:visible}
     </style></head><body>
-      <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}</h1>
+      <h1>Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}</h1>
       <div class="sub">Generado el ${fmtDate(nowISO())} por ${esc(App.currentUser.name)} · Cumplimiento: ${pct}% (${hechas} de ${totalCeldas})</div>
       <div class="aviso-color">Si esta hoja sale sin colores: en el diálogo de impresión abre "Más ajustes" y activa <b>"Gráficos de fondo"</b>.</div>
       ${tablas}
@@ -3892,7 +5885,7 @@ async function renderMatrizSemanal() {
     const vacia = () => celda('', { border: bordes });
 
     // Encabezado del documento
-    filas.push([celda(`Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[5].getDate()}/${dias[5].getMonth() + 1}/${dias[5].getFullYear()}`,
+    filas.push([celda(`Plan de Engrase — Semana ${dias[0].getDate()}/${dias[0].getMonth() + 1} al ${dias[6].getDate()}/${dias[6].getMonth() + 1}/${dias[6].getFullYear()}`,
       { font: { bold: true, sz: 15 } })]);
     merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: nCols - 1 } });
     filas.push([celda(`Generado el ${fmtDate(nowISO())} por ${App.currentUser.name} · Cumplimiento ${pct}% (${hechas} de ${totalCeldas})`,
@@ -3936,6 +5929,20 @@ async function renderMatrizSemanal() {
             fila.push(celda('REALIZADO', {
               font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },
               fill: { fgColor: { rgb: '00B050' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'hecho_atrasado') {
+            fila.push(celda('REALIZADO ATRASADO', {
+              font: { bold: true, italic: true, sz: 8, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: '2DB6A3' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              border: bordes
+            }));
+          } else if (s.tipo === 'hecho_adelantado') {
+            fila.push(celda('REALIZADO ADELANTADO', {
+              font: { bold: true, italic: true, sz: 8, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: '5B7FBF' } },
               alignment: { horizontal: 'center', vertical: 'center' },
               border: bordes
             }));
@@ -3983,7 +5990,7 @@ async function renderMatrizSemanal() {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Plan semanal');
-    XLSX.writeFile(wb, `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[5].getFullYear()}.xlsx`);
+    XLSX.writeFile(wb, `plan_engrase_${dias[0].getDate()}-${dias[0].getMonth() + 1}-${dias[6].getFullYear()}.xlsx`);
     showInAppToast('✓ Excel descargado con colores');
   });
 }
@@ -4007,7 +6014,7 @@ async function renderTurno() {
         <h3>Plan de engrase del turno — ${shift === 'shift_dia' ? 'Día' : 'Noche'}</h3>
         <span class="pill">${equiposTurno.length} equipos</span>
       </div>
-      <table class="data-table">
+      <table class="data-table turno-table">
         <thead><tr><th>Estado</th><th>Código</th><th>Equipo</th><th>Ubicación</th><th>Horómetro</th><th>Último</th><th>Próximo</th><th>Restante</th><th></th></tr></thead>
         <tbody>
           ${statuses.map(({ e, s }) => `
@@ -4036,22 +6043,129 @@ async function renderRegistrar() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
+  // Equipos recientes: función YA existente (trackRecentEquipment()/
+  // recentEquiposHTML(), reutilizada tal cual en Mi Turno y Equipos, ver
+  // línea ~178) — se muestra aquí porque ya hay datos reales para hacerlo
+  // (startGreaseFlow() ya llama trackRecentEquipment() al registrar), sin
+  // inventar ninguna persistencia ni funcionalidad nueva.
+  const recentsHTML = await recentEquiposHTML();
   c.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>Seleccionar equipo</h3></div>
-      <select id="reg-eq-select" class="input">
-        <option value="">— Selecciona un equipo —</option>
-        ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
-      </select>
+    <div class="reg-select-wrap">
+      <div class="reg-select-card">
+        <h2 class="reg-select-title">Seleccionar equipo</h2>
+        <p class="reg-select-subtitle">Busca y selecciona un equipo para registrar el engrase.</p>
+        <div class="reg-eq-search">
+          <input type="text" id="reg-eq-search" class="input" placeholder="Busca por código, marca o modelo…" autocomplete="off"/>
+          <div id="reg-eq-search-results" class="reg-eq-search-results hidden"></div>
+        </div>
+        ${recentsHTML}
+      </div>
     </div>
     <div id="reg-flow-area"></div>
   `;
-  $('#reg-eq-select').addEventListener('change', (e) => {
-    if (e.target.value) startGreaseFlow(e.target.value, $('#reg-flow-area'));
-  });
+  wireRegEquipoSearch(equipos, $('#reg-flow-area'));
+  $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => {
+    const eq = equipos.find(e => e.id === b.dataset.recentId);
+    if (eq) collapseRegSelectToChip(eq);
+    startGreaseFlow(b.dataset.recentId, $('#reg-flow-area'));
+  }));
 }
 
-async function startGreaseFlow(equipmentId, target) {
+// Selector compacto tras elegir equipo (cierre operativo §13) — el buscador
+// + recientes ya no siguen ocupando espacio mientras se completa el
+// formulario: se reemplazan por un chip fijo con la opción de "Cambiar"
+// (vuelve a dibujar renderRegistrar() desde cero, el camino más simple y
+// seguro — no intenta "deshacer" el chip a mano).
+function collapseRegSelectToChip(equipo) {
+  const card = document.querySelector('.reg-select-card');
+  if (!card) return;
+  card.innerHTML = `
+    <div class="reg-select-chip">
+      <span class="mono"><b>${esc(equipo.code)}</b> · ${esc(equipo.brand)} ${esc(equipo.model)}</span>
+      <button type="button" class="btn btn-sm" id="reg-select-change">Cambiar</button>
+    </div>`;
+  $('#reg-select-change').addEventListener('click', () => renderRegistrar());
+}
+
+// Selector de equipo compacto (lote occurrences/carryover, §2) — escribir
+// para filtrar en vez de desplazarse por un <select> con TODOS los equipos
+// activos. Mismo patrón que wireQuickFind() (topbar), pero con su PROPIO
+// contenedor/posicionamiento (ancho completo, no anclado a la derecha como
+// el de la topbar) — no reutiliza .quick-find-results a propósito. Sin
+// listener en `document` (esta pantalla se vuelve a dibujar completa en
+// cada navegación — un listener global se acumularía); se cierra con
+// blur (con margen para que el click en un resultado alcance a disparar
+// antes) o Escape.
+function wireRegEquipoSearch(equipos, flowArea) {
+  const input = $('#reg-eq-search');
+  const caja = $('#reg-eq-search-results');
+  if (!input || !caja) return;
+  let resultados = [];
+  function buscar() {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { caja.classList.add('hidden'); caja.innerHTML = ''; return; }
+    resultados = equipos.filter(e =>
+      (e.code || '').toLowerCase().includes(q) ||
+      (e.shortCode || '').toLowerCase().includes(q) ||
+      `${e.brand} ${e.model}`.toLowerCase().includes(q)
+    ).slice(0, 8);
+    if (!resultados.length) {
+      caja.innerHTML = '<div class="qf-vacio">Ningún equipo coincide</div>';
+      caja.classList.remove('hidden');
+      return;
+    }
+    caja.innerHTML = resultados.map((e, i) => `
+      <button type="button" class="qf-item" data-i="${i}">
+        <span class="mono"><b>${esc(e.code)}</b>${e.shortCode ? ' · ' + esc(e.shortCode) : ''}</span>
+        <span class="dim">${esc(e.brand)} ${esc(e.model)}</span>
+      </button>`).join('');
+    caja.classList.remove('hidden');
+    $$('.qf-item', caja).forEach(b => b.addEventListener('mousedown', (ev) => {
+      ev.preventDefault(); // evita que el blur del input se dispare ANTES del click y oculte la caja
+      const eq = resultados[+b.dataset.i];
+      caja.classList.add('hidden');
+      collapseRegSelectToChip(eq);
+      startGreaseFlow(eq.id, flowArea);
+    }));
+  }
+  let temporizador;
+  input.addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(buscar, 150); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && resultados.length === 1) { ev.preventDefault(); $('.qf-item', caja)?.dispatchEvent(new MouseEvent('mousedown')); }
+    if (ev.key === 'Escape') { input.value = ''; caja.classList.add('hidden'); }
+  });
+  input.addEventListener('blur', () => { caja.classList.add('hidden'); });
+  input.addEventListener('focus', () => { if (resultados.length) caja.classList.remove('hidden'); });
+}
+
+// A dónde ir tras Finalizar Engrase (Validar ahora/después) — NUNCA usar
+// navigate() a secas aquí: navigate() es el router de escritorio
+// (renderTurno/renderHistorial de ADMIN) y, dentro del shell del
+// Lubricador (.lub-shell), App.route suele seguir en 'turno' porque
+// bootLubricador() lleva su propia navegación aparte (ver
+// redibujarPantallaActual, mismo criterio) — llamar a navigate('turno') ahí
+// terminaba pintando la tabla de escritorio "PLAN DE ENGRASE DEL TURNO"
+// dentro de la pantalla del Lubricador. "Mi Turno" (trabajo por hacer) y
+// "Mis Engrases" (trabajo ya hecho) son pantallas distintas — el destino
+// correcto después de registrar SIEMPRE es Mis Engrases, reutilizando
+// renderLubricadorHistorial() (misma vista de tarjetas, sin duplicarla).
+function irAMisEngrasesTrasRegistrar() {
+  App.lubricadorGreaseFlowActive = false; // el flujo terminó de verdad: llegó a Mis Engrases
+  if (document.querySelector('.lub-shell')) {
+    App.route = 'historial';
+    $$('.lub-nav-item').forEach(x => {
+      const active = x.dataset.route === 'historial';
+      x.classList.toggle('active', active);
+      if (active) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current');
+    });
+    renderLubricadorHistorial();
+  } else {
+    navigate(App.route);
+  }
+}
+
+async function startGreaseFlow(equipmentId, target, options) {
+  const outOfPlan = !!(options && options.outOfPlan);
   trackRecentEquipment(equipmentId);
   const equipment = await DB.get('equipment', equipmentId);
   // Estado ANTES de engrasar: sirve para saber si el equipo venía vencido, dato que usa
@@ -4069,10 +6183,12 @@ async function startGreaseFlow(equipmentId, target) {
 
   // Aviso si el equipo ya fue engrasado hoy por alguien más (evita que dos cuadrillas repitan el mismo trabajo)
   const todayStr = new Date().toDateString();
-  const todaysRecords = (await DB.allActive('lubrication_records'))
-    .filter(r => r.equipmentId === equipmentId && new Date(r.date).toDateString() === todayStr)
+  const allRecordsForEq = (await DB.allActive('lubrication_records'))
+    .filter(r => r.equipmentId === equipmentId)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const todaysRecords = allRecordsForEq.filter(r => new Date(r.date).toDateString() === todayStr);
   const alreadyDoneToday = todaysRecords[0];
+  const ultimoEngraseReg = allRecordsForEq[0] || null;
   const duplicateWarning = alreadyDoneToday && alreadyDoneToday.userId !== App.currentUser.id
     ? `<div class="duplicate-warning">⚠ Este equipo ya fue engrasado hoy por <b>${esc(alreadyDoneToday.userName)}</b> a las ${new Date(alreadyDoneToday.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}. Verifica con tu supervisor antes de registrar otro engrase, para no duplicar el trabajo.</div>`
     : '';
@@ -4080,22 +6196,88 @@ async function startGreaseFlow(equipmentId, target) {
   const draftId = `draft_${equipmentId}_${App.currentUser.id}`;
   const draft = await DB.get('grease_drafts', draftId);
 
+  // Contexto de ocurrencia (lote occurrences/carryover, §2): turno programado
+  // por el plan vs. turno en el que se está registrando de verdad, y si esta
+  // MISMA ocurrencia de hoy ya quedó marcada "no se pudo ejecutar" en un
+  // turno anterior (carryover) — ver src/core/operational-scope.js. Solo
+  // informativo aquí: NO bloquea el registro (si el turno no coincide, el
+  // engrase se guarda igual y plan-compliance.js ya lo cuenta como
+  // 'realizado_atrasado', no como incumplimiento).
+  const todayISOReg = todayDateISO();
+  const occurrenceKeyHoy = plan ? computeOccurrenceKey(plan, { dateISO: todayISOReg }) : null;
+  const skipsActivosReg = await DB.allActive('lubrication_skips');
+  const carriedOverSkip = occurrenceKeyHoy ? findCarriedOverSkipForToday(skipsActivosReg, { equipmentId, dateISO: todayISOReg }) : null;
+  const turnoActualReg = currentShiftId();
+  const turnoProgramadoReg = plan && plan.shiftId ? plan.shiftId : null;
+  const turnoDistintoReg = !!(turnoProgramadoReg && turnoProgramadoReg !== turnoActualReg);
+  const shiftLabel = (s) => s === 'shift_dia' ? 'Día' : 'Noche';
+
+  // Contexto completo de la ocurrencia (cierre operativo §11/§12): código+
+  // modelo/ubicación/tipo de trabajo/estado/programado/turno actual/último
+  // engrase — TODO con datos reales ya cargados, nunca texto fijo. "Tipo de
+  // trabajo" reutiliza findExistingWorkForEquipment() (operational-scope.js,
+  // ya usado por el botón "+ Fuera de plan") en vez de reinventar la
+  // prioridad ASSIGNED > PLANNED > (ninguno).
+  const ubicacionReg = equipment.locationId ? (await DB.get('locations', equipment.locationId)) : null;
+  const assignmentsActivosReg = await DB.allActive('lubrication_assignments');
+  const trabajoReg = findExistingWorkForEquipment({
+    plan, assignments: assignmentsActivosReg, statusCode: estadoPrevio, todayDate: new Date()
+  });
+  const TIPO_TRABAJO_LABELS = { ASSIGNED: 'Asignado', PLANNED: 'Planificado', NONE: plan ? 'Sin ocurrencia hoy' : 'Sin plan' };
+  const tipoTrabajoLabelReg = outOfPlan ? 'Fuera de plan' : TIPO_TRABAJO_LABELS[trabajoReg.kind];
+  const ESTADO_PREVIO_LABELS = { ROJO: 'Vencido', AMARILLO: 'Próximo a vencer', VERDE: 'Al día', GRIS: 'Sin plan / pausado' };
+  const programadoLabelReg = !plan ? '—'
+    : plan.controlType === 'Horas de operación' ? `Cada ${fmt(plan.frequency || 0)} h`
+    : (plan.assignedDays || []).length ? `${plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ')} · ${shiftLabel(plan.shiftId || turnoActualReg)}` : '—';
+  const ultimoEngraseLabelReg = ultimoEngraseReg ? `${fmtDate(ultimoEngraseReg.date)} · ${fmt(ultimoEngraseReg.hourmeter)} h` : 'Nunca registrado';
+
+  const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
   const html = `
-    <div class="panel">
-      <div class="panel-head"><h3>Registrar engrase — ${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</h3></div>
-      <div class="dim" style="padding:0 14px 8px">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())} · ${currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche'}</div>
+    <div class="grease-flow-panel">
+      <div class="grease-flow-card grease-flow-equipo-card">
+        ${outOfPlan ? `<span class="oop-badge">FUERA DE PLAN</span>` : ''}
+        <div class="grease-flow-equipo-code">${esc(equipment.code)}</div>
+        <div class="grease-flow-equipo-model">${esc(equipment.brand)} ${esc(equipment.model)}</div>
+        <div class="grease-flow-equipo-meta">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())} · ${currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche'}</div>
+        ${turnoDistintoReg ? `<div class="grease-flow-turno-warn">⚠ Turno programado: ${shiftLabel(turnoProgramadoReg)} · Registrando en turno ${shiftLabel(turnoActualReg)} — quedará como "Realizado atrasado".</div>` : ''}
+        ${estadoPrevio === 'ROJO' ? `<div class="grease-flow-vencido-warn">⚠ Este equipo está VENCIDO — no se engrasó en el ciclo esperado.</div>` : ''}
+        ${carriedOverSkip ? `<div class="grease-flow-carryover-warn">⚠ El turno ${shiftLabel(carriedOverSkip.shiftId)} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carriedOverSkip.reason] || carriedOverSkip.reason)}${carriedOverSkip.observacion ? ' · ' + esc(carriedOverSkip.observacion) : ''} (${esc(carriedOverSkip.userName)}).</div>` : ''}
+        ${outOfPlan ? `<p class="dim" style="margin:6px 0 0">Este engrase no estaba programado para este momento.</p>` : ''}
+        <dl class="grease-flow-contexto">
+          <div><dt>Ubicación</dt><dd>${esc(ubicacionReg ? ubicacionReg.name : '—')}</dd></div>
+          <div><dt>Tipo de trabajo</dt><dd>${esc(tipoTrabajoLabelReg)}</dd></div>
+          <div><dt>Estado</dt><dd>${esc(ESTADO_PREVIO_LABELS[estadoPrevio] || estadoPrevio)}</dd></div>
+          <div><dt>Programado</dt><dd>${esc(programadoLabelReg)}</dd></div>
+          <div><dt>Turno actual</dt><dd>${shiftLabel(turnoActualReg)}</dd></div>
+          <div><dt>Último engrase</dt><dd>${esc(ultimoEngraseLabelReg)}</dd></div>
+        </dl>
+      </div>
+      ${outOfPlan ? `
+      <div class="grease-flow-card">
+        <h4 class="grease-flow-card-head">Motivo</h4>
+        <div class="form-grid">
+          <label class="span-2">Motivo del engrase fuera de plan
+            <select required name="outOfPlanReason" id="oop-reason-select">
+              ${OUT_OF_PLAN_REASONS.map(r => `<option value="${r}">${OUT_OF_PLAN_REASON_LABELS[r]}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+      </div>` : ''}
       ${duplicateWarning}
       ${draft ? `<div class="draft-banner" id="draft-banner">📝 Tienes un progreso sin terminar guardado ${fmtDate(draft.savedAt)}. <button type="button" class="btn btn-sm btn-accent" id="btn-restore-draft">Continuar</button> <button type="button" class="btn btn-sm" id="btn-discard-draft">Descartar</button></div>` : ''}
-      <form id="grease-form">
-        <div class="form-grid">
-          <label class="span-2">Horómetro actual
-            <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
-          </label>
-          <label class="span-2 nohm-toggle">
-            <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
-            <span>Este equipo NO tiene horómetro, o está dañado / no se puede leer</span>
-          </label>
-          <div id="nohm-reason-wrap" class="span-2 hidden">
+      <form id="grease-form" class="grease-flow-form">
+        <div class="grease-flow-card">
+          <h4 class="grease-flow-card-head">Horómetro</h4>
+          <div class="grease-flow-hm-row">
+            <label class="grease-flow-hm-field">Horómetro actual
+              <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
+            </label>
+            <label class="grease-flow-toggle-row">
+              <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
+              <span>Sin horómetro / dañado</span>
+            </label>
+          </div>
+          <div id="nohm-reason-wrap" class="hidden" style="margin-top:12px">
             <label>¿Por qué no se pudo leer?
               <select name="noHourmeterReason">
                 ${['El equipo no tiene horómetro', 'Horómetro dañado', 'Pantalla ilegible / rota', 'Equipo apagado, no se pudo leer', 'Otro'].map(o => `<option>${o}</option>`).join('')}
@@ -4103,67 +6285,91 @@ async function startGreaseFlow(equipmentId, target) {
               <span class="field-hint">El engrase se registra igual. Queda anotado que no se pudo tomar el horómetro, y el plan por horas de este equipo no se recalcula.</span>
             </label>
           </div>
-          <label>Tipo de grasa utilizada
-            <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
-          </label>
-          <label>Cantidad utilizada (kg)<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
-          ${puedeRetroactivo ? `
-          <div class="span-2 retro-box">
-            <label class="retro-toggle">
-              <input type="checkbox" id="retro-check"/>
-              <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
+        </div>
+
+        <div class="grease-flow-card">
+          <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
+          <div class="form-grid grease-flow-lube-grid">
+            <label>Tipo de grasa utilizada
+              <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
             </label>
-            <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
-              <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
-              <label>Turno en que se hizo
-                <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+            <label>Cantidad utilizada (${GREASE_UNIT})<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
+          </div>
+          ${puedeRetroactivo ? `
+          <details class="reg-advanced">
+            <summary>Opciones avanzadas</summary>
+            <div class="retro-box">
+              <h5 class="grease-flow-retro-head">Registro retroactivo</h5>
+              <label class="retro-toggle">
+                <input type="checkbox" id="retro-check"/>
+                <span>Registrar como engrase ATRASADO (con fecha anterior)</span>
               </label>
-              <label class="span-2">Lo realizó
-                <select name="retroUser">
-                  ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
-                </select>
-                <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
-              </label>
+              <div id="retro-fields" class="form-grid hidden" style="margin-top:10px">
+                <label>Fecha en que se hizo<input type="datetime-local" name="retroDate" max="${new Date().toISOString().slice(0, 16)}"/></label>
+                <label>Turno en que se hizo
+                  <select name="retroShift"><option value="shift_dia">Turno Día</option><option value="shift_noche">Turno Noche</option></select>
+                </label>
+                <label class="span-2">Lo realizó
+                  <select name="retroUser">
+                    ${lubricadores.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('') || '<option value="">(sin lubricadores registrados)</option>'}
+                  </select>
+                  <span class="field-hint">Queda registrado que ${esc(App.currentUser.name)} lo capturó de forma retroactiva.</span>
+                </label>
+              </div>
             </div>
-          </div>` : ''}
+          </details>` : ''}
         </div>
 
-        <div class="checklist-head">
-          <h4>Checklist de puntos de engrase</h4>
-          ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
+        <div class="grease-flow-card">
+          <div class="grease-flow-points-head">
+            <h4 class="grease-flow-card-head">Puntos de engrase</h4>
+            ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
+          </div>
+          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
+          <div id="checklist">
+            ${points.length ? points.map(p => `
+              <div class="checklist-item" data-point="${p.id}">
+                <label class="check-row">
+                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}" alt="Foto de ${esc(p.point)}"/>` : ''}
+                  <input type="checkbox" class="chk-done" checked/>
+                  <span class="check-row-text">${esc(p.point)}</span>
+                  <span class="check-row-mark">✓</span>
+                </label>
+                <select class="chk-reason hidden">
+                  <option value="">¿Por qué no se realizó?</option>
+                  ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+                </select>
+              </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
+          </div>
         </div>
-        ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
-        <div id="checklist">
-          ${points.length ? points.map(p => `
-            <div class="checklist-item" data-point="${p.id}">
-              <label class="check-row">
-                ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}"/>` : ''}
-                <input type="checkbox" class="chk-done" checked/>
-                <span class="check-row-text">${esc(p.point)}</span>
-                <span class="check-row-mark">✓</span>
-              </label>
-              <select class="chk-reason hidden">
-                <option value="">¿Por qué no se realizó?</option>
-                ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+
+        <div class="grease-flow-card">
+          <h4 class="grease-flow-card-head">Condición del equipo</h4>
+          <div class="form-grid">
+            <label class="span-2">Condición encontrada
+              <select name="condition">
+                <option>Normal</option><option>Con desgaste</option><option>Requiere atención</option>
               </select>
-            </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
+            </label>
+          </div>
         </div>
 
-        <div class="form-grid" style="margin-top:16px">
-          <label>Condición encontrada
-            <select name="condition">
-              <option>Normal</option><option>Con desgaste</option><option>Requiere atención</option>
-            </select>
-          </label>
-          <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
-          ${photoFieldHTML()}
+        <div class="grease-flow-card">
+          <h4 class="grease-flow-card-head">Evidencia</h4>
+          <div class="form-grid">
+            <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
+            ${photoFieldHTML()}
+          </div>
         </div>
 
-        <div class="modal-actions">
-          <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
-          <button type="submit" class="btn btn-accent">${ic("check")}Finalizar engrase</button>
+        <div class="grease-flow-final">
+          <div class="modal-actions">
+            ${!outOfPlan && trabajoReg.kind !== 'NONE' ? `<button type="button" class="btn" id="btn-no-ejecutado">No se pudo ejecutar</button>` : ''}
+            <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
+            <button type="submit" class="btn btn-accent btn-grease-submit">${ic("check")}Finalizar engrase</button>
+          </div>
+          <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>
         </div>
-        <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>
       </form>
     </div>`;
 
@@ -4208,6 +6414,93 @@ async function startGreaseFlow(equipmentId, target) {
   }
 
   async function discardDraft() { try { await DB.delete('grease_drafts', draftId); } catch (e) {} }
+
+  // "No se pudo ejecutar" (lote occurrences/carryover, §1) — NUNCA crea un
+  // lubrication_record: guarda un lubrication_skips con motivo+observación
+  // y vuelve a una pantalla estable. El carryover al turno siguiente es
+  // automático (ver comentario de findCarriedOverSkipForToday() en
+  // operational-scope.js) — esta función solo registra el motivo, no
+  // reprograma nada del plan.
+  function openNoExecutionForm() {
+    openModal('No se pudo ejecutar este engrase', `
+      <div class="form-grid">
+        <label class="span-2">Motivo
+          <select id="noexec-reason">
+            ${NO_EXECUTION_REASONS.map(r => `<option value="${r}">${esc(NO_EXECUTION_REASON_LABELS[r])}</option>`).join('')}
+          </select>
+        </label>
+        <label class="span-2">Observación<textarea id="noexec-obs" rows="3" placeholder="Obligatoria si el motivo es &quot;Otro&quot;"></textarea></label>
+      </div>
+      <div id="noexec-match-result"></div>
+      <div class="modal-actions" style="margin-top:14px">
+        <button type="button" class="btn" id="noexec-cancel">Cancelar</button>
+        <button type="button" class="btn btn-accent" id="noexec-confirm">Confirmar</button>
+      </div>
+    `);
+    $('#noexec-cancel').addEventListener('click', closeModal);
+
+    // YA_ENGRASADO (cierre histórico, Parte A): busca automáticamente si
+    // hay un lubrication_record real que satisfaga ESTA ocurrencia antes
+    // de dejarlo como una afirmación sin respaldo — NUNCA cierra nada solo
+    // por elegir el motivo (§2 del pedido). Ver
+    // findMatchingGreaseRecordForOccurrence() en operational-scope.js.
+    async function actualizarMatchYaEngrasado() {
+      const cont = $('#noexec-match-result');
+      if (!cont) return;
+      if ($('#noexec-reason').value !== 'YA_ENGRASADO' || !plan) { cont.innerHTML = ''; return; }
+      cont.innerHTML = `<p class="dim" style="margin:8px 0 0">Buscando un engrase reciente compatible…</p>`;
+      const [recordsParaMatch, assignmentsParaMatch, skipsParaMatch] = await Promise.all([
+        DB.allActive('lubrication_records'), DB.allActive('lubrication_assignments'), DB.allActive('lubrication_skips')
+      ]);
+      const match = findMatchingGreaseRecordForOccurrence({
+        plan, occurrenceKey: occurrenceKeyHoy, occurrenceDate: new Date(),
+        records: recordsParaMatch, assignments: assignmentsParaMatch, skips: skipsParaMatch
+      });
+      if (match.status === 'MATCH') {
+        const rec = match.records[0];
+        cont.innerHTML = `
+          <div class="grease-flow-carryover-warn" style="margin-top:10px">
+            <b>✓ Se encontró un engrase reciente compatible.</b><br>
+            ${esc(equipment.code)} · ${fmtDate(rec.date)} · ${fmt(rec.hourmeter)} h · ${esc(rec.userName || '—')}
+            <div class="modal-actions" style="margin-top:8px"><button type="button" class="btn btn-sm btn-accent" id="noexec-vincular">Vincular al plan</button></div>
+          </div>`;
+        $('#noexec-vincular').addEventListener('click', () => guardarNoEjecucion({ linkedRecordId: rec.id }));
+      } else if (match.status === 'AMBIGUOUS') {
+        cont.innerHTML = `<div class="grease-flow-vencido-warn" style="margin-top:10px">⚠ Se encontraron varios engrases posibles. Requiere revisión del Planificador.</div>`;
+      } else {
+        cont.innerHTML = `<p class="dim" style="margin:8px 0 0">No se encontró un engrase compatible.</p>`;
+      }
+    }
+    $('#noexec-reason').addEventListener('change', actualizarMatchYaEngrasado);
+
+    async function guardarNoEjecucion({ linkedRecordId } = {}) {
+      const reason = $('#noexec-reason').value;
+      const observacion = $('#noexec-obs').value;
+      let skip;
+      try {
+        skip = buildNoExecutionRecord({
+          id: uid('skip'), equipmentId: equipment.id, planId: plan ? plan.id : null,
+          occurrenceKey: occurrenceKeyHoy, date: nowISO(), shiftId: turnoActualReg,
+          reason, observacion, userId: App.currentUser.id, userName: App.currentUser.name, now: nowISO(),
+          linkedRecordId
+        });
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      await DB.put('lubrication_skips', skip);
+      await logAudit('ENGRASE_NO_EJECUTADO',
+        `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}${linkedRecordId ? ' · vinculado a ' + linkedRecordId : ''}`,
+        App.currentUser.name);
+      await discardDraft();
+      closeModal();
+      showInAppToast(linkedRecordId ? `✓ Vinculado a un engrase real — ${equipment.code}` : `Registrado: no se pudo ejecutar — ${equipment.code}`);
+      App.lubricadorGreaseFlowActive = false; // el flujo terminó (sin engrase) — no debe sobrevivir a la sesión siguiente
+      Sync.fullSync();
+      redibujarPantallaActual();
+    }
+    $('#noexec-confirm').addEventListener('click', () => guardarNoEjecucion());
+  }
 
   function restoreDraftIntoForm(d) {
     const form = $('#grease-form');
@@ -4272,7 +6565,15 @@ async function startGreaseFlow(equipmentId, target) {
     });
 
     $('#btn-check-all')?.addEventListener('click', () => {
-      $$('.chk-done').forEach(chk => {
+      // Acción explícita (lote occurrences/carryover, §2): "Marcar todos" ya
+      // no aplica de un solo toque — pide confirmación, para que no sea un
+      // atajo accidental que declare puntos como realizados sin haberlos
+      // engrasado de verdad. Si ya estaban todos marcados, no hay nada que
+      // confirmar (evita un confirm() sin sentido al tocarlo dos veces).
+      const puntos = $$('.chk-done');
+      if (puntos.every(c => c.checked)) return;
+      if (!confirm(`¿Marcar los ${puntos.length} puntos de engrase como realizados? Confírmalo solo si de verdad engrasaste todos.`)) return;
+      puntos.forEach(chk => {
         chk.checked = true;
         chk.closest('.checklist-item').querySelector('.chk-reason').classList.add('hidden');
       });
@@ -4288,6 +6589,7 @@ async function startGreaseFlow(equipmentId, target) {
       });
     });
     $('#btn-report-anomaly')?.addEventListener('click', () => openAnomalyForm(equipment.id, equipment.code));
+    $('#btn-no-ejecutado')?.addEventListener('click', () => openNoExecutionForm());
 
     // Autoguardado: cualquier cambio en el formulario programa un guardado de borrador local
     $('#grease-form').addEventListener('input', scheduleDraftSave);
@@ -4303,8 +6605,13 @@ async function startGreaseFlow(equipmentId, target) {
       $('#draft-banner')?.remove();
     });
 
+    let enviandoEngrase = false; // guarda contra doble click/doble submit: nunca duplicar lubrication_record
     $('#grease-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (enviandoEngrase) return;
+      enviandoEngrase = true;
+      $('.btn-grease-submit').disabled = true;
+      try {
       const fd = Object.fromEntries(new FormData(ev.target).entries());
       const newHourmeter = parseFloat(fd.hourmeter);
       const marcadoRetro = !!$('#retro-check')?.checked && fd.retroDate;
@@ -4331,6 +6638,27 @@ async function startGreaseFlow(equipmentId, target) {
           alert('Selecciona el motivo de "No realizado" para: ' + item.querySelector('span').textContent);
           return;
         }
+      }
+
+      // Validación real (lote occurrences/carryover, §2): si TODOS los puntos
+      // del checklist quedaron marcados como realizados, la cantidad de
+      // grasa no puede ser 0 — sería contradictorio (se engrasó todo el
+      // equipo sin gastar nada de lubricante). Sin puntos configurados no
+      // hay nada que exigir aquí (mismo criterio que
+      // computeExecutionCompleteness() en operational-scope.js: sin
+      // checklist, siempre se considera completo).
+      const totalPuntosChecklist = $$('.checklist-item').length;
+      const qtyIngresada = parseFloat(fd.qty || 0);
+      if (totalPuntosChecklist > 0 && incomplete.length === 0 && !(qtyIngresada > 0)) {
+        alert(`Marcaste los ${totalPuntosChecklist} puntos de engrase como realizados, pero la cantidad de grasa es 0. Anota la cantidad real utilizada.`);
+        return;
+      }
+
+      // "Otro" como motivo de fuera de plan exige observación — nunca depender
+      // solo de esa etiqueta genérica (§7 del lote correspondiente).
+      if (outOfPlan && fd.outOfPlanReason === 'OTRO' && !(fd.notes || '').trim()) {
+        alert('Escribe una observación describiendo el motivo del engrase fuera de plan.');
+        return;
       }
 
       const details = $$('.checklist-item').map(item => ({
@@ -4367,6 +6695,67 @@ async function startGreaseFlow(equipmentId, target) {
         ? (await DB.get('users', fd.retroUser)) || App.currentUser
         : App.currentUser;
 
+      // Snapshot operativo (§1 del cierre de lote — ver docs/OPERATIONAL_SCOPE.md):
+      // se calcula ANTES de tocar el plan/equipo (lastGreaseHour/locationId
+      // pueden cambiar después de HOY) para que quede fijo el contexto de
+      // ESTE momento, nunca reconstruible desde el estado actual. Se
+      // calcula ANTES de guardar nada — completeGreaseAssignmentForOccurrence()
+      // más abajo reutiliza la MISMA occurrenceKey, nunca la recalcula.
+      // Retroactivo: la ocurrencia que se cierra es la de la fecha REAL del
+      // engrase, no la de hoy (que es cuando se está capturando) — solo
+      // importa para planes "Día y turno de la semana" (los de "Horas de
+      // operación" no usan dateISO, ver computeOccurrenceKey()).
+      const occurrenceKeyDeEsteEngrase = plan ? computeOccurrenceKey(plan, { dateISO: esRetro ? fechaRegistro.slice(0, 10) : todayDateISO() }) : null;
+      const asignacionActivaDeEsteEngrase = occurrenceKeyDeEsteEngrase
+        ? findActivePendingAssignment(await DB.allActive('lubrication_assignments'), occurrenceKeyDeEsteEngrase)
+        : null;
+      // Si había una asignación manual activa, la cuadrilla RESPONSABLE es la
+      // asignada (aunque quien tenga la sesión sea una jefatura registrando en
+      // nombre de otro); si no, la cuadrilla del DISPOSITIVO — solo cuando
+      // quien registra es Lubricador con dispositivo configurado. Nunca se
+      // inventa una cuadrilla cuando no se puede saber (jefatura registrando
+      // sin asignación activa: queda null a propósito).
+      let crewIdDeEsteEngrase = asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.assignedCrewId : null;
+      if (!crewIdDeEsteEngrase && App.currentUser.role === 'LUBRICADOR') {
+        const scopeDeEsteEngrase = await getCurrentOperationalScope();
+        if (scopeDeEsteEngrase.kind === 'DEVICE_SCOPED') crewIdDeEsteEngrase = scopeDeEsteEngrase.crewId;
+      }
+      const crewLocationIdDeEsteEngrase = crewIdDeEsteEngrase
+        ? ((await DB.allActive('cuadrillas')).find(c => c.id === crewIdDeEsteEngrase) || {}).locationId || null
+        : null;
+      // Fuera de plan (lote correspondiente) — prioridad ASSIGNED > OUT_OF_PLAN
+      // > PLANNED (§15): una assignment activa SIEMPRE gana, aunque se haya
+      // entrado por el botón "+ Fuera de plan" (nunca se convierte en
+      // OUT_OF_PLAN solo porque el lubricador tocó ese botón por costumbre).
+      const executionTypeDeEsteEngrase = asignacionActivaDeEsteEngrase
+        ? 'ASSIGNED'
+        : (outOfPlan ? 'OUT_OF_PLAN' : 'PLANNED');
+      const completenessDeEsteEngrase = computeExecutionCompleteness(details);
+      // Solo un engrase fuera de plan puede "satisfacer por adelantado" una
+      // ocurrencia futura (§9/§10/§13/§14) — trabajo PLANNED/ASSIGNED ya
+      // tiene su propio mecanismo (completeGreaseAssignmentForOccurrence()/
+      // avance normal de plan.lastGreaseHour más abajo).
+      const satisfiedOccurrenceKeyDeEsteEngrase = executionTypeDeEsteEngrase === 'OUT_OF_PLAN'
+        ? resolveOutOfPlanSatisfaction({
+            plan, completeness: completenessDeEsteEngrase,
+            existingRecords: await DB.allActive('lubrication_records'),
+            todayDate: esRetro ? new Date(fechaRegistro) : new Date()
+          })
+        : null;
+
+      const operationalSnapshot = buildExecutionSnapshot({
+        equipmentLocationId: equipment.locationId,
+        crewId: crewIdDeEsteEngrase,
+        crewLocationId: crewLocationIdDeEsteEngrase,
+        performedByUserId: autor.id,
+        shiftId: turnoRegistro,
+        assignmentId: asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.id : null,
+        executionType: executionTypeDeEsteEngrase,
+        outOfPlanReason: executionTypeDeEsteEngrase === 'OUT_OF_PLAN' ? (fd.outOfPlanReason || 'OTRO') : null,
+        executionCompleteness: completenessDeEsteEngrase,
+        satisfiedOccurrenceKey: satisfiedOccurrenceKeyDeEsteEngrase
+      });
+
       const record = stamp({
         id: uid('greg'), equipmentId: equipment.id, planId: plan ? plan.id : null,
         date: fechaRegistro, shiftId: turnoRegistro, hourmeter: sinHorometro ? equipment.hourmeter : newHourmeter,
@@ -4378,6 +6767,7 @@ async function startGreaseFlow(equipmentId, target) {
         noHourmeterReason: sinHorometro ? fd.noHourmeterReason : undefined,
         retroactivo: esRetro || undefined,
         capturadoPor: esRetro ? App.currentUser.name : undefined,
+        operationalSnapshot,
         synced: navigator.onLine
       }, App.currentUser.name);
       // ── Guardado protegido ────────────────────────────────────────────
@@ -4429,6 +6819,21 @@ async function startGreaseFlow(equipmentId, target) {
           `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
           App.currentUser.name);
 
+        // Evento propio para engrase fuera de plan (§27) — nunca tokens/PIN,
+        // solo el contexto de negocio.
+        if (executionTypeDeEsteEngrase === 'OUT_OF_PLAN') {
+          await logAudit('OUT_OF_PLAN_GREASE_RECORDED',
+            `${equipment.code} · motivo ${operationalSnapshot.outOfPlanReason} · ${completenessDeEsteEngrase}${satisfiedOccurrenceKeyDeEsteEngrase ? ' · satisface ' + satisfiedOccurrenceKeyDeEsteEngrase : ' · pendiente de conciliación'}`,
+            App.currentUser.name);
+        }
+
+        // Si este engrase cerraba una asignación manual PENDING (§R), la
+        // completa. Si era trabajo normal sin asignación, no hace nada.
+        if (occurrenceKeyDeEsteEngrase) {
+          await completeGreaseAssignmentForOccurrence(equipment, occurrenceKeyDeEsteEngrase, record.id)
+            .catch(err => console.warn('No se pudo cerrar la asignación de este engrase', err));
+        }
+
       } catch (err) {
         // Algo falló a mitad del guardado (disco lleno, base bloqueada, app cerrándose).
         // Se revierte lo que alcanzó a escribirse para no dejar el equipo con datos
@@ -4453,9 +6858,43 @@ async function startGreaseFlow(equipmentId, target) {
       await discardDraft();
       await refreshLocalNotifications();
       await refreshAppBadge();
+      // Sube el engrase ya, para que el resto del equipo lo vea en segundos
+      // en vez de esperar el siguiente ciclo del timer. No await: no debe
+      // bloquear la pantalla de "Validar ahora/después" que sigue abajo. El
+      // guard de onSyncStateChange() (ver más arriba en este archivo) sigue
+      // intacto tal cual — este fullSync() NUNCA desmonta esta pantalla.
+      Sync.fullSync();
 
-      area.innerHTML = `<div class="panel"><div class="empty-state success">✓ Engrase registrado para ${esc(equipment.code)}. Próximo engrase recalculado automáticamente.</div></div>`;
-      setTimeout(() => navigate(App.route), 900);
+      // La validación NO es obligatoria en el momento: el lubrication_record
+      // ya quedó guardado arriba pase lo que pase acá. "Validar ahora" abre
+      // el MISMO modal real (openValidationModal, grease_validations) sobre
+      // este `record`/`equipment"; "Validar después" solo navega — no crea
+      // ningún grease_validation, el estado derivado queda en
+      // PENDIENTE_VALIDACION hasta que alguien firme (ver
+      // docs/GREASE_VALIDATION_AUDIT.md).
+      area.innerHTML = `<div class="panel">
+        <div class="empty-state success">Engrase registrado correctamente — ${esc(equipment.code)}. Próximo engrase recalculado automáticamente.</div>
+        <div class="grease-validate-choice">
+          <p class="dim">¿Quién valida este engrase?</p>
+          <div class="grease-validate-choice-actions">
+            <button type="button" class="btn btn-accent" id="grease-validate-now-btn">Validar ahora</button>
+            <button type="button" class="btn" id="grease-validate-later-btn">Validar después</button>
+          </div>
+        </div>
+      </div>`;
+      $('#grease-validate-now-btn')?.addEventListener('click', () => {
+        openValidationModal(record, equipment, irAMisEngrasesTrasRegistrar);
+      });
+      $('#grease-validate-later-btn')?.addEventListener('click', irAMisEngrasesTrasRegistrar);
+      } finally {
+        // El botón puede ya no existir (éxito reemplazó `area.innerHTML`) —
+        // reactivarlo solo importa en los caminos de error/validación fallida,
+        // para que la persona pueda corregir y reintentar (nunca queda
+        // bloqueado, pero tampoco permite un doble submit mientras procesa).
+        enviandoEngrase = false;
+        const btnSubmit = $('.btn-grease-submit');
+        if (btnSubmit) btnSubmit.disabled = false;
+      }
     });
   }
 }
@@ -4499,6 +6938,7 @@ async function renderHorometros() {
       await DB.put('equipment', stamp(eq, App.currentUser.name));
       await logAudit('HOROMETRO_ACTUALIZADO', `${esc(eq.code)} → ${fmt(newVal)} h`, App.currentUser.name);
       showInAppToast(`✓ Horómetro de ${esc(eq.code)} actualizado`);
+      Sync.fullSync(); // sube el cambio ya, en vez de esperar el siguiente ciclo del timer
       renderHorometros();
     });
   });
@@ -4510,6 +6950,12 @@ async function renderHorometros() {
     await handleHourmeterExcelImport(file, equipos);
     ev.target.value = '';
   });
+
+  // UI-FULL-102: navigate() ya aplica makeTablesResponsive() en la carga inicial de
+  // esta pantalla, pero "Guardar" (arriba) llama a renderHorometros() directamente
+  // para refrescar la tabla, sin pasar por navigate() — sin esta llamada, la tabla
+  // pierde las etiquetas móviles justo después del primer guardado.
+  makeTablesResponsive(c);
 }
 
 async function handleHourmeterExcelImport(file, equipos) {
@@ -4545,6 +6991,10 @@ async function handleHourmeterExcelImport(file, equipos) {
     </div>
     <div class="modal-actions"><button class="btn btn-accent" id="btn-confirm-hm">Aplicar actualización</button></div>
   `);
+  // UI-FULL-305: esta tabla vive dentro de un modal (openModal), fuera de #app-content
+  // — el gancho central de navigate() (que aplica makeTablesResponsive() a cada ruta)
+  // nunca la alcanza. openModal() es síncrona, así que la tabla ya existe en el DOM aquí.
+  makeTablesResponsive($('.modal-body'));
   $('#btn-confirm-hm').addEventListener('click', async () => {
     let applied = 0;
     for (const p of preview) {
@@ -4556,6 +7006,7 @@ async function handleHourmeterExcelImport(file, equipos) {
     }
     await logAudit('HOROMETROS_IMPORTADOS', `${applied} equipos actualizados desde Excel`, App.currentUser.name);
     showInAppToast(`✓ Horómetros importados: ${applied} equipos`);
+    Sync.fullSync(); // sube el lote ya, en vez de esperar el siguiente ciclo del timer
     closeModal();
     navigate('horometros');
   });
@@ -4571,6 +7022,7 @@ async function renderAnomalias() {
   const equipos = await DB.allActive('equipment');
 
   c.innerHTML = `
+    <div class="layout-wide">
     <div class="toolbar">
       <select id="anom-filter" class="input">
         <option value="">Todos los estados</option>
@@ -4583,12 +7035,17 @@ async function renderAnomalias() {
         <thead><tr><th>Criticidad</th><th>Equipo</th><th>Componente</th><th>Descripción</th><th>Fecha</th><th>Responsable</th><th>Estado</th><th>Foto</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
+    </div>
     </div>`;
 
 
-  function draw(filter = '') {
+  async function draw(filter = '') {
     const rows = anomalies.filter(a => !filter || a.status === filter);
-    $('#anom-table tbody').innerHTML = rows.map(a => {
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7): las fotos de anomalías pueden venir de otro dispositivo — se
+    // resuelven todas en paralelo antes de armar la tabla.
+    const photoSrcs = await Promise.all(rows.map(a => resolvePhotoThumbSrcs(a)));
+    $('#anom-table tbody').innerHTML = rows.map((a, i) => {
       const eq = equipos.find(e => e.id === a.equipmentId);
       return `<tr>
         <td><span class="dot" style="background:${CRIT_COLOR[a.criticality]}"></span> ${esc(a.criticality)}</td>
@@ -4598,7 +7055,7 @@ async function renderAnomalias() {
         <td>${fmtDate(a.createdAt)}</td>
         <td>${esc(a.createdBy)}</td>
         <td>${esc(a.status)}</td>
-        <td>${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`)}</td>
+        <td>${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`, photoSrcs[i])}</td>
         <td class="row-actions">
           <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
           ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm anom-close" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
@@ -4741,7 +7198,7 @@ async function renderLubricantes() {
     </div>
     <div class="panel">
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (kg)</th>${canEdit ? '<th></th>' : ''}</tr></thead>
+        <thead><tr><th>Nombre</th><th>Marca</th><th>Tipo</th><th>Grado</th><th>Código</th><th>Consumo total (${GREASE_UNIT})</th>${canEdit ? '<th></th>' : ''}</tr></thead>
         <tbody>
           ${lubricants.map(l => {
             const total = records.filter(r => r.greaseType === l.id).reduce((s, r) => s + (r.qty || 0), 0);
@@ -4759,7 +7216,7 @@ async function renderLubricantes() {
   makeTablesResponsive(c);
 
   function lubForm(existing) {
-    const l = existing || { name: '', brand: '', type: '', grade: '', code: '', unit: 'kg' };
+    const l = existing || { name: '', brand: '', type: '', grade: '', code: '', unit: GREASE_UNIT };
     openModal(existing ? `Editar · ${esc(existing.name)}` : 'Nuevo lubricante', `
       <form id="lub-form" class="form-grid">
         <label>Nombre<input required name="name" value="${esc(l.name)}"/></label>
@@ -4767,7 +7224,7 @@ async function renderLubricantes() {
         <label>Tipo<input name="type" value="${esc(l.type)}"/></label>
         <label>Grado<input name="grade" placeholder="NLGI 2" value="${esc(l.grade)}"/></label>
         <label>Código interno<input name="code" value="${esc(l.code)}"/></label>
-        <label>Unidad<input name="unit" value="${l.unit || 'kg'}"/></label>
+        <label>Unidad<input name="unit" value="${l.unit || GREASE_UNIT}"/></label>
         <div class="modal-actions"><button type="submit" class="btn btn-accent">${existing ? 'Guardar cambios' : 'Guardar'}</button></div>
       </form>`);
     $('#lub-form').addEventListener('submit', async (ev) => {
@@ -4797,6 +7254,21 @@ async function renderLubricantes() {
   }));
 }
 
+// Búsqueda parcial, sin distinguir mayúsculas/minúsculas, sobre los campos
+// de equipo ya existentes (código, código ahorrativo, marca, modelo,
+// descripción, N° de serie, familia/tipo, ubicación) — reutilizada por el
+// buscador de Historial. `type`/`location` son opcionales (el equipo puede
+// no tener familia/ubicación asignada todavía).
+function equipoMatchesQuery(eq, type, location, query) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [
+    eq.code, eq.shortCode, eq.brand, eq.model, eq.description, eq.serial,
+    type ? type.name : '', location ? location.name : '',
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(q);
+}
+
 /* ============================================================
    HISTORIAL
    ============================================================ */
@@ -4804,57 +7276,162 @@ async function renderHistorial() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
-  const types = await DB.allActive('equipment_types');
+  // TODAS (no solo activas) — esta pantalla nunca usa `types`/`locations`
+  // para un <select> (a diferencia de Dashboard/Reportes/Matriz), solo para
+  // mostrar el nombre de la ubicación/familia de cada equipo del historial
+  // — un equipo con una ubicación YA desactivada debe seguir mostrando su
+  // nombre real, nunca "—" (mismo bug real que DATA-PENDING-A02, ver
+  // docs/BUG_REGISTER.md).
+  const types = await DB.all('equipment_types');
+  const locations = await DB.all('locations');
+  const plans = await DB.allActive('lubrication_plans');
+  const planPorEquipoIdHist = {}; plans.forEach(p => planPorEquipoIdHist[p.equipmentId] = p);
   const today = new Date().toISOString().slice(0, 10);
   let lastGeneralResults = [];
+  // Pestañas (misma pantalla, sin navigate() — solo se alterna display vía
+  // .hidden — ambos grupos ya cargaron sus datos, cambiar de pestaña no
+  // vuelve a pedirlos ni pierde filtros/resultados). "Por equipo" abre por
+  // defecto.
   c.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>Buscar en todo el historial</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <label class="filter-label">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
-        <label class="filter-label">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
-        <label class="filter-label">Turno
-          <select id="gh-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
-        </label>
-        <label class="filter-label">Familia
-          <select id="gh-familia" class="input input-sm"><option value="">Todas</option>${types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
-        </label>
-        <label class="filter-label">Estado del equipo
-          <select id="gh-estado" class="input input-sm">
-            <option value="">Todos</option>
-            <option value="ROJO">Vencidos</option>
-            <option value="AMARILLO">Próximos</option>
-            <option value="VERDE">Al día</option>
-          </select>
-        </label>
-        <button class="btn btn-accent" id="gh-apply">${ic("search")}Buscar</button>
+    <div class="layout-wide">
+    <div class="hist-tabs" role="tablist">
+      <button type="button" class="hist-tab active" data-tab="equipo" role="tab" aria-selected="true">Por equipo</button>
+      <button type="button" class="hist-tab" data-tab="global" role="tab" aria-selected="false">Historial global</button>
+    </div>
+    <div data-hist-panel="equipo">
+      <div class="panel" id="hist-eq-panel">
+        <div class="panel-head"><h3>Historial por equipo</h3></div>
+        <div id="hist-eq-search-area"></div>
       </div>
-      <div id="gh-results"></div>
+      <div id="hist-area"></div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Historial por equipo</h3></div>
-      <select id="hist-equipo" class="input">
-        <option value="">— Selecciona un equipo —</option>
-        ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
-      </select>
+    <div data-hist-panel="global" class="hidden">
+      <div class="panel hist-global-panel">
+        <div class="panel-head"><h3>Historial global</h3></div>
+        <div class="hist-global-body">
+          <input type="search" id="gh-search" class="input hist-global-search" placeholder="Buscar: código, familia, marca, modelo, ubicación…" autocomplete="off"/>
+          <div class="hist-global-filters-row">
+            <label class="filter-label hist-global-filter">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
+            <label class="filter-label hist-global-filter">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
+            <label class="filter-label hist-global-filter">Turno
+              <select id="gh-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
+            </label>
+            <label class="filter-label hist-global-filter">Estado del equipo
+              <select id="gh-estado" class="input input-sm">
+                <option value="">Todos</option>
+                <option value="ROJO">Vencidos</option>
+                <option value="AMARILLO">Próximos</option>
+                <option value="VERDE">Al día</option>
+              </select>
+            </label>
+            <div class="hist-global-summary" id="gh-summary"></div>
+          </div>
+          <div id="gh-results"></div>
+        </div>
+      </div>
     </div>
-    <div id="hist-area"></div>
+    </div>
   `;
-  $('#hist-equipo').addEventListener('change', async (e) => {
-    const id = e.target.value;
-    if (!id) { $('#hist-area').innerHTML = ''; return; }
-    await drawHistory(id);
-  });
+
+  $$('.hist-tab', c).forEach(tab => tab.addEventListener('click', () => {
+    $$('.hist-tab', c).forEach(t => { t.classList.toggle('active', t === tab); t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
+    $$('[data-hist-panel]', c).forEach(p => p.classList.toggle('hidden', p.dataset.histPanel !== tab.dataset.tab));
+  }));
+
+  // Buscador de equipo (código/familia/marca/modelo/ubicación), reutiliza
+  // equipoMatchesQuery() — es la ÚNICA búsqueda de equipo de la pantalla (el
+  // historial global ya no tiene una propia, ver A7). Al elegir un equipo, la
+  // búsqueda se reemplaza por un encabezado compacto; "Cambiar equipo" vuelve
+  // a mostrarla. Debounce ~280ms, mismo patrón que wireQuickFind() (topbar).
+  const typePorIdHist = {}; types.forEach(t => typePorIdHist[t.id] = t);
+  const locPorIdHist = {}; locations.forEach(l => locPorIdHist[l.id] = l);
+
+  function renderEqSearch() {
+    $('#hist-eq-search-area').innerHTML = `
+      <div class="hist-eq-search-wrap">
+        <input type="search" id="hist-eq-search" class="input hist-eq-search" placeholder="Buscar equipo: código, familia, marca, modelo, ubicación…" autocomplete="off"/>
+        <div id="hist-eq-results" class="hist-eq-results hidden"></div>
+      </div>`;
+    $('#hist-area').innerHTML = '';
+    wireEqSearch();
+  }
+
+  function renderEqHeader(eq) {
+    const type = typePorIdHist[eq.typeId];
+    const loc = locPorIdHist[eq.locationId];
+    $('#hist-eq-search-area').innerHTML = `
+      <div class="hist-eq-header">
+        <div class="hist-eq-header-main">
+          <span class="hist-eq-header-code">${esc(eq.code)}</span>
+          <span class="hist-eq-header-model">${esc(eq.brand)} ${esc(eq.model)}</span>
+        </div>
+        <div class="hist-eq-header-meta">
+          <span>${esc((type || {}).name || 'Sin familia')}</span>
+          <span>${esc((loc || {}).name || 'Sin ubicación')}</span>
+          <span class="hist-eq-header-status">${esc(eq.status)}</span>
+        </div>
+        <button type="button" class="btn btn-sm" id="hist-eq-change">${ic('search')}Cambiar equipo</button>
+      </div>`;
+    $('#hist-eq-change').addEventListener('click', renderEqSearch);
+  }
+
+  function wireEqSearch() {
+    const input = $('#hist-eq-search');
+    const box = $('#hist-eq-results');
+    let temporizador;
+    function buscar() {
+      const q = input.value;
+      if (!q.trim()) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      const matches = equipos.filter(e => equipoMatchesQuery(e, typePorIdHist[e.typeId], locPorIdHist[e.locationId], q)).slice(0, 8);
+      if (!matches.length) {
+        box.innerHTML = '<div class="hist-eq-empty">Ningún equipo coincide</div>';
+        box.classList.remove('hidden');
+        return;
+      }
+      box.innerHTML = matches.map(e => `
+        <button type="button" class="hist-eq-result" data-id="${e.id}">
+          <span class="mono"><b>${esc(e.code)}</b></span>
+          <span class="dim">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorIdHist[e.locationId] || {}).name || 'Sin ubicación')}</span>
+        </button>`).join('');
+      box.classList.remove('hidden');
+      $$('.hist-eq-result', box).forEach(b => b.addEventListener('click', async () => {
+        const eq = equipos.find(e => e.id === b.dataset.id);
+        renderEqHeader(eq);
+        await drawHistory(eq.id);
+      }));
+    }
+    input.addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(buscar, 280); });
+    document.addEventListener('click', ev => { if (!ev.target.closest('.hist-eq-search-wrap')) box.classList.add('hidden'); });
+  }
+
+  renderEqSearch();
+
+  // Deep-link desde el Dashboard (fila/código de "Mayor tiempo sin
+  // engrasar" o acción "Ver historial" de sus modales): preselecciona el
+  // equipo igual que si el usuario lo hubiera elegido del buscador — no es
+  // un filtro nuevo, reutiliza renderEqHeader()/drawHistory() reales.
+  if (App.dashJumpEquipoId) {
+    const jumpId = App.dashJumpEquipoId;
+    App.dashJumpEquipoId = null;
+    const eqJump = equipos.find(e => e.id === jumpId);
+    if (eqJump) { renderEqHeader(eqJump); await drawHistory(eqJump.id); }
+  }
 
   async function runGeneralSearch() {
     const from = $('#gh-from').value ? new Date($('#gh-from').value + 'T00:00:00') : null;
     const to = $('#gh-to').value ? new Date($('#gh-to').value + 'T23:59:59') : null;
     const turno = $('#gh-turno').value;
-    const familia = $('#gh-familia').value;
     const estado = $('#gh-estado').value;
+    const query = $('#gh-search').value;
 
+    // Todos los filtros se combinan con AND: cada uno reduce matchEquipos por
+    // separado (vacío/"Todos" = no restringe), y turno/fechas filtran los
+    // registros aparte — el resultado final cumple TODAS las condiciones
+    // activas a la vez, nunca solo una.
     let matchEquipos = equipos;
-    if (familia) matchEquipos = matchEquipos.filter(e => e.typeId === familia);
+    if (query.trim()) {
+      matchEquipos = matchEquipos.filter(e => equipoMatchesQuery(e, typePorIdHist[e.typeId], locPorIdHist[e.locationId], query));
+    }
     if (estado) {
       const statuses = await computeAllStatuses(matchEquipos);
       const okIds = new Set(statuses.filter(x => x.s.code === estado).map(x => x.e.id));
@@ -4877,6 +7454,11 @@ async function renderHistorial() {
     // registros dejaba la pantalla congelada varios segundos.
     const eqPorId = {}; equipos.forEach(e => eqPorId[e.id] = e);
     const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
+    // Cumplimiento: el "registro anterior" para el vencimiento por horas es el
+    // anterior REAL del equipo en TODO el historial (allRecords, sin el filtro
+    // de fecha/turno visible), nunca del subconjunto filtrado en pantalla.
+    const recordsPorEquipo = {};
+    allRecords.forEach(r => { (recordsPorEquipo[r.equipmentId] = recordsPorEquipo[r.equipmentId] || []).push(r); });
 
     lastGeneralResults = results.map(r => ({ r, eq: eqPorId[r.equipmentId], lub: lubPorId[r.greaseType] }));
 
@@ -4886,17 +7468,24 @@ async function renderHistorial() {
     const LIMITE_VISIBLE = 200;
     const visibles = results.slice(0, LIMITE_VISIBLE);
     const hayMas = results.length > LIMITE_VISIBLE;
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7) — solo se resuelven las filas VISIBLES (máximo 200), nunca los
+    // miles de resultados filtrados completos.
+    const photoSrcsVisibles = await Promise.all(visibles.map(r => resolvePhotoThumbSrcs(r)));
 
+    $('#gh-summary').innerHTML = `
+      <span class="hist-global-count">${results.length} resultados${hayMas ? ` · ${LIMITE_VISIBLE} recientes` : ''}</span>
+      <button type="button" class="btn hist-export-btn" id="gh-export">${ic("download")}Exportar CSV</button>
+    `;
     $('#gh-results').innerHTML = `
-      <div class="toolbar" style="padding:10px 0">
-        <button class="btn btn-sm" id="gh-export">${ic("download")}Descargar estos resultados (CSV)</button>
-        <span class="dim">${results.length} resultado(s)${hayMas ? ` · mostrando los ${LIMITE_VISIBLE} más recientes` : ''}</span>
-      </div>
       ${hayMas ? `<div class="dim" style="padding:0 0 8px">Afina los filtros para ver menos resultados, o descarga el CSV que incluye los ${results.length} completos.</div>` : ''}
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Foto</th></tr></thead>
-        <tbody>${visibles.map(r => {
+      <div class="hist-global-table-wrap">
+      <table class="data-table hist-global-table">
+        <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Turno</th><th>Responsable</th><th>Horómetro</th><th>Grasa</th><th>Condición</th><th>Cumplimiento</th><th>Foto</th></tr></thead>
+        <tbody>${visibles.map((r, i) => {
           const eq = eqPorId[r.equipmentId];
+          const planEq = planPorEquipoIdHist[r.equipmentId] || null;
+          const compliance = evaluateRecordCompliance(r, planEq, findPreviousRecord(r, recordsPorEquipo[r.equipmentId] || []));
           return `<tr>
             <td>${fmtDate(r.date)}</td>
             <td class="mono">${eq ? eq.code : '—'}</td>
@@ -4906,10 +7495,12 @@ async function renderHistorial() {
             <td class="mono">${fmt(r.hourmeter)} h</td>
             <td>${(lubPorId[r.greaseType] || {}).name || '—'}</td>
             <td>${esc(r.condition)}</td>
-            <td>${photoThumbsHTML(r, eq ? eq.code : '')}</td>
+            <td>${complianceBadgeHTML(compliance)}</td>
+            <td>${photoThumbsHTML(r, eq ? eq.code : '', photoSrcsVisibles[i])}</td>
           </tr>`;
-        }).join('') || '<tr><td colspan="9" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
-      </table>`;
+        }).join('') || '<tr><td colspan="10" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
+      </table>
+      </div>`;
     makeTablesResponsive($('#gh-results'));
     wirePhotoThumbs($('#gh-results'));
     $('#gh-export')?.addEventListener('click', () => {
@@ -4921,329 +7512,1088 @@ async function renderHistorial() {
     });
   }
 
-  $('#gh-apply').addEventListener('click', runGeneralSearch);
+  // Sin botón Buscar: el texto busca con debounce ~280ms (mismo patrón que el
+  // buscador de equipo de arriba); los demás filtros actualizan al cambiar.
+  let ghTemporizador;
+  $('#gh-search').addEventListener('input', () => { clearTimeout(ghTemporizador); ghTemporizador = setTimeout(runGeneralSearch, 280); });
+  $('#gh-from').addEventListener('change', runGeneralSearch);
+  $('#gh-to').addEventListener('change', runGeneralSearch);
+  $('#gh-turno').addEventListener('change', runGeneralSearch);
+  $('#gh-estado').addEventListener('change', runGeneralSearch);
   runGeneralSearch();
+}
+
+// Insignia visual para evaluateRecordCompliance()/findPreviousRecord()
+// (src/core/plan-compliance.js) — 4 estados, nunca color-saturado: "cumplido"
+// discreto (verde tenue), "fuera_de_plan" como alerta (rojo), "anticipado"
+// (solo Horas, tolerancia ±10%) ámbar tenue — no es alerta ni logro, es una
+// categoría propia — y "no_evaluable" gris/neutro (nunca se lee como un
+// juicio negativo, es solo "no se sabe").
+function complianceBadgeHTML(compliance) {
+  const MAP = {
+    cumplido: ['hist-compliance-ok', 'Cumplido'],
+    fuera_de_plan: ['hist-compliance-alert', 'Fuera de plan'],
+    anticipado: ['hist-compliance-early', 'Anticipado'],
+    // Mismo tono que VALIDATION_BADGE.VALIDADO_ENCARGADO (hist-compliance-teal)
+    // — un tercer color, ni verde "todo perfecto" ni rojo "incumplido", para
+    // el caso real "se hizo, pero en el otro turno del mismo día" (lote
+    // occurrences/carryover).
+    realizado_atrasado: ['hist-compliance-teal', 'Realizado atrasado'],
+    no_evaluable: ['hist-compliance-neutral', 'No evaluable'],
+  };
+  const [cls, label] = MAP[compliance.estado] || MAP.no_evaluable;
+  return `<span class="hist-compliance-badge ${cls}" title="${esc(compliance.motivo || '')}">${label}</span>`;
+}
+
+// Insignia de VALIDATION_STATUS (src/core/grease-validation.js) — mismo
+// componente visual que complianceBadgeHTML(), tono propio para Encargado
+// (ni alerta ni el mismo verde que Operador, ver VALIDATION_BADGE).
+function validationBadgeHTML(status) {
+  const badge = VALIDATION_BADGE[status] || VALIDATION_BADGE[VALIDATION_STATUS.PENDIENTE];
+  const toneClass = { amber: 'hist-compliance-early', green: 'hist-compliance-ok', teal: 'hist-compliance-teal', red: 'hist-compliance-alert' }[badge.tone] || 'hist-compliance-neutral';
+  return `<span class="hist-compliance-badge ${toneClass}">${badge.label}</span>`;
+}
+
+// Modal de validación del engrase con firma manuscrita (canvas) — PERSISTE
+// en el store separado `grease_validations` (nunca escribe en
+// lubrication_records: la autoría del Lubricador no se toca, ver
+// docs/GREASE_VALIDATION_AUDIT.md). Guardado offline-first igual que el
+// resto de la app: DB.put() ya escribe primero en IndexedDB; sync.js
+// (uploadSignatureIfNeeded) sube la firma a Storage cuando hay señal.
+// Solo se debe abrir para un registro SIN validación activa — quien llama
+// ya filtró por pendientes, pero se re-verifica justo antes de guardar
+// (máximo una validación activa por registro, sin revalidación todavía).
+// `onDone` se llama tras confirmar, para que quien abrió el modal decida
+// cómo refrescar su propia pantalla (Historial vs. Dashboard).
+async function openValidationModal(record, equipment, onDone) {
+  const anomaliasRelacionadas = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
+
+  openModal('Validar engrase', `
+    <div class="val-info">
+      <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
+      <div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(record.date)}</span></div>
+      <div class="val-info-row"><span>Lubricador</span><span>${esc(record.userName)}</span></div>
+      <div class="val-info-row"><span>Turno</span><span>${record.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</span></div>
+      ${Number.isFinite(record.hourmeter) ? `<div class="val-info-row"><span>Horómetro</span><span>${fmt(record.hourmeter)} h</span></div>` : ''}
+      ${record.qty ? `<div class="val-info-row"><span>Cantidad de grasa</span><span>${fmt(record.qty, 1)} ${GREASE_UNIT}</span></div>` : ''}
+      ${anomaliasRelacionadas.length ? `<div class="val-info-row"><span>Anomalías abiertas del equipo</span><span>${anomaliasRelacionadas.length}</span></div>` : ''}
+    </div>
+    <div class="form-grid">
+      <label>Nombre<input type="text" id="val-name" class="input" placeholder="Nombre de quien valida" autocomplete="off"/></label>
+      <label>Rol
+        <select id="val-role" class="input">
+          <option value="">— Selecciona —</option>
+          <option value="OPERADOR">Operador</option>
+          <option value="ENCARGADO">Encargado</option>
+        </select>
+      </label>
+      <label class="span-2 hidden" id="val-reason-wrap">Motivo (obligatorio si Encargado)<textarea id="val-reason" class="input" placeholder="Ej: Operador no disponible"></textarea></label>
+    </div>
+    <div class="val-signature-wrap">
+      <div class="val-signature-label">Firma</div>
+      <canvas id="val-signature-canvas" class="val-signature-canvas" width="500" height="180"></canvas>
+      <div id="val-error" class="val-error hidden"></div>
+      <div class="val-signature-actions">
+        <button type="button" class="btn btn-sm" id="val-clear">Borrar firma</button>
+        <button type="button" class="btn btn-accent" id="val-confirm">Confirmar validación</button>
+      </div>
+    </div>
+  `);
+
+  const canvas = $('#val-signature-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1a1a1a';
+  let hasSignature = false;
+  let drawing = false;
+  function posFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+  function startStroke(e) { drawing = true; hasSignature = true; const p = posFromEvent(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }
+  function moveStroke(e) { if (!drawing) return; const p = posFromEvent(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+  function endStroke() { drawing = false; }
+  canvas.addEventListener('pointerdown', startStroke);
+  canvas.addEventListener('pointermove', moveStroke);
+  window.addEventListener('pointerup', endStroke);
+
+  $('#val-role').addEventListener('change', (e) => {
+    $('#val-reason-wrap').classList.toggle('hidden', e.target.value !== 'ENCARGADO');
+  });
+  $('#val-clear').addEventListener('click', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hasSignature = false;
+  });
+  $('#val-confirm').addEventListener('click', async () => {
+    const form = {
+      signerName: $('#val-name').value,
+      signerRole: $('#val-role').value,
+      reason: $('#val-reason') ? $('#val-reason').value : '',
+      hasSignature,
+    };
+    const result = validateValidationForm(form);
+    $('#val-error').classList.toggle('hidden', result.valid);
+    if (!result.valid) { $('#val-error').textContent = Object.values(result.errors).join(' '); return; }
+
+    // Re-chequeo justo antes de guardar (no solo al abrir el modal): si YA
+    // hay alguna validación activa (una o varias — p. ej. otro dispositivo
+    // validó offline mientras este formulario estaba abierto), NO se crea
+    // otra en silencio. Se muestra lo que ya existe en vez de sumar una más.
+    const yaActivas = findActiveValidations(record.id, await DB.allActive('grease_validations'));
+    if (yaActivas.length === 1) {
+      closeModal();
+      await openValidationDetailModal(yaActivas[0], equipment, record.date);
+      return;
+    }
+    if (yaActivas.length > 1) {
+      closeModal();
+      await openValidationConflictModal(yaActivas, equipment, record.date);
+      return;
+    }
+
+    const validation = stamp({
+      id: uid('val'), lubricationRecordId: record.id, equipmentId: equipment.id,
+      signerName: form.signerName.trim(), signerRole: form.signerRole,
+      reason: form.signerRole === 'ENCARGADO' ? form.reason.trim() : undefined,
+      signedAt: nowISO(),
+      signatureLocal: canvas.toDataURL('image/png'), // offline-first: base64 local primero
+      signatureUrl: null, // lo llena sync.js (uploadSignatureIfNeeded) cuando hay señal
+      signerUserId: App.currentUser ? App.currentUser.id : undefined,
+    }, App.currentUser ? App.currentUser.name : 'sistema');
+    await DB.put('grease_validations', validation);
+    closeModal();
+    if (onDone) onDone();
+  });
+}
+
+// Vista de SOLO LECTURA de una validación ya existente — "Ver validación"
+// (nunca se abre openValidationModal de nuevo sobre un registro ya
+// validado: esta primera versión no soporta revalidación).
+async function openValidationDetailModal(validation, equipment, recordDate) {
+  const status = statusForSignerRole(validation.signerRole);
+  // La firma es contenido sensible (§8 docs/STORAGE_PRIVACY_DESIGN.md) — si
+  // este dispositivo no tiene la copia local (base64), se pide un signed
+  // URL en vez de mostrar la URL cruda del bucket.
+  const signatureRaw = validation.signatureLocal || validation.signatureUrl;
+  const signatureSrc = await resolveEvidenceSrc(signatureRaw);
+  openModal('Validación del engrase', `
+    <div class="val-info">
+      <div class="val-info-row"><span>Equipo</span><span>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</span></div>
+      <div class="val-info-row"><span>Estado</span><span>${validationBadgeHTML(status)}</span></div>
+      ${recordDate ? `<div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div>` : ''}
+      <div class="val-info-row"><span>Nombre</span><span>${esc(validation.signerName)}</span></div>
+      <div class="val-info-row"><span>Rol</span><span>${validation.signerRole === 'ENCARGADO' ? 'Encargado' : 'Operador'}</span></div>
+      <div class="val-info-row"><span>Fecha/hora de la validación</span><span>${fmtDate(validation.signedAt)}</span></div>
+      ${validation.reason ? `<div class="val-info-row"><span>Motivo</span><span>${esc(validation.reason)}</span></div>` : ''}
+    </div>
+    <div class="val-signature-wrap">
+      <div class="val-signature-label">Firma</div>
+      ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"${evidenceValueAttr(signatureRaw)}/>` : '<p class="dim">Firma no disponible en este dispositivo todavía (pendiente de sincronizar).</p>'}
+    </div>
+  `);
+}
+
+// "Ver conflicto" — 2+ validaciones activas para el MISMO registro (doble
+// firma offline/multidispositivo, ver docs/GREASE_VALIDATION_AUDIT.md §10).
+// Muestra TODAS completas (nombre/rol/fecha/motivo/firma), sin elegir
+// ninguna ni borrar nada — la resolución (marcar cuál es la válida) NO está
+// implementada todavía (ver docs/GREASE_VALIDATION_AUDIT.md §13).
+async function openValidationConflictModal(validationsActivas, equipment, recordDate) {
+  // Misma resolución que openValidationDetailModal(), para cada firma —
+  // todas se piden en paralelo antes de armar el modal (nunca una a la vez).
+  const signatureRaws = validationsActivas.map(v => v.signatureLocal || v.signatureUrl);
+  const signatureSrcs = await Promise.all(signatureRaws.map(v => resolveEvidenceSrc(v)));
+  openModal(`Conflicto de validación (${validationsActivas.length})`, `
+    <p class="dim">${validationsActivas.length} personas validaron este mismo engrase por separado (probablemente offline, en dispositivos distintos). Ninguna firma se eliminó — revisa cuál es la correcta manualmente.</p>
+    ${recordDate ? `<div class="val-info"><div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div></div>` : ''}
+    ${validationsActivas.map((validation, idx) => {
+      const signatureSrc = signatureSrcs[idx];
+      return `
+      <div class="val-conflict-item">
+        <div class="val-conflict-item-head">Firma ${idx + 1}</div>
+        <div class="val-info">
+          <div class="val-info-row"><span>Nombre</span><span>${esc(validation.signerName)}</span></div>
+          <div class="val-info-row"><span>Rol</span><span>${validation.signerRole === 'ENCARGADO' ? 'Encargado' : 'Operador'}</span></div>
+          <div class="val-info-row"><span>Fecha/hora</span><span>${fmtDate(validation.signedAt)}</span></div>
+          ${validation.reason ? `<div class="val-info-row"><span>Motivo</span><span>${esc(validation.reason)}</span></div>` : ''}
+        </div>
+        <div class="val-signature-wrap">
+          ${signatureSrc ? `<img class="val-signature-canvas" src="${signatureSrc}" alt="Firma de ${esc(validation.signerName)}"${evidenceValueAttr(signatureRaws[idx])}/>` : '<p class="dim">Firma no disponible en este dispositivo todavía.</p>'}
+        </div>
+      </div>`;
+    }).join('')}
+  `);
 }
 
 async function drawHistory(equipmentId) {
   const equipment = await DB.get('equipment', equipmentId);
-  const records = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const anomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
+  const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const allAnomalies = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipmentId);
+  // Cierre histórico, Parte B (§11/§12/§13/§15): "No se pudo ejecutar"
+  // NUNCA había aparecido en Historial — los lubrication_skips se mezclan
+  // ahora en la MISMA tabla de "Engrases" (nunca se borra ni se oculta un
+  // NO EJECUTADO cuando el turno siguiente sí engrasa; ambos eventos
+  // quedan, en su propio orden cronológico real).
+  const allSkips = (await DB.allActive('lubrication_skips')).filter(s => s.equipmentId === equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const lubricants = await DB.allActive('lubricants');
+  const locationsHist = await DB.allActive('locations');
+  const locNameHist = (id) => (locationsHist.find(l => l.id === id) || {}).name || 'Sin ubicación';
+  // Ubicación de CADA registro AL MOMENTO en que se hizo (§1 del cierre de
+  // lote): usa el snapshot guardado en ese registro si existe; para
+  // registros de antes de este lote, cae a la ubicación ACTUAL del equipo
+  // (marcado con "*" — nunca se presenta como si fuera dato histórico real,
+  // ver resolveRecordEquipmentLocationId() en operational-scope.js).
+  const ubicacionRecordHTML = (r) => {
+    const { value, source } = resolveRecordEquipmentLocationId(r, equipment);
+    const nombre = value ? locNameHist(value) : 'Sin ubicación';
+    return source === 'snapshot'
+      ? esc(nombre)
+      : `<span title="Registro anterior al historial de ubicaciones: se muestra la ubicación ACTUAL del equipo, no necesariamente la de ese momento">${esc(nombre)} *</span>`;
+  };
+  // Tipo de ejecución (§18 del lote "engrase fuera de plan"): distingue
+  // PLANIFICADO/ASIGNADO/FUERA DE PLAN — para FUERA DE PLAN se agrega motivo
+  // + completo/parcial en el título (tooltip), sin ensuciar la tabla con más
+  // columnas de las necesarias.
+  const OOP_REASON_LABELS_HIST = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const tipoRecordHTML = (r) => {
+    const { value: tipo } = resolveRecordExecutionType(r);
+    if (tipo === 'OUT_OF_PLAN') {
+      const motivo = resolveRecordOutOfPlanReason(r);
+      const completeness = resolveRecordCompleteness(r);
+      const detalle = [motivo ? OOP_REASON_LABELS_HIST[motivo] || motivo : null, completeness === 'COMPLETE' ? 'Completo' : completeness === 'PARTIAL' ? 'Parcial' : null].filter(Boolean).join(' · ');
+      return `<span class="oop-badge" style="margin-bottom:0" title="${esc(detalle)}">Fuera de plan</span>`;
+    }
+    if (tipo === 'ASSIGNED') return '<span class="status-chip" style="--c:var(--amber)">Asignado</span>';
+    return '<span class="dim">Planificado</span>';
+  };
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
+  const validations = await DB.allActive('grease_validations');
   const isAdmin = App.currentUser.role === 'ADMINISTRADOR';
 
-  let avgInterval = '—';
-  if (records.length > 1) {
-    const sorted = [...records].sort((a, b) => a.hourmeter - b.hourmeter);
-    let diffs = [];
-    for (let i = 1; i < sorted.length; i++) diffs.push(sorted[i].hourmeter - sorted[i - 1].hourmeter);
-    avgInterval = fmt(diffs.reduce((a, b) => a + b, 0) / diffs.length, 1) + ' h';
-  }
-
+  // Filtro de período (Desde/Hasta) SOLO para este equipo — independiente del
+  // buscador/filtros de "Historial global" (ids distintos, sin estado
+  // compartido). Vacíos = todo el historial del equipo. Afecta Engrases Y
+  // Anomalías a la vez (AND con el equipo ya seleccionado).
   $('#hist-area').innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>${esc(equipment.code)} · ${esc(equipment.brand)} ${esc(equipment.model)}</h3></div>
-      <div class="detail-grid">
-        <div><b>Horómetro actual</b><div class="mono">${fmt(equipment.hourmeter)} h</div></div>
-        <div><b>Engrases registrados</b><div>${records.length}</div></div>
-        <div><b>Intervalo promedio real</b><div>${avgInterval}</div></div>
-        <div><b>Anomalías registradas</b><div>${anomalies.length}</div></div>
-      </div>
+    <div class="hist-eq-period-row">
+      <label class="filter-label hist-eq-period-filter">Desde <input type="date" id="hist-eq-from" class="input input-sm"/></label>
+      <label class="filter-label hist-eq-period-filter">Hasta <input type="date" id="hist-eq-to" class="input input-sm"/></label>
+      <button type="button" class="hist-eq-clear-dates hidden" id="hist-eq-clear-dates">✕ Limpiar fechas</button>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Engrases</h3></div>
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Turno</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad</th><th>Condición</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
-        <tbody>
-          ${records.map(r => `<tr data-rec="${r.id}">
-            <td>${fmtDate(r.date)}</td>
-            <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-            <td class="mono">${fmt(r.hourmeter)} h</td>
-            <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
-            <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
-            <td class="mono">${fmt(r.qty, 1)} kg</td>
-            <td>${esc(r.condition)}${(() => {
-              const pend = (r.details || []).filter(d => !d.done);
-              const avisos = [];
-              if (pend.length) avisos.push(`<div class="pendiente-nota">${pend.length} punto(s) sin engrasar: ${pend.map(d => `${esc(d.pointName)} <i>(${esc(d.reason || 'sin motivo')})</i>`).join(', ')}</div>`);
-              if (r.sinHorometro) avisos.push(`<div class="pendiente-nota">⚠ Sin lectura de horómetro: ${esc(r.noHourmeterReason || 'no se pudo leer')}</div>`);
-              return avisos.join('');
-            })()}</td>
-            <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`)}</td>
-            ${isAdmin ? `<td><button class="btn btn-sm btn-danger btn-del-record" data-id="${r.id}">${ic("trash")}Eliminar</button></td>` : ''}
-          </tr>`).join('') || `<tr><td colspan="${isAdmin ? 9 : 8}" class="empty-state">Sin registros.</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Anomalías</h3></div>
-      <table class="data-table">
-        <thead><tr><th>Fecha</th><th>Componente</th><th>Descripción</th><th>Criticidad</th><th>Estado</th><th>Foto</th></tr></thead>
-        <tbody>
-          ${anomalies.map(a => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin anomalías.</td></tr>'}
-        </tbody>
-      </table>
-    </div>
+    <div id="hist-eq-content"></div>
   `;
-  wirePhotoThumbs($('#hist-area'));
-  makeTablesResponsive($('#hist-area'));
 
-  if (isAdmin) {
-    $$('.btn-del-record').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm('¿Eliminar este registro de engrase? Esta acción se guarda como borrado lógico (queda en auditoría) y NO recalcula automáticamente el horómetro ni el plan de engrase del equipo — revísalos manualmente si era el registro más reciente.')) return;
-      const rec = await DB.get('lubrication_records', b.dataset.id);
-      rec.active = false;
-      await DB.put('lubrication_records', stamp(rec, App.currentUser.name));
-      await logAudit('ENGRASE_ELIMINADO', `${esc(equipment.code)} · ${fmtDate(rec.date)}`, App.currentUser.name);
-      showInAppToast('✓ Registro de engrase eliminado');
-      drawHistory(equipmentId);
+  async function renderPeriodContent() {
+    const fromVal = $('#hist-eq-from').value;
+    const toVal = $('#hist-eq-to').value;
+    const from = fromVal ? new Date(fromVal + 'T00:00:00') : null;
+    const to = toVal ? new Date(toVal + 'T23:59:59') : null;
+    const filtered = !!(from || to);
+    $('#hist-eq-clear-dates').classList.toggle('hidden', !filtered);
+
+    const records = allRecords.filter(r => {
+      const d = new Date(r.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+    const anomalies = allAnomalies.filter(a => {
+      const d = new Date(a.createdAt);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+    const skipsDelPeriodo = allSkips.filter(s => {
+      const d = new Date(s.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+    // Línea temporal unificada (§11/§15): ENGRASE y NO_EJECUTADO ordenados
+    // por fecha real descendente, igual criterio que `records` a secas
+    // (más reciente primero) — nunca se separan en 2 listas distintas.
+    const eventosHist = [
+      ...records.map(r => ({ tipo: 'ENGRASE', date: r.date, record: r })),
+      ...skipsDelPeriodo.map(s => ({ tipo: 'NO_EJECUTADO', date: s.date, skip: s })),
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    let avgInterval = '—';
+    if (records.length > 1) {
+      const sorted = [...records].sort((a, b) => a.hourmeter - b.hourmeter);
+      let diffs = [];
+      for (let i = 1; i < sorted.length; i++) diffs.push(sorted[i].hourmeter - sorted[i - 1].hourmeter);
+      avgInterval = fmt(diffs.reduce((a, b) => a + b, 0) / diffs.length, 1) + ' h';
+    }
+
+    // Condición larga (puntos sin engrasar / sin horómetro) se resume como
+    // insignia corta + "Ver detalle" (modal), en vez de romper la fila de la
+    // tabla con texto largo — el detalle completo no se pierde, solo se oculta
+    // hasta que se pide.
+    const condDetails = {};
+    records.forEach(r => {
+      const pend = (r.details || []).filter(d => !d.done);
+      const avisos = [];
+      if (pend.length) avisos.push(`<div class="pendiente-nota">${pend.length} punto(s) sin engrasar: ${pend.map(d => `${esc(d.pointName)} <i>(${esc(d.reason || 'sin motivo')})</i>`).join(', ')}</div>`);
+      if (r.sinHorometro) avisos.push(`<div class="pendiente-nota">⚠ Sin lectura de horómetro: ${esc(r.noHourmeterReason || 'no se pudo leer')}</div>`);
+      condDetails[r.id] = avisos.join('');
+    });
+
+    // KPI del período filtrado (con etiqueta que lo deja claro) cuando hay
+    // fechas activas; histórico total del equipo cuando no las hay. El
+    // horómetro actual es el valor EN VIVO del equipo — no es un dato de
+    // período, así que nunca cambia con este filtro.
+    const ahoraValHist = new Date(); // una sola vez — nunca fecha de sync/apertura de pantalla
+    // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
+    // §7): fotos de engrase/anomalías pueden venir de otro dispositivo.
+    const [recordPhotoSrcs, anomalyPhotoSrcs] = await Promise.all([
+      Promise.all(records.map(r => resolvePhotoThumbSrcs(r))),
+      Promise.all(anomalies.map(a => resolvePhotoThumbSrcs(a))),
+    ]);
+    $('#hist-eq-content').innerHTML = `
+      <div class="kpi-grid hist-kpi-grid">
+        <div class="kpi-card"><div class="kpi-value mono">${fmt(equipment.hourmeter)} h</div><div class="kpi-label">Horómetro actual</div></div>
+        <div class="kpi-card"><div class="kpi-value">${records.length}</div><div class="kpi-label">Engrases ${filtered ? 'en el período' : 'registrados'}</div></div>
+        <div class="kpi-card"><div class="kpi-value">${avgInterval}</div><div class="kpi-label">Intervalo promedio ${filtered ? '(período)' : 'real'}</div></div>
+        <div class="kpi-card ${anomalies.length ? 'tone-amber' : ''}"><div class="kpi-value">${anomalies.length}</div><div class="kpi-label">Anomalías ${filtered ? 'en el período' : 'registradas'}</div></div>
+        <div class="kpi-card ${skipsDelPeriodo.length ? 'tone-amber' : ''}"><div class="kpi-value">${skipsDelPeriodo.length}</div><div class="kpi-label">No ejecutados ${filtered ? 'en el período' : 'registrados'}</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Engrases</h3></div>
+        <table class="data-table hist-table">
+          <thead><tr><th>Fecha</th><th>Turno</th><th>Ubicación</th><th>Tipo</th><th>Horómetro</th><th>Responsable</th><th>Grasa</th><th>Cantidad (${GREASE_UNIT})</th><th>Condición</th><th>Cumplimiento</th><th>Validación</th><th>Foto</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+          <tbody>
+            ${eventosHist.map((ev, i) => {
+              if (ev.tipo === 'NO_EJECUTADO') {
+                const s = ev.skip;
+                // Fila compacta (cierre histórico §12/§13): mismas columnas de
+                // la tabla, pero la mayoría no aplica a un "no ejecutado" — se
+                // dejan en "—" en vez de inventar un dato. Nunca se muestra el
+                // código interno del motivo (NO_EXECUTION_REASON_LABELS ya
+                // traduce a texto real).
+                return `<tr data-skip="${s.id}" class="hist-row-skip">
+                <td>${fmtDate(s.date)}</td>
+                <td>${s.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+                <td>—</td>
+                <td><span class="hist-noexec-badge">No ejecutado</span></td>
+                <td class="mono">—</td>
+                <td>${esc(s.userName)}</td>
+                <td>—</td>
+                <td>—</td>
+                <td><button type="button" class="btn btn-sm hist-skip-detail" data-skip="${s.id}">${esc(NO_EXECUTION_REASON_LABELS[s.reason] || s.reason)}</button></td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                ${isAdmin ? '<td></td>' : ''}
+              </tr>`;
+              }
+              const r = ev.record;
+              const compliance = evaluateRecordCompliance(r, plan, findPreviousRecord(r, allRecords));
+              const activasEsteRegistro = findActiveValidations(r.id, validations);
+              const valStatus = validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings);
+              // Histórico (anterior a GREASE_VALIDATION_ENABLED_FROM): nunca exige
+              // firma — ni siquiera muestra el botón "Validar" — ver
+              // docs/GREASE_VALIDATION_AUDIT.md §14. Vencida (ya pasó el plazo de
+              // MAX_VALIDATION_SHIFTS turnos): tampoco se ofrece "Validar" — no se
+              // crea firma retroactiva normal desde Historial.
+              const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
+                activasEsteRegistro.length === 0
+                ? `<button type="button" class="btn btn-sm hist-validar-btn" data-rec="${r.id}">Validar</button>`
+                : activasEsteRegistro.length === 1
+                  ? `<button type="button" class="btn btn-sm hist-ver-validacion-btn" data-rec="${r.id}">Ver validación</button>`
+                  : `<button type="button" class="btn btn-sm hist-ver-conflicto-btn" data-rec="${r.id}">Ver conflicto</button>`;
+              const iRecords = records.indexOf(r); // índice real en `records` (recordPhotoSrcs está alineado con esa lista, no con eventosHist)
+              return `<tr data-rec="${r.id}">
+              <td>${fmtDate(r.date)}</td>
+              <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
+              <td>${ubicacionRecordHTML(r)}</td>
+              <td>${tipoRecordHTML(r)}</td>
+              <td class="mono">${fmt(r.hourmeter)} h</td>
+              <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
+              <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
+              <td class="mono">${fmt(r.qty, 1)} ${GREASE_UNIT}</td>
+              <td><span class="hist-cond-badge">${esc(r.condition)}</span>${condDetails[r.id] ? ` <button type="button" class="hist-cond-link" data-rec="${r.id}">Ver detalle</button>` : ''}</td>
+              <td>${complianceBadgeHTML(compliance)}</td>
+              <td>${validationBadgeHTML(valStatus)} ${valAction}</td>
+              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[iRecords])}</td>
+              ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
+            </tr>`;
+            }).join('') || `<tr><td colspan="${isAdmin ? 13 : 12}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Anomalías</h3></div>
+        <table class="data-table">
+          <thead><tr><th>Fecha</th><th>Componente</th><th>Descripción</th><th>Criticidad</th><th>Estado</th><th>Foto</th></tr></thead>
+          <tbody>
+            ${anomalies.map((a, i) => `<tr><td>${fmtDate(a.createdAt)}</td><td>${esc(a.component)}</td><td>${esc(a.description)}</td><td>${esc(a.criticality)}</td><td>${esc(a.status)}</td><td>${photoThumbsHTML(a, `${esc(equipment.code)} · ${esc(a.component)}`, anomalyPhotoSrcs[i])}</td></tr>`).join('') || `<tr><td colspan="6" class="empty-state">${filtered ? 'Sin anomalías en este período.' : 'Sin anomalías.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+    wirePhotoThumbs($('#hist-eq-content'));
+    makeTablesResponsive($('#hist-eq-content'));
+
+    $$('.hist-cond-link', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      openModal('Detalle de la condición', condDetails[b.dataset.rec] || '<p class="dim">Sin detalles adicionales.</p>');
     }));
+
+    // Detalle de "No ejecutado" (cierre histórico §16) — modal propio,
+    // nunca reutiliza el flujo de Registrar Engrase (no hay nada que
+    // registrar aquí, solo consultar lo que ya pasó).
+    $$('.hist-skip-detail', $('#hist-eq-content')).forEach(b => b.addEventListener('click', () => {
+      const s = allSkips.find(sk => sk.id === b.dataset.skip);
+      if (!s) return;
+      openModal('Detalle de "No se pudo ejecutar"', `
+        <div class="form-grid">
+          <div><b>Motivo</b><br>${esc(NO_EXECUTION_REASON_LABELS[s.reason] || s.reason)}</div>
+          <div><b>Fecha/hora</b><br>${fmtDate(s.date)}</div>
+          <div><b>Turno</b><br>${s.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</div>
+          <div><b>Registrado por</b><br>${esc(s.userName)}</div>
+          ${s.observacion ? `<div class="span-2"><b>Observación</b><br>${esc(s.observacion)}</div>` : ''}
+          ${s.linkedRecordId ? `<div class="span-2"><b>✓ Vinculado a un engrase real</b> (conciliado, ver fila del ${fmtDate((allRecords.find(r => r.id === s.linkedRecordId) || {}).date || '')} en esta misma tabla)</div>` : ''}
+        </div>`);
+    }));
+
+    $$('.hist-validar-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (rec) openValidationModal(rec, equipment, () => drawHistory(equipmentId));
+    }));
+    $$('.hist-ver-validacion-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
+      const validation = findActiveValidation(b.dataset.rec, validations);
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (validation) await openValidationDetailModal(validation, equipment, rec ? rec.date : null);
+    }));
+    $$('.hist-ver-conflicto-btn', $('#hist-eq-content')).forEach(b => b.addEventListener('click', async () => {
+      const activas = findActiveValidations(b.dataset.rec, validations);
+      const rec = records.find(r => r.id === b.dataset.rec);
+      if (activas.length > 1) await openValidationConflictModal(activas, equipment, rec ? rec.date : null);
+    }));
+
+    if (isAdmin) {
+      $$('.btn-del-record').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('¿Eliminar este registro de engrase? Esta acción se guarda como borrado lógico (queda en auditoría) y NO recalcula automáticamente el horómetro ni el plan de engrase del equipo — revísalos manualmente si era el registro más reciente.')) return;
+        const rec = await DB.get('lubrication_records', b.dataset.id);
+        rec.active = false;
+        await DB.put('lubrication_records', stamp(rec, App.currentUser.name));
+        await logAudit('ENGRASE_ELIMINADO', `${esc(equipment.code)} · ${fmtDate(rec.date)}`, App.currentUser.name);
+        showInAppToast('✓ Registro de engrase eliminado');
+        drawHistory(equipmentId);
+      }));
+    }
   }
+
+  renderPeriodContent();
+  $('#hist-eq-from').addEventListener('change', renderPeriodContent);
+  $('#hist-eq-to').addEventListener('change', renderPeriodContent);
+  $('#hist-eq-clear-dates').addEventListener('click', () => {
+    $('#hist-eq-from').value = '';
+    $('#hist-eq-to').value = '';
+    renderPeriodContent();
+  });
 }
 
 /* ============================================================
    REPORTES
    ============================================================ */
+// "YYYY-MM-DD" (valor nativo de <input type="date">) → "DD/MM/YYYY" para
+// mostrar el período de forma compacta — puramente visual, no toca ninguna
+// fecha usada en cálculos (esas siguen leyendo el input directo).
+function ddmmyyyy(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Agrupa un rango de días en "cubetas" para la Tendencia de cumplimiento:
+// 1 cubeta por día si el rango es corto (≤31 días, mismo criterio que "un
+// mes" para no saturar el eje X); si es más amplio, 1 cubeta por semana
+// (Lunes a Domingo) — infraestructura simple reutilizando el mismo cálculo
+// de programado/realizado por cubeta, sin inventar un tercer criterio.
+function construirBucketsTendencia(dias) {
+  if (dias.length <= 31) return dias.map(d => ({ label: d.toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }), dias: [d] }));
+  const buckets = [];
+  let actual = null;
+  dias.forEach(d => {
+    if (!actual || actual.dias.length >= 7) {
+      actual = { label: d.toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }), dias: [] };
+      buckets.push(actual);
+    }
+    actual.dias.push(d);
+  });
+  return buckets;
+}
+
+// REPORTES / INFORMES — análisis HISTÓRICO por período (distinto del
+// Dashboard: estado actual/alertas/acciones inmediatas). Pregunta que debe
+// responder: "¿cómo nos fue en este período, qué no se cumplió y por qué?".
+// El reporte principal es Realizados/Programados (computeProgramadoRealizadoPeriodo,
+// src/core/plan-compliance.js) — SOLO planes Día/Turno, ver esa función para
+// por qué los planes por Horas se excluyen a propósito (no se inventa una
+// proyección horómetro→fecha). Validación de engrases usa el mismo baseline
+// GREASE_VALIDATION_ENABLED_FROM del resto de la app (ver
+// docs/GREASE_VALIDATION_AUDIT.md §14) — mientras siga en null, la sección
+// se muestra como pendiente de configurar, nunca con datos fabricados.
 async function renderReportes() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
   const allRecords = await DB.allActive('lubrication_records');
   const anomalies = await DB.allActive('anomalies');
+  // Cierre histórico, Parte C (§17-§22 del pedido): lubrication_skips
+  // entran al análisis histórico como su PROPIA categoría — NUNCA se
+  // cuentan como lubrication_records (un "no ejecutado" nunca es un
+  // engrase realizado, ver §20).
+  const allSkips = await DB.allActive('lubrication_skips');
   const users = await DB.allActive('users');
   const locations = await DB.allActive('locations');
   const lubricants = await DB.allActive('lubricants');
+  const types = await DB.allActive('equipment_types');
+  // TODAS (no solo activas) — solo para typePorId/locPorId (texto en
+  // pantalla/exports). `types`/`locations` de arriba siguen activas-solo:
+  // alimentan los <select> de filtro de esta pantalla. Mismo bug real que
+  // DATA-PENDING-A02 (docs/BUG_REGISTER.md): un equipo con ubicación/familia
+  // ya desactivada no debe perder su nombre en Reportes/exports.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
+  const plans = await DB.allActive('lubrication_plans');
+  const validations = await DB.allActive('grease_validations');
+  // Exportación de "No ejecutados" (§4 del pedido, columna "Cuadrilla"): el
+  // skip no guarda su propia cuadrilla (no existe ese campo en el modelo),
+  // así que se resuelve vía la cuadrilla ACTUAL del usuario que lo registró
+  // — mismo fallback controlado que ya usa el resto de la app cuando no hay
+  // snapshot histórico (nunca se inventa una cuadrilla).
+  const cuadrillas = await DB.allActive('cuadrillas');
   const statuses = await computeAllStatuses(equipos);
 
+  const equiposPorId = {}; equipos.forEach(e => equiposPorId[e.id] = e);
+  const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
+  const typePorId = {}; typesAll.forEach(t => typePorId[t.id] = t);
+  const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
+  const locPorId = {}; locationsAll.forEach(l => locPorId[l.id] = l);
+  const usersPorId = {}; users.forEach(u => usersPorId[u.id] = u);
+  const cuadrillasPorId = {}; cuadrillas.forEach(cq => cuadrillasPorId[cq.id] = cq);
+
   const total = equipos.length;
-  const vencidos = statuses.filter(x => x.s.code === 'ROJO').length;
-  const pendientes = statuses.filter(x => x.s.code === 'AMARILLO').length;
-  const alDia = statuses.filter(x => x.s.code === 'VERDE').length;
-  const compliance = total ? Math.round(((total - vencidos) / total) * 100) : 0;
 
   const today = new Date();
   const toInput = today.toISOString().slice(0, 10);
-  const fromInput = ''; // sin límite por defecto — antes ocultaba silenciosamente todo lo anterior a 30 días
+  // Antes: sin límite por defecto ("todo el historial"), lo que impedía
+  // calcular Programados/Realizados (necesita un rango ACOTADO de días para
+  // recorrer). 30 días es un período de análisis inicial razonable — se
+  // amplía con el filtro Desde, nunca se oculta nada silenciosamente (el
+  // filtro queda visible y editable).
+  const fromInput = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
 
   c.innerHTML = `
+    <div class="rep-page layout-wide">
     ${total === 0 ? `<div class="panel"><div class="empty-state">No hay equipos registrados en este dispositivo todavía. Si ya los cargaste en otro dispositivo, ve a Configuración → Sincronización y confirma que esté conectado — puede que falte sincronizar.</div></div>` : ''}
-    <div class="kpi-grid">
-      ${kpiCard('TOTAL EQUIPOS', total, 'neutral')}
-      ${kpiCard('AL DÍA', alDia, 'green')}
-      ${kpiCard('PENDIENTES', pendientes, 'amber')}
-      ${kpiCard('VENCIDOS', vencidos, 'red')}
-    </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Filtros del reporte</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <label class="filter-label">Desde <input type="date" id="f-from" class="input input-sm" value="${fromInput}"/></label>
-        <label class="filter-label">Hasta <input type="date" id="f-to" class="input input-sm" value="${toInput}"/></label>
-        <label class="filter-label">Equipo
+      <div class="panel-head"><h3>Filtros del informe</h3></div>
+      <div class="toolbar rep-filters-row" style="padding:0 14px 14px">
+        <label class="filter-label rep-filter-narrow">Desde <input type="date" id="f-from" class="input input-sm" value="${fromInput}"/></label>
+        <label class="filter-label rep-filter-narrow">Hasta <input type="date" id="f-to" class="input input-sm" value="${toInput}" max="${toInput}"/></label>
+        <label class="filter-label rep-filter-wide">Equipo
           <select id="f-equipo" class="input input-sm">
             <option value="">Todos</option>
             ${equipos.map(e => `<option value="${e.id}">${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
           </select>
         </label>
-        <label class="filter-label">Turno
+        <label class="filter-label rep-filter-wide">Familia
+          <select id="f-familia" class="input input-sm">
+            <option value="">Todas</option>
+            ${types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter-label rep-filter-wide">Ubicación
+          <select id="f-ubic" class="input input-sm">
+            <option value="">Todas</option>
+            ${locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter-label rep-filter-mid">Turno
           <select id="f-turno" class="input input-sm">
             <option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option>
           </select>
         </label>
-        <label class="filter-label">Responsable
+        <label class="filter-label rep-filter-mid">Responsable
           <select id="f-resp" class="input input-sm">
             <option value="">Todos</option>
             ${users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}
           </select>
         </label>
-        <button class="btn btn-accent" id="f-apply">Aplicar filtros</button>
+        <button class="btn btn-accent rep-filter-apply" id="f-apply">Aplicar filtros</button>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Cumplimiento de engrase</h3><span class="pill">${compliance}%</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${compliance}%; background:${compliance >= App.generalSettings.complianceTarget ? 'var(--green)' : compliance >= 80 ? 'var(--amber)' : 'var(--red)'}"></div></div>
+      <div class="panel-head"><h3>Resumen del período</h3></div>
+      <div id="rep-resumen"></div>
     </div>
 
-    <div class="charts-grid">
-      <div class="panel"><div class="panel-head"><h3>Engrases por día</h3></div><div class="chart-box"><canvas id="chart-daily"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por turno</h3></div><div class="chart-box"><canvas id="chart-shift"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por equipo</h3></div><div class="chart-box"><canvas id="chart-equipo"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Engrases por responsable</h3></div><div class="chart-box"><canvas id="chart-resp"></canvas></div></div>
-      <div class="panel"><div class="panel-head"><h3>Estado actual de la flota</h3></div><div class="chart-box"><canvas id="chart-fleet"></canvas></div></div>
+    <div class="rep-tendencia-turno-grid">
+      <div class="panel">
+        <div class="panel-head"><h3>Tendencia de cumplimiento</h3></div>
+        <div class="dim" style="padding:0 14px 10px">Cumplimiento % (realizados/programados) por día, o por semana si el rango es amplio. Independiente de Cumplimiento operativo del Dashboard.</div>
+        <div class="chart-box rep-chart-tendencia-box" id="chart-tendencia-box"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Cumplimiento por turno</h3></div>
+        <div id="rep-turno-area" class="rep-turno-grid"></div>
+      </div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Puntos no engrasados y sus motivos</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Cada punto que un lubricador no pudo engrasar, con la razón que anotó. Sirve para dar seguimiento a graseras dañadas, líneas obstruidas y puntos inaccesibles. Usa los mismos filtros de arriba.</div>
+      <div class="panel-head"><h3>Cumplimiento por equipo</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Ordenado de MENOR a mayor cumplimiento — más engrases no es mejor desempeño, esta lista es para detectar dónde actuar.</div>
+      <div id="rep-equipo-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Consumo de grasa</h3></div>
+      <div id="rep-consumo-stats"></div>
+      <div class="rep-tabs" id="rep-consumo-tabs" role="tablist">
+        <button type="button" class="rep-tab active" data-tab="equipo" role="tab" aria-selected="true">Por equipo</button>
+        <button type="button" class="rep-tab" data-tab="familia" role="tab" aria-selected="false">Por familia</button>
+        <button type="button" class="rep-tab" data-tab="lubricante" role="tab" aria-selected="false">Por lubricante</button>
+      </div>
+      <div class="chart-box rep-chart-consumo-box" id="chart-consumo-box"></div>
+    </div>
+
+    <div class="rep-pareto-anomalias-grid">
+      <div class="panel">
+        <div class="panel-head"><h3>Puntos no engrasados</h3></div>
+        <div class="dim" style="padding:0 14px 8px">Motivos más frecuentes en el período — detalle completo más abajo.</div>
+        <div id="rep-motivos-pareto"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Anomalías de lubricación</h3></div>
+        <div id="rep-anomalias-area"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Detalle de puntos no engrasados</h3></div>
       <div id="skipped-points-area"></div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Informe fotográfico</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Fotos tomadas al registrar engrases y anomalías. Se filtran igual que las gráficas de arriba.</div>
-      <div id="photo-report-grid" class="photo-report-grid"></div>
+      <div class="panel-head"><h3>No ejecutados</h3></div>
+      <div class="dim" style="padding:0 14px 8px">"No se pudo ejecutar" (lubrication_skips) — NUNCA se cuenta como engrase realizado, aunque el turno siguiente sí lo haya hecho (ver Historial para esa secuencia completa).</div>
+      <div id="rep-no-ejecutados-area"></div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h3>Informes ejecutivos</h3></div>
-      <div style="padding:0 14px 6px" class="dim">Listos para imprimir o enviar por correo. Usan los mismos filtros de fecha/equipo/turno/responsable de arriba.</div>
-      <div class="toolbar" style="padding:0 14px 14px">
+      <div class="panel-head"><h3>Validación de engrases</h3></div>
+      <div id="rep-validacion-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Actividad por responsable</h3></div>
+      <div id="rep-actividad-resp-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Evidencia fotográfica</h3></div>
+      <div class="rep-photo-toggle-row">
+        <span id="rep-photo-count" class="dim">Cargando…</span>
+        <button type="button" class="btn btn-sm" id="rep-photo-toggle">Ver fotos</button>
+      </div>
+      <div id="photo-report-grid" class="photo-report-grid hidden"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Generar informe</h3></div>
+      <div style="padding:0 14px 6px" class="dim">Usan los mismos filtros de arriba.</div>
+      <div class="toolbar" style="padding:0 14px 10px">
         <button class="btn btn-accent" id="exp-pdf">${ic("download")}Informe ejecutivo (PDF)</button>
         <button class="btn btn-accent" id="exp-excel">${ic("download")}Informe completo (Excel)</button>
       </div>
+      <details class="rep-more-exports" style="padding:0 14px 14px">
+        <summary class="btn btn-sm">Más exportaciones ▾</summary>
+        <div class="toolbar" style="padding-top:10px">
+          <button class="btn btn-sm" id="exp-cumplimiento">${ic("download")}Cumplimiento (CSV)</button>
+          <button class="btn btn-sm" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
+          <button class="btn btn-sm" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
+          <button class="btn btn-sm" id="exp-puntos">${ic("download")}Puntos no engrasados (CSV)</button>
+          <button class="btn btn-sm" id="exp-no-ejecutados">${ic("download")}No ejecutados (CSV)</button>
+        </div>
+      </details>
     </div>
-
-    <div class="panel">
-      <div class="panel-head"><h3>Exportar por separado (CSV)</h3></div>
-      <div class="toolbar" style="padding:0 14px 14px">
-        <button class="btn" id="exp-cumplimiento">${ic("download")}Cumplimiento (CSV)</button>
-        <button class="btn" id="exp-historico">${ic("download")}Histórico de engrases (CSV)</button>
-        <button class="btn" id="exp-anomalias">${ic("download")}Anomalías (CSV)</button>
-      </div>
     </div>`;
 
   const charts = {};
-  function destroyCharts() { Object.values(charts).forEach(ch => ch && ch.destroy()); }
+  function destroyChart(key) { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
+  function destroyCharts() { Object.keys(charts).forEach(destroyChart); }
+
+  // Estado de la pestaña activa de "Consumo de grasa" — persiste entre
+  // llamadas a drawAll() (ej. al "Aplicar filtros") dentro del mismo render
+  // de la pantalla, se reinicia solo si se vuelve a entrar a Reportes.
+  let consumoTabActual = 'equipo';
+  let consumoDatasets = null;
+
+  // Equipos que pasan Equipo/Familia/Ubicación (sin fecha) — universo de
+  // "programados" (Tendencia/por turno/por equipo): esto SÍ es correcto que
+  // use la ubicación ACTUAL del equipo, porque "programado" es un concepto
+  // del plan vigente HOY, no un dato histórico.
+  function equiposFiltrados() {
+    const eqId = $('#f-equipo').value;
+    const fam = $('#f-familia').value;
+    const ubic = $('#f-ubic').value;
+    return equipos.filter(e => {
+      if (eqId && e.id !== eqId) return false;
+      if (fam && e.typeId !== fam) return false;
+      if (ubic && e.locationId !== ubic) return false;
+      return true;
+    });
+  }
+
+  // Pendiente cerrado (§23/§24 del cierre de lote): los REGISTROS reales
+  // (a diferencia de "programados" arriba) se filtran por Equipo/Familia
+  // usando el equipo actual (esos dos campos no cambian con el tiempo), pero
+  // por UBICACIÓN usan resolveRecordEquipmentLocationId() — la ubicación
+  // real AL MOMENTO de ejecutarse cuando el registro tiene snapshot, nunca
+  // la ubicación ACTUAL del equipo (que pudo moverse después). Registros
+  // sin snapshot (de antes de este lote) siguen cayendo a la ubicación
+  // actual, exactamente el comportamiento de siempre — fallback controlado,
+  // nunca se inventa dónde estuvo el equipo en el pasado.
+  function equiposFiltradosPorEquipoYFamilia() {
+    const eqId = $('#f-equipo').value;
+    const fam = $('#f-familia').value;
+    return equipos.filter(e => {
+      if (eqId && e.id !== eqId) return false;
+      if (fam && e.typeId !== fam) return false;
+      return true;
+    });
+  }
 
   function applyFilters() {
     const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
     const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
-    const eqId = $('#f-equipo').value;
     const turno = $('#f-turno').value;
     const respId = $('#f-resp').value;
+    const ubic = $('#f-ubic').value;
+    const idsPermitidos = new Set(equiposFiltradosPorEquipoYFamilia().map(e => e.id));
     return allRecords.filter(r => {
+      if (!idsPermitidos.has(r.equipmentId)) return false;
+      if (ubic && resolveRecordEquipmentLocationId(r, equiposPorId[r.equipmentId]).value !== ubic) return false;
       const d = new Date(r.date);
       if (from && d < from) return false;
       if (to && d > to) return false;
-      if (eqId && r.equipmentId !== eqId) return false;
       if (turno && r.shiftId !== turno) return false;
       if (respId && r.userId !== respId) return false;
       return true;
     });
   }
 
-  function drawCharts() {
-    // Las tablas (fotos y puntos pendientes) se dibujan SIEMPRE, aunque el motor de
-    // gráficas no cargue — antes quedaban en blanco junto con las gráficas.
-    const registrosFiltrados = applyFilters();
-    try {
-      drawPhotoReport(registrosFiltrados);
-      drawSkippedPoints(registrosFiltrados);
-    } catch (err) {
-      console.error('Error dibujando las tablas de reportes', err);
-    }
-
-    destroyCharts();
-    if (!window.Chart) {
-      $$('.chart-box', c).forEach(box => box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>');
-      return;
-    }
-    try {
-      drawChartsInner();
-    } catch (err) {
-      console.error('Error dibujando reportes', err);
-      $$('.chart-box', c).forEach(box => box.innerHTML = `<div class="empty-state">No se pudo generar esta gráfica (${err.message}).</div>`);
-    }
+  function applyFiltersAnomalias() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
+    const respId = $('#f-resp').value;
+    const respUser = respId ? users.find(u => u.id === respId) : null;
+    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
+    return anomalies.filter(a => {
+      if (!idsPermitidos.has(a.equipmentId)) return false;
+      const d = new Date(a.createdAt);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      if (respUser && a.createdBy !== respUser.name) return false;
+      return true;
+    });
   }
 
-  function drawChartsInner() {
-    const records = applyFilters();
-    const CHART_TEXT = '#9BA3AA';
-    const GRID = 'rgba(255,255,255,0.06)';
-    Chart.defaults.color = CHART_TEXT;
-    Chart.defaults.borderColor = GRID;
-    Chart.defaults.font.family = "'Inter', sans-serif";
-
-    // Por día
-    const byDay = {};
-    records.forEach(r => { const k = new Date(r.date).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' }); byDay[k] = (byDay[k] || 0) + 1; });
-    const dayKeys = Object.keys(byDay);
-    charts.daily = new Chart($('#chart-daily'), {
-      type: 'line',
-      data: { labels: dayKeys, datasets: [{ label: 'Engrases', data: dayKeys.map(k => byDay[k]), borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.15)', fill: true, tension: 0.3 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  // Cierre histórico, Parte C (§17) — MISMOS filtros (Desde/Hasta/Equipo/
+  // Familia/Ubicación/Turno/Responsable) que applyFilters() aplica a
+  // lubrication_records, para que "No ejecutados" responda a los mismos
+  // controles del resto del informe sin un criterio propio.
+  function applyFiltersSkips() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
+    const turno = $('#f-turno').value;
+    const respId = $('#f-resp').value;
+    const ubic = $('#f-ubic').value;
+    const idsPermitidos = new Set(equiposFiltradosPorEquipoYFamilia().map(e => e.id));
+    return allSkips.filter(s => {
+      if (!idsPermitidos.has(s.equipmentId)) return false;
+      if (ubic && (equiposPorId[s.equipmentId] || {}).locationId !== ubic) return false;
+      const d = new Date(s.date);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      if (turno && s.shiftId !== turno) return false;
+      if (respId && s.userId !== respId) return false;
+      return true;
     });
-
-    // Por turno
-    const dia = records.filter(r => r.shiftId === 'shift_dia').length;
-    const noche = records.filter(r => r.shiftId === 'shift_noche').length;
-    charts.shift = new Chart($('#chart-shift'), {
-      type: 'bar',
-      data: { labels: ['Día', 'Noche'], datasets: [{ data: [dia, noche], backgroundColor: ['#F2A900', '#3B4A5A'] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Por equipo
-    const byEq = {};
-    records.forEach(r => { const eq = equipos.find(e => e.id === r.equipmentId); const k = eq ? eq.code : '—'; byEq[k] = (byEq[k] || 0) + 1; });
-    const eqKeys = Object.keys(byEq).sort((a, b) => byEq[b] - byEq[a]).slice(0, 10);
-    charts.equipo = new Chart($('#chart-equipo'), {
-      type: 'bar',
-      data: { labels: eqKeys, datasets: [{ data: eqKeys.map(k => byEq[k]), backgroundColor: '#E8A33D' }] },
-      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Por responsable
-    const byResp = {};
-    records.forEach(r => { byResp[r.userName] = (byResp[r.userName] || 0) + 1; });
-    const respKeys = Object.keys(byResp);
-    charts.resp = new Chart($('#chart-resp'), {
-      type: 'bar',
-      data: { labels: respKeys, datasets: [{ data: respKeys.map(k => byResp[k]), backgroundColor: '#3FB950' }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-    });
-
-    // Estado de la flota
-    charts.fleet = new Chart($('#chart-fleet'), {
-      type: 'doughnut',
-      data: { labels: ['Al día', 'Próximos', 'Vencidos', 'Detenidos/Sin plan'], datasets: [{ data: [alDia, pendientes, vencidos, total - alDia - pendientes - vencidos], backgroundColor: ['#3FB950', '#E8A33D', '#E5484D', '#7A828A'] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } }
-    });
-
   }
 
-  // Lista todos los puntos que NO se engrasaron, con el motivo que anotó el lubricador.
-  // Antes esa información se guardaba pero no se mostraba en ninguna pantalla.
-  function drawSkippedPoints(records) {
-    const area = $('#skipped-points-area');
-    if (!area) return;
+  // Exportación de "No ejecutados" (lote dedicado, CSV/Excel/PDF): texto
+  // legible de los filtros ACTIVOS del informe — reusa los mismos inputs
+  // que applyFilters()/applyFiltersSkips() ya leen, nunca un criterio
+  // propio. Solo lista lo que el usuario realmente eligió (§3/§6/§7).
+  function filtrosActivosTexto() {
+    const partes = [];
+    const ubicId = $('#f-ubic').value; if (ubicId) partes.push(`Ubicación: ${(locPorId[ubicId] || {}).name || ubicId}`);
+    const famId = $('#f-familia').value; if (famId) partes.push(`Familia: ${(typePorId[famId] || {}).name || famId}`);
+    const eqId = $('#f-equipo').value; if (eqId) partes.push(`Equipo: ${(equiposPorId[eqId] || {}).code || eqId}`);
+    const turno = $('#f-turno').value; if (turno) partes.push(`Turno: ${turno === 'shift_dia' ? 'Día' : 'Noche'}`);
+    const respId = $('#f-resp').value; if (respId) partes.push(`Responsable: ${(usersPorId[respId] || {}).name || respId}`);
+    return partes.length ? partes.join('  ·  ') : 'Todos los equipos/turnos/responsables';
+  }
 
+  // Filas de detalle de "No ejecutados" para exportar — FUENTE ÚNICA para
+  // CSV/Excel/PDF (§8/§16 del pedido: mismo orden en los 3 formatos, sin
+  // recalcular nada por separado). `skipsF` ya viene filtrado por
+  // applyFiltersSkips() — nunca se reconstruye desde audit_log ni se
+  // cuentan lubrication_records aquí. Orden: más reciente primero, misma
+  // convención que puntosNoEngrasadosDe() (única lista de detalle
+  // comparable que ya existe en este informe).
+  function noEjecutadosFilasDetalle(skipsF) {
+    return [...skipsF].sort((a, b) => new Date(b.date) - new Date(a.date)).map(s => {
+      const eq = equiposPorId[s.equipmentId];
+      const usr = usersPorId[s.userId];
+      const cuadrillaNombre = usr ? (cuadrillasPorId[usr.cuadrillaId] || {}).name : null;
+      const horaTxt = (s.date || '').includes('T')
+        ? new Date(s.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })
+        : '—';
+      return {
+        fecha: fmtDate(s.date),
+        hora: horaTxt,
+        codigo: eq ? eq.code : '—',
+        modelo: eq ? `${eq.brand} ${eq.model}` : '—',
+        ubicacion: (locPorId[(eq || {}).locationId] || {}).name || '—',
+        turno: s.shiftId === 'shift_dia' ? 'Día' : 'Noche',
+        motivo: NO_EXECUTION_REASON_LABELS[s.reason] || s.reason,
+        observacion: s.observacion || '—',
+        usuario: s.userName || '—',
+        cuadrilla: cuadrillaNombre || '—',
+        occurrence: s.occurrenceKey || '—',
+        estado: s.linkedRecordId ? 'Vinculado a un engrase real' : 'Sin vincular',
+      };
+    });
+  }
+
+  // null si no hay "Desde" (no se puede acotar el recorrido de días) — el
+  // valor por defecto del input ya trae 30 días, así que esto solo pasa si
+  // la persona lo borra a mano.
+  function diasDelPeriodo() {
+    const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
+    if (!from) return null;
+    const hoy = new Date(new Date().setHours(0, 0, 0, 0));
+    const hastaInput = $('#f-to').value ? new Date($('#f-to').value + 'T00:00:00') : hoy;
+    // Nunca contar días futuros como "programados": un "Hasta" en el futuro
+    // (el input ya trae max=hoy, pero se re-valida aquí por si acaso) se
+    // recorta a HOY — de lo contrario días que todavía no ocurren se
+    // contarían como "no realizados" sin que fuera posible cumplirlos.
+    const to = hastaInput > hoy ? hoy : hastaInput;
+    const out = [];
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) out.push(new Date(d));
+    return out;
+  }
+
+  // Puntos que quedaron sin engrasar + su motivo — usado tanto para pintar
+  // la sección en pantalla como para el CSV (misma lógica, una sola vez).
+  function puntosNoEngrasadosDe(records) {
     const filas = [];
     records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       (r.details || []).filter(d => !d.done).forEach(d => {
-        filas.push({
-          fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—',
-          punto: d.pointName, motivo: d.reason || '(sin motivo anotado)', por: r.userName
-        });
+        filas.push({ fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—', punto: d.pointName, motivo: d.reason || '(sin motivo anotado)', por: r.userName });
       });
-      // También los engrases donde no se pudo leer el horómetro
       if (r.sinHorometro) {
-        filas.push({
-          fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—',
-          punto: '⚠ Sin lectura de horómetro', motivo: r.noHourmeterReason || 'No se pudo leer', por: r.userName
-        });
+        filas.push({ fecha: r.date, code: eq ? eq.code : '—', equipo: eq ? `${eq.brand} ${eq.model}` : '—', punto: '⚠ Sin lectura de horómetro', motivo: r.noHourmeterReason || 'No se pudo leer', por: r.userName });
       }
     });
     filas.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    return filas;
+  }
 
-    // Resumen por motivo, para ver de un vistazo qué falla más
+  // Fuente ÚNICA de Consumo (Resumen, sección Consumo, Excel y PDF calculan
+  // exactamente esto — nunca cada uno por su cuenta). "qty válida" = número
+  // finito (incluye 0); un registro sin horómetro/qty no cuenta ni en el
+  // total ni en el denominador del promedio, para no diluirlo con ceros que
+  // en realidad son "sin dato".
+  function consumoDe(records) {
+    const registrosConQty = records.filter(r => Number.isFinite(Number(r.qty)));
+    const totalQty = registrosConQty.reduce((s, r) => s + Number(r.qty), 0);
+    const promedio = registrosConQty.length ? totalQty / registrosConQty.length : null;
+    return { totalQty, promedio, registrosConQty };
+  }
+
+  function drawResumen(records, dias, progReal) {
+    const area = $('#rep-resumen');
+    const { totalQty } = consumoDe(records);
+    const consumoCard = `<div class="kpi-card tone-neutral"><div class="kpi-value">${fmt(totalQty, 1)}</div><div class="kpi-label">Consumo total (${GREASE_UNIT})</div></div>`;
+    const periodoTxt = `Período: ${ddmmyyyy($('#f-from').value)} – ${ddmmyyyy($('#f-to').value) || ddmmyyyy(toInput)}`;
+    if (!dias || !progReal) {
+      area.innerHTML = `<div class="empty-state">Selecciona una fecha "Desde" para calcular Cumplimiento/Programados/Realizados.</div><div class="rep-resumen-grid">${consumoCard}</div>`;
+      return;
+    }
+    const { programados, realizados } = progReal.general;
+    const pct = programados ? Math.round((realizados / programados) * 100) : null;
+    // No realizados = obligaciones programadas del período (Día/Turno) que
+    // NO tuvieron ejecución válida — nunca negativo (Math.max), nunca cuenta
+    // días futuros (dias ya viene recortado a HOY, ver diasDelPeriodo()),
+    // nunca usa el total de equipos como denominador (parte de `programados`,
+    // que ya es 1 slot por equipo/día programado, no por equipo existente).
+    const noRealizados = Math.max(programados - realizados, 0);
+    const tone = pct === null ? 'neutral' : pct >= App.generalSettings.complianceTarget ? 'green' : pct >= 80 ? 'amber' : 'red';
+    // "Vencidos" NO va aquí a propósito: es estado ACTUAL de la flota
+    // (Dashboard), no una métrica del período histórico filtrado.
+    area.innerHTML = `<div class="dim rep-periodo-line">${periodoTxt}</div>
+      <div class="rep-resumen-grid">
+        <div class="kpi-card tone-${tone}"><div class="kpi-value">${pct === null ? '—' : pct + '%'}</div><div class="kpi-label">Cumplimiento del período</div></div>
+        ${kpiCard('Programados', programados, 'neutral')}
+        ${kpiCard('Realizados', realizados, 'green')}
+        ${kpiCard('No realizados', noRealizados, noRealizados > 0 ? 'amber' : 'neutral')}
+        ${consumoCard}
+      </div>
+      <div class="dim rep-resumen-note">Cumplimiento basado en planes Día/Turno evaluables.</div>`;
+  }
+
+  function drawTendencia(records, dias, equiposDT, turnoSel) {
+    destroyChart('tendencia');
+    const box = $('#chart-tendencia-box');
+    if (!dias) { box.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde" para ver la tendencia.</div>'; return; }
+    if (!window.Chart) { box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>'; return; }
+    box.innerHTML = '<canvas id="chart-tendencia"></canvas>';
+    const buckets = construirBucketsTendencia(dias);
+    const labels = buckets.map(b => b.label);
+    const data = buckets.map(b => {
+      const r = computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, b.dias, turnoSel);
+      return r.general.programados ? Math.round((r.general.realizados / r.general.programados) * 100) : null;
+    });
+    charts.tendencia = new Chart($('#chart-tendencia'), {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.10)', fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        ...(prefersReducedMotion() ? { animation: false } : {}),
+        scales: {
+          y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
+          // Todos los datos siguen ahí (no se recorta ningún punto) — solo se
+          // reduce cuántas ETIQUETAS del eje X se dibujan, para que no se
+          // amontonen cuando el rango es amplio.
+          x: { ticks: { autoSkip: true, maxTicksLimit: 8 } }
+        }
+      }
+    });
+  }
+
+  function drawCumplimientoTurno(progReal) {
+    const area = $('#rep-turno-area');
+    if (!progReal) { area.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde".</div>'; return; }
+    area.innerHTML = [['shift_dia', 'Día'], ['shift_noche', 'Noche']].map(([id, label]) => {
+      const t = progReal.porTurno[id];
+      const pct = t.programados ? Math.round((t.realizados / t.programados) * 100) : null;
+      const tone = pct === null ? 'neutral' : pct >= App.generalSettings.complianceTarget ? 'green' : pct >= 80 ? 'amber' : 'red';
+      return `<div class="rep-turno-card tone-${tone}">
+        <div class="rep-turno-label">${label}</div>
+        <div class="rep-turno-pct">${pct === null ? '—' : pct + '%'}</div>
+        <div class="rep-turno-frac">${t.realizados} de ${t.programados}</div>
+        <div class="progress-track rep-turno-bar"><div class="progress-fill" style="width:${pct === null ? 0 : pct}%; background:${tone === 'neutral' ? 'var(--text-dim)' : `var(--${tone})`}"></div></div>
+      </div>`;
+    }).join('');
+  }
+
+  function drawCumplimientoEquipo(progReal) {
+    const area = $('#rep-equipo-area');
+    if (!progReal) { area.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde".</div>'; return; }
+    // Un equipo con 0 programados en el período (sin días asignados que
+    // cayeran en el rango) NO tiene un cumplimiento que evaluar — mostrar 0%
+    // lo haría ver como un incumplimiento cuando en realidad no le tocaba
+    // nada. Se EXCLUYE del ranking principal (nunca se le inventa un 0%).
+    const sinProgramacion = progReal.porEquipo.filter(x => x.programados === 0).length;
+    const filas = progReal.porEquipo
+      .filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct); // MENOR cumplimiento primero: ayuda a decidir dónde actuar
+    if (!filas.length) { area.innerHTML = '<div class="empty-state">Ningún equipo con plan Día/Turno tuvo días programados en este período.</div>'; return; }
+    area.innerHTML = `<table class="data-table rep-equipo-table">
+      <thead><tr><th>Código</th><th>Modelo</th><th>Realizados/Programados</th><th>Cumplimiento</th></tr></thead>
+      <tbody>${filas.map(f => `<tr>
+        <td class="mono">${esc(f.e.code)}</td>
+        <td>${esc(f.e.brand)} ${esc(f.e.model)}</td>
+        <td class="mono">${f.realizados}/${f.programados}</td>
+        <td><span class="hist-compliance-badge ${f.pct >= App.generalSettings.complianceTarget ? 'hist-compliance-ok' : f.pct >= 80 ? 'hist-compliance-early' : 'hist-compliance-alert'}">${f.pct}%</span></td>
+      </tr>`).join('')}</tbody>
+    </table>
+    ${sinProgramacion > 0 ? `<div class="dim rep-resumen-note">${sinProgramacion} equipo(s) sin programación en este período (0 días asignados dentro del rango) no se muestran aquí — no es un incumplimiento, simplemente no tenían nada programado.</div>` : ''}`;
+    makeTablesResponsive(area);
+  }
+
+  // Consumo de grasa: UN solo gráfico con tabs (Por equipo/Familia/
+  // Lubricante) en vez de 3 visualizaciones simultáneas — nunca se borra
+  // ningún dato, "Por equipo" solo RECORTA VISUALMENTE el ranking a los
+  // Top 7 con mayor consumo (excluye los de 0 lb del ranking, el detalle
+  // completo sigue en la exportación/informe). La altura del canvas se fija
+  // según la cantidad real de categorías (ver dibujarConsumoTab()).
+  function drawConsumo(records) {
+    const { totalQty, promedio, registrosConQty } = consumoDe(records);
+    $('#rep-consumo-stats').innerHTML = `<div class="kpi-grid">
+      <div class="kpi-card tone-neutral"><div class="kpi-value">${fmt(totalQty, 1)}</div><div class="kpi-label">Total (${GREASE_UNIT})</div></div>
+      <div class="kpi-card tone-neutral"><div class="kpi-value">${promedio === null ? '—' : fmt(promedio, 2)}</div><div class="kpi-label">Promedio por engrase (${GREASE_UNIT})</div></div>
+    </div>`;
+
+    const byEq = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; const k = eq ? eq.code : '—'; byEq[k] = (byEq[k] || 0) + Number(r.qty); });
+    const byFamilia = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; const t = eq ? typePorId[eq.typeId] : null; const k = t ? t.name : 'Sin familia'; byFamilia[k] = (byFamilia[k] || 0) + Number(r.qty); });
+    const byLub = {};
+    registrosConQty.forEach(r => { const l = lubPorId[r.greaseType]; const k = l ? l.name : 'Sin identificar'; byLub[k] = (byLub[k] || 0) + Number(r.qty); });
+
+    consumoDatasets = {
+      equipo: Object.entries(byEq).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 7),
+      familia: Object.entries(byFamilia).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
+      lubricante: Object.entries(byLub).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
+    };
+    dibujarConsumoTab(consumoTabActual);
+  }
+
+  function dibujarConsumoTab(tab) {
+    consumoTabActual = tab;
+    $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => { b.classList.toggle('active', b.dataset.tab === tab); b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'); });
+    destroyChart('consumo');
+    const box = $('#chart-consumo-box');
+    const entries = (consumoDatasets && consumoDatasets[tab]) || [];
+    if (!window.Chart) { box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas.</div>'; return; }
+    if (!entries.length) { box.innerHTML = '<div class="empty-state">Sin consumo registrado en este período.</div>'; return; }
+    // Altura proporcional a la cantidad real de categorías — nunca reserva
+    // espacio para filas que no existen (tope 220px, mínimo legible 120px).
+    box.style.height = `${Math.max(120, Math.min(220, entries.length * 32 + 40))}px`;
+    box.innerHTML = '<canvas id="chart-consumo"></canvas>';
+    charts.consumo = new Chart($('#chart-consumo'), {
+      type: 'bar',
+      data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: '#E8A33D' }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, ...(prefersReducedMotion() ? { animation: false } : {}), scales: { x: { beginAtZero: true } } }
+    });
+  }
+
+  // Pareto de motivos (compacto, en su propio panel junto a Anomalías) +
+  // detalle (tabla completa, panel aparte más abajo) — misma información
+  // que antes, ahora en 2 paneles separados para reducir la altura del
+  // Pareto (pedido explícito de densidad). % junto al conteo se mantiene;
+  // el CSV sigue en "Generar informe".
+  function drawSkippedPoints(records) {
+    const paretoArea = $('#rep-motivos-pareto');
+    const detalleArea = $('#skipped-points-area');
+    if (!paretoArea || !detalleArea) return;
+    const filas = puntosNoEngrasadosDe(records);
     const porMotivo = {};
     filas.forEach(f => { porMotivo[f.motivo] = (porMotivo[f.motivo] || 0) + 1; });
     const resumen = Object.entries(porMotivo).sort((a, b) => b[1] - a[1]);
 
-    area.innerHTML = !filas.length
+    paretoArea.innerHTML = !filas.length
       ? '<div class="empty-state">Sin puntos pendientes en este periodo — todos los engrases se completaron.</div>'
-      : `
-        <div class="skipped-summary">
-          ${resumen.map(([motivo, n]) => `<span class="skipped-chip">${esc(motivo)}: <b>${n}</b></span>`).join('')}
+      : `<div class="skipped-summary">
+          ${resumen.map(([motivo, n]) => `<span class="skipped-chip">${esc(motivo)}: <b>${n}</b> (${Math.round(n / filas.length * 100)}%)</span>`).join('')}
         </div>
-        <div class="toolbar" style="padding:6px 14px 10px">
-          <button class="btn btn-sm" id="exp-skipped">${ic("download")}Descargar esta lista (CSV)</button>
-          <span class="dim">${filas.length} punto(s) pendiente(s)</span>
-        </div>
-        <table class="data-table">
+        <div class="dim" style="padding:6px 14px 0">${filas.length} punto(s) pendiente(s)</div>`;
+
+    detalleArea.innerHTML = !filas.length
+      ? '<div class="empty-state">Sin puntos pendientes en este periodo.</div>'
+      : `<table class="data-table">
           <thead><tr><th>Fecha</th><th>Código</th><th>Equipo</th><th>Punto</th><th>Motivo</th><th>Reportado por</th></tr></thead>
           <tbody>${filas.map(f => `<tr>
             <td>${fmtDate(f.fecha)}</td>
@@ -5254,27 +8604,181 @@ async function renderReportes() {
             <td>${esc(f.por)}</td>
           </tr>`).join('')}</tbody>
         </table>`;
-    makeTablesResponsive(area);
+    makeTablesResponsive(detalleArea);
+  }
 
-    $('#exp-skipped')?.addEventListener('click', () => {
-      const rows = [['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por']];
-      filas.forEach(f => rows.push([fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]));
-      downloadCSV(rows, 'puntos_no_engrasados.csv');
+  // El modelo real de anomalías (ver formulario de edición, app.js) permite
+  // 3 valores de `status`: 'Abierta', 'En atención', 'Cerrada' — NO existe
+  // un estado "Resuelta" separado, así que nunca se inventa. "Abiertas"
+  // (KPI) es status !== 'Cerrada' (agrupa Abierta+En atención, real y
+  // correcto); el desglose "Por estado" de abajo muestra el valor EXACTO de
+  // `status` tal como está en los datos, agrupado dinámicamente — si algún
+  // día se agrega/quita un valor, esto sigue siendo fiel sin tocar código.
+  function drawAnomaliasSeccion(anomaliasF) {
+    const area = $('#rep-anomalias-area');
+    const abiertas = anomaliasF.filter(a => a.status !== 'Cerrada').length;
+    const cerradas = anomaliasF.filter(a => a.status === 'Cerrada').length;
+    const porEstado = {};
+    anomaliasF.forEach(a => { const k = a.status || 'Sin estado'; porEstado[k] = (porEstado[k] || 0) + 1; });
+    const estadosOrdenados = Object.entries(porEstado).sort((a, b) => b[1] - a[1]);
+    const porTipo = {};
+    anomaliasF.forEach(a => { porTipo[a.component] = (porTipo[a.component] || 0) + 1; });
+    const tiposOrdenados = Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const porEquipo = {};
+    anomaliasF.forEach(a => { const eq = equiposPorId[a.equipmentId]; const k = eq ? eq.code : '—'; porEquipo[k] = (porEquipo[k] || 0) + 1; });
+    const equiposOrdenados = Object.entries(porEquipo).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('Detectadas', anomaliasF.length, 'neutral')}
+        ${kpiCard('Abiertas', abiertas, abiertas > 0 ? 'red' : 'neutral')}
+        ${kpiCard('Cerradas', cerradas, 'green')}
+      </div>
+      ${anomaliasF.length ? `
+      <div class="rep-subhead" style="padding:0 14px">Por estado (real)</div>
+      <div class="skipped-summary">${estadosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
+      <div class="rep-two-col">
+        <div>
+          <div class="rep-subhead">Principales tipos</div>
+          <div class="skipped-summary">${tiposOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
+        </div>
+        <div>
+          <div class="rep-subhead">Equipos con más anomalías</div>
+          ${equiposOrdenados.map(([k, n]) => `<div class="rep-consumo-row"><span class="mono">${esc(k)}</span><span>${n}</span></div>`).join('')}
+        </div>
+      </div>` : '<div class="empty-state">Sin anomalías en este período.</div>'}`;
+  }
+
+  // Cierre histórico, Parte C (§18/§19/§20 del pedido) — "No ejecutados":
+  // total + desglose por motivo/ubicación/equipo/turno/fecha. NUNCA se
+  // trata como cumplimiento (§20: un skip nunca cierra una ocurrencia por
+  // sí mismo — eso sigue dependiendo 100% de que exista un
+  // lubrication_record real, ya sea directo o vinculado vía
+  // findMatchingGreaseRecordForOccurrence(); este panel es puramente
+  // informativo, un conteo aparte).
+  function drawNoEjecutadosSeccion(skipsF) {
+    const area = $('#rep-no-ejecutados-area');
+    const porMotivo = {};
+    skipsF.forEach(s => { const k = NO_EXECUTION_REASON_LABELS[s.reason] || s.reason; porMotivo[k] = (porMotivo[k] || 0) + 1; });
+    const motivosOrdenados = Object.entries(porMotivo).sort((a, b) => b[1] - a[1]);
+    const porUbicacion = {};
+    skipsF.forEach(s => { const k = (locPorId[(equiposPorId[s.equipmentId] || {}).locationId] || {}).name || 'Sin ubicación'; porUbicacion[k] = (porUbicacion[k] || 0) + 1; });
+    const ubicacionesOrdenadas = Object.entries(porUbicacion).sort((a, b) => b[1] - a[1]);
+    const porEquipo = {};
+    skipsF.forEach(s => { const eq = equiposPorId[s.equipmentId]; const k = eq ? eq.code : '—'; porEquipo[k] = (porEquipo[k] || 0) + 1; });
+    const equiposOrdenados = Object.entries(porEquipo).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const porTurno = { 'Día': 0, 'Noche': 0 };
+    skipsF.forEach(s => { porTurno[s.shiftId === 'shift_dia' ? 'Día' : 'Noche']++; });
+
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('No ejecutados', skipsF.length, skipsF.length ? 'amber' : 'neutral')}
+        ${kpiCard('Turno Día', porTurno['Día'], 'neutral')}
+        ${kpiCard('Turno Noche', porTurno['Noche'], 'neutral')}
+      </div>
+      ${skipsF.length ? `
+      <div class="rep-subhead" style="padding:0 14px">Por motivo</div>
+      <div class="skipped-summary">${motivosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / skipsF.length * 100)}%)</span>`).join('')}</div>
+      <div class="rep-two-col">
+        <div>
+          <div class="rep-subhead">Por ubicación</div>
+          <div class="skipped-summary">${ubicacionesOrdenadas.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b></span>`).join('')}</div>
+        </div>
+        <div>
+          <div class="rep-subhead">Equipos con más "no ejecutados"</div>
+          ${equiposOrdenados.map(([k, n]) => `<div class="rep-consumo-row"><span class="mono">${esc(k)}</span><span>${n}</span></div>`).join('')}
+        </div>
+      </div>` : '<div class="empty-state">Sin "no se pudo ejecutar" en este período.</div>'}`;
+  }
+
+  function drawValidacionSeccion(records) {
+    const area = $('#rep-validacion-area');
+    // Sin excepción propia de Reportes: `sujetos` sale de la MISMA función
+    // central que usan Dashboard/Historial/Mis Engrases
+    // (isRecordSubjectToValidation()) — mientras GREASE_VALIDATION_ENABLED_FROM
+    // siga en null, ningún registro es "sujeto" todavía (ver
+    // docs/GREASE_VALIDATION_AUDIT.md §14), así que `sujetos` da vacío solo,
+    // nunca por una rama aparte aquí. El mensaje solo distingue el motivo
+    // (nunca fabrica un porcentaje falso como si fuera un dato real).
+    const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+    if (!sujetos.length) {
+      area.innerHTML = GREASE_VALIDATION_ENABLED_FROM
+        ? '<div class="empty-state">Ningún registro del período está sujeto a validación.</div>'
+        : '<div class="empty-state">Validación pendiente de activación — todavía no se definió la fecha/hora desde la cual un engrase queda sujeto a validación (GREASE_VALIDATION_ENABLED_FROM). Ver docs/GREASE_VALIDATION_AUDIT.md.</div>';
+      return;
+    }
+    // Mismas funciones centrales que Dashboard/Historial/Mis Engrases (no se
+    // reimplementa el conteo 0/1/2+ ni el plazo de MAX_VALIDATION_SHIFTS
+    // turnos aquí — isRecordPendingValidation()/isRecordValidationExpired()/
+    // isRecordInConflict() son la única fuente).
+    const ahoraVal = new Date();
+    let validados = 0, pendientes = 0, conflictos = 0, vencidos = 0, porOperador = 0, porEncargado = 0;
+    sujetos.forEach(r => {
+      const activas = findActiveValidations(r.id, validations);
+      if (activas.length > 1) { conflictos++; return; }
+      if (activas.length === 1) { validados++; if (activas[0].signerRole === 'OPERADOR') porOperador++; else porEncargado++; return; }
+      if (isRecordValidationExpired(r, validations, ahoraVal, App.generalSettings)) vencidos++;
+      else pendientes++;
     });
+    const pctValidado = Math.round(validados / sujetos.length * 100);
+    area.innerHTML = `<div class="kpi-grid">
+        ${kpiCard('Sujetos a validación', sujetos.length, 'neutral')}
+        ${kpiCard('Validados', validados, 'green')}
+        ${kpiCard('Pendientes', pendientes, pendientes > 0 ? 'amber' : 'neutral')}
+        ${kpiCard('Vencidos', vencidos, vencidos > 0 ? 'red' : 'neutral')}
+        ${kpiCard('Conflictos', conflictos, conflictos > 0 ? 'red' : 'neutral')}
+        ${kpiCard('Por Operador', porOperador, 'neutral')}
+        ${kpiCard('Por Encargado', porEncargado, 'neutral')}
+      </div>
+      <div class="dim rep-resumen-note">% validado: ${pctValidado}%. Los registros anteriores a la activación no entran en este cálculo. "Vencidos" superó el plazo de ${MAX_VALIDATION_SHIFTS} turnos sin firma.</div>`;
+  }
+
+  // Ranking compacto (tabla + barra, no un gráfico grande) — es secundario,
+  // solo carga de trabajo registrada, NUNCA se interpreta como desempeño
+  // (sin colores de aprobado/reprobado). % calculado sobre los registros del
+  // período ya filtrado (records.length, el mismo conjunto que reciben el
+  // resto de las secciones de Reportes). Barra: columna propia, proporcional
+  // al responsable con MÁS engrases (compara carga entre personas, no contra
+  // el total del período). Mini-resumen arriba (responsables activos/mayor
+  // actividad) + nota de "no es desempeño" abajo con menor peso visual.
+  function drawActividadResponsable(records) {
+    const area = $('#rep-actividad-resp-area');
+    const byResp = {};
+    records.forEach(r => { byResp[r.userName] = (byResp[r.userName] || 0) + 1; });
+    const entries = Object.entries(byResp).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) { area.innerHTML = '<div class="empty-state">Sin actividad registrada en este período.</div>'; return; }
+    const total = records.length;
+    const maxN = entries[0][1];
+    area.innerHTML = `
+      <div class="rep-actividad-sub">
+        <span>Responsables activos: <span class="mono">${entries.length}</span></span>
+        <span>Mayor actividad: <span class="mono">${esc(entries[0][0])}</span></span>
+      </div>
+      <div class="rep-actividad-table">
+        <div class="rep-actividad-row rep-actividad-head">
+          <span>Responsable</span><span>Engrases</span><span>%</span><span>Carga</span>
+        </div>
+        ${entries.map(([nombre, n]) => `
+          <div class="rep-actividad-row">
+            <span class="rep-actividad-nombre">${esc(nombre)}</span>
+            <span class="rep-actividad-count mono">${n}</span>
+            <span class="rep-actividad-pct mono">${Math.round(n / total * 100)}%</span>
+            <span class="rep-actividad-bar-track"><span class="rep-actividad-bar-fill" style="width:${Math.round(n / maxN * 100)}%"></span></span>
+          </div>`).join('')}
+      </div>
+      <div class="dim rep-actividad-nota">Carga de trabajo registrada — no es una medición de cumplimiento ni de desempeño laboral.</div>`;
   }
 
   function drawPhotoReport(records) {
     const from = $('#f-from').value ? new Date($('#f-from').value + 'T00:00:00') : null;
     const to = $('#f-to').value ? new Date($('#f-to').value + 'T23:59:59') : null;
-    const eqId = $('#f-equipo').value;
     const respId = $('#f-resp').value;
     const respUser = respId ? users.find(u => u.id === respId) : null;
+    const idsPermitidos = new Set(equiposFiltrados().map(e => e.id));
 
     const filteredAnomalies = anomalies.filter(a => {
       const d = new Date(a.createdAt);
+      if (!idsPermitidos.has(a.equipmentId)) return false;
       if (from && d < from) return false;
       if (to && d > to) return false;
-      if (eqId && a.equipmentId !== eqId) return false;
       if (respUser && a.createdBy !== respUser.name) return false;
       return true;
     });
@@ -5282,13 +8786,15 @@ async function renderReportes() {
     const photoItems = [
       ...records.filter(r => r.photo).map(r => ({
         photo: r.photo, date: r.date, type: 'Engrase',
-        eq: (equipos.find(e => e.id === r.equipmentId) || {}).code || '—', by: r.userName
+        eq: (equiposPorId[r.equipmentId] || {}).code || '—', by: r.userName
       })),
       ...filteredAnomalies.filter(a => a.photo).map(a => ({
         photo: a.photo, date: a.createdAt, type: 'Anomalía · ' + a.component,
-        eq: (equipos.find(e => e.id === a.equipmentId) || {}).code || '—', by: a.createdBy
+        eq: (equiposPorId[a.equipmentId] || {}).code || '—', by: a.createdBy
       }))
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    $('#rep-photo-count').textContent = `${photoItems.length} evidencia(s)`;
 
     // Las fotos se cargan de a tandas. Antes se insertaban TODAS de golpe: con 300 fotos
     // de 40 KB cada una eso son ~12 MB de texto que el navegador tiene que procesar de
@@ -5297,11 +8803,16 @@ async function renderReportes() {
     const POR_TANDA = 24;
     let mostradas = 0;
 
-    function pintarTanda() {
+    async function pintarTanda() {
       const tanda = photoItems.slice(mostradas, mostradas + POR_TANDA);
-      const html = tanda.map(p => `
+      // Cada foto puede ser base64 local (se muestra directo) o una URL/path
+      // de Storage que puede necesitar un signed URL (ver
+      // docs/STORAGE_PRIVACY_DESIGN.md) — se resuelven las de ESTA tanda
+      // nada más (nunca las 300 de golpe), en paralelo.
+      const srcs = await Promise.all(tanda.map(p => resolveEvidenceSrc(p.photo)));
+      const html = tanda.map((p, i) => `
         <div class="photo-report-item">
-          <img src="${p.photo}" class="photo-thumb-lg" loading="lazy" data-full="${p.photo}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"/>
+          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}" alt="Foto de ${esc(p.eq)} · ${esc(p.type)}"${evidenceValueAttr(p.photo)}/>
           <div class="photo-report-caption"><b>${esc(p.eq)}</b> · ${esc(p.type)}<br/>${fmtDate(p.date)} · ${esc(p.by)}</div>
         </div>`).join('');
 
@@ -5332,69 +8843,115 @@ async function renderReportes() {
     }
   }
 
-  drawCharts();
-  $('#f-apply').addEventListener('click', drawCharts);
+  function drawAll() {
+    const records = applyFilters();
+    const eqsF = equiposFiltrados();
+    const dias = diasDelPeriodo();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+
+    try {
+      drawResumen(records, dias, progReal);
+      drawTendencia(records, dias, equiposDT, turnoSel);
+      drawCumplimientoTurno(progReal);
+      drawCumplimientoEquipo(progReal);
+      drawConsumo(records);
+      drawSkippedPoints(records);
+      drawAnomaliasSeccion(applyFiltersAnomalias());
+      drawNoEjecutadosSeccion(applyFiltersSkips());
+      drawValidacionSeccion(records);
+      drawActividadResponsable(records);
+      drawPhotoReport(records);
+    } catch (err) {
+      console.error('Error dibujando reportes', err);
+    }
+  }
+
+  $('#rep-photo-toggle').addEventListener('click', () => {
+    const grid = $('#photo-report-grid');
+    const oculto = grid.classList.toggle('hidden');
+    $('#rep-photo-toggle').textContent = oculto ? 'Ver fotos' : 'Ocultar fotos';
+  });
+
+  $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => b.addEventListener('click', () => dibujarConsumoTab(b.dataset.tab)));
+
+  drawAll();
+  $('#f-apply').addEventListener('click', drawAll);
 
   $('#exp-cumplimiento').addEventListener('click', () => {
+    const idsF = new Set(equiposFiltrados().map(e => e.id));
     const rows = [['Código', 'Equipo', 'Horómetro', 'Estado', 'Próximo engrase', 'Restante/Atraso']];
-    statuses.forEach(({ e, s }) => rows.push([e.code, `${esc(e.brand)} ${esc(e.model)}`, e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? '']));
+    statuses.filter(x => idsF.has(x.e.id)).forEach(({ e, s }) => rows.push([e.code, `${esc(e.brand)} ${esc(e.model)}`, e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? '']));
     downloadCSV(rows, 'reporte_cumplimiento_engrase.csv');
   });
   $('#exp-historico').addEventListener('click', () => {
     const records = applyFilters();
-    const rows = [['Fecha', 'Equipo', 'Horómetro', 'Turno', 'Responsable', 'Cantidad (kg)', 'Condición']];
+    const rows = [['Fecha', 'Equipo', 'Horómetro', 'Turno', 'Responsable', `Cantidad (${GREASE_UNIT})`, 'Condición']];
     records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       rows.push([fmtDate(r.date), eq ? eq.code : '', r.hourmeter, r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.qty, r.condition]);
     });
     downloadCSV(rows, 'historico_engrases.csv');
   });
   $('#exp-anomalias').addEventListener('click', () => {
     const rows = [['Fecha', 'Equipo', 'Componente', 'Descripción', 'Criticidad', 'Estado', 'Responsable']];
-    anomalies.forEach(a => {
-      const eq = equipos.find(e => e.id === a.equipmentId);
+    applyFiltersAnomalias().forEach(a => {
+      const eq = equiposPorId[a.equipmentId];
       rows.push([fmtDate(a.createdAt), eq ? eq.code : '', a.component, a.description, a.criticality, a.status, a.createdBy]);
     });
     downloadCSV(rows, 'reporte_anomalias.csv');
   });
+  $('#exp-puntos').addEventListener('click', () => {
+    const filas = puntosNoEngrasadosDe(applyFilters());
+    const rows = [['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por']];
+    filas.forEach(f => rows.push([fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]));
+    downloadCSV(rows, 'puntos_no_engrasados.csv');
+  });
+  $('#exp-no-ejecutados').addEventListener('click', () => {
+    // §10 del pedido: cero resultados no genera un archivo vacío/corrupto,
+    // solo avisa — mismo mecanismo (alert nativo) que ya usa el resto de la
+    // app para este tipo de guardia (ver "No hay equipos para imprimir.").
+    const filasDet = noEjecutadosFilasDetalle(applyFiltersSkips());
+    if (!filasDet.length) { alert('Sin registros para exportar en "No ejecutados" con los filtros actuales.'); return; }
+    const rows = [['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado']];
+    filasDet.forEach(f => rows.push([f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado]));
+    downloadCSV(rows, 'no_ejecutados.csv');
+  });
 
   $('#exp-excel').addEventListener('click', () => {
     const records = applyFilters();
-    const filteredAnomalies = anomalies;
+    const anomaliasF = applyFiltersAnomalias();
+    const dias = diasDelPeriodo();
+    const eqsF = equiposFiltrados();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+    const pct = progReal && progReal.general.programados ? Math.round((progReal.general.realizados / progReal.general.programados) * 100) : null;
+    const { totalQty, registrosConQty } = consumoDe(records);
+    const abiertas = anomaliasF.filter(a => a.status !== 'Cerrada').length;
+
     const wb = XLSX.utils.book_new();
     const C = REPORT_COLORS;
     const meta = App.generalSettings.complianceTarget;
-    const colorCumpl = colorPorCumplimiento(compliance, meta);
-    const abiertas = anomalies.filter(a => a.status !== 'Cerrada').length;
-    const detenidos = Math.max(total - alDia - pendientes - vencidos, 0);
-    const periodoTxt = $('#f-from').value
-      ? `Periodo: ${$('#f-from').value} a ${$('#f-to').value || 'hoy'}`
-      : `Periodo: todo el historial hasta ${$('#f-to').value || 'hoy'}`;
+    const colorCumpl = colorPorCumplimiento(pct ?? 0, meta);
+    const periodoTxt = `Periodo: ${$('#f-from').value || '—'} a ${$('#f-to').value || 'hoy'}`;
 
-    /* ---------- Hoja 1: Panel ejecutivo ---------- */
+    /* ---------- Hoja 1: Resumen ---------- */
     const filasResumen = [
-      ['CUMPLIMIENTO DE ENGRASE', compliance + '%', `Meta: ${meta}%`],
+      ['CUMPLIMIENTO DEL PERÍODO', pct === null ? '—' : pct + '%', `Meta: ${meta}%`],
       [],
-      ['ESTADO DE LA FLOTA', 'Equipos', '% del total'],
-      ['Al día', alDia, total ? Math.round(alDia / total * 100) + '%' : '0%'],
-      ['Próximos a vencer', pendientes, total ? Math.round(pendientes / total * 100) + '%' : '0%'],
-      ['Vencidos', vencidos, total ? Math.round(vencidos / total * 100) + '%' : '0%'],
-      ['Detenidos / sin plan', detenidos, total ? Math.round(detenidos / total * 100) + '%' : '0%'],
-      ['TOTAL', total, '100%'],
+      ['PROGRAMADOS/REALIZADOS (Día/Turno)', '', ''],
+      ['Programados', progReal ? progReal.general.programados : '—', ''],
+      ['Realizados', progReal ? progReal.general.realizados : '—', ''],
+      ['No realizados', progReal ? Math.max(progReal.general.programados - progReal.general.realizados, 0) : '—', ''],
       [],
       ['OTROS INDICADORES', '', ''],
+      ['Consumo total de grasa', `${fmt(totalQty, 1)} ${GREASE_UNIT}`, ''],
       ['Anomalías abiertas', abiertas, ''],
       ['Engrases en el periodo', records.length, ''],
-      ['Puntos no engrasados en el periodo', records.reduce((n, r) => n + (r.details || []).filter(d => !d.done).length, 0), ''],
-      [],
-      ['LECTURA RÁPIDA', '', ''],
-      [compliance >= meta
-        ? `La flota está dentro del objetivo de cumplimiento (mínimo ${meta}%).`
-        : compliance >= 80
-          ? `La flota está por debajo del objetivo (${meta}%). Revisar los equipos vencidos como prioridad.`
-          : 'Cumplimiento crítico. Se recomienda intervención inmediata sobre los equipos vencidos.', '', '']
+      ['Puntos no engrasados en el periodo', puntosNoEngrasadosDe(records).length, ''],
     ];
-
     const wsResumen = xlsHojaConFormato({
       titulo: 'CONTROL DE ENGRASE — OPEN PIT',
       subtitulo: `Informe Ejecutivo  ·  Generado: ${fmtDate(nowISO())}  ·  Por: ${App.currentUser.name}  ·  ${periodoTxt}`,
@@ -5402,57 +8959,32 @@ async function renderReportes() {
       filas: filasResumen,
       estiloPorCelda: (valor, ci, fila) => {
         const etiqueta = String(fila[0] || '');
-        // Sub-encabezados de sección
-        if (['ESTADO DE LA FLOTA', 'OTROS INDICADORES', 'LECTURA RÁPIDA'].includes(etiqueta)) {
+        if (['PROGRAMADOS/REALIZADOS (Día/Turno)', 'OTROS INDICADORES'].includes(etiqueta)) {
           return xlsEstiloCelda({ hexFondo: C.azulTitulo.hex, hexTexto: 'FFFFFF', negrita: true });
         }
-        if (etiqueta === 'CUMPLIMIENTO DE ENGRASE') {
-          return ci === 1
-            ? xlsEstiloCelda({ hexFondo: colorCumpl.hex, hexTexto: 'FFFFFF', negrita: true, centrado: true })
-            : xlsEstiloCelda({ negrita: true });
+        if (etiqueta === 'CUMPLIMIENTO DEL PERÍODO') {
+          return ci === 1 ? xlsEstiloCelda({ hexFondo: colorCumpl.hex, hexTexto: 'FFFFFF', negrita: true, centrado: true }) : xlsEstiloCelda({ negrita: true });
         }
-        if (etiqueta === 'Al día') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.verdeSuave.hex, hexTexto: REPORT_COLORS.verdeTexto.hex, centrado: true });
-        if (etiqueta === 'Próximos a vencer') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, centrado: true });
-        if (etiqueta === 'Vencidos') return ci === 0 ? xlsEstiloCelda() : xlsEstiloCelda({ hexFondo: C.rojoSuave.hex, hexTexto: REPORT_COLORS.rojoTexto.hex, centrado: true });
-        if (etiqueta === 'TOTAL') return xlsEstiloCelda({ hexFondo: C.grisSuave.hex, negrita: true, centrado: ci > 0 });
         if (etiqueta === 'Anomalías abiertas' && ci === 1 && abiertas > 0) return xlsEstiloCelda({ hexFondo: C.rojoSuave.hex, hexTexto: REPORT_COLORS.rojoTexto.hex, negrita: true, centrado: true });
         return xlsEstiloCelda({ centrado: ci > 0 });
       }
     });
     wsResumen['!cols'] = [{ wch: 38 }, { wch: 14 }, { wch: 18 }];
-    delete wsResumen['!autofilter']; // en el panel no tiene sentido el filtro
-    XLSX.utils.book_append_sheet(wb, wsResumen, 'Panel Ejecutivo');
+    delete wsResumen['!autofilter'];
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
 
-    /* ---------- Hoja 2: Equipos ---------- */
-    const colEquipos = ['Código', 'Cód. Ahorrativo', 'Marca', 'Modelo', 'Ubicación', 'Turno', 'Horómetro (h)', 'Estado', 'Próximo engrase (h)', 'Restante/Atraso (h)'];
-    const filasEquipos = statuses.map(({ e, s }) => [
-      e.code, e.shortCode || '', e.brand, e.model,
-      (locations.find(l => l.id === e.locationId) || {}).name || '',
-      e.shiftId === 'shift_dia' ? 'Día' : 'Noche',
-      e.hourmeter, s.label, s.nextHour ?? '', s.remaining ?? ''
-    ]);
-    const wsEquipos = xlsHojaConFormato({
-      titulo: 'EQUIPOS Y ESTADO DE ENGRASE',
-      subtitulo: `${statuses.length} equipos  ·  Generado: ${fmtDate(nowISO())}`,
-      columnas: colEquipos, filas: filasEquipos,
-      estiloPorCelda: (valor, ci, fila) => ci === 7 ? xlsEstiloEstado(fila[7]) : xlsEstiloCelda({ centrado: ci >= 5 })
-    });
-    wsEquipos['!cols'] = [{ wch: 12 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }];
-    XLSX.utils.book_append_sheet(wb, wsEquipos, 'Equipos');
-
-    /* ---------- Hoja 3: Histórico de engrases ---------- */
-    const colHist = ['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro (h)', 'Grasa', 'Cantidad (kg)', 'Condición', 'Observaciones'];
+    /* ---------- Hoja 2: Histórico de engrases ---------- */
+    const colHist = ['Fecha', 'Código', 'Equipo', 'Turno', 'Responsable', 'Horómetro (h)', 'Grasa', `Cantidad (${GREASE_UNIT})`, 'Condición', 'Observaciones'];
     const filasHist = records.map(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
+      const eq = equiposPorId[r.equipmentId];
       return [
         fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '',
         r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, r.hourmeter,
-        (lubricants.find(l => l.id === r.greaseType) || {}).name || '', r.qty, r.condition, r.notes || ''
+        (lubPorId[r.greaseType] || {}).name || '', r.qty, r.condition, r.notes || ''
       ];
     });
     const wsHist = xlsHojaConFormato({
-      titulo: 'HISTÓRICO DE ENGRASES',
-      subtitulo: `${records.length} registros  ·  ${periodoTxt}`,
+      titulo: 'HISTÓRICO DE ENGRASES', subtitulo: `${records.length} registros  ·  ${periodoTxt}`,
       columnas: colHist, filas: filasHist, hexEncabezado: C.verde.hex,
       estiloPorCelda: (valor, ci, fila) => {
         if (ci === 8 && fila[8] === 'Requiere atención') return xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true, centrado: true });
@@ -5462,15 +8994,40 @@ async function renderReportes() {
     wsHist['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 9 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 13 }, { wch: 16 }, { wch: 32 }];
     XLSX.utils.book_append_sheet(wb, wsHist, 'Histórico Engrases');
 
-    /* ---------- Hoja 4: Anomalías ---------- */
+    /* ---------- Hoja 3: Cumplimiento por equipo ---------- */
+    const filasCumpl = progReal ? progReal.porEquipo.filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct) : [];
+    const wsCumpl = xlsHojaConFormato({
+      titulo: 'CUMPLIMIENTO POR EQUIPO (Día/Turno)', subtitulo: `${filasCumpl.length} equipo(s)  ·  ${periodoTxt}  ·  menor cumplimiento primero`,
+      columnas: ['Código', 'Marca', 'Modelo', 'Realizados', 'Programados', 'Cumplimiento %'],
+      filas: filasCumpl.length ? filasCumpl.map(f => [f.e.code, f.e.brand, f.e.model, f.realizados, f.programados, f.pct + '%']) : [['—', '—', '—', '—', '—', 'Sin planes Día/Turno evaluables en el período']],
+      hexEncabezado: C.azulTitulo.hex,
+      estiloPorCelda: (valor, ci, fila) => ci >= 3 ? xlsEstiloCelda({ centrado: true }) : xlsEstiloCelda()
+    });
+    wsCumpl['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsCumpl, 'Cumplimiento');
+
+    /* ---------- Hoja 4: Puntos no engrasados ---------- */
+    const filasPtos = puntosNoEngrasadosDe(records);
+    const wsPtos = xlsHojaConFormato({
+      titulo: 'PUNTOS NO ENGRASADOS Y SUS MOTIVOS', subtitulo: `${filasPtos.length} punto(s) pendiente(s)  ·  ${periodoTxt}`,
+      columnas: ['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por'],
+      filas: filasPtos.length ? filasPtos.map(f => [fmtDate(f.fecha), f.code, f.equipo, f.punto, f.motivo, f.por]) : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—', '—']],
+      hexEncabezado: C.ambar.hex,
+      estiloPorCelda: (valor, ci) => ci === 4 ? xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true }) : xlsEstiloCelda()
+    });
+    wsPtos['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 28 }, { wch: 26 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsPtos, 'Puntos Pendientes');
+
+    /* ---------- Hoja 5: Anomalías ---------- */
     const colAnom = ['Fecha', 'Código', 'Componente', 'Descripción', 'Criticidad', 'Estado', 'Responsable'];
-    const filasAnom = filteredAnomalies.map(a => {
-      const eq = equipos.find(e => e.id === a.equipmentId);
+    const filasAnom = anomaliasF.map(a => {
+      const eq = equiposPorId[a.equipmentId];
       return [fmtDate(a.createdAt), eq ? eq.code : '', a.component, a.description, a.criticality, a.status, a.createdBy];
     });
     const wsAnom = xlsHojaConFormato({
-      titulo: 'ANOMALÍAS REPORTADAS',
-      subtitulo: `${filteredAnomalies.length} en total  ·  ${abiertas} abiertas`,
+      titulo: 'ANOMALÍAS REPORTADAS', subtitulo: `${anomaliasF.length} en total  ·  ${abiertas} abiertas  ·  ${periodoTxt}`,
       columnas: colAnom, filas: filasAnom, hexEncabezado: C.rojo.hex,
       estiloPorCelda: (valor, ci, fila) => {
         if (ci === 4) return xlsEstiloCriticidad(fila[4]);
@@ -5483,30 +9040,67 @@ async function renderReportes() {
     wsAnom['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 22 }, { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, wsAnom, 'Anomalías');
 
-    /* ---------- Hoja 5: Puntos no engrasados ---------- */
-    const colPtos = ['Fecha', 'Código', 'Equipo', 'Punto no realizado', 'Motivo', 'Reportado por'];
-    const filasPtos = [];
-    records.forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
-      (r.details || []).filter(d => !d.done).forEach(d => {
-        filasPtos.push([fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '', d.pointName, d.reason || '(sin motivo)', r.userName]);
-      });
-      if (r.sinHorometro) {
-        filasPtos.push([fmtDate(r.date), eq ? eq.code : '', eq ? `${eq.brand} ${eq.model}` : '', 'Sin lectura de horómetro', r.noHourmeterReason || 'No se pudo leer', r.userName]);
-      }
+    /* ---------- Hoja 6: Consumo por equipo ---------- */
+    const byEqQty = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; if (!eq) return; byEqQty[eq.id] = byEqQty[eq.id] || { e: eq, qty: 0 }; byEqQty[eq.id].qty += Number(r.qty); });
+    const filasConsumo = Object.values(byEqQty).sort((a, b) => b.qty - a.qty);
+    const wsConsumo = xlsHojaConFormato({
+      titulo: 'CONSUMO DE GRASA POR EQUIPO', subtitulo: `Total: ${fmt(totalQty, 1)} ${GREASE_UNIT}  ·  ${periodoTxt}`,
+      columnas: ['Código', 'Marca', 'Modelo', `Consumo (${GREASE_UNIT})`],
+      filas: filasConsumo.length ? filasConsumo.map(f => [f.e.code, f.e.brand, f.e.model, fmt(f.qty, 1)]) : [['—', '—', '—', 'Sin consumo en el período']],
+      hexEncabezado: C.verde.hex,
+      estiloPorCelda: (valor, ci) => ci === 3 ? xlsEstiloCelda({ centrado: true }) : xlsEstiloCelda()
     });
-    const wsPtos = xlsHojaConFormato({
-      titulo: 'PUNTOS NO ENGRASADOS Y SUS MOTIVOS',
-      subtitulo: `${filasPtos.length} punto(s) pendiente(s)  ·  ${periodoTxt}`,
-      columnas: colPtos,
-      filas: filasPtos.length ? filasPtos : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—', '—']],
+    wsConsumo['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsConsumo, 'Consumo');
+
+    /* ---------- Hoja 7: Validación (solo si el baseline ya está configurado) ---------- */
+    if (GREASE_VALIDATION_ENABLED_FROM) {
+      const ahoraValXls = new Date();
+      const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+      const filasVal = sujetos.map(r => {
+        const eq = equiposPorId[r.equipmentId];
+        const activas = findActiveValidations(r.id, validations);
+        // Mismo criterio central que Dashboard/Historial (validationStatusForRecord):
+        // conflicto tiene prioridad, 1 activa = validado, 0 activas = pendiente
+        // o vencida según el plazo de MAX_VALIDATION_SHIFTS turnos.
+        const estado = activas.length > 1 ? 'Conflicto'
+          : activas.length === 1 ? (activas[0].signerRole === 'ENCARGADO' ? 'Validado · Encargado' : 'Validado · Operador')
+          : isRecordValidationExpired(r, validations, ahoraValXls, App.generalSettings) ? 'Vencida' : 'Pendiente';
+        return [fmtDate(r.date), eq ? eq.code : '', estado, activas.length === 1 ? activas[0].signerName : '', activas.length === 1 ? fmtDate(activas[0].signedAt) : ''];
+      });
+      const wsVal = xlsHojaConFormato({
+        titulo: 'VALIDACIÓN DE ENGRASES', subtitulo: `${sujetos.length} sujeto(s) a validación  ·  ${periodoTxt}`,
+        columnas: ['Fecha engrase', 'Código', 'Estado', 'Firmado por', 'Fecha validación'],
+        filas: filasVal.length ? filasVal : [['—', '—', 'Sin registros sujetos a validación', '', '']],
+        hexEncabezado: C.azulTitulo.hex,
+        estiloPorCelda: () => xlsEstiloCelda()
+      });
+      wsVal['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, wsVal, 'Validación');
+    }
+
+    /* ---------- Hoja 8: No ejecutados (lote de exportación dedicado) ----------
+       Misma fuente/orden que el CSV y el PDF (noEjecutadosFilasDetalle()) —
+       nunca se recalcula por separado. Título/Periodo/Filtros activos/Total
+       van en el subtítulo (mismo patrón que el resto de hojas de este
+       informe, ej. "Anomalías"/"Puntos Pendientes"), luego la tabla
+       detallada. */
+    const filasNoEjecXls = noEjecutadosFilasDetalle(applyFiltersSkips());
+    const wsNoEjec = xlsHojaConFormato({
+      titulo: 'NO EJECUTADOS',
+      subtitulo: `Total: ${filasNoEjecXls.length}  ·  ${periodoTxt}  ·  Filtros: ${filtrosActivosTexto()}`,
+      columnas: ['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado'],
+      filas: filasNoEjecXls.length
+        ? filasNoEjecXls.map(f => [f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado])
+        : [['—', '—', '—', '—', '—', '—', '—', 'Sin "no se pudo ejecutar" en el período', '—', '—', '—', '—']],
       hexEncabezado: C.ambar.hex,
-      estiloPorCelda: (valor, ci) => ci === 4
-        ? xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true })
+      estiloPorCelda: (valor, ci) => ci === 11 && valor === 'Vinculado a un engrase real'
+        ? xlsEstiloCelda({ hexFondo: C.verdeSuave.hex, hexTexto: REPORT_COLORS.verdeTexto.hex, centrado: true })
         : xlsEstiloCelda()
     });
-    wsPtos['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 28 }, { wch: 26 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, wsPtos, 'Puntos Pendientes');
+    wsNoEjec['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 12 }, { wch: 20 }, { wch: 16 }, { wch: 9 }, { wch: 22 }, { wch: 32 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, wsNoEjec, 'No ejecutados');
 
     XLSX.writeFile(wb, `informe_ejecutivo_engrase_${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
@@ -5517,6 +9111,18 @@ async function renderReportes() {
     const pageWidth = doc.internal.pageSize.getWidth();
     let y = 0;
 
+    const records = applyFilters();
+    const anomaliasF = applyFiltersAnomalias();
+    const dias = diasDelPeriodo();
+    const eqsF = equiposFiltrados();
+    const equiposDT = eqsF.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+    const turnoSel = $('#f-turno').value || null;
+    const progReal = dias ? computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoSel) : null;
+    const pct = progReal && progReal.general.programados ? Math.round((progReal.general.realizados / progReal.general.programados) * 100) : null;
+    const noRealizados = progReal ? Math.max(progReal.general.programados - progReal.general.realizados, 0) : 0;
+    const { totalQty, registrosConQty } = consumoDe(records);
+    const periodoTxt = `Periodo: ${$('#f-from').value || '—'} a ${$('#f-to').value || 'hoy'}`;
+
     // Encabezado
     doc.setFillColor(...REPORT_COLORS.marca.rgb);
     doc.rect(0, 0, pageWidth, 72, 'F');
@@ -5525,98 +9131,43 @@ async function renderReportes() {
     doc.text('CONTROL DE ENGRASE — OPEN PIT', 40, 30);
     doc.setTextColor(255, 255, 255);
     doc.setFont(undefined, 'normal'); doc.setFontSize(11);
-    doc.text('Informe Ejecutivo de Cumplimiento de Engrase', 40, 48);
+    doc.text('Informe Ejecutivo — Análisis del Período', 40, 48);
     doc.setFontSize(8.5);
-    const periodoTxt = $('#f-from').value
-      ? `Periodo: ${$('#f-from').value} a ${$('#f-to').value || 'hoy'}`
-      : `Periodo: todo el historial hasta ${$('#f-to').value || 'hoy'}`;
     doc.text(`Generado: ${fmtDate(nowISO())}   ·   Por: ${esc(App.currentUser.name)}   ·   ${periodoTxt}`, 40, 62);
     y = 100;
 
-    // ============ DASHBOARD EJECUTIVO ============
     const C = REPORT_COLORS;
     const metaCumplimiento = App.generalSettings.complianceTarget;
-    const colorCumpl = colorPorCumplimiento(compliance, metaCumplimiento);
-    const detenidos = Math.max(total - alDia - pendientes - vencidos, 0);
+    const colorCumpl = colorPorCumplimiento(pct ?? 0, metaCumplimiento);
 
-    // --- Bloque 1: cifra grande de cumplimiento + anillo de estado de flota ---
+    // --- Bloque 1: cifra grande de CUMPLIMIENTO DEL PERÍODO (ya no estado
+    // actual de la flota — eso es Dashboard, no Reportes) ---
     const dashY = y;
-    const dashH = 130;
+    const dashH = 110;
     doc.setDrawColor(228); doc.setFillColor(252, 252, 251);
     doc.roundedRect(40, dashY, pageWidth - 80, dashH, 6, 6, 'FD');
-
-    // Cifra principal de cumplimiento
     doc.setTextColor(...colorCumpl.rgb);
     doc.setFont(undefined, 'bold'); doc.setFontSize(46);
-    doc.text(`${compliance}%`, 62, dashY + 56);
+    doc.text(pct === null ? '—' : `${pct}%`, 62, dashY + 56);
     doc.setTextColor(...C.textoTenue.rgb); doc.setFont(undefined, 'normal'); doc.setFontSize(9);
-    doc.text('CUMPLIMIENTO DE ENGRASE', 62, dashY + 72);
+    doc.text('CUMPLIMIENTO DEL PERÍODO (Día/Turno)', 62, dashY + 72);
     doc.setFontSize(8);
-    doc.text(`Meta establecida: ${metaCumplimiento}%`, 62, dashY + 85);
-
-    // Barra de avance contra la meta
-    const barX = 62, barW2 = 230;
-    doc.setFillColor(234, 234, 232); doc.roundedRect(barX, dashY + 95, barW2, 10, 3, 3, 'F');
-    doc.setFillColor(...colorCumpl.rgb);
-    doc.roundedRect(barX, dashY + 95, Math.max(barW2 * (compliance / 100), 3), 10, 3, 3, 'F');
-    const metaX2 = barX + barW2 * (metaCumplimiento / 100);
-    doc.setDrawColor(60); doc.setLineWidth(1.2);
-    doc.line(metaX2, dashY + 91, metaX2, dashY + 109);
-    doc.setLineWidth(0.2);
-
-    // --- Anillo (dona) con la composición de la flota ---
-    const cx = pageWidth - 170, cy = dashY + 62, rExt = 44, rInt = 26;
-    const segmentos = [
-      { v: alDia, c: C.verde, lbl: 'Al día' },
-      { v: pendientes, c: C.ambar, lbl: 'Próximos' },
-      { v: vencidos, c: C.rojo, lbl: 'Vencidos' },
-      { v: detenidos, c: C.gris, lbl: 'Detenidos/Sin plan' }
-    ].filter(s => s.v > 0);
-    const totalSeg = segmentos.reduce((a, s) => a + s.v, 0) || 1;
-
-    // Dibuja cada porción como un abanico de triángulos finos
-    let angIni = -Math.PI / 2;
-    segmentos.forEach(s => {
-      const barrido = (s.v / totalSeg) * Math.PI * 2;
-      doc.setFillColor(...s.c.rgb);
-      const pasos = Math.max(Math.ceil(barrido / 0.06), 2);
-      for (let i = 0; i < pasos; i++) {
-        const a1 = angIni + (barrido * i) / pasos;
-        const a2 = angIni + (barrido * (i + 1)) / pasos;
-        doc.triangle(
-          cx + rExt * Math.cos(a1), cy + rExt * Math.sin(a1),
-          cx + rExt * Math.cos(a2), cy + rExt * Math.sin(a2),
-          cx, cy, 'F'
-        );
-      }
-      angIni += barrido;
-    });
-    // Centro blanco para que quede como anillo, con el total al medio
-    doc.setFillColor(252, 252, 251);
-    doc.circle(cx, cy, rInt, 'F');
-    doc.setTextColor(25); doc.setFont(undefined, 'bold'); doc.setFontSize(18);
-    doc.text(String(total), cx, cy + 2, { align: 'center' });
-    doc.setTextColor(...C.textoTenue.rgb); doc.setFont(undefined, 'normal'); doc.setFontSize(6.5);
-    doc.text('EQUIPOS', cx, cy + 12, { align: 'center' });
-
-    // Leyenda del anillo
-    let ly = dashY + 22;
-    segmentos.forEach(s => {
-      doc.setFillColor(...s.c.rgb);
-      doc.roundedRect(cx + rExt + 14, ly - 6, 8, 8, 1.5, 1.5, 'F');
-      doc.setTextColor(60); doc.setFontSize(7.5); doc.setFont(undefined, 'normal');
-      doc.text(`${s.lbl}: ${s.v}`, cx + rExt + 26, ly);
-      ly += 13;
-    });
+    doc.text(`Meta establecida: ${metaCumplimiento}%  ·  Programados: ${progReal ? progReal.general.programados : '—'}  ·  Realizados: ${progReal ? progReal.general.realizados : '—'}`, 62, dashY + 85);
+    if (pct !== null) {
+      const barX = 62, barW2 = pageWidth - 62 - 80;
+      doc.setFillColor(234, 234, 232); doc.roundedRect(barX, dashY + 95, barW2, 10, 3, 3, 'F');
+      doc.setFillColor(...colorCumpl.rgb);
+      doc.roundedRect(barX, dashY + 95, Math.max(barW2 * (pct / 100), 3), 10, 3, 3, 'F');
+    }
     y = dashY + dashH + 16;
 
-    // --- Bloque 2: tarjetas KPI con franja de color ---
+    // --- Bloque 2: tarjetas KPI del período ---
     const kpis = [
-      ['Total equipos', total, C.gris],
-      ['Al día', alDia, C.verde],
-      ['Próximos a vencer', pendientes, pendientes > 0 ? C.ambar : C.gris],
-      ['Vencidos', vencidos, vencidos > 0 ? C.rojo : C.gris],
-      ['Anomalías abiertas', anomalies.filter(a => a.status !== 'Cerrada').length, anomalies.filter(a => a.status !== 'Cerrada').length > 0 ? C.rojo : C.gris]
+      ['Programados', progReal ? progReal.general.programados : '—', C.gris],
+      ['Realizados', progReal ? progReal.general.realizados : '—', C.verde],
+      ['No realizados', noRealizados, noRealizados > 0 ? C.ambar : C.gris],
+      [`Consumo (${GREASE_UNIT})`, fmt(totalQty, 1), C.gris],
+      ['Anomalías abiertas', anomaliasF.filter(a => a.status !== 'Cerrada').length, anomaliasF.filter(a => a.status !== 'Cerrada').length > 0 ? C.rojo : C.gris]
     ];
     const gap = 8;
     const boxW = (pageWidth - 80 - gap * (kpis.length - 1)) / kpis.length;
@@ -5633,42 +9184,69 @@ async function renderReportes() {
     });
     y += 66;
 
-    // Narrativa
-    const openAnom = anomalies.filter(a => a.status !== 'Cerrada').length;
-    const target = App.generalSettings.complianceTarget;
-    const narrative = `Al día de hoy, la flota registra un cumplimiento de engrase del ${compliance}%. De ${total} equipos activos, ${alDia} están al día, ${pendientes} próximos a vencer y ${vencidos} vencidos que requieren atención inmediata. Actualmente hay ${openAnom} anomalía(s) abierta(s) pendientes de resolución. ${compliance < target ? `Se recomienda priorizar el engrase de los equipos vencidos listados a continuación para volver al objetivo de cumplimiento (mínimo ${target}%).` : `La flota se mantiene dentro del objetivo de cumplimiento definido (mínimo ${target}%).`}`;
-    doc.setTextColor(20); doc.setFontSize(9.5);
-    const lines = doc.splitTextToSize(narrative, pageWidth - 80);
-    doc.text(lines, 40, y);
-    y += lines.length * 12 + 16;
+    // Cumplimiento por turno (texto compacto, sin tabla)
+    if (progReal) {
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+      doc.text('Cumplimiento por turno', 40, y); y += 16;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5);
+      [['shift_dia', 'Día'], ['shift_noche', 'Noche']].forEach(([id, label]) => {
+        const t = progReal.porTurno[id];
+        const tpct = t.programados ? Math.round((t.realizados / t.programados) * 100) : null;
+        doc.text(`${label}: ${t.realizados}/${t.programados}  (${tpct === null ? '—' : tpct + '%'})`, 40, y);
+        y += 14;
+      });
+      y += 6;
+    }
 
-    // Tabla: equipos que requieren atención
-    const attention = statuses.filter(x => x.s.code === 'ROJO' || x.s.code === 'AMARILLO')
-      .sort((a, b) => (a.s.remaining ?? 0) - (b.s.remaining ?? 0));
+    // Tabla: equipos con menor cumplimiento (reemplaza "equipos que requieren atención")
+    const equiposMenorCumpl = progReal ? progReal.porEquipo.filter(x => x.programados > 0)
+      .map(x => ({ ...x, pct: Math.round((x.realizados / x.programados) * 100) }))
+      .sort((a, b) => a.pct - b.pct).slice(0, 15) : [];
     doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Equipos que requieren atención', 40, y); y += 6;
+    doc.text('Equipos con menor cumplimiento', 40, y); y += 6;
     doc.autoTable({
       startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.marca.rgb },
-      head: [['Estado', 'Código', 'Equipo', 'Turno', 'Horómetro', 'Restante/Atraso']],
-      body: attention.length ? attention.map(({ e, s }) => [
-        s.label, e.code, `${esc(e.brand)} ${esc(e.model)}`,
-        e.shiftId === 'shift_dia' ? 'Día' : 'Noche',
-        fmt(e.hourmeter) + ' h',
-        s.remaining != null ? (s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h') : (s.scheduleDate ? WEEKDAY_NAMES[s.scheduleDate.getDay()] : '—')
-      ]) : [['—', '—', 'Todos los equipos están al día', '—', '—', '—']],
-      // Colorea la columna Estado según sea VENCIDO (rojo) o PRÓXIMO (ámbar), para
-      // que en una hoja impresa se distingan de un vistazo sin tener que leer.
+      head: [['Código', 'Equipo', 'Realizados', 'Programados', 'Cumplimiento']],
+      body: equiposMenorCumpl.length ? equiposMenorCumpl.map(f => [f.e.code, `${esc(f.e.brand)} ${esc(f.e.model)}`, f.realizados, f.programados, f.pct + '%']) : [['—', 'Sin planes Día/Turno evaluables en el período', '—', '—', '—']],
       didParseCell: (data) => {
-        if (data.section !== 'body' || data.column.index !== 0) return;
-        const txt = String(data.cell.raw || '').toUpperCase();
-        if (txt.includes('VENCID')) { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
-        else if (txt.includes('PRÓXIM') || txt.includes('PROXIM')) { data.cell.styles.textColor = REPORT_COLORS.ambarTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
+        if (data.section !== 'body' || data.column.index !== 4) return;
+        const p = parseInt(data.cell.raw, 10);
+        if (Number.isFinite(p) && p < 80) { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
       }
     });
     y = doc.lastAutoTable.finalY + 20;
 
-    // Tabla: anomalías abiertas
-    const openAnomalies = anomalies.filter(a => a.status !== 'Cerrada');
+    // Tabla: consumo de grasa (top equipos)
+    if (y > 620) { doc.addPage(); y = 40; }
+    const byEqQtyPdf = {};
+    registrosConQty.forEach(r => { const eq = equiposPorId[r.equipmentId]; if (!eq) return; byEqQtyPdf[eq.id] = byEqQtyPdf[eq.id] || { e: eq, qty: 0 }; byEqQtyPdf[eq.id].qty += Number(r.qty); });
+    const consumoTop = Object.values(byEqQtyPdf).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+    doc.text(`Consumo de grasa — total ${fmt(totalQty, 1)} ${GREASE_UNIT}`, 40, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.verde.rgb },
+      head: [['Código', 'Equipo', `Consumo (${GREASE_UNIT})`]],
+      body: consumoTop.length ? consumoTop.map(f => [f.e.code, `${esc(f.e.brand)} ${esc(f.e.model)}`, fmt(f.qty, 1)]) : [['—', 'Sin consumo en el período', '—']]
+    });
+    y = doc.lastAutoTable.finalY + 20;
+
+    // Tabla: principales motivos de no engrase
+    const puntosPendientes = puntosNoEngrasadosDe(records);
+    const porMotivoPdf = {};
+    puntosPendientes.forEach(f => { porMotivoPdf[f.motivo] = (porMotivoPdf[f.motivo] || 0) + 1; });
+    const motivosOrdenados = Object.entries(porMotivoPdf).sort((a, b) => b[1] - a[1]);
+    if (y > 620) { doc.addPage(); y = 40; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+    doc.text('Principales motivos de no engrase', 40, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
+      head: [['Motivo', 'Cantidad', '%']],
+      body: motivosOrdenados.length ? motivosOrdenados.map(([m, n]) => [m, n, Math.round(n / puntosPendientes.length * 100) + '%']) : [['—', '—', 'Sin puntos pendientes en el periodo']]
+    });
+    y = doc.lastAutoTable.finalY + 20;
+
+    // Tabla: anomalías relevantes (abiertas del período)
+    const openAnomalies = anomaliasF.filter(a => a.status !== 'Cerrada');
     if (y > 620) { doc.addPage(); y = 40; }
     doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
     doc.text('Anomalías abiertas', 40, y); y += 6;
@@ -5676,10 +9254,10 @@ async function renderReportes() {
       startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.rojo.rgb },
       head: [['Criticidad', 'Código', 'Componente', 'Descripción', 'Estado']],
       body: openAnomalies.length ? openAnomalies.map(a => {
-        const eq = equipos.find(e => e.id === a.equipmentId);
+        const eq = equiposPorId[a.equipmentId];
         return [a.criticality, eq ? eq.code : '—', a.component, a.description, a.status];
-      }) : [['—', '—', '—', 'Sin anomalías abiertas', '—']]
-          ,didParseCell: (data) => {
+      }) : [['—', '—', '—', 'Sin anomalías abiertas', '—']],
+      didParseCell: (data) => {
         if (data.section !== 'body' || data.column.index !== 0) return;
         const t = String(data.cell.raw || '');
         if (t === 'Crítica') { data.cell.styles.textColor = REPORT_COLORS.rojoTexto.rgb; data.cell.styles.fontStyle = 'bold'; }
@@ -5689,42 +9267,64 @@ async function renderReportes() {
     });
     y = doc.lastAutoTable.finalY + 20;
 
-    // Tabla: puntos que quedaron sin engrasar, con su motivo
-    // (ojo: se llama puntosPendientes y no "pendientes" — ese nombre ya está usado
-    //  más arriba en esta misma función para el conteo de equipos próximos a vencer)
-    const puntosPendientes = [];
-    applyFilters().forEach(r => {
-      const eq = equipos.find(e => e.id === r.equipmentId);
-      (r.details || []).filter(d => !d.done).forEach(d => {
-        puntosPendientes.push([fmtDate(r.date), eq ? eq.code : '—', d.pointName, d.reason || '(sin motivo)', r.userName]);
+    // Tabla: validación de engrases — SOLO si el baseline ya está configurado
+    if (GREASE_VALIDATION_ENABLED_FROM) {
+      const ahoraValPdf = new Date();
+      const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
+      let validados = 0, pendientesVal = 0, conflictosVal = 0, vencidosVal = 0;
+      sujetos.forEach(r => {
+        const activas = findActiveValidations(r.id, validations);
+        if (activas.length > 1) { conflictosVal++; return; }
+        if (activas.length === 1) { validados++; return; }
+        if (isRecordValidationExpired(r, validations, ahoraValPdf, App.generalSettings)) vencidosVal++; else pendientesVal++;
       });
-      if (r.sinHorometro) {
-        puntosPendientes.push([fmtDate(r.date), eq ? eq.code : '—', 'Sin lectura de horómetro', r.noHourmeterReason || 'No se pudo leer', r.userName]);
-      }
+      if (y > 620) { doc.addPage(); y = 40; }
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+      doc.text('Validación de engrases', 40, y); y += 16;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5);
+      doc.text(`Sujetos: ${sujetos.length}  ·  Validados: ${validados}  ·  Pendientes: ${pendientesVal}  ·  Vencidos: ${vencidosVal}  ·  Conflictos: ${conflictosVal}`, 40, y);
+      y += 20;
+    }
+
+    // Sección "NO EJECUTADOS" (lote de exportación dedicado) — MISMA
+    // fuente/orden que el CSV y la hoja de Excel (noEjecutadosFilasDetalle(),
+    // más reciente primero), nunca una consulta aparte. autoTable pagina
+    // solo (multipágina real); "Observación" usa el wrap por defecto de
+    // autoTable (overflow:'linebreak') para que el texto largo se vea
+    // completo en varias líneas, nunca recortado/oculto.
+    const filasNoEjecPdf = noEjecutadosFilasDetalle(applyFiltersSkips());
+    if (y > 600) { doc.addPage(); y = 40; }
+    doc.setFont(undefined, 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+    doc.text('NO EJECUTADOS', 40, y); y += 18;
+    doc.setFont(undefined, 'normal'); doc.setFontSize(9.5); doc.setTextColor(60);
+    doc.text(periodoTxt, 40, y); y += 14;
+    doc.text(`Filtros utilizados: ${filtrosActivosTexto()}`, 40, y); y += 14;
+    doc.text(`Total: ${filasNoEjecPdf.length}`, 40, y); y += 16;
+
+    // Resumen por motivo — SIEMPRE los 6 motivos reales (aunque alguno esté
+    // en 0), en el orden pedido explícitamente — nunca solo los presentes.
+    const ORDEN_MOTIVOS_RESUMEN_PDF = ['REPARACION', 'SIN_TIEMPO', 'NO_DISPONIBLE', 'CONDICION_INSEGURA', 'YA_ENGRASADO', 'OTRO'];
+    const conteoPorMotivoPdf = {};
+    filasNoEjecPdf.forEach(f => { conteoPorMotivoPdf[f.motivo] = (conteoPorMotivoPdf[f.motivo] || 0) + 1; });
+    doc.autoTable({
+      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 8 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
+      head: [['Motivo', 'Cantidad']],
+      body: ORDEN_MOTIVOS_RESUMEN_PDF.map(r => [NO_EXECUTION_REASON_LABELS[r], conteoPorMotivoPdf[NO_EXECUTION_REASON_LABELS[r]] || 0])
     });
-    if (y > 620) { doc.addPage(); y = 40; }
+    y = doc.lastAutoTable.finalY + 16;
+
+    if (y > 600) { doc.addPage(); y = 40; }
     doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Puntos no engrasados y sus motivos', 40, y); y += 6;
+    doc.text('Detalle', 40, y); y += 6;
     doc.autoTable({
       startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 7.5 }, headStyles: { fillColor: REPORT_COLORS.ambar.rgb },
-      head: [['Fecha', 'Código', 'Punto', 'Motivo', 'Reportado por']],
-      body: puntosPendientes.length ? puntosPendientes.slice(0, 40) : [['—', '—', '—', 'Sin puntos pendientes en el periodo', '—']]
+      head: [['Fecha', 'Hora', 'Equipo', 'Modelo', 'Ubicación', 'Turno', 'Motivo', 'Observación', 'Usuario', 'Cuadrilla', 'Occurrence', 'Estado']],
+      body: filasNoEjecPdf.length
+        ? filasNoEjecPdf.map(f => [f.fecha, f.hora, f.codigo, f.modelo, f.ubicacion, f.turno, f.motivo, f.observacion, f.usuario, f.cuadrilla, f.occurrence, f.estado])
+        : [['—', '—', '—', '—', '—', '—', '—', 'Sin "no se pudo ejecutar" en el período', '—', '—', '—', '—']],
+      columnStyles: { 7: { cellWidth: 70 } }
     });
     y = doc.lastAutoTable.finalY + 20;
-
-    // Tabla: histórico de engrases del periodo filtrado (resumen, últimos 40)
-    const records = applyFilters().slice(0, 40);
-    if (y > 620) { doc.addPage(); y = 40; }
-    doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20);
-    doc.text('Histórico de engrases (periodo filtrado)', 40, y); y += 6;
-    doc.autoTable({
-      startY: y, margin: { left: 40, right: 40 }, styles: { fontSize: 7.5 }, headStyles: { fillColor: REPORT_COLORS.verde.rgb },
-      head: [['Fecha', 'Código', 'Turno', 'Responsable', 'Horómetro', 'Condición']],
-      body: records.length ? records.map(r => {
-        const eq = equipos.find(e => e.id === r.equipmentId);
-        return [fmtDate(r.date), eq ? eq.code : '', r.shiftId === 'shift_dia' ? 'Día' : 'Noche', r.userName, fmt(r.hourmeter) + ' h', r.condition];
-      }) : [['—', '—', '—', '—', '—', 'Sin registros en el periodo']]
-    });
 
     // Pie de página
     const pageCount = doc.internal.getNumberOfPages();
@@ -5773,22 +9373,98 @@ function fileToCompressedDataURL(file, maxDim = 1400, quality = 0.8) {
   });
 }
 
+// P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md) — resuelve el `src` real para
+// mostrar UNA evidencia (foto de engrase/anomalía, firma) que puede venir
+// como base64 local (offline, este dispositivo la tomó) o como una URL/path
+// de Storage (la subió este u otro dispositivo). Base64 se muestra directo,
+// sin red. Cualquier otra cosa intenta un signed URL (funciona igual hoy,
+// con el bucket todavía público, que el día que deje de serlo); si eso
+// falla por lo que sea (sin conexión, sesión vencida, bucket aún no
+// migrado) cae de vuelta al valor original — nunca deja de mostrar algo si
+// había algo que mostrar. Usado hoy solo en las dos pantallas de evidencia
+// "cruzable entre dispositivos" (Reportes, firma de validación) — ver
+// docs/STORAGE_PRIVACY_DESIGN.md §Limitaciones para los sitios que SIGUEN
+// usando el valor crudo (miniaturas de checklist, diagramas de familia).
+async function resolveEvidenceSrc(value, { force = false } = {}) {
+  if (!value || typeof value !== 'string') return value || null;
+  if (value.startsWith('data:image')) return value; // copia local, nunca red
+  try {
+    const cfg = await DB.getConfig();
+    const signed = await Sync.getSignedPhotoUrl(value, cfg, { force });
+    return signed || value;
+  } catch (e) {
+    return value;
+  }
+}
+
+// Atributo `data-evidence-value` para un <img> resuelto vía
+// resolveEvidenceSrc() — guarda el valor CRUDO (nunca el signed URL ya
+// usado) para que wireEvidenceImgFallbackOnce() pueda pedir uno nuevo si
+// este falla. Base64 nunca lo necesita (no hay nada que "regenerar").
+function evidenceValueAttr(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string' || rawValue.startsWith('data:image')) return '';
+  return ` data-evidence-value="${esc(rawValue)}"`;
+}
+
+// Reintento único + placeholder controlado (§38/§40 docs/
+// STORAGE_PRIVACY_DESIGN.md): un <img> de evidencia (foto/firma) puede
+// fallar por una URL firmada vencida (más de ~1h en pantalla), sin red, o
+// el bucket ya privado sin sesión válida. Wireado UNA sola vez a nivel de
+// documento (el evento 'error' de <img> no burbujea, por eso se usa
+// captura) — cubre Reportes/Ayuda/Plan de engrase/validación sin tener que
+// wirear cada pantalla por separado. Solo actúa sobre <img
+// data-evidence-value="..."> (el valor CRUDO guardado, nunca el signed
+// URL ya usado) — cualquier otra imagen de la app (íconos, avatares) la
+// ignora tal cual.
+function wireEvidenceImgFallbackOnce() {
+  if (wireEvidenceImgFallbackOnce._wired) return;
+  wireEvidenceImgFallbackOnce._wired = true;
+  document.addEventListener('error', async (ev) => {
+    const img = ev.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.evidenceValue) return;
+    if (img.dataset.evidenceRetried) {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'photo-thumb-placeholder dim';
+      placeholder.style.cssText = 'display:flex; align-items:center; justify-content:center; text-align:center; padding:8px; font-size:11px; min-height:60px';
+      placeholder.textContent = 'Imagen no disponible sin conexión';
+      img.replaceWith(placeholder);
+      return;
+    }
+    img.dataset.evidenceRetried = '1';
+    const fresh = await resolveEvidenceSrc(img.dataset.evidenceValue, { force: true });
+    if (fresh) img.src = fresh;
+  }, true);
+}
+
 function openPhotoLightbox(src, caption) {
-  openModal(caption || 'Fotografía', `<img src="${src}" style="width:100%; border-radius:8px; display:block"/>`);
+  openModal(caption || 'Fotografía', `<img src="${src}" style="width:100%; border-radius:8px; display:block" alt="${esc(caption || 'Fotografía')}"/>`);
 }
 
-function photoThumbHTML(src, caption) {
+function photoThumbHTML(src, caption, rawValue) {
   if (!src) return '<span class="dim">—</span>';
-  return `<img src="${src}" class="photo-thumb" data-full="${src}" data-caption="${(caption || '').replace(/"/g, '&quot;')}" alt="Foto"/>`;
+  return `<img src="${src}" class="photo-thumb" data-full="${src}" data-caption="${(caption || '').replace(/"/g, '&quot;')}" alt="Foto"${evidenceValueAttr(rawValue)}/>`;
 }
 
-// Muestra TODAS las fotos de un registro (funciona igual con registros viejos de una sola foto)
-function photoThumbsHTML(record, caption) {
+// Muestra TODAS las fotos de un registro (funciona igual con registros viejos de una sola foto).
+// `resolvedSrcs` (mismo orden que photosOf(record)) viene de
+// resolvePhotoThumbSrcs() — quien llama lo resuelve ANTES para no volver
+// async esta función ni romper sus muchos llamadores síncronos. Sin
+// `resolvedSrcs` cae al valor crudo (compatibilidad con cualquier llamador
+// que aún no se haya actualizado).
+function photoThumbsHTML(record, caption, resolvedSrcs) {
   const photos = photosOf(record);
   if (!photos.length) return '<span class="dim">—</span>';
+  const srcs = resolvedSrcs || photos;
   return `<div class="photo-thumb-group">${photos.map((p, i) =>
-    photoThumbHTML(p, `${caption || ''}${photos.length > 1 ? ` (${i + 1}/${photos.length})` : ''}`)
+    photoThumbHTML(srcs[i], `${caption || ''}${photos.length > 1 ? ` (${i + 1}/${photos.length})` : ''}`, p)
   ).join('')}</div>`;
+}
+
+// Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+// resuelve TODAS las fotos de un registro en paralelo — usado por Historial
+// (equipo/global) y Anomalías antes de armar la tabla.
+async function resolvePhotoThumbSrcs(record) {
+  return Promise.all(photosOf(record).map(p => resolveEvidenceSrc(p)));
 }
 
 function wirePhotoThumbs(container) {
@@ -5798,8 +9474,22 @@ function wirePhotoThumbs(container) {
   });
 }
 
+// Protecci\u00F3n CSV/Excel formula injection (lote "No ejecutados", \u00A75 \u2014
+// aplica a TODOS los CSV de la app por venir de la funci\u00F3n compartida):
+// un valor que EMPIECE con =, +, -, @ (o tab/CR, los otros disparadores
+// documentados) es interpretado como f\u00F3rmula por Excel/Sheets al abrir el
+// CSV. Se neutraliza con una comilla simple al frente \u2014 el campo sigue
+// vi\u00E9ndose igual como texto, nunca cambia el valor real exportado. Los
+// exports existentes (c\u00F3digos, fechas, n\u00FAmeros) no empiezan con esos
+// caracteres en la pr\u00E1ctica, as\u00ED que esto no altera su salida; el caso real
+// que lo necesita es el nuevo campo libre "Observaci\u00F3n" de No ejecutados.
+function csvSafeField(v) {
+  const s = String(v ?? '');
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 function downloadCSV(rows, filename) {
-  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = rows.map(r => r.map(v => `"${csvSafeField(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -5813,6 +9503,14 @@ function downloadCSV(rows, filename) {
 async function renderUsuarios() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
+  // AUTH_MODE='supabase': pantalla completamente distinta (administra
+  // personas reales vía la Edge Function manage-users, nunca el store
+  // "users" legacy) — ver renderUsuariosSupabase() más abajo. Con
+  // AUTH_MODE='legacy' (default), esta rama nunca se toma y todo lo de
+  // abajo sigue exactamente igual que siempre.
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    return renderUsuariosSupabase(c);
+  }
   const isSupervisor = App.currentUser.role === 'SUPERVISOR';
   // Un supervisor solo administra cuentas de lubricadores; el administrador ve y crea todos los roles.
   const allUsers = await DB.allActive('users');
@@ -5824,7 +9522,7 @@ async function renderUsuarios() {
   c.innerHTML = `
     <div class="toolbar">
       <button class="btn btn-accent" id="btn-new-lubricador">${ic("plus")}Nuevo lubricador</button>
-      ${!isSupervisor ? `<button class="btn" id="btn-new-user">+ Otro tipo de usuario</button>` : ''}
+      ${!isSupervisor ? `<button class="btn" id="btn-new-user">${ic("plus")}Otro tipo de usuario</button>` : ''}
     </div>
     <div class="panel">
       <table class="data-table">
@@ -5905,6 +9603,235 @@ async function renderUsuarios() {
     showInAppToast('✓ Usuario desactivado');
     renderUsuarios();
   }));
+}
+
+/* ============================================================
+   USUARIOS — AUTH_MODE='supabase' (P0-2, personas reales vía
+   supabase/functions/manage-users). Nunca toca el store "users" legacy
+   (esos 7 registros no son cuentas Auth, ver docs/
+   AUTH_RLS_IMPLEMENTATION_PLAN.md §17) — todo pasa por Auth.manageUsers(),
+   que a su vez exige una sesión ya autenticada y reenvía el JWT propio;
+   la autorización real (¿este caller es ADMINISTRADOR activo?) la decide
+   siempre la Edge Function server-side, nunca este archivo.
+   ============================================================ */
+// FIX "Agregar usuario" (auditoría previa): Auth.manageUsers() ya llamaba
+// correctamente a la Edge Function real (nunca auth.admin.* directo, nunca
+// service_role) — el problema era puramente de esta capa de UI: errores
+// del servidor mostrados como código crudo ("username_taken"), sin guardia
+// de doble-click, sin confirmación de contraseña, y fallas de red sin
+// traducir. Una sola tabla de traducción para las 4 pantallas (crear/rol/
+// activar/resetear) — nunca stack trace/service_role/JWT en el mensaje.
+const MANAGE_USERS_ERROR_LABELS = {
+  AUTH_REQUIRED: 'Tu sesión expiró o no hay una sesión activa. Vuelve a iniciar sesión.',
+  AUTH_FORBIDDEN: 'No tienes permisos de Administrador para hacer esto.',
+  SYNC_NOT_CONFIGURED: 'La sincronización no está configurada en este dispositivo.',
+  NETWORK: 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.',
+  TIMEOUT: 'El servidor no respondió a tiempo. Intenta de nuevo.',
+  username_taken: 'Ese nombre de usuario ya existe. Elige otro.',
+  invalid_role: 'El rol seleccionado no es válido.',
+  temp_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
+  new_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
+  display_name_required: 'Escribe el nombre completo.',
+  app_user_id_required: 'Falta indicar a qué usuario aplica esto.',
+  invalid_input: 'Los datos ingresados no son válidos.',
+  not_found: 'No se encontró ese usuario.',
+  cannot_remove_last_admin: 'No puedes quitar el rol de Administrador al único activo — activa otro Administrador primero.',
+  cannot_deactivate_last_admin: 'No puedes desactivar al único Administrador activo — activa otro primero.',
+  auth_create_failed: 'No se pudo crear la cuenta (podría ya existir, o los datos no son válidos).',
+  auth_create_no_id: 'El servidor no confirmó la creación de la cuenta. Intenta de nuevo.',
+  profile_create_failed_rolled_back: 'No se pudo completar la creación del usuario — no quedó ninguna cuenta a medio crear. Intenta de nuevo.',
+  update_failed: 'No se pudo guardar el cambio. Intenta de nuevo.',
+  reset_failed: 'No se pudo restablecer la contraseña. Intenta de nuevo.',
+  internal_error: 'Ocurrió un error inesperado en el servidor. Intenta de nuevo.',
+  unknown_action: 'Acción no reconocida.',
+};
+function manageUsersErrorMessage(err) {
+  const code = (err && err.message) || '';
+  if (MANAGE_USERS_ERROR_LABELS[code]) return MANAGE_USERS_ERROR_LABELS[code];
+  if (code.startsWith('list_failed_') || code.startsWith('HTTP_')) {
+    return 'No se pudo completar la acción (el servidor respondió con un error). Intenta de nuevo.';
+  }
+  return 'No se pudo completar la acción. Intenta de nuevo.';
+}
+async function renderUsuariosSupabase(c) {
+  const offline = !navigator.onLine;
+  c.innerHTML = `
+    <div class="toolbar">
+      <button class="btn btn-accent" id="btn-new-user-sb" ${offline ? 'disabled title="Requiere conexión"' : ''}>${ic('plus')}Nuevo usuario</button>
+      ${offline ? '<span class="dim">Sin conexión — la administración de usuarios requiere Internet.</span>' : ''}
+    </div>
+    <div class="panel">
+      <table class="data-table">
+        <thead><tr><th>Nombre</th><th>Rol</th><th>Activo</th><th></th></tr></thead>
+        <tbody id="usuarios-sb-tbody">
+          <tr><td colspan="4" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  // Offline: la administración de usuarios exige Internet siempre — no
+  // hay snapshot local de la lista completa que mostrar, y los botones
+  // de acción quedan deshabilitados (arriba). Nada de esto se guarda para
+  // sincronizar después: no es un cambio operativo diferible, es una
+  // operación de seguridad que solo tiene sentido hecha en el momento,
+  // contra el servidor real.
+  if (offline) return;
+
+  let users = [];
+  try {
+    const res = await Auth.manageUsers('LIST_USERS');
+    users = res.users || [];
+  } catch (e) {
+    const tbody = $('#usuarios-sb-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
+    return;
+  }
+
+  const tbody = $('#usuarios-sb-tbody');
+  if (!tbody) return; // la pantalla cambió mientras esperábamos la respuesta
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td>${esc(u.display_name)}</td>
+      <td>${esc(u.role)}</td>
+      <td>${u.active ? 'Sí' : 'No'}</td>
+      <td class="row-actions">
+        <button class="btn btn-sm" data-role="${esc(u.app_user_id)}">${ic('edit')}Rol</button>
+        <button class="btn btn-sm ${u.active ? 'btn-danger' : ''}" data-toggle="${esc(u.app_user_id)}" data-active="${u.active ? 'true' : 'false'}">
+          ${u.active ? ic('trash') + 'Desactivar' : ic('check') + 'Activar'}
+        </button>
+        <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">${ic("rotate-ccw")}Reset password</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
+
+  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase(c));
+  $$('button[data-role]', c).forEach(b => b.addEventListener('click', () => {
+    const u = users.find(x => x.app_user_id === b.dataset.role);
+    if (u) roleFormSupabase(u, c);
+  }));
+  $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', async () => {
+    const activeNow = b.dataset.active === 'true';
+    try {
+      await Auth.manageUsers('SET_ACTIVE', { app_user_id: b.dataset.toggle, active: !activeNow });
+      showInAppToast(activeNow ? '✓ Usuario desactivado' : '✓ Usuario activado');
+      renderUsuariosSupabase(c);
+    } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+  }));
+  $$('button[data-reset]', c).forEach(b => b.addEventListener('click', () => resetPasswordFormSupabase(b.dataset.reset)));
+}
+
+// Deshabilita el submit mientras la llamada está en vuelo (evita doble
+// creación/doble submit por doble click o red lenta) y restaura texto+
+// estado al terminar, sin importar si fue éxito o error — un solo lugar
+// para las 3 formas de este archivo, en vez de repetir el patrón 3 veces.
+async function withSubmitGuard(form, busyLabel, fn) {
+  const btn = form.querySelector('button[type="submit"]');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = busyLabel;
+  try {
+    await fn();
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+// "Activo" NO es un campo de este formulario a propósito: handleCreateUser()
+// (manage-users) siempre crea la cuenta con active=true — un checkbox aquí
+// no tendría ningún efecto real en el servidor (revisado explícitamente,
+// no agregado "por si acaso"). Desactivar es SET_ACTIVE, una acción
+// posterior y separada sobre un usuario ya creado.
+// Preparado para el futuro modelo de turno de notificaciones (§13 del
+// pedido de este fix, NO implementado aquí): `fd` se arma directo desde
+// FormData y se reenvía tal cual — el día que se agreguen inputs nuevos
+// (notificationShift/notificationAvailability/receiveAllShifts), viajan
+// solos sin tocar este handler, siempre que manage-users los valide como
+// campos PROPIOS y separados de `role` (nunca mezclados, nunca
+// SUPERVISOR_DIA/NOCHE como rol).
+function userFormSupabase(c) {
+  openModal('Nuevo usuario', `
+    <form id="user-form-sb" class="form-grid">
+      <label>Nombre completo<input required name="display_name"/></label>
+      <label>Usuario<input required name="username" pattern="[a-zA-Z0-9._-]+"/>
+        <span class="field-hint">Sin espacios ni "@" — se usa para generar el acceso interno, nunca se muestra completo.</span>
+      </label>
+      <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option>${r}</option>`).join('')}</select></label>
+      <label>Contraseña temporal (mínimo 8 caracteres)<input required minlength="8" type="password" name="temp_password" autocomplete="new-password"/>
+        <span class="field-hint">La persona debería cambiarla apenas entre. Nunca queda guardada en este dispositivo.</span>
+      </label>
+      <label>Confirmar contraseña<input required minlength="8" type="password" name="temp_password_confirm" autocomplete="new-password"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Crear usuario</button></div>
+    </form>`);
+  $('#user-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    // Validación de formulario (nunca sustituye al servidor, solo evita
+    // un viaje de red inútil por un error obvio): campos requeridos ya
+    // los cubre `required`/`minlength` del HTML; lo único que el HTML no
+    // puede validar es que ambas contraseñas coincidan.
+    if (fd.temp_password !== fd.temp_password_confirm) {
+      showInAppToast('✗ Las contraseñas no coinciden.');
+      return;
+    }
+    delete fd.temp_password_confirm; // nunca se envía al servidor, es solo un chequeo de UI
+    await withSubmitGuard(form, 'Creando…', async () => {
+      try {
+        await Auth.manageUsers('CREATE_USER', fd);
+        showInAppToast('✓ Usuario creado correctamente.');
+        closeModal();
+        if (c) renderUsuariosSupabase(c); // refresca solo la lista, sin recargar toda la pantalla
+      } catch (e) {
+        showInAppToast('✗ ' + manageUsersErrorMessage(e));
+      } finally {
+        fd.temp_password = ''; // limpia la referencia local apenas termina el submit
+      }
+    });
+  });
+}
+
+function roleFormSupabase(u, c) {
+  openModal(`Cambiar rol · ${esc(u.display_name)}`, `
+    <form id="role-form-sb" class="form-grid">
+      <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+    </form>`);
+  $('#role-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    await withSubmitGuard(form, 'Guardando…', async () => {
+      try {
+        await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role });
+        showInAppToast('✓ Rol actualizado correctamente.');
+        closeModal();
+        if (c) renderUsuariosSupabase(c);
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    });
+  });
+}
+
+function resetPasswordFormSupabase(appUserId) {
+  openModal('Restablecer contraseña', `
+    <form id="reset-form-sb" class="form-grid">
+      <label>Contraseña temporal nueva (mínimo 8 caracteres)<input required minlength="8" type="password" name="new_password" autocomplete="new-password"/></label>
+      <label>Confirmar contraseña<input required minlength="8" type="password" name="new_password_confirm" autocomplete="new-password"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Restablecer</button></div>
+    </form>`);
+  $('#reset-form-sb').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    if (fd.new_password !== fd.new_password_confirm) {
+      showInAppToast('✗ Las contraseñas no coinciden.');
+      return;
+    }
+    await withSubmitGuard(form, 'Restableciendo…', async () => {
+      try {
+        await Auth.manageUsers('RESET_PASSWORD', { app_user_id: appUserId, new_password: fd.new_password });
+        showInAppToast('✓ Contraseña restablecida correctamente.');
+        closeModal();
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    });
+  });
 }
 
 /* ============================================================
@@ -6112,7 +10039,17 @@ async function getHelpContent() {
   return help;
 }
 
-function familyCardHTML(fam, canEdit) {
+// Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
+// el diagrama de familia y las miniaturas de sus puntos pueden venir de
+// otro dispositivo — async ahora, resuelve TODO antes de armar el HTML
+// (mismo patrón que Reportes/firma de validación/pointRow).
+async function familyCardHTML(fam, canEdit) {
+  const allPoints = fam.zones.flatMap(z => z.points);
+  const [diagramSrc, ...pointSrcs] = await Promise.all([
+    resolveEvidenceSrc(fam.photo),
+    ...allPoints.map(p => resolveEvidenceSrc(p.photo)),
+  ]);
+  const pointSrcByRef = new Map(allPoints.map((p, i) => [p, pointSrcs[i]]));
   return `
     <div class="panel family-card" data-family-id="${fam.id}">
       <div class="panel-head">
@@ -6121,13 +10058,13 @@ function familyCardHTML(fam, canEdit) {
       </div>
       <div class="family-body">
         <div class="family-diagram">${fam.photo
-          ? `<img src="${fam.photo}" class="family-photo photo-thumb" data-full="${fam.photo}" data-caption="${esc(fam.name)}" alt="${esc(fam.name)}"/>`
+          ? `<img src="${diagramSrc}" class="family-photo photo-thumb" data-full="${diagramSrc}" data-caption="${esc(fam.name)}" alt="${esc(fam.name)}"/>`
           : familySilhouetteSvg(fam.svg)}</div>
         <div class="family-zones">
           ${fam.zones.map(z => `
             <div class="family-zone">
               <div class="family-zone-title"><span class="dot" style="background:${z.color}"></span>${esc(z.name)}</div>
-              <ul class="family-zone-list">${z.points.map(p => `<li>${p.photo ? photoThumbHTML(p.photo, p.text) : ''}<span>${p.text}</span></li>`).join('')}</ul>
+              <ul class="family-zone-list">${z.points.map(p => `<li>${p.photo ? photoThumbHTML(pointSrcByRef.get(p), p.text) : ''}<span>${p.text}</span></li>`).join('')}</ul>
             </div>`).join('')}
         </div>
       </div>
@@ -6141,31 +10078,62 @@ async function renderAyuda() {
   const canEdit = App.currentUser.role === 'ADMINISTRADOR';
   const help = await getHelpContent();
 
+  // Accesos compactos por familia (chip) en vez de mostrar las N tarjetas completas de
+  // una vez — la tarjeta real (familyCardHTML) se muestra/oculta al tocar su chip.
+  // familyCardHTML() es async (resuelve signed URLs) — se resuelven todas
+  // las familias en paralelo antes de armar el HTML final.
+  const familyCards = await Promise.all(help.families.map(f => familyCardHTML(f, canEdit)));
+  const familiesHTML = help.families.length ? `
+      <div class="ayuda-family-chips">
+        ${help.families.map(f => `<button type="button" class="ayuda-family-chip" data-family-id="${f.id}">${esc(f.name)}</button>`).join('')}
+      </div>
+      ${help.families.map((f, i) => `<div class="ayuda-family-card hidden" data-family-wrap="${f.id}">${familyCards[i]}</div>`).join('')}`
+    : `<div class="empty-state">No hay guías visuales configuradas todavía.</div>`;
+
   c.innerHTML = `
-    ${canEdit ? '' : `
-    <div class="panel">
-      <div class="panel-head"><h3>Apariencia</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
-        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
+    <div class="ayuda-page">
+      <div class="panel">
+        <div class="panel-head"><h3>Ayuda y soporte</h3></div>
+        <div class="dim" style="padding:0 14px 14px">Consulta rápidamente cómo interpretar estados, registrar incidencias y trabajar sin conexión.</div>
       </div>
-    </div>`}
-    <div class="panel">
-      <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
-      <div class="dim" style="padding:0 14px 14px">Referencia visual rápida. Los diagramas son esquemáticos (no a escala ni específicos de una marca) — para el detalle exacto de tu equipo, usa "Plan de Engrase → Configurar" donde están los puntos reales configurados.</div>
-      ${canEdit ? `<div class="toolbar" style="padding:0 14px 14px"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
-    </div>
-    ${help.families.map(f => familyCardHTML(f, canEdit)).join('')}
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Preguntas frecuentes</h3>
-        ${canEdit ? `<button class="btn btn-sm" id="faq-edit-btn">Editar preguntas</button>` : ''}
+
+      <div class="panel">
+        <div class="panel-head"><h3>Guía de puntos de engrase por familia de equipo</h3></div>
+        <div class="dim ayuda-guia-sub">Referencia visual por categoría de equipo — imagen y puntos de engrase. Para el detalle exacto de un equipo específico, usa "Plan de Engrase → Configurar".</div>
+        ${canEdit ? `<div class="toolbar ayuda-guia-toolbar"><button class="btn btn-accent" id="family-add-btn">${ic("plus")}Agregar familia de equipo</button></div>` : ''}
+        ${familiesHTML}
       </div>
-      <div style="padding:4px 14px 14px">
-        ${help.faq.map(f => `<details class="faq-item"><summary>${esc(f.question)}</summary><p>${esc(f.answer)}</p></details>`).join('') || '<div class="empty-state">Sin preguntas todavía.</div>'}
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Preguntas frecuentes</h3>
+          ${canEdit ? `<button class="btn btn-sm" id="faq-edit-btn">Editar preguntas</button>` : ''}
+        </div>
+        <div class="ayuda-faq-list">
+          ${help.faq.map(f => `<details class="faq-item"><summary>${esc(f.question)}<span class="faq-chevron">›</span></summary><p>${esc(f.answer)}</p></details>`).join('') || '<div class="empty-state" style="padding:0 14px 14px">Sin preguntas todavía.</div>'}
+        </div>
       </div>
+
+      ${!canEdit ? `
+      <div class="panel ayuda-apariencia-row">
+        <div class="ayuda-apariencia-info">
+          <b>Apariencia</b>
+          <span class="dim">Color de acento y tema claro/oscuro.</span>
+        </div>
+        <button type="button" class="btn btn-sm" id="btn-theme">🎨 Cambiar colores</button>
+      </div>` : ''}
     </div>`;
   wirePhotoThumbs(c);
+
+  $$('.ayuda-family-chip', c).forEach(chip => {
+    chip.addEventListener('click', () => {
+      const wrap = c.querySelector(`.ayuda-family-card[data-family-wrap="${chip.dataset.familyId}"]`);
+      if (!wrap) return;
+      const nowOpen = wrap.classList.toggle('hidden') === false;
+      chip.classList.toggle('active', nowOpen);
+      if (nowOpen) wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  });
 
   if (!canEdit) {
     $('#btn-theme').addEventListener('click', openThemePicker);
@@ -6364,7 +10332,6 @@ function openFamilyEditForm(help, existing) {
   });
 }
 
-/* ---------- Edición de preguntas frecuentes (solo Administrador) ---------- */
 function openFaqEditForm(help) {
   function bodyHTML() {
     return `
@@ -6476,6 +10443,196 @@ function wireSimpleListPanel(container, store, onChange) {
       await DB.put(store, stamp(item, App.currentUser.name));
       await logAudit('LISTA_ACTUALIZADA', `${store}: eliminado "${esc(name)}"`, App.currentUser.name);
       showInAppToast(`✓ "${esc(name)}" eliminado`);
+      onChange();
+    });
+  });
+}
+
+/* ---------- Cuadrillas: panel dedicado (Configuración) ----------
+   Distinto del genérico simpleListPanelHTML (solo nombre+activo): cada
+   cuadrilla tiene además `locationId` y `isDefault` (§C/§K del pedido) —
+   máximo una cuadrilla `isDefault:true` por ubicación, la que recibe el
+   trabajo normal (ver resolveDefaultCrewForLocation() en
+   operational-scope.js). Cambiar la ubicación de una cuadrilla queda en
+   auditoría (CREW_LOCATION_CHANGED). ---------- */
+async function cuadrillasPanelHTML() {
+  const cuadrillas = await DB.allActive('cuadrillas');
+  const locations = await DB.allActive('locations');
+  const locName = (id) => (locations.find(l => l.id === id) || {}).name || '—';
+  return `
+    <div class="panel" data-cuadrillas-panel>
+      <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo.</div>
+      <table class="data-table">
+        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Por defecto</th><th></th></tr></thead>
+        <tbody>
+          ${cuadrillas.map(cq => `
+            <tr data-id="${cq.id}">
+              <td>${esc(cq.name)}</td>
+              <td>${esc(locName(cq.locationId))}</td>
+              <td>${cq.isDefault ? '✓' : '—'}</td>
+              <td class="row-actions">
+                <button class="btn btn-sm cq-edit">${ic("edit")}Editar</button>
+                <button class="btn btn-sm btn-danger cq-remove">${ic("trash")}Eliminar</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin cuadrillas todavía.</td></tr>'}
+        </tbody>
+      </table>
+      <div class="toolbar" style="padding:10px 14px">
+        <button class="btn btn-accent" id="cq-add">${ic("plus")}Agregar cuadrilla</button>
+      </div>
+    </div>`;
+}
+
+function wireCuadrillasPanel(container, onChange) {
+  const panel = container.querySelector('[data-cuadrillas-panel]');
+  if (!panel) return;
+
+  async function openCuadrillaForm(cuadrilla) {
+    const locations = await DB.allActive('locations');
+    openModal(cuadrilla ? `Editar ${esc(cuadrilla.name)}` : 'Nueva cuadrilla', `
+      <form id="cq-form">
+        <label>Nombre<input required name="name" value="${cuadrilla ? esc(cuadrilla.name) : ''}"/></label>
+        <label>Ubicación
+          <select name="locationId">
+            <option value="">— Sin ubicación —</option>
+            ${locations.map(l => `<option value="${l.id}" ${cuadrilla && cuadrilla.locationId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="check-row" style="margin-top:8px">
+          <input type="checkbox" class="chk-done" name="isDefault" ${cuadrilla && cuadrilla.isDefault ? 'checked' : ''}/>
+          <span class="check-row-text">Cuadrilla por defecto de esa ubicación (recibe el trabajo normal)</span>
+        </label>
+        <span class="field-hint">Si la marcas como default, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
+        <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
+      </form>
+    `);
+    $('#cq-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = Object.fromEntries(new FormData(ev.target).entries());
+      const locationId = fd.locationId || null;
+      const isDefault = !!fd.isDefault;
+      const anterior = cuadrilla ? await DB.get('cuadrillas', cuadrilla.id) : null;
+      const cambioUbicacion = !!anterior && anterior.locationId !== locationId;
+
+      // Máximo una default por ubicación (§K): marcar esta desmarca las demás de esa ubicación.
+      if (isDefault && locationId) {
+        const todas = await DB.allActive('cuadrillas');
+        for (const otra of todas) {
+          if (otra.id !== (cuadrilla ? cuadrilla.id : null) && otra.locationId === locationId && otra.isDefault) {
+            otra.isDefault = false;
+            await DB.put('cuadrillas', stamp(otra, App.currentUser.name));
+          }
+        }
+      }
+
+      const item = cuadrilla || { id: uid('cua'), active: true };
+      item.name = fd.name.trim();
+      item.locationId = locationId;
+      item.isDefault = isDefault;
+      await DB.put('cuadrillas', stamp(item, App.currentUser.name));
+
+      if (cambioUbicacion) {
+        const nombreAntes = locName2(locations, anterior.locationId);
+        const nombreDespues = locName2(locations, locationId);
+        await logAudit('CREW_LOCATION_CHANGED', `${esc(item.name)}: ${esc(nombreAntes)} → ${esc(nombreDespues)}`, App.currentUser.name);
+      } else {
+        await logAudit('LISTA_ACTUALIZADA', `cuadrillas: "${esc(item.name)}" guardada`, App.currentUser.name);
+      }
+      showInAppToast(`✓ "${esc(item.name)}" guardada`);
+      Sync.fullSync();
+      closeModal();
+      onChange();
+    });
+  }
+  function locName2(locations, id) { return (locations.find(l => l.id === id) || {}).name || 'sin ubicación'; }
+
+  panel.querySelector('#cq-add').addEventListener('click', () => openCuadrillaForm(null));
+  panel.querySelectorAll('.cq-edit').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.closest('tr').dataset.id;
+      openCuadrillaForm(await DB.get('cuadrillas', id));
+    });
+  });
+  panel.querySelectorAll('.cq-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const id = row.dataset.id;
+      const item = await DB.get('cuadrillas', id);
+      if (!confirm(`¿Eliminar la cuadrilla "${esc(item.name)}"? Los dispositivos que ya la tengan asignada no se modifican, pero dejará de aparecer como opción.`)) return;
+      item.active = false;
+      await DB.put('cuadrillas', stamp(item, App.currentUser.name));
+      await logAudit('LISTA_ACTUALIZADA', `cuadrillas: eliminada "${esc(item.name)}"`, App.currentUser.name);
+      showInAppToast(`✓ "${esc(item.name)}" eliminada`);
+      onChange();
+    });
+  });
+}
+
+/* ---------- Dispositivo operativo (Configuración) ----------
+   Conecta getDeviceAssignment()/saveDeviceAssignment() (app.js, ya
+   existían para push pero nunca se usaban para scope operativo — ver
+   docs/OPERATIONAL_SCOPE.md) con una UI real. Visibilidad por rol (§F):
+   ADMIN/PLANIFICADOR editan, SUPERVISOR y LUBRICADOR solo lectura,
+   VISOR no ve este panel. ---------- */
+async function devicePanelHTML() {
+  const role = App.currentUser.role;
+  if (role === 'VISOR') return '';
+  const assignment = await getDeviceAssignment();
+  const cuadrillas = await DB.allActive('cuadrillas');
+  const locations = await DB.allActive('locations');
+  const crew = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
+  const crewLocationName = crew ? (locations.find(l => l.id === crew.locationId) || {}).name : null;
+  const canEditDevice = canConfigureDevice(role);
+  return `
+    <div class="panel" data-device-panel>
+      <div class="panel-head"><h3>Dispositivo operativo</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Este teléfono/tablet se asigna a UNA cuadrilla — de ahí sale qué equipos ve "Mi Turno" de cualquier Lubricador que inicie sesión aquí. La asignación es de ESTE dispositivo, no de la persona, y sigue guardada aunque cierres sesión, uses el PIN rápido o reinstales la app. El turno (Día/Noche) nunca se guarda aquí: siempre se calcula por la hora real.</p>
+        <div class="detail-grid" style="margin:10px 0">
+          <div><b>Identificador</b><div class="mono" style="font-size:11px">${esc(getDeviceId())}</div></div>
+          <div><b>Cuadrilla asignada</b><div>${crew ? esc(crew.name) : 'Sin asignar'}</div></div>
+          <div><b>Ubicación (según la cuadrilla)</b><div>${crewLocationName ? esc(crewLocationName) : '—'}</div></div>
+        </div>
+        ${canEditDevice
+          ? `<button class="btn btn-accent" id="btn-device-config">${ic("edit")}${crew ? 'Cambiar cuadrilla' : 'Asignar cuadrilla'}</button>`
+          : role === 'LUBRICADOR'
+            ? '<p class="dim">Solo un Administrador o Planificador puede cambiar la cuadrilla de este dispositivo.</p>'
+            : ''}
+      </div>
+    </div>`;
+}
+
+function wireDevicePanel(container, onChange) {
+  const panel = container.querySelector('[data-device-panel]');
+  if (!panel) return;
+  panel.querySelector('#btn-device-config')?.addEventListener('click', async () => {
+    const assignment = await getDeviceAssignment();
+    const cuadrillas = (await DB.allActive('cuadrillas')).filter(cq => cq.active !== false);
+    openModal('Dispositivo operativo', `
+      <form id="device-form">
+        <label>Nombre de este dispositivo (opcional, para identificarlo)
+          <input name="nombre" value="${esc(assignment.nombre || '')}" placeholder="Ej: Teléfono Volcán 1"/>
+        </label>
+        <label>Cuadrilla asignada
+          <select name="cuadrillaId">
+            <option value="">— Sin asignar —</option>
+            ${cuadrillas.map(cq => `<option value="${cq.id}" ${assignment.cuadrillaId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
+          </select>
+          <span class="field-hint">Los lubricadores que inicien sesión en este dispositivo verán el trabajo de esta cuadrilla en "Mi Turno".</span>
+        </label>
+        <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
+      </form>
+    `);
+    $('#device-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = Object.fromEntries(new FormData(ev.target).entries());
+      const crewAnterior = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
+      const crewNueva = cuadrillas.find(cq => cq.id === fd.cuadrillaId);
+      await saveDeviceAssignment({ cuadrillaId: fd.cuadrillaId || '', nombre: fd.nombre });
+      await logAudit('DEVICE_CREW_CHANGED', `${esc(getDeviceId())}: ${esc(crewAnterior ? crewAnterior.name : 'sin asignar')} → ${esc(crewNueva ? crewNueva.name : 'sin asignar')}`, App.currentUser.name);
+      showInAppToast('✓ Dispositivo actualizado');
+      closeModal();
       onChange();
     });
   });
@@ -6882,6 +11039,13 @@ async function renderConfig() {
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
   const timeVal = (h, m) => `${pad(h)}:${pad(m)}`;
+  // PIN rápido (P0-2): SOLO en AUTH_MODE='supabase' con sesión real ya
+  // autenticada — nunca aparece en modo legacy ni sin login, ver
+  // src/core/quick-unlock.js. Auth.getProfile() es la misma identidad que
+  // Auth.isAuthenticated() ya validó, nunca App.currentUser.id a ciegas
+  // (evita depender del shape armado en currentUserFromAuthProfile()).
+  const quickUnlockAvailable = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
+  const quickUnlockConfigured = quickUnlockAvailable && await QuickUnlock.isConfigured(Auth.getProfile().appUserId);
 
   c.innerHTML = `
     <div class="panel">
@@ -6891,6 +11055,17 @@ async function renderConfig() {
         <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
       </div>
     </div>
+    ${quickUnlockAvailable ? `
+    <div class="panel">
+      <div class="panel-head"><h3>PIN rápido (desbloqueo sin Internet)</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Permite volver a entrar en este dispositivo con un PIN de 4 o 6 dígitos, sin escribir tu contraseña cada vez — incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol: solo desbloquea la pantalla.</p>
+        ${quickUnlockConfigured
+          ? `<button type="button" class="btn" id="btn-quick-unlock-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="btn-quick-unlock-disable">Desactivar PIN rápido</button>`
+          : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
+      </div>
+    </div>` : ''}
+    ${await devicePanelHTML()}
     <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
@@ -6906,11 +11081,11 @@ async function renderConfig() {
         </form>
       </div>
     </div>
-    ${await simpleListPanelHTML('cuadrillas', 'Cuadrillas de lubricación', 'Se asignan a lubricadores (Usuarios) y a equipos (ficha del equipo) para que dos cuadrillas no engrasen el mismo equipo.')}
+    ${await cuadrillasPanelHTML()}
     ${await simpleListPanelHTML('locations', 'Ubicaciones / Flotas', 'Aparecen como opción de "Ubicación" al crear o editar un equipo.')}
     ${await simpleListPanelHTML('equipment_types', 'Categorías de equipo', 'Aparecen como opción de "Categoría" al crear o editar un equipo.')}
 
-    <div class="panel">
+    <div class="panel" id="notif-panel">
       <div class="panel-head"><h3>Notificaciones — control por tipo</h3></div>
       <div style="padding:14px">
         <p class="dim">Cada aviso se controla por separado: puedes activarlo o apagarlo, elegir a qué hora suena y qué roles lo reciben. Los cambios aplican a todos los dispositivos al sincronizar.</p>
@@ -6942,7 +11117,8 @@ async function renderConfig() {
     <div class="panel">
       <div class="panel-head"><h3>Notificaciones push (llegan aunque la app esté cerrada)</h3></div>
       <div style="padding:14px">
-        <p class="dim">Usan OneSignal (más simple que conectar Firebase a mano — ver GUIA_NOTIFICACIONES_PUSH.md). Necesitas pegar tu "App ID" de OneSignal en el código antes de que esto funcione.</p>
+        ${ONESIGNAL_APP_ID ? `
+        <p class="dim">Recibe avisos aunque tengas la app cerrada.</p>
         <div id="push-status" class="dim" style="margin-bottom:10px">
           ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
             ? 'Este dispositivo puede recibir notificaciones aunque la app esté cerrada.'
@@ -6950,7 +11126,13 @@ async function renderConfig() {
         </div>
         ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
           ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
+        <div id="my-notif-prefs" style="margin-top:14px"></div>
         <div id="push-tokens-list" style="margin-top:14px"></div>
+        ` : `
+        <p class="dim"><b>Notificaciones push no configuradas</b></p>
+        <p class="dim">Esta función todavía no está disponible.</p>
+        <button class="btn" disabled>Activar en este dispositivo</button>
+        `}
       </div>
     </div>
     <div class="panel">
@@ -6965,6 +11147,18 @@ async function renderConfig() {
             <button type="submit" class="btn btn-accent">Guardar y probar conexión</button>
             <button type="button" class="btn" id="btn-sync-now">Sincronizar ahora</button>
           </div>
+        </form>
+        <form id="sync-interval-form" class="form-grid" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px">
+          <label>Sincronización automática
+            <select name="syncIntervalSeconds" ${App.currentUser.role !== 'ADMINISTRADOR' ? 'disabled' : ''}>
+              ${SYNC_INTERVAL_OPTIONS.map(s => `<option value="${s}" ${App.generalSettings.syncIntervalSeconds === s ? 'selected' : ''}>${syncIntervalLabel(s)}</option>`).join('')}
+            </select>
+            <span class="field-hint">También se sincroniza al recuperar conexión y después de operaciones importantes.</span>
+          </label>
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `
+          <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
+            <button type="submit" class="btn btn-accent">Guardar intervalo</button>
+          </div>` : ''}
         </form>
         <div id="sync-status" class="dim" style="margin-top:10px">
           ${cfg.url ? `Servidor conectado. Última descarga: ${cfg.lastPull ? fmtDate(cfg.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
@@ -7004,7 +11198,7 @@ async function renderConfig() {
         <p class="dim" style="margin-top:6px">Restaurar NO borra lo que ya tienes — combina los datos del archivo con los actuales (si un registro existe en ambos, gana el más reciente).</p>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel" id="audit-log-panel">
       <div class="panel-head"><h3>Registro de auditoría (últimas 50 acciones)</h3></div>
       <table class="data-table">
         <thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th><th>Usuario</th></tr></thead>
@@ -7028,13 +11222,27 @@ async function renderConfig() {
 
   $('#btn-theme').addEventListener('click', openThemePicker);
 
+  $('#btn-quick-unlock-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure'));
+  $('#btn-quick-unlock-change')?.addEventListener('click', () => quickUnlockConfigureModal('change'));
+  $('#btn-quick-unlock-disable')?.addEventListener('click', async () => {
+    await QuickUnlock.disable();
+    await logAudit('QUICK_UNLOCK_DESACTIVADO', App.currentUser.name, App.currentUser.name);
+    showInAppToast('✓ PIN rápido desactivado');
+    renderConfig();
+  });
+
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     const [dayH] = fd.shiftDayStart.split(':').map(Number);
     const [nightH] = fd.shiftNightStart.split(':').map(Number);
+    // ...(current): el documento `settings/general` guarda MÁS campos que
+    // este formulario conoce (syncIntervalSeconds, ver #sync-interval-form
+    // más abajo) — nunca se reconstruye desde cero, o guardar esto
+    // borraría en silencio lo que el otro formulario acababa de guardar.
+    const current = (await DB.get('settings', 'general')) || {};
     const updated = {
-      id: 'general', shiftDayStart: dayH, shiftNightStart: nightH,
+      ...current, id: 'general', shiftDayStart: dayH, shiftNightStart: nightH,
       defaultAlertYellowHours: parseFloat(fd.defaultAlertYellowHours),
       complianceTarget: parseFloat(fd.complianceTarget)
     };
@@ -7046,25 +11254,116 @@ async function renderConfig() {
     renderConfig();
   });
 
-  wireSimpleListPanel(c, 'cuadrillas', () => renderConfig());
+  $('#sync-interval-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    // Defensa además de deshabilitar/ocultar el control (ver markup
+    // arriba): aunque alguien forzara el <select> por DevTools, esto
+    // sigue sin permitir el cambio si no es ADMINISTRADOR.
+    if (App.currentUser.role !== 'ADMINISTRADOR') return;
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const seconds = normalizeSyncInterval(parseInt(fd.syncIntervalSeconds, 10));
+    const current = (await DB.get('settings', 'general')) || {};
+    const updated = { ...current, id: 'general', syncIntervalSeconds: seconds };
+    await DB.put('settings', stamp(updated, App.currentUser.name));
+    await logAudit('SYNC_INTERVALO_ACTUALIZADO', syncIntervalLabel(seconds), App.currentUser.name);
+    await loadGeneralSettings();
+    // Aplica YA, sin reiniciar la app — Sync.setAutoInterval() apaga el
+    // timer anterior antes de crear el nuevo (nunca quedan dos activos).
+    Sync.setAutoInterval(App.generalSettings.syncIntervalSeconds);
+    showInAppToast('✓ Intervalo de sincronización actualizado');
+    renderConfig();
+  });
+
+  wireCuadrillasPanel(c, () => renderConfig());
+  wireDevicePanel(c, () => renderConfig());
   wireSimpleListPanel(c, 'locations', () => renderConfig());
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
   $('#btn-enable-push')?.addEventListener('click', async () => {
-    if (!ONESIGNAL_APP_ID) { alert('Falta pegar el App ID de OneSignal en el código (ver GUIA_NOTIFICACIONES_PUSH.md). Sin eso las notificaciones no pueden activarse.'); return; }
     if (!confirm('Se te va a pedir permiso para mostrar notificaciones. ¿Continuar?')) return;
     await initPushNotifications();
     alert('Listo. Si OneSignal está bien configurado, este dispositivo debería aparecer en la lista de abajo en unos segundos (puede que tengas que volver a entrar a esta pantalla).');
     renderConfig();
   });
 
-  const pushTokens = (await DB.allActive('push_tokens'));
-  $('#push-tokens-list').innerHTML = pushTokens.length ? `
-    <table class="data-table">
-      <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th></tr></thead>
-      <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
-    </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
-  makeTablesResponsive($('#push-tokens-list'));
+  // "Mis notificaciones" (lote arquitectura de notificaciones, §2/§21/§22/
+  // §29) — autoservicio: cada persona ajusta SU PROPIO turno/disponibilidad
+  // de notificación; receiveAllShifts solo se ofrece a ADMINISTRADOR (a
+  // cualquier otro rol isUserEligibleForNotification() lo ignora, pero
+  // tampoco tiene sentido mostrárselo). Solo existe si la persona YA
+  // activó push en este dispositivo (si no, no hay fila push_tokens propia
+  // que editar — se pide activar primero, nunca se inventa una fila vacía
+  // aquí en la UI).
+  const misPrefsEl = $('#my-notif-prefs');
+  if (misPrefsEl) {
+    const misTokens = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+    if (!misTokens.length) {
+      misPrefsEl.innerHTML = `<p class="dim">Activa las notificaciones push arriba para poder configurar tu turno de notificación.</p>`;
+    } else {
+      const actual = misTokens[0]; // mismas preferencias en todas las plataformas de la persona (ver saveNotificationPreferences)
+      misPrefsEl.innerHTML = `
+        <h4 class="grease-flow-card-head" style="margin-top:0">Mis notificaciones</h4>
+        <form id="my-notif-prefs-form" class="form-grid">
+          <label>Turno en el que quiero recibir avisos
+            <select name="notificationShift">
+              <option value="BOTH" ${actual.notificationShift === 'BOTH' || !actual.notificationShift ? 'selected' : ''}>Ambos turnos</option>
+              <option value="DAY" ${actual.notificationShift === 'DAY' ? 'selected' : ''}>Solo Turno Día</option>
+              <option value="NIGHT" ${actual.notificationShift === 'NIGHT' ? 'selected' : ''}>Solo Turno Noche</option>
+            </select>
+          </label>
+          <label>Disponibilidad
+            <select name="notificationAvailability">
+              <option value="AVAILABLE" ${actual.notificationAvailability !== 'RESTING' ? 'selected' : ''}>Disponible</option>
+              <option value="RESTING" ${actual.notificationAvailability === 'RESTING' ? 'selected' : ''}>De descanso (no recibir avisos operativos)</option>
+            </select>
+          </label>
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `
+          <label class="retro-toggle span-2">
+            <input type="checkbox" name="receiveAllShifts" ${actual.receiveAllShifts ? 'checked' : ''}/>
+            <span>Recibir alertas de todos los turnos (ignora el filtro de turno para mí)</span>
+          </label>` : ''}
+          <div class="span-2"><button type="submit" class="btn btn-sm btn-accent">Guardar mis notificaciones</button></div>
+        </form>`;
+      $('#my-notif-prefs-form').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const fd = Object.fromEntries(new FormData(ev.target).entries());
+        try {
+          await saveNotificationPreferences({
+            notificationShift: fd.notificationShift,
+            notificationAvailability: fd.notificationAvailability,
+            receiveAllShifts: fd.receiveAllShifts === 'on'
+          });
+          showInAppToast('✓ Preferencias de notificación guardadas');
+        } catch (e) { alert(e.message || 'No se pudo guardar.'); }
+      });
+    }
+  }
+
+  // Solo existe cuando ONESIGNAL_APP_ID está configurado (ver markup arriba)
+  // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
+  const pushTokensListEl = $('#push-tokens-list');
+  if (pushTokensListEl) {
+    // Filtra las filas de DISPOSITIVO (sin userId, ver saveDeviceAssignment())
+    // — esta tabla es "Usuario/Rol", nunca tuvo sentido mostrarlas aquí
+    // (tienen su propio panel en Configuración → Cuadrillas/Dispositivo).
+    const pushTokens = (await DB.allActive('push_tokens')).filter(t => t.userId);
+    pushTokensListEl.innerHTML = pushTokens.length ? `
+      <table class="data-table">
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th><th></th></tr></thead>
+        <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td><td><button type="button" class="btn btn-sm" data-edit-notif-user="${esc(t.userId)}" data-edit-notif-name="${esc(t.userName)}">Editar</button></td></tr>`).join('')}</tbody>
+      </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
+    makeTablesResponsive($('#push-tokens-list'));
+    $$('[data-edit-notif-user]', pushTokensListEl).forEach(btn => {
+      btn.addEventListener('click', () => openEditUserNotificationPrefsModal(btn.dataset.editNotifUser, btn.dataset.editNotifName));
+    });
+  }
+  // UI-FULL-103: navigate() ya aplica makeTablesResponsive() en la primera entrada a
+  // Configuración, pero renderConfig() se vuelve a llamar directamente (sin pasar por
+  // navigate()) después de casi cualquier acción de esta pantalla (guardar ajustes,
+  // agregar cuadrilla/ubicación/tipo, activar push, restaurar respaldo…) — cada una de
+  // esas veces reconstruye la tabla de auditoría sin la etiqueta móvil si no se repite
+  // la llamada aquí.
+  makeTablesResponsive($('#audit-log-panel'));
 
   // Al apagar un tipo de aviso, su tarjeta se atenúa enseguida (sin esperar a guardar)
   $$('[data-notif-toggle]', c).forEach(chk => {
@@ -7159,6 +11458,23 @@ async function renderConfig() {
 /* ============================================================
    MODAL genérico
    ============================================================ */
+// Accesibilidad del modal (auditoría de accesibilidad, corrección #2 —
+// mayor impacto por lo poco que cuesta: un solo arreglo aquí cubre TODAS
+// las pantallas que llaman openModal()). Antes: sin Escape, sin trampa de
+// foco (Tab se escapaba a la página de atrás), sin foco inicial, sin
+// devolver el foco al cerrar, sin role/aria-modal/aria-labelledby, y el
+// botón "✕" sin aria-label.
+//
+// El estado (foco previo, listener de teclado) se guarda como propiedades
+// ad-hoc del propio nodo `overlay` (que es un singleton, nunca se recrea,
+// solo se vacía su innerHTML) — a propósito, en vez de funciones/variables
+// nuevas a nivel de módulo: varios specs reales (ej.
+// tests/ui/grease-validation.spec.js) extraen SOLO openModal()/closeModal()
+// con una lista acotada de nombres para probarlos en una página aislada;
+// agregar un identificador global nuevo rompería esos specs con un
+// ReferenceError. Manteniendo todo dentro de estas dos funciones, cualquier
+// arnés que ya extraiga openModal()/closeModal() sigue funcionando sin
+// tocar su lista de nombres.
 function openModal(title, bodyHTML) {
   let overlay = $('#modal-overlay');
   if (!overlay) {
@@ -7167,14 +11483,46 @@ function openModal(title, bodyHTML) {
     overlay.className = 'modal-overlay';
     document.body.appendChild(overlay);
   }
+  overlay._previousFocus = document.activeElement;
   overlay.innerHTML = `
-    <div class="modal">
-      <div class="modal-head"><h3>${title}</h3><button class="icon-btn" id="modal-close">✕</button></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text" tabindex="-1">
+      <div class="modal-head"><h3 id="modal-title-text">${title}</h3><button class="icon-btn" id="modal-close" aria-label="Cerrar">✕</button></div>
       <div class="modal-body">${bodyHTML}</div>
     </div>`;
   overlay.classList.add('open');
   $('#modal-close').addEventListener('click', closeModal);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+  // Trampa de foco + Escape: Tab/Shift+Tab nunca deben salir del modal, y
+  // Escape cierra igual que el botón "✕". `offsetParent !== null` excluye
+  // elementos ocultos (display:none / ramas condicionales del HTML).
+  function focusableElements() {
+    return Array.from(overlay.querySelectorAll(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+  }
+  function onKeydown(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); closeModal(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = focusableElements();
+    if (!focusable.length) { e.preventDefault(); return; } // nada que enfocar: el foco se queda en el modal mismo
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  // Quita el listener del modal anterior (si `overlay` se reutiliza para
+  // abrir varios modales en la misma sesión) antes de agregar el nuevo —
+  // nunca se acumulan listeners de Escape/Tab de modales ya cerrados.
+  if (overlay._onKeydown) overlay.removeEventListener('keydown', overlay._onKeydown);
+  overlay._onKeydown = onKeydown;
+  overlay.addEventListener('keydown', onKeydown);
+
+  // Foco inicial: el contenedor del modal mismo (tabindex="-1", nunca queda
+  // en el orden normal de Tab) — el lector de pantalla anuncia el diálogo y
+  // su título (aria-labelledby) antes de que la persona empiece a tabular
+  // por su contenido, en vez de quedarse leyendo donde estaba la página de
+  // atrás.
+  overlay.querySelector('.modal').focus();
 }
 function closeModal() {
   const overlay = $('#modal-overlay');
@@ -7184,4 +11532,12 @@ function closeModal() {
   // anterior sigue existiendo dentro del documento con sus campos y manejadores viejos,
   // y al abrir otra ventana se mezclan (ese era el "desfase" al agregar puntos de engrase).
   overlay.innerHTML = '';
+  // Devuelve el foco a quien abrió el modal — nunca lo deja "perdido" en el
+  // body. Si ese elemento ya no existe (la pantalla cambió debajo, o era de
+  // un modal anterior encadenado), focus() en un nodo desconectado es un
+  // no-op inofensivo, no un error.
+  if (overlay._previousFocus && typeof overlay._previousFocus.focus === 'function') {
+    overlay._previousFocus.focus();
+  }
+  overlay._previousFocus = null;
 }

@@ -61,6 +61,15 @@
   --border: #DADCD7;
   --text: #1B1F23;
   --text-dim: #656C73;
+  /* --green/--amber/--red del modo oscuro (auditoría de accesibilidad) daban
+     ~2.2-3.9:1 de contraste sobre fondo blanco (fallan el mínimo 3:1 de WCAG
+     para texto/íconos) — se ajustaron oscureciéndolos hasta pasar 4.5:1,
+     verificado con la fórmula de luminancia relativa de WCAG. El modo
+     contraste (sol directo, más abajo) ya tenía su propio ajuste; este es
+     el mismo criterio para el modo claro normal. */
+  --green: #1E7A34;
+  --amber: #8A5A00;
+  --red: #C0262B;
 }
 [data-mode="light"] .lub-eq-btn,
 [data-mode="light"] .eq-card,
@@ -175,6 +184,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   margin: 0; font-family: var(--font-display); font-weight: 700;
   letter-spacing: 0.03em; text-transform: uppercase; font-size: 18px;
 }
+/* Móvil: títulos largos ("SINCRONIZACIÓN CON BASE DE DATOS REMOTA",
+   "PAPELERA — RECUPERAR LO ELIMINADO"…) envolvían a 2-3 líneas y, sumado al
+   padding vertical de escritorio, el encabezado dominaba la pantalla antes
+   de mostrar nada del contenido. Menos padding reduce ese bloque sin perder
+   jerarquía ni el acento industrial amarillo (border-image de .panel-head,
+   sin cambios). El font-size de h3 se ajusta más abajo, junto a
+   `.panel-head h3 { font-size: var(--fs-lg) }` — misma convención ya usada
+   en este archivo para ganarle en cascada (ver comentario ahí). Desktop
+   intacto. */
+@media (max-width: 600px) {
+  .panel-head { padding: 9px 14px; margin-bottom: 2px; }
+  .panel-head h4 { font-size: 23px; line-height: 1.15; }
+}
 
 /* ---------------- Login ---------------- */
 .login-screen {
@@ -251,19 +273,27 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {
   width: 240px; background: var(--surface); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; padding: 16px 12px; flex: none;
+  display: flex; flex-direction: column; padding: 14px 12px; flex: none;
   position: sticky; top: 0; height: 100vh;
 }
-.brand-sidebar { padding: 4px 8px 18px; }
-.menu { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+/* Modo compacto (docs/UI_VISUAL_COMPOSITION_AUDIT.md, mejora sidebar desktop):
+   con las 14 rutas de ADMINISTRADOR + Cerrar sesión, el bloque de marca y el
+   logout sobraban espacio vertical que el menú necesitaba — se recorta el
+   padding inferior del logo y el superior del logout, sin tocar su tamaño. */
+.brand-sidebar { padding: 4px 8px 10px; }
+.menu { display: flex; flex-direction: column; gap: 1px; flex: 1; overflow-y: auto; }
+/* Separador MUY discreto entre bloques de prioridad operativa (operación
+   diaria / consulta-control / administración) — solo un poco más de aire +
+   una línea fina, nunca un título de sección (sidebar debe seguir compacto). */
+.menu-sep { flex: 0 0 auto; height: 1px; margin: 6px 10px; background: var(--border); opacity: 0.6; }
 .menu-item {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
   background: transparent; border: none; color: var(--text-dim); text-align: left; cursor: pointer;
-  font-size: 14px; font-weight: 500;
+  font-size: 15px; font-weight: 500;
 }
 .menu-item:hover { background: var(--surface-2); color: var(--text); }
 .menu-item.active { background: rgba(242,169,0,0.12); color: var(--accent); }
-.menu-item.logout { margin-top: 8px; border-top: 1px solid var(--border); border-radius: 0; padding-top: 14px; }
+.menu-item.logout { margin-top: 8px; border-top: 1px solid var(--border); border-radius: 0; padding-top: 10px; }
 .menu-icon {
   width: 18px; height: 18px; flex: none; background: currentColor; opacity: 0.85;
   -webkit-mask-size: contain; mask-size: contain;
@@ -271,6 +301,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   -webkit-mask-position: center; mask-position: center;
   display: inline-block;
 }
+/* Camión articulado (Equipos): ícono trazado directamente de
+   assets/icons/navigation/mi-equipo-articulado.png (proporción real
+   ~1.94:1), más ancho que el resto para no verse aplastado — la altura
+   no cambia (sigue el tamaño de .menu-icon vigente, misma fila que los demás
+   ítems de menú/barra inferior). Ver docs/UI_RESPONSIVE.md. */
+.menu-icon.icon-truck { width: 35px; }
+/* .menu-icon es compartida con .bottom-item (barra inferior móvil) y
+   .lub-nav-item (shell Lubricador) — el aumento a ~20px es SOLO para el
+   sidebar del Administrador, sin afectar esas dos pantallas. */
+.sidebar .menu-icon { width: 20px; height: 20px; }
+.sidebar .menu-icon.icon-truck { width: 39px; }
 .menu-item.active .menu-icon, .lub-nav-item.active .menu-icon, .bottom-item.active .menu-icon { opacity: 1; }
 
 /* Íconos dentro de botones de texto (no el menú lateral) */
@@ -326,19 +367,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
      cuatro controles de ~44px de alto (mínimo táctil, no se toca) hacía que
      la barra se viera excesivamente alta. Aquí solo se reduce el "aire"
      alrededor (padding, gaps, texto), nunca el tamaño de toque. */
-  .topbar { padding: 7px 10px; gap: 8px; }
+  .topbar { padding: 7px 8px; gap: 6px; }
+  /* El logo cede su espacio al título en el topbar móvil (el hamburguesa ya
+     transmite "menú/marca" — el logo no aporta nada que perder aquí; sigue
+     intacto en el sidebar y en el shell del Lubricador, sin cambios). */
+  .topbar .brand-mark.small.only-mobile { display: none; }
   .topbar-title {
-    font-size: 15px; max-width: 40vw; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
+    font-size: 18px; flex: 1 1 auto; min-width: 0; max-width: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .topbar-right { gap: 8px; }
+  .topbar-right { gap: 6px; }
   /* Solo el ícono de turno en móvil (☀/☾) — el texto completo queda en el
      title del badge (se puede tocar/mantener presionado para verlo) y se
      recupera en escritorio. Ahorra ancho para que todo quepa en una línea. */
-  .topbar-shift { padding: 3px 8px; font-size: 13px; }
+  .topbar-shift { padding: 3px 7px; font-size: 13px; }
   .topbar-shift-label { display: none; }
   .conn-badge {
-    padding: 3px 8px; font-size: 10px; max-width: 120px;
+    padding: 3px 7px; font-size: 10px; max-width: 86px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .kpi-grid { gap: 8px; }
@@ -355,17 +400,28 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .data-table { font-size: 12px; }
   .data-table th, .data-table td { padding: 8px 10px; }
   .filter-label { flex: 1 1 45%; min-width: 130px; }
-  .chart-box { height: 220px; padding: 8px 10px 12px; }
+  .chart-box { padding: 8px 10px 12px; }
   .lub-eq-code { font-size: 17px; }
   .lub-heading { font-size: 19px; }
 }
 
-.icon-btn { background: none; border: none; color: var(--text); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+/* min-width (auditoría de accesibilidad): a diferencia de .btn/.menu-item/etc,
+   .icon-btn puede quedar solo-ícono sin texto al lado — su ancho real quedaba
+   en ~26-34px (18px de ícono + 4px/8px de padding), bajo el objetivo táctil
+   de 44px. min-height ya lo ponía la regla de "Área táctil" más abajo. */
+.icon-btn { background: none; border: none; color: var(--text); font-size: 18px; cursor: pointer; padding: 4px 8px; min-width: var(--tap); display: inline-flex; align-items: center; justify-content: center; }
 
-/* ---------------- KPI cards ---------------- */
+/* ---------------- KPI cards ----------------
+   6 tarjetas KPI reales (ver kpiCard() en app.js). Progresión de columnas
+   MONÓTONA por rango sin solapar (UI-RESPONSIVE Fase 2 / UI-RESP-003,
+   docs/UI_RESPONSIVE.md): 2 → 3 → 4 → 6 a medida que crece el ancho —
+   nunca menos columnas al tener más espacio. Los 3 puntos de corte
+   (600/900/1100) son los mismos que ya usa el resto del archivo, no se
+   agregó ningún breakpoint nuevo. */
 .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
-@media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 601px) and (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 901px) and (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(4, 1fr); } }
 .kpi-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px; border-left: 4px solid var(--border);
@@ -378,6 +434,207 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .kpi-card.tone-red { border-left-color: var(--red); }
 .kpi-value { font-family: var(--font-mono); font-size: 28px; font-weight: 700; }
 .kpi-label { font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.06em; margin-top: 4px; text-transform: uppercase; }
+
+/* ---------------- Dashboard operativo (rediseño): jerarquía Estado de
+   lubricación (destacado) > Actividad (discreto) > paneles. Mismos colores
+   semánticos que .kpi-card (tone-green/amber/red/neutral), hover solo
+   desktop (hover:hover) — en touch no queda "pegado" tras el tap. ---- */
+.dash-section { margin-bottom: 16px; }
+.dash-section-title { font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 8px; }
+
+.dash-hero-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+@media (min-width: 560px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1024px) { .dash-hero-grid { grid-template-columns: repeat(5, 1fr); } }
+.dash-hero-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 11px 12px; border-top: 4px solid var(--border); min-height: 44px;
+}
+.dash-hero-card.kpi-clickable { cursor: pointer; transition: transform 0.1s ease, border-color 0.15s ease; }
+@media (hover: hover) { .dash-hero-card.kpi-clickable:hover { border-color: var(--accent); transform: translateY(-1px); } }
+.dash-hero-card.kpi-clickable:active { transform: scale(0.98); }
+.dash-hero-card.tone-green { border-top-color: var(--green); }
+.dash-hero-card.tone-amber { border-top-color: var(--amber); }
+.dash-hero-card.tone-red { border-top-color: var(--red); }
+.dash-hero-value { font-family: var(--font-mono); font-size: 26px; font-weight: 700; line-height: 1; }
+.dash-hero-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; margin-top: 3px; text-transform: uppercase; }
+
+/* "Actividad": mini-KPIs SECUNDARIOS (menor jerarquía que "Estado de
+   lubricación" arriba) — número arriba/label debajo, como dashHeroCard pero
+   más chicas. Grid responsive real (minmax(0,1fr)), nunca ancho fijo que
+   deje espacio vacío: 2 columnas ocupando TODO el ancho en móvil, 4 en
+   tablet/desktop — el número de columnas es fijo por breakpoint (a
+   diferencia de dash-hero-grid) porque estas son solo 4 tarjetas
+   conceptuales (+ "Conflictos" condicional, que simplemente cae en una
+   fila nueva con el mismo ancho de columna). */
+.dash-section-secondary { margin-top: 2px; }
+.dash-activity-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 601px) { .dash-activity-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.dash-activity-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-height: 44px;
+}
+.dash-activity-card.kpi-clickable { cursor: pointer; transition: border-color 0.15s ease; }
+@media (hover: hover) { .dash-activity-card.kpi-clickable:hover { border-color: var(--accent); } }
+.dash-activity-card.kpi-clickable:active { transform: scale(0.98); }
+.dash-activity-card.tone-green { border-left: 3px solid var(--green); }
+.dash-activity-card.tone-amber { border-left: 3px solid var(--amber); }
+.dash-activity-card.tone-red { border-left: 3px solid var(--red); }
+.dash-activity-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; line-height: 1.1; }
+.dash-activity-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
+
+/* "Panel operativo" (lote occurrences/carryover, §3) — motivos de "no se
+   pudo ejecutar" de hoy (chips) y estado por ubicación (tabla compacta,
+   reutiliza .data-table ya existente). Este panel vive en un <section>,
+   no en un .panel (que trae overflow-x:auto por su cuenta, ver regla
+   existente arriba) — se agrega el mismo overflow-x:auto aquí para que
+   una ubicación con nombre largo nunca produzca scroll horizontal de
+   PÁGINA (solo de la tabla, si hiciera falta). */
+.dash-motivos-noexec-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.dash-motivo-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px;
+  border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text);
+}
+.dash-ubic-breakdown { margin-top: 6px; overflow-x: auto; }
+
+/* "Cumplimiento operativo" (Hoy/Semana/Turno Día|Noche) — 3 tarjetas
+   iguales, independientes de computeFleetCompliance() histórico. */
+.dash-compliance-note { padding: 0 14px 8px; font-size: 12px; line-height: 1.4; }
+.dash-compliance-grid { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 0 14px 12px; }
+@media (min-width: 768px) { .dash-compliance-grid { grid-template-columns: repeat(3, 1fr); } }
+.dash-compliance-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.dash-compliance-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; }
+.dash-compliance-pct { font-family: var(--font-mono); font-size: 22px; font-weight: 700; margin-top: 2px; }
+.dash-compliance-frac { font-size: 11.5px; color: var(--text-dim); margin-bottom: 4px; }
+
+/* ---------------- Filas operativas compactas (compartidas por "Mayor
+   tiempo sin engrasar" y "Equipos que requieren atención"): 3-4 líneas de
+   texto fluido, SIN min-height ni justify-content que reserven espacio
+   vacío — el alto de la card lo define el contenido, nunca un valor fijo.
+   Mobile-first: apiladas en columna (una card corta por línea de texto);
+   desktop (≥769px) las mismas líneas se acomodan en una sola fila. ---- */
+.dash-op-line1 { display: flex; align-items: center; gap: 8px; }
+.dash-op-line2 { font-size: 12.5px; color: var(--text-dim); }
+.dash-op-line3 { font-size: 12.5px; }
+.dash-op-line4 { font-size: 12.5px; color: var(--text-dim); }
+
+/* "Mayor tiempo sin engrasar": lista/ranking operativo compacto (patrón
+   KPI/resumen → lista → drill-down tipo Fiix/UpKeep/Fracttal), NUNCA grid de
+   cards, ranking #1/#2/#3 ni tabla pesada. REDISEÑO: el dato clave (días) ya
+   no es un texto aislado a la derecha — es un bloque destacado (número +
+   etiqueta corta) con "Historial" como acción PRINCIPAL visible debajo
+   (antes solo la fila entera era clickable, sin ningún control visible). La
+   fila con más días (is-max) recibe un acento ámbar discreto (borde + fondo
+   muy sutil en el bloque de días), nunca una tarjeta separada. */
+.link-btn {
+  background: none; border: none; padding: 4px; color: var(--accent); font-size: 12.5px; font-weight: 700;
+  cursor: pointer; text-decoration: underline; min-height: var(--tap, 44px);
+}
+/* "Ver todos" del header: mismo .link-btn de siempre, pero con más peso
+   visual SOLO en este panel (pill discreta) para integrarse mejor junto al
+   título — no se toca .link-btn en general (lo usan otras pantallas). */
+.dash-exc-head .link-btn {
+  text-decoration: none; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 6px 12px;
+}
+.dash-exc-head .link-btn:hover { background: var(--surface); border-color: var(--accent); }
+.dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
+.dash-exc-summary { color: var(--text-dim); white-space: nowrap; }
+.dash-exc-summary .mono { color: var(--text); font-weight: 700; }
+.dash-exc-list { display: flex; flex-direction: column; padding: 0 14px 6px; }
+.dash-exc-row {
+  display: flex; align-items: center; gap: 14px; padding: 9px 10px; min-height: 44px;
+  border-bottom: 1px solid var(--border); border-left: 3px solid transparent;
+}
+.dash-exc-list .dash-exc-row:last-child { border-bottom: none; }
+.dash-exc-row.is-max { border-left-color: var(--amber); background: rgba(232,163,61,0.05); }
+.dash-exc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+.dash-exc-line1, .dash-exc-line2, .dash-exc-line3 { line-height: 1.2; }
+.dash-exc-code { font-weight: 700; font-size: 14.5px; }
+.dash-exc-line2, .dash-exc-line3 { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Bloque de días: el dato fuerte de la fila — número grande, etiqueta corta
+   debajo, nunca "flotando" solo contra el borde derecho. */
+.dash-exc-side { flex: none; display: flex; align-items: center; gap: 10px; }
+.dash-exc-days-wrap {
+  display: flex; flex-direction: column; align-items: center; line-height: 1.05;
+  min-width: 52px; padding: 4px 8px; border-radius: 8px;
+}
+.dash-exc-days-wrap.is-max { background: rgba(232,163,61,0.12); }
+.dash-exc-days { font-family: var(--font-mono); font-weight: 700; font-size: 19px; }
+.dash-exc-days.is-max { color: var(--amber); font-size: 21px; }
+.dash-exc-days-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.dash-exc-hist-btn { flex: none; }
+
+@media (max-width: 480px) {
+  /* Móvil: misma jerarquía, apilado limpio — el bloque de días+botón pasa a
+     una fila propia debajo del texto principal, en vez de comprimirse contra
+     el borde. */
+  .dash-exc-row { flex-wrap: wrap; }
+  .dash-exc-main { flex: 1 1 100%; }
+  .dash-exc-side { flex: 1 1 100%; justify-content: space-between; margin-top: 4px; }
+}
+
+.dash-list-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.dash-list-actions.compact { flex-wrap: nowrap; gap: 6px; }
+
+/* Modal "Pendientes de validación": lista compacta con divisores sutiles,
+   igual criterio que .dash-exc-row — sin cards, sin tabla. */
+.dash-tiempo-modal-list { display: flex; flex-direction: column; }
+.dash-tiempo-modal-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.dash-tiempo-modal-list .dash-tiempo-modal-row:last-child { border-bottom: none; }
+.dash-pendiente-tiempo { margin-left: auto; font-family: var(--font-mono); font-weight: 700; color: var(--amber); font-size: 12.5px; white-space: nowrap; }
+.dash-tiempo-modal-sub { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---------------- "Equipos que requieren atención": cola operativa
+   compacta (reemplaza la tabla ancha de 9 columnas). REDISEÑO: antes cada
+   "línea" (.dash-op-line2/3/4) tenía el MISMO flex-grow en desktop
+   (flex:1 1 0) sin importar cuán corto fuera su texto ("Programado hoy",
+   "Día: Sábado"), dejando franjas de espacio vacío enormes entre columnas
+   angostas — la causa real del desperdicio horizontal reportado. Ahora es
+   una fila plana con flex-wrap: en móvil el texto decide sus propias líneas
+   (máx. 3 antes de acciones), en desktop (≥769px) cabe en 1 sola fila con
+   anchos ajustados al contenido real de cada campo (código más grande que
+   el resto — jerarquía visual — meta con ellipsis si no cabe, "programación"
+   y "plan" ya combinados/abreviados en textos cortos, ver
+   progCompactaFor()/WEEKDAY_ABBR_DASH en app.js). Sin scroll horizontal en
+   ningún ancho. ---- */
+.dash-cola-atencion { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px; }
+.dash-cola-row {
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 4px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+}
+.dash-cola-badge {
+  flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 20px; white-space: nowrap;
+}
+.dash-cola-badge.tone-red { background: rgba(229,72,77,0.12); color: var(--red); }
+.dash-cola-badge.tone-amber { background: rgba(232,163,61,0.12); color: var(--amber); }
+.dash-cola-badge.tone-neutral { background: var(--surface); color: var(--text-dim); }
+/* Código del equipo: más importante visualmente que modelo/ubicación
+   (jerarquía pedida) — un poco más grande, siempre en negrita. */
+.dash-cola-code { flex: 0 0 auto; font-weight: 700; font-size: 14px; }
+.dash-cola-meta { flex: 1 1 100%; font-size: 12.5px; color: var(--text-dim); }
+.dash-cola-prog-tag { flex: 0 0 auto; font-family: var(--font-mono); font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+.dash-cola-plan { flex: 1 1 auto; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.dash-cola-actions { flex: 1 1 100%; display: flex; gap: 6px; margin-top: 2px; }
+.dash-cola-actions .btn { flex: 1; min-height: var(--tap, 44px); }
+/* Registrar: un poco más de jerarquía que Historial (acento), sin volverlo
+   un botón gigante — mismo tamaño que Historial, solo tono distinto. */
+.dash-cola-actions .dash-cola-reg { font-weight: 700; }
+
+@media (min-width: 769px) {
+  /* Una sola fila compacta: columnas ajustadas al contenido real, nunca
+     flex-grow igual para todo — "equipo" (código+meta) es la única que
+     realmente necesita espacio flexible; el resto son textos ya cortos. */
+  .dash-cola-row { flex-wrap: nowrap; gap: 14px; min-height: 48px; padding: 8px 14px; }
+  .dash-cola-meta {
+    flex: 1 1 220px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dash-cola-prog-tag { flex: 0 1 90px; text-align: right; }
+  .dash-cola-plan { flex: 0 1 180px; overflow: hidden; text-overflow: ellipsis; }
+  .dash-cola-actions { flex: 0 0 auto; margin-top: 0; }
+  .dash-cola-actions .btn { flex: none; min-height: 32px; }
+}
 
 /* ---------------- Panels & tables ---------------- */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
@@ -430,19 +687,71 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .eq-card.bulk-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
 .eq-bulk-check { width: 18px; height: 18px; margin-right: 4px; pointer-events: none; }
 
-/* ---------------- Ayuda: familias de equipo y FAQ ---------------- */
-.family-card .family-body { display: flex; gap: 20px; padding: 6px 14px 14px; flex-wrap: wrap; }
-.family-diagram { flex: 0 0 260px; background: var(--surface-2); border-radius: 10px; padding: 10px; }
-.family-svg { width: 100%; height: auto; display: block; }
-.family-zones { flex: 1 1 260px; display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
-.family-zone-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 4px; }
-.family-zone-list { margin: 0; padding-left: 22px; font-size: 13px; color: var(--text-dim); display: flex; flex-direction: column; gap: 6px; }
+/* ---------------- Ayuda: rediseño (centro de ayuda de lectura, no full-width
+   como Reportes) — contenedor propio de ~900-1100px, con gutter de 16px antes
+   de topar el máximo; en móvil/tablet ocupa el 100% del padre (que ya trae su
+   propio padding lateral de 12-20px, .app-content/.lub-content). Ver excepción
+   ".lub-content:has(.ayuda-page)" más arriba para el shell del Lubricador. */
+.ayuda-page { width: 100%; }
+@media (min-width: 900px) {
+  .ayuda-page { max-width: 1100px; width: calc(100% - 32px); margin: 0 auto; }
+}
+
+/* Descripción y toolbar del panel de familias — antes vivían como estilos inline en el
+   markup; ahora en CSS para que el espaciado sea consistente con el resto de paneles. */
+.ayuda-guia-sub { padding: 0 14px 14px; }
+.ayuda-guia-toolbar { padding: 0 14px 14px; }
+
+/* Accesos compactos por familia (chips) — la tarjeta completa (familyCardHTML) se
+   muestra/oculta al tocar su chip, en vez de apilar las N tarjetas de una vez. */
+.ayuda-family-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 14px; }
+.ayuda-family-chip {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer;
+  min-height: var(--tap, 44px);
+}
+.ayuda-family-chip.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.ayuda-family-card { margin: 0 14px 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ayuda-family-card .family-card { border: none; margin: 0; }
+
+/* ---------------- Ayuda: familias de equipo y FAQ ----------------
+   Foco visual: imagen protagonista a la izquierda, puntos de engrase a la derecha
+   (imagen arriba / puntos debajo en móvil). La imagen usa un tamaño y alineación
+   consistentes sea dibujo propio o foto real subida por el Administrador. */
+.family-card .family-body { display: flex; gap: 24px; padding: 12px 16px 16px; flex-wrap: wrap; align-items: flex-start; }
+.family-diagram {
+  flex: 0 0 300px; background: var(--surface-2); border-radius: 12px; padding: 16px;
+  display: flex; align-items: center; justify-content: center; min-height: 190px;
+}
+.family-svg { width: 100%; height: auto; max-height: 190px; display: block; }
+.family-zones { flex: 1 1 280px; display: flex; flex-direction: column; gap: 14px; min-width: 220px; }
+.family-zone-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+.family-zone-list { margin: 0; padding-left: 22px; font-size: 13px; color: var(--text-dim); display: flex; flex-direction: column; gap: 7px; }
 .family-zone-list li { display: flex; align-items: center; gap: 8px; }
 .family-zone-list .photo-thumb { flex: none; }
-.faq-item { border-bottom: 1px solid var(--border); padding: 10px 0; }
-.faq-item summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
-.faq-item p { color: var(--text-dim); font-size: 13px; margin: 8px 0 2px; line-height: 1.5; }
-@media (max-width: 700px) { .family-diagram { flex: 1 1 100%; } }
+/* FAQ: filas ~44-48px (antes ~34px con padding 10px 0), chevron alineado a la
+   derecha, ancho completo del panel. */
+.ayuda-faq-list { padding: 0 14px 8px; }
+.faq-item { border-bottom: 1px solid var(--border); padding: 0; }
+.faq-item summary {
+  cursor: pointer; font-weight: 600; font-size: 13.5px; list-style: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 2px; min-height: 44px; width: 100%;
+}
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-chevron { flex: none; color: var(--text-dim); font-size: 18px; line-height: 1; transition: transform 0.15s ease; }
+.faq-item[open] .faq-chevron { transform: rotate(90deg); }
+.faq-item p { color: var(--text-dim); font-size: 13px; margin: 0 0 12px; padding: 0 2px; line-height: 1.5; }
+@media (max-width: 700px) {
+  .family-diagram { flex: 1 1 100%; min-height: 170px; }
+}
+
+/* Apariencia: antes tarjeta grande al inicio, ahora fila compacta al final. */
+.ayuda-apariencia-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px; flex-wrap: wrap;
+}
+.ayuda-apariencia-info { display: flex; flex-direction: column; gap: 2px; }
 
 /* ---------------- Editor de familias y FAQ de Ayuda (admin) ---------------- */
 .fam-zone-editor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--surface-2); }
@@ -488,6 +797,113 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .btn-accent:hover { background: var(--accent-dark); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
+@media (max-width: 640px) {
+  /* Doble clase a propósito: .btn ya trae min-height:var(--tap) (44px) desde la
+     sección de accesibilidad al final del archivo, que por orden de cascada
+     ganaría sobre una sola clase — aquí se busca más alto que ese mínimo. */
+  .btn.btn-grease-submit { min-height: 52px; font-size: 16px; }
+}
+
+/* ---------------- Registrar Engrase: UI Iteración 2 — cards (UI/Responsive Fase 4) ----------------
+   startGreaseFlow() es compartido por Lubricador y Administrador/Planificador/Supervisor
+   (docs/UI_RESPONSIVE.md). El pedido de iteración 1 (un único .panel con divisores
+   internos) se veía "como un formulario de escritorio comprimido" — se reemplaza por
+   bloques independientes (.grease-flow-card), cada uno sobre el fondo de página que
+   ya existía (var(--bg), distinto de var(--surface) en los 3 temas — dark/light/
+   contraste — no se introduce ningún color nuevo). Todo queda scoped bajo
+   .grease-flow-panel; no se toca .panel/.panel-head/.checklist-head global. */
+.grease-flow-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.grease-flow-card:last-child { margin-bottom: 0; }
+.grease-flow-card-head {
+  margin: 0 0 var(--sp-3); font-family: var(--font-display); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.02em; font-size: 15px; color: var(--text);
+}
+
+/* ---- Card "Equipo": código grande (nivel 1) → marca/modelo (nivel 2) → autor/fecha/turno (nivel 3) ---- */
+.grease-flow-equipo-code { font-family: var(--font-mono); font-weight: 700; font-size: 22px; }
+.grease-flow-equipo-model { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.grease-flow-equipo-meta { font-size: 12px; color: var(--text-dim); margin-top: var(--sp-2); }
+
+/* ---- Card "Horómetro": input + "sin horómetro" en la MISMA fila en todos los
+   anchos (pedido explícito) — el input crece, el checkbox queda compacto a la
+   derecha sin encogerse por debajo de un tamaño usable. ---- */
+.grease-flow-hm-row { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.grease-flow-hm-field { display: flex; flex: 1 1 auto; min-width: 140px; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.grease-flow-hm-field .big-input { width: 100%; box-sizing: border-box; }
+.grease-flow-toggle-row {
+  display: flex; align-items: flex-start; gap: 10px; flex: 0 0 auto; max-width: 46%;
+  padding: 12px var(--sp-3); border-radius: 8px; background: var(--surface-2);
+  cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1.3;
+}
+/* ---- Card "Lubricante utilizado": Tipo de grasa | Cantidad en 2 columnas desde
+   390px (más angosto que el quiebre general de .form-grid en 560px — a este
+   par de campos le alcanza el espacio antes; ver docs/UI_RESPONSIVE.md) +
+   subsector de registro retroactivo. ---- */
+@media (min-width: 390px) {
+  .grease-flow-panel .grease-flow-lube-grid { grid-template-columns: 1fr 1fr; }
+}
+.grease-flow-retro-head {
+  margin: 0 0 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  font-size: 12px; color: var(--amber);
+}
+
+/* ---- Card "Puntos de engrase": título + "Marcar todos" en la misma cabecera,
+   se apila en pantallas muy angostas (360px) en vez de comprimirse. Siempre
+   una sola columna de puntos (#checklist no lleva grid en ningún ancho). ---- */
+.grease-flow-points-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  flex-wrap: wrap; margin-bottom: var(--sp-3);
+}
+.grease-flow-points-head .grease-flow-card-head { margin-bottom: 0; }
+
+/* ---- Acción final: fuera de las cards, como cierre de página (no otra card) ---- */
+.grease-flow-final { margin-top: var(--sp-3); }
+/* Guardar fácil en móvil (cierre operativo §19) — sticky SOLO dentro del
+   shell del Lubricador (donde existe .lub-bottom-nav fija) y solo en
+   anchos móviles (en tablet/desktop el formulario ya no compite con una
+   sola mano ni con una barra inferior). `bottom` despega lo suficiente
+   para NUNCA tapar la barra inferior (68px cubre su alto real + el
+   safe-area de notch, con margen) — verificado en
+   tests/ui/lubricador-grease-form.spec.js contra el markup real de
+   .lub-bottom-nav. Fondo igual al de la página (nunca un recuadro flotante
+   que no combine) + sombra sutil hacia arriba para separarlo del
+   contenido que queda debajo al hacer scroll. */
+@media (max-width: 640px) {
+  .lub-shell .grease-flow-final {
+    position: sticky; bottom: 68px; z-index: 20;
+    background: var(--bg); padding: 10px 0 4px;
+    box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.3);
+  }
+}
+
+/* ---- Iteración 3: ancho de página y layout tablet/desktop ----
+   Móvil (360-412): sin cambios, 1 columna, todo el ancho de .lub-content/
+   .app-content. Tablet (≥768): contenedor propio ~720px, centrado — se
+   neutraliza el límite de 560px que .lub-content aplica a otras pantallas
+   del Lubricador (Mi Turno, etc.) SOLO cuando contiene .grease-flow-panel,
+   vía :has() (ya usado en este archivo, líneas 157/1182). Desktop (≥1024):
+   contenedor ~960px; Horómetro y Lubricante comparten una fila de 2
+   columnas, el resto (Puntos/Condición/Evidencia/Finalizar) ocupa todo el
+   ancho del contenedor. */
+.grease-flow-panel { width: 100%; }
+@media (min-width: 768px) {
+  .grease-flow-panel { max-width: 720px; margin: 0 auto; }
+  .lub-content:has(.grease-flow-panel) { max-width: none; }
+  .grease-flow-equipo-card { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: var(--sp-3); }
+  .grease-flow-equipo-meta { flex-basis: 100%; }
+}
+@media (min-width: 1024px) {
+  .grease-flow-panel { max-width: 960px; }
+  .grease-flow-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+  .grease-flow-form > .grease-flow-card { margin-bottom: 0; }
+  /* Hijos 3 en adelante (Puntos, Condición, Evidencia, Finalizar): todo el ancho. */
+  .grease-flow-form > *:nth-child(n+3) { grid-column: 1 / -1; }
+  .grease-flow-panel .check-row { padding: 18px 10px; gap: 18px; }
+}
+
 /* ---------------- Checklist ---------------- */
 .checklist-head { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 0 2px; }
 .checklist-head h4 { margin: 0; font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.03em; font-size: 16px; }
@@ -495,6 +911,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .checklist-progress-fill { height: 100%; background: var(--green); border-radius: 20px; transition: width 0.25s ease; }
 
 .checklist-item { border-bottom: 1px solid var(--border); }
+/* Registrar Engrase (.grease-flow-panel): última fila sin línea colgando — ya
+   cierra con el borde de la .grease-flow-card que la contiene. */
+.grease-flow-panel .checklist-item:last-child { border-bottom: none; }
 .check-row {
   display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 16px 4px;
   cursor: pointer; -webkit-tap-highlight-color: transparent; position: relative;
@@ -518,6 +937,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 15px; margin: 0 4px 14px;
 }
 .chk-reason.hidden { display: none; }
+/* Registrar Engrase (.grease-flow-panel): ya no necesita el offset de 4px que
+   tenía dentro del .panel sin padding — ahora vive dentro del padding propio
+   de .grease-flow-card. */
+.grease-flow-panel .chk-reason { margin: 0 0 var(--sp-3); }
 
 .point-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
 .row-actions { display: flex; gap: 6px; flex: none; }
@@ -573,6 +996,41 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   cursor: pointer; font-weight: 600;
 }
 .recents-chip:hover, .recents-chip:active { border-color: var(--accent); color: var(--accent); }
+.recents-chip { min-height: var(--tap, 44px); }
+
+/* ---------------- Registrar Engrase — pantalla inicial (antes de elegir
+   equipo): seleccionar equipo es la acción principal, no un campo perdido
+   en una pantalla vacía. Mismo <select>/flujo de siempre (sin cambios
+   funcionales) — solo más protagonista y con ancho de lectura razonable en
+   desktop en vez de estirarse a todo el monitor. ---- */
+.reg-select-wrap { display: flex; justify-content: center; padding: 4px 0 16px; }
+.reg-select-card {
+  width: 100%; max-width: 560px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 26px 22px; text-align: center;
+}
+.reg-select-title { font-size: 19px; margin: 0 0 4px; }
+.reg-select-subtitle { font-size: 13px; color: var(--text-dim); margin: 0 0 18px; }
+.reg-select-card .recents-row { justify-content: center; padding-top: 16px; padding-bottom: 0; }
+/* Selector de equipo compacto (lote occurrences/carryover, §2) — reemplaza
+   el <select> con TODOS los equipos por un buscador con resultados en
+   vivo. Propio (no .quick-find de la topbar): ancho completo y anclado a
+   la izquierda, no colapsado/angosto. */
+.reg-eq-search { position: relative; text-align: left; }
+.reg-eq-search input { width: 100%; font-size: 15px; padding: 14px 16px; min-height: 52px; }
+.reg-eq-search-results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 60;
+  max-height: 60vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4); padding: 5px;
+}
+/* Chip compacto tras elegir equipo (cierre operativo §13) — reemplaza el
+   buscador + recientes, sin desperdiciar el espacio vertical que antes
+   ocupaban mientras se llena el formulario debajo. */
+.reg-select-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; text-align: left;
+}
+.reg-select-chip span { font-size: 14px; }
 
 /* ---------------- Gestor de listas simples (cuadrillas, ubicaciones, categorías) ---------------- */
 .simple-list { display: flex; flex-direction: column; padding: 4px 14px; }
@@ -582,6 +1040,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .simple-list-row:last-child { border-bottom: none; }
 .simple-list-name { font-weight: 600; font-size: 13.5px; }
+/* Móvil: el nombre nunca debe quedar tapado/cortado por los botones —
+   pasa a ocupar toda la fila arriba, con Renombrar/Eliminar debajo
+   (comparten la fila cuando caben; en pantallas muy angostas los botones
+   se aprietan con flex:1 en vez de desbordar, ver .row-actions). Desktop
+   conserva el layout de una sola fila (sin cambios). */
+@media (max-width: 600px) {
+  .simple-list-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .simple-list-name { width: 100%; white-space: normal; overflow-wrap: break-word; }
+  .simple-list-row .row-actions { width: 100%; }
+  .simple-list-row .row-actions .btn { flex: 1; }
+}
 
 /* ---------------- Aviso en pantalla (toast) de anomalías nuevas ---------------- */
 #toast-box {
@@ -609,29 +1078,238 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ---------------- Reportes: filtros y gráficas ---------------- */
 .filter-label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dim); }
 .filter-label .input { width: 100%; }
-.charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-.chart-box { position: relative; height: 240px; padding: 10px 14px 16px; }
-@media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+/* UI-VIS-203/204 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): antes fijo en 2
+   columnas SIEMPRE (incluso a 1920px, con .app-content ya corregido) y con
+   height:240px fijo contra un ancho de columna variable, dando aspect-ratio
+   erráticos (1.39 en 360px hasta 3.09 en 768px, medido). Patrón RAM (repeat/
+   auto-fit/minmax/min) reutilizable: cada columna nunca baja de min(100%,360px)
+   —así jamás se desborda en móvil, colapsando a 1 columna sola— ni crece más
+   allá de lo necesario; el número de columnas resulta del espacio real
+   disponible en vez de un valor fijo por breakpoint. aspect-ratio reemplaza el
+   height fijo para que la proporción del gráfico sea consistente sin importar
+   cuántas columnas entren. */
+.charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 14px; }
+.chart-box { position: relative; aspect-ratio: 16 / 9; min-height: 200px; padding: 10px 14px 16px; }
+
+/* ---------------- Reportes: rediseño análisis-por-período (no Dashboard) —
+   Cumplimiento por turno/equipo, consumo, anomalías, validación. Cards solo
+   para resumen; tablas/listas para detalle real (ver docs de diseño del
+   lote "Reportes"). ---- */
+
+/* Ancho completo en pantallas DENSAS/OPERATIVAS: la regla genérica
+   ".app-content { max-width:1500px; margin:0 auto }" (≥1400px, ver más abajo)
+   centra pantallas de lectura de una sola columna (Ayuda, Configuración) —
+   pero Reportes/Dashboard/Matriz/Equipos/Historial/Anomalías son densas y
+   multi-columna/tabla, así que no deben recortarse en monitores anchos.
+   Mismo patrón ya usado para Anomalías(Lubricador)/Mis Engrases/Mi Turno
+   (".lub-content:has(...)"). ".layout-wide" envuelve todo el contenido de
+   cada una de esas 6 pantallas — no estira cards/formularios internos que no
+   lo necesiten, solo libera el contenedor exterior. Registrar Engrase/Ayuda/
+   Configuración NO llevan esta clase a propósito (lectura/formulario). */
+.app-content:has(.layout-wide) { max-width: none; width: 100%; min-width: 0; margin-left: 0; margin-right: 0; padding-left: 16px; padding-right: 16px; }
+@media (max-width: 600px) {
+  .app-content:has(.layout-wide) { padding-left: 10px; padding-right: 10px; }
+}
+
+/* Filtros: barra compacta desktop — Desde/Hasta angostos, Equipo/Familia/
+   Ubicación con más espacio (flex-grow), Turno/Responsable intermedios,
+   botón alineado a la misma altura. Wrap natural en móvil/tablet, nunca
+   scroll horizontal (mismo .toolbar { flex-wrap: wrap } de base). */
+.rep-filters-row .filter-label { flex: 0 0 auto; }
+.rep-filters-row .input-sm { min-height: 38px; box-sizing: border-box; }
+/* FIX responsive: estas 3 reglas deben GANAR sobre ".rep-filters-row
+   .filter-label" de arriba — antes eran de menor especificidad (1 clase vs
+   2) y perdían el flex-basis/min-width contra "flex: 0 0 auto", dejando los
+   filtros sin crecer/encoger (auto = ancho de contenido) y espacio vacío al
+   envolver en móvil. Se prefijan con ".rep-filters-row" para igualar
+   especificidad y ganar por orden de aparición (más abajo en el archivo). */
+.rep-filters-row .rep-filter-narrow { flex: 0 1 128px; min-width: 112px; }
+.rep-filters-row .rep-filter-wide { flex: 1 1 200px; min-width: 160px; }
+.rep-filters-row .rep-filter-mid { flex: 0 1 150px; min-width: 130px; }
+.rep-filter-apply { align-self: flex-end; min-height: 38px; }
+/* Móvil <=600px: 1 columna real, cada filtro/control a ancho completo — sin
+   columnas forzadas que dejen espacio lateral vacío. */
+@media (max-width: 600px) {
+  .rep-filters-row { flex-direction: column; align-items: stretch; }
+  .rep-filters-row .filter-label,
+  .rep-filters-row .rep-filter-apply { width: 100%; flex: 1 1 auto; min-width: 0; }
+  .rep-filters-row .input-sm { width: 100%; }
+}
+
+/* Resumen del período: 5 mini-KPIs iguales, propio (no el .kpi-grid
+   genérico de 6/8 columnas que usan otras pantallas) — así SIEMPRE
+   aprovecha el ancho completo con exactamente 5 tarjetas, sin una 6ta
+   columna vacía. */
+.rep-periodo-line { padding: 0 14px 8px; font-weight: 600; }
+.rep-resumen-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 14px 14px; }
+@media (min-width: 561px) { .rep-resumen-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1000px) { .rep-resumen-grid { grid-template-columns: repeat(5, 1fr); } }
+.rep-resumen-grid .kpi-card { padding: 12px 14px; }
+.rep-resumen-grid .kpi-value { font-size: 26px; }
+.rep-resumen-grid .kpi-label { font-size: 12px; }
+.rep-resumen-note { padding: 0 14px 14px; }
+
+/* Tendencia (principal, ~70% del ancho) + Cumplimiento por turno (~30%)
+   desde ~1000px — apilados en tablet/móvil (bloques normales uno debajo
+   del otro, cada uno sigue siendo un .panel de ancho completo). */
+.rep-tendencia-turno-grid { display: flex; flex-direction: column; gap: 16px; }
+/* align-items por defecto (stretch): Tendencia y Turno quedan de la MISMA
+   altura en desktop — el panel de Turno no se deja más corto con un hueco
+   vacío abajo, sino que se estira y su contenido se centra (ver
+   .rep-turno-grid más abajo). */
+@media (min-width: 1000px) { .rep-tendencia-turno-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); } }
+.rep-tendencia-turno-grid > .panel { display: flex; flex-direction: column; }
+/* PULIDO densidad: Tendencia bajó de 300-320px a 230-250px — es el gráfico
+   principal, pero no debe monopolizar media pantalla. */
+.rep-chart-tendencia-box { aspect-ratio: auto; min-height: 220px; height: 230px; }
+@media (min-width: 1000px) { .rep-chart-tendencia-box { height: 250px; } }
+
+.rep-two-col { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 0 14px 14px; }
+@media (min-width: 769px) { .rep-two-col { grid-template-columns: 1fr 1fr; } }
+.rep-subhead { font-size: 12px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
+.rep-turno-grid { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 0 14px 14px; flex: 1; align-content: center; }
+@media (min-width: 601px) { .rep-turno-grid { grid-template-columns: 1fr 1fr; } }
+/* Desde 1000px el panel de Turno es la columna angosta (~30%) junto a
+   Tendencia — 2 columnas Día|Noche quedarían apretadas, mejor apiladas y
+   centradas verticalmente para llenar la misma altura de Tendencia. */
+@media (min-width: 1000px) { .rep-turno-grid { grid-template-columns: 1fr; } }
+.rep-turno-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; border-left: 4px solid transparent; }
+.rep-turno-card.tone-green { border-left-color: var(--green); }
+.rep-turno-card.tone-amber { border-left-color: var(--amber); }
+.rep-turno-card.tone-red { border-left-color: var(--red); }
+.rep-turno-card.tone-neutral { border-left-color: var(--text-dim); }
+.rep-turno-label { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.rep-turno-pct { font-size: 26px; font-weight: 700; line-height: 1.15; }
+.rep-turno-frac { font-family: var(--font-mono); color: var(--text-dim); font-size: 12.5px; margin-top: 2px; }
+.rep-turno-bar { margin: 8px 0 0; }
+.rep-consumo-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.rep-consumo-row:last-child { border-bottom: none; }
+
+/* Actividad por responsable: ranking compacto (tabla + barra propia, no el
+   layout anterior de nombre-a-la-izquierda/conteo-al-extremo-derecho con
+   hueco enorme en medio, ni una microbarra escondida detrás del número).
+   Carga de trabajo, NUNCA desempeño — sin colores de aprobado/reprobado,
+   tono neutro fijo para la barra. En desktop no se estira a todo el ancho
+   del panel si son pocas filas; en móvil ocupa el 100%. */
+.rep-actividad-sub { display: flex; gap: 14px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; color: var(--text-dim); }
+.rep-actividad-sub .mono { color: var(--text); font-weight: 700; }
+.rep-actividad-table { padding: 0 14px 4px; display: flex; flex-direction: column; }
+.rep-actividad-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(34px, auto) minmax(40px, auto) minmax(90px, 1fr);
+  align-items: center; gap: 12px; min-height: 40px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.rep-actividad-row:last-child { border-bottom: none; }
+.rep-actividad-head { min-height: 26px; font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
+.rep-actividad-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.rep-actividad-count { text-align: right; font-weight: 700; }
+/* % más visible: un poco más grande que el resto de la fila, color de texto
+   normal (no dim) — es el dato de comparación rápida entre responsables. */
+.rep-actividad-pct { text-align: right; font-size: 13.5px; font-weight: 700; }
+.rep-actividad-bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.rep-actividad-bar-fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); opacity: 0.55; }
+/* Nota "no es desempeño": se conserva pero con menor peso (más chica que el
+   resto del texto del panel, sin negrita, tono apagado). */
+.rep-actividad-nota { padding: 4px 14px 14px; font-size: 11.5px; line-height: 1.4; }
+@media (min-width: 1000px) {
+  /* ~50-65% del ancho del panel — no lo estira artificialmente si son pocas filas. */
+  .rep-actividad-table, .rep-actividad-sub { max-width: 640px; }
+}
+@media (max-width: 480px) {
+  /* Fila apilada en 2 líneas: nombre+cifras arriba, barra completa debajo —
+     así la barra conserva ancho útil en vez de comprimirse a unos pixeles. */
+  .rep-actividad-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; }
+  .rep-actividad-row.rep-actividad-head { display: none; } /* encabezado de tabla no aporta en 1 columna angosta */
+  .rep-actividad-nombre { flex: 1 1 auto; }
+  .rep-actividad-count, .rep-actividad-pct { flex: 0 0 auto; }
+  .rep-actividad-bar-track { flex: 1 1 100%; }
+}
+
+/* Cumplimiento por equipo: filas ligeramente más altas/legibles que el
+   .data-table genérico, sin pintar la fila completa (el % ya es un badge
+   discreto, no un fondo). */
+.rep-equipo-table th, .rep-equipo-table td { font-size: 13.5px; }
+.rep-equipo-table td { padding: 12px 14px; }
+
+/* Consumo de grasa: UN solo gráfico con tabs (Por equipo/Familia/
+   Lubricante) en vez de 3 visualizaciones simultáneas — la altura del
+   canvas la fija JS según la cantidad real de categorías (nunca reserva
+   espacio para filas que no existen), tope 220px (ver drawConsumo()). */
+.rep-tabs { display: flex; gap: 6px; padding: 0 14px 10px; flex-wrap: wrap; }
+.rep-tab {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 7px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  min-height: var(--tap, 44px);
+}
+.rep-tab.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+@media (max-width: 560px) { .rep-tabs { flex-wrap: nowrap; } .rep-tab { flex: 1; text-align: center; padding: 7px 8px; } }
+.rep-chart-consumo-box { aspect-ratio: auto; min-height: 120px; }
+
+/* Pareto de motivos + Anomalías: lado a lado desde 900px cuando el ancho
+   alcanza, apilados debajo — ambos compactos, ninguno reserva media
+   pantalla. */
+.rep-pareto-anomalias-grid { display: flex; flex-direction: column; gap: 16px; }
+@media (min-width: 900px) { .rep-pareto-anomalias-grid { display: grid; grid-template-columns: 1fr 1fr; align-items: start; } }
+
+.rep-photo-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 14px 12px; }
+.rep-more-exports summary { cursor: pointer; list-style: none; }
+.rep-more-exports summary::-webkit-details-marker { display: none; }
+.rep-more-exports[open] summary { margin-bottom: 4px; }
 
 /* ============================================================
    INTERFAZ SIMPLIFICADA — LUBRICADOR (móvil, un toque, campo)
    ============================================================ */
 .lub-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
-.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+/* UI/Responsive Fase 4 (docs/UI_RESPONSIVE.md): topbar, user-strip y lub-content
+   comparten el mismo margen lateral (--sp-3, 12px) para que el borde izquierdo
+   de marca / usuario / tarjetas quede alineado en vez de saltar entre 16px y
+   12px. Se mantienen como bloques separados a pedido del usuario (no fusionar
+   usuario+turno dentro del topbar: en 360-412px ya lleva marca + estado de
+   sincronización + salir). */
+.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border); }
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
 .lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
-.lub-user-strip { padding: 8px 16px; font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
-.lub-content { flex: 1; padding: 16px 14px 100px; }
+/* UI-VIS-302 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): el botón de salir era solo
+   un ícono de 18px con 4px de padding — muy por debajo del mínimo táctil. Se
+   agrega min-width/min-height:44px en todos los anchos, y el texto (ya en el
+   HTML, oculto por defecto) se muestra desde tablet/desktop. */
+.lub-logout-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: var(--tap); min-height: var(--tap); border-radius: 8px;
+}
+.lub-logout-btn:hover, .lub-logout-btn:active { background: var(--surface-2); }
+.lub-logout-text { display: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
+@media (min-width: 768px) {
+  .lub-logout-text { display: inline; }
+  .lub-logout-btn { padding: 8px 12px; }
+}
+/* Vertical compactado de 8px a var(--sp-2) (6px): es texto informativo de una
+   sola línea (usuario + turno), no un control táctil, así que no aplica el
+   mínimo de 44px de --tap. */
+.lub-user-strip { padding: var(--sp-2) var(--sp-3); font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+/* UI/Responsive Fase 3 (docs/UI_RESPONSIVE.md): padding lateral pasado a
+   var(--sp-3) — antes 14px sin relación con la escala, sumado al padding
+   propio de .lub-eq-btn (16px) daba un inset acumulado de 36px por lado
+   (medido con Playwright). El lateral no cambia en Fase 4 (sigue en 12px,
+   ya estaba en el rango correcto); el superior baja de 16px a --sp-3 (12px)
+   para alinear con el nuevo padding de topbar/user-strip. No reduce ningún
+   área táctil: solo el espacio antes del primer encabezado. */
+.lub-content { flex: 1; padding: var(--sp-3) var(--sp-3) 100px; }
 .lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; }
-.lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 14px; }
+/* El turno (Día/Noche) ya se muestra en .lub-user-strip — este encabezado dejó
+   de repetirlo ("Equipos del turno Noche" → "Equipos asignados", app.js). El
+   margen inferior baja de 14px a --sp-3 (12px), atado a la escala existente. */
+.lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 var(--sp-3); }
 
 .lub-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-.lub-scan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; }
+.lub-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.lub-scan-btn, .lub-outofplan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; min-height: 44px; }
 
+.lub-section-head { margin: var(--sp-3) 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
+.lub-eq-list + .lub-section-head { margin-top: var(--sp-4, 20px); }
 .lub-eq-btn {
   display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
-  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px; cursor: pointer; color: var(--text);
+  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); cursor: pointer; color: var(--text);
 }
 .lub-eq-btn[data-status="VERDE"] { border-left-color: var(--green); }
 .lub-eq-btn[data-status="AMARILLO"] { border-left-color: var(--amber); }
@@ -643,26 +1321,69 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-eq-model { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .lub-eq-location { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
 .lub-eq-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+/* Móvil: menos "aire" vertical entre tarjetas y dentro de cada una — se ven
+   más equipos sin desplazarse tanto, sin quitar ningún dato (Estado/Código/
+   Equipo/Ubicación/Horómetro/Último/Próximo/Restante siguen todos) ni tocar
+   tipografía (legibilidad intacta) ni el botón "Realizar engrase". */
+@media (max-width: 600px) {
+  .lub-eq-list { gap: 8px; }
+  .lub-eq-btn { padding: 11px var(--sp-3); }
+  .lub-eq-top { margin-bottom: 3px; }
+  .lub-eq-model { margin-bottom: 2px; }
+  .lub-eq-location { margin-bottom: 4px; }
+}
 
 .lub-anomaly-fab {
-  display: block; width: 100%; margin-top: 18px; padding: 16px; border-radius: 12px;
+  display: block; width: 100%; margin-top: 18px; padding: 16px var(--sp-3); border-radius: 12px;
   background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--red);
   font-weight: 700; font-size: 15px; cursor: pointer;
 }
 .lub-back { margin-bottom: 12px; }
 .lub-record-list { display: flex; flex-direction: column; gap: 10px; }
 .lub-record-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.lub-record-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin-top: 6px; }
+.lub-record-validacion { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.lub-record-validacion .btn { min-height: var(--tap, 44px); }
 
-/* ---------------- Avisos dentro del formulario de engrase ---------------- */
+/* ---------------- Avisos dentro del formulario de engrase ----------------
+   UI/Responsive Fase 4: el margen lateral fijo (antes 14px) se quita — ahora viven
+   directamente sobre el fondo de página igual que las .grease-flow-card, así que el
+   único inset lateral es el de .lub-content/.app-content (ya existente). Solo margen
+   vertical, con --sp-3 en vez del 14px suelto sin relación con la escala. */
 .duplicate-warning {
-  margin: 0 14px 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5;
+  margin: 0 0 var(--sp-3); padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5;
   background: rgba(232,163,61,0.12); border: 1px solid var(--amber); color: var(--text);
 }
 .draft-banner {
-  margin: 0 14px 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6;
+  margin: 0 0 var(--sp-3); padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6;
   background: rgba(59,130,246,0.10); border: 1px solid #3B82F6; color: var(--text);
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
+/* Contexto de ocurrencia dentro de Registrar Engrase (lote occurrences/
+   carryover, §2) — mismo criterio visual que .duplicate-warning (fondo
+   suave + borde del color del semáforo), cada una con SU color para no
+   confundirse entre sí: turno distinto = mismo turquesa que
+   'hecho_atrasado'/hist-compliance-teal (informativo, no es un error);
+   vencido = rojo (ya era incumplimiento antes de abrir este formulario);
+   carryover = ámbar (turno anterior dejó pendiente esta ocurrencia). */
+.grease-flow-turno-warn, .grease-flow-vencido-warn, .grease-flow-carryover-warn {
+  margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+}
+.grease-flow-turno-warn { background: rgba(45,182,163,0.14); border: 1px solid #2DB6A3; color: var(--text); }
+.grease-flow-vencido-warn { background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--text); }
+.grease-flow-carryover-warn { background: rgba(232,163,61,0.12); border: 1px solid var(--amber); color: var(--text); }
+/* Contexto completo de la ocurrencia (cierre operativo §11/§12) — grid de
+   2 columnas en móvil (nunca 1 columna angosta, cabe bien), 3 desde
+   tablet. Datos reales (ubicación/tipo de trabajo/estado/programado/
+   turno/último engrase), nunca texto fijo. */
+.grease-flow-contexto {
+  margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 14px; width: 100%;
+}
+.grease-flow-contexto > div { min-width: 0; }
+.grease-flow-contexto dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0; }
+.grease-flow-contexto dd { font-size: 13px; margin: 1px 0 0; overflow-wrap: break-word; }
+@media (min-width: 640px) { .grease-flow-contexto { grid-template-columns: repeat(3, 1fr); } }
 
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;
@@ -674,11 +1395,61 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 8px 2px; cursor: pointer;
 }
 .lub-nav-item.active { color: var(--accent); }
+/* UI-VIS-302: la barra se mantiene completa (fondo full-width, position:fixed
+   sin cambios) pero desde 1024px los 4 ítems dejan de estirarse (flex:1) a lo
+   ancho de todo el monitor — se limitan a un ancho cómodo y se centran. */
+@media (min-width: 1024px) {
+  .lub-bottom-nav { justify-content: center; }
+  .lub-nav-item { flex: 0 1 170px; }
+}
 
 /* En pantallas grandes centramos la vista del lubricador para que no se estire de forma extraña */
 @media (min-width: 640px) {
   .lub-content { max-width: 560px; margin: 0 auto; width: 100%; }
   .lub-bottom-nav > * { max-width: 560px; }
+}
+/* Ayuda: rediseño — 560px (pensado para un formulario de una sola tarea, ver
+   comentario UI-VIS-302 más abajo) dejaba la guía de familias/FAQ angosta y
+   con enormes márgenes vacíos en desktop; Ayuda es lectura/referencia, no un
+   formulario corto. Se libera del límite de 560px del shell Lubricador (igual
+   patrón :has() que Anomalías/Mis Engrases/Mi Turno abajo) y ".ayuda-page"
+   toma su propio ancho de lectura más adelante (~900-1100px). Mi Turno/
+   Registrar Engrase siguen en 560px, sin cambios. */
+@media (min-width: 640px) {
+  .lub-content:has(.ayuda-page) { max-width: none; }
+}
+/* UI-FULL-105/109 (docs/UI_RESPONSIVE_FULL_AUDIT.md, LOTE P2-A): Anomalías y Mis
+   Engrases NO son formularios de una sola tarea como Mi Turno/Registrar Engrase
+   — Anomalías es una tabla de datos y Mis Engrases una lista que puede crecer;
+   ambas desperdiciaban ~1360px en 1920px con el límite de 560px de arriba. Mismo
+   patrón que .grease-flow-panel: excepción scoped por :has(), sin tocar
+   .lub-content para el resto de pantallas del Lubricador (Mi Turno/Ayuda siguen
+   en 560px, a propósito). #anom-table y .lub-record-list son exclusivos de cada
+   pantalla — no coinciden nunca con Mi Turno/Registrar Engrase/Ayuda. */
+@media (min-width: 768px) {
+  .lub-content:has(.lub-record-list),
+  .lub-content:has(#anom-table) { max-width: none; }
+  .lub-record-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; }
+}
+
+/* UI-VIS-302 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): Mi Turno (renderLubricadorHome)
+   quedaba con el mismo límite de 560px que el resto del shell Lubricador incluso
+   en desktop, con ~1360px vacíos en 1920px — el peor caso medido de todo el
+   sistema (29% de utilización). Igual técnica que arriba: :has(.lub-eq-list) es
+   exclusivo de esta pantalla (no coincide con Ayuda/Registrar Engrase), así que
+   Ayuda sigue en 560px sin cambios, a propósito. 768-1023px: se quita el límite
+   y el grid decide 1 o 2 columnas según el espacio real (auto-fill); desde
+   1024px el ancho se topa en ~1150px y se fuerzan 2 columnas fijas, tal como se
+   pidió (no un grid abierto que termine en 3-4 columnas angostas). */
+@media (min-width: 768px) {
+  .lub-content:has(.lub-eq-list) { max-width: none; }
+  .lub-content:has(.lub-eq-list) .lub-eq-list {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start;
+  }
+}
+@media (min-width: 1024px) {
+  .lub-content:has(.lub-eq-list) { max-width: 1150px; }
+  .lub-content:has(.lub-eq-list) .lub-eq-list { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* Botones grandes también en formularios de engrase para uso en campo */
@@ -699,12 +1470,39 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 /* Tablets y celulares grandes en horizontal */
 @media (min-width: 601px) and (max-width: 900px) {
-  .kpi-grid { grid-template-columns: repeat(4, 1fr); }
+  /* .kpi-grid: la progresión de columnas para este rango ya la fija la
+     regla monótona junto a la definición base (ver "KPI cards" arriba,
+     docs/UI_RESPONSIVE.md UI-RESP-003) — no se duplica aquí. */
   .cards-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 }
-/* Pantallas muy anchas: limitar el ancho de lectura de paneles de una sola columna */
+/* Pantallas muy anchas: limitar el ancho de lectura de paneles de una sola columna.
+   width:100% es necesario: .app-content es hijo de .main (flex-direction:column) y
+   margin:auto en el eje transversal desactiva el stretch por defecto, dejando el
+   contenedor con shrink-to-fit (encogido a su contenido) en vez de llenar hasta
+   max-width — UI-VIS-001/002/004/101/102/104/107/201/202/203/205,
+   docs/UI_VISUAL_COMPOSITION_AUDIT.md */
 @media (min-width: 1400px) {
-  .app-content { max-width: 1500px; margin: 0 auto; }
+  .app-content { max-width: 1500px; width: 100%; margin: 0 auto; }
+  /* Mismo límite para Anomalías/Mis Engrases del Lubricador (ver excepción de
+     .lub-content arriba, UI-FULL-105/109) — igual que .app-content, no 100% del
+     monitor a partir de cierto punto. */
+  .lub-content:has(.lub-record-list),
+  .lub-content:has(#anom-table) { max-width: 1500px; }
+}
+/* UI-FULL-304 (docs/UI_RESPONSIVE_FULL_AUDIT.md, LOTE P2-A): Configuración tenía
+   ~12 .panel apilados en 1 sola columna en TODOS los anchos — en desktop cada
+   uno se ensancha pero su contenido (2-4 campos, o un botón) deja mucho espacio
+   vacío. Desde 1024px (pedido explícito: "1024+, 2 columnas para paneles
+   pequeños/medianos" — NO desde 768, para no encoger de más el .form-grid
+   interno de cada panel, que reacciona al ancho del VIEWPORT, no de su columna).
+   #audit-log-panel/#notif-panel (tabla de hasta 50 filas, 6 tarjetas de aviso)
+   siguen ocupando el ancho completo — :has(#audit-log-panel) identifica esta
+   pantalla sin necesidad de una clase nueva en el HTML. */
+@media (min-width: 1024px) {
+  .app-content:has(#audit-log-panel) {
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); align-items: start;
+  }
+  #notif-panel, #audit-log-panel { grid-column: 1 / -1; }
 }
 /* Modo horizontal en celular: la barra inferior no debe robar tanta altura */
 @media (max-height: 420px) and (orientation: landscape) {
@@ -736,6 +1534,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   }
   .data-table td:empty { display: none; }
   .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; }
+
+  /* Columnas marcadas como secundarias (ver UI-ANDROID-005 / docs/UI_RESPONSIVE.md):
+     se ocultan solo en esta tarjeta apilada móvil, nunca en escritorio, para reducir
+     la densidad de información sin tocar el mecanismo genérico data-label de arriba. */
+  .data-table td.col-secondary { display: none; }
+  /* :last-child ya no basta para quitar el borde inferior de la última celda VISIBLE
+     cuando alguna celda oculta por .col-secondary queda después de ella en el DOM —
+     esta regla generaliza esa lógica sin tocar la de arriba (que sigue cubriendo las
+     tablas .data-table que no usan .col-secondary). */
+  .data-table tr td:not(.col-secondary, :has(~ td:not(.col-secondary))) { border-bottom: none; }
+
+  /* "Engrase del Turno" (renderTurno()) — mismas tarjetas apiladas de
+     arriba, solo un poco más compactas para ver más equipos por pantalla
+     sin ocultar ningún dato (Estado/Código/Equipo/Ubicación/Horómetro/
+     Último/Próximo/Restante) ni tocar el botón "Realizar engrase". */
+  .turno-table tr { margin-bottom: 8px; padding: 2px 10px; }
+  .turno-table td { padding: 5px 0; font-size: 12.5px; }
 }
 
 /* ---------------- Íconos reemplazados por el set real de Lucide (lucide.dev, código abierto) ----------------
@@ -747,8 +1562,12 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20width%3D%227%22%20height%3D%227%22%20x%3D%223%22%20y%3D%223%22%20rx%3D%221%22%20/%3E%0A%20%20%3Crect%20width%3D%227%22%20height%3D%227%22%20x%3D%2214%22%20y%3D%223%22%20rx%3D%221%22%20/%3E%0A%20%20%3Crect%20width%3D%227%22%20height%3D%227%22%20x%3D%2214%22%20y%3D%2214%22%20rx%3D%221%22%20/%3E%0A%20%20%3Crect%20width%3D%227%22%20height%3D%227%22%20x%3D%223%22%20y%3D%2214%22%20rx%3D%221%22%20/%3E%0A%3C/svg%3E");
 }
 .icon-truck {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M14%2018V6a2%202%200%200%200-2-2H4a2%202%200%200%200-2%202v11a1%201%200%200%200%201%201h2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%2018H9%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M19%2018h2a1%201%200%200%200%201-1v-3.65a1%201%200%200%200-.22-.624l-3.48-4.35A1%201%200%200%200%2017.52%208H14%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2217%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%227%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M14%2018V6a2%202%200%200%200-2-2H4a2%202%200%200%200-2%202v11a1%201%200%200%200%201%201h2%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%2018H9%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M19%2018h2a1%201%200%200%200%201-1v-3.65a1%201%200%200%200-.22-.624l-3.48-4.35A1%201%200%200%200%2017.52%208H14%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%2217%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%227%22%20cy%3D%2218%22%20r%3D%222%22%20/%3E%0A%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%22175%20475%20910%20470%22%3E%3Cpath%20d%3D%22M%20655.624%20485.637%20C%20648.159%20487.929,%20644.956%20490.379,%20624.917%20509.120%20C%20614.697%20518.679,%20601.345%20531.112,%20595.246%20536.748%20L%20584.158%20546.996%20408.829%20547.248%20L%20233.500%20547.500%20226.759%20550.693%20C%20214.751%20556.381,%20211.828%20560.278,%20196.520%20590.996%20C%20183.701%20616.721,%20183%20618.437,%20183%20624.096%20C%20183%20627.378,%20183.696%20631.737,%20184.546%20633.782%20C%20188.433%20643.127,%20189.389%20643.868,%20247.973%20682.964%20C%20279.070%20703.717,%20306.085%20721.552,%20308.006%20722.598%20C%20311.376%20724.433,%20316.181%20724.518,%20443.500%20725%20L%20575.500%20725.500%20601%20739.424%20C%20615.025%20747.081,%20631.508%20756.081,%20637.628%20759.424%20C%20643.748%20762.766,%20649.823%20766.233,%20651.128%20767.129%20L%20653.500%20768.758%20653.318%20791.040%20C%20653.218%20803.295,%20652.891%20814.297,%20652.592%20815.489%20C%20651.803%20818.633,%20647.889%20820,%20639.676%20820%20L%20632.447%20820%20630.836%20810.750%20C%20621.831%20759.040,%20572.821%20724.343,%20519.644%20732.031%20C%20487.812%20736.632,%20454.440%20762.492,%20442.502%20791.806%20L%20440.341%20797.112%20434.682%20785.806%20C%20421.243%20758.958,%20399.046%20740.986,%20369.175%20732.769%20C%20357.617%20729.589,%20331.758%20729.621,%20320.549%20732.829%20C%20252.576%20752.281,%20223.662%20826.656,%20261.787%20883.979%20C%20275.099%20903.994,%20297.166%20919.369,%20321.378%20925.499%20C%20333.463%20928.559,%20352.438%20928.957,%20364.792%20926.412%20C%20397.605%20919.650,%20425.693%20895.689,%20438.500%20863.531%20L%20440.081%20859.563%20443.410%20867.221%20C%20462.817%20911.864,%20510.891%20936.624,%20556.642%20925.540%20C%20587.473%20918.071,%20613.652%20895.993,%20624.681%20868.158%20C%20626.568%20863.396,%20628.511%20858.523,%20628.999%20857.329%20C%20629.835%20855.281,%20630.645%20855.136,%20643.193%20854.792%20C%20660.630%20854.314,%20665.737%20852.441,%20675.103%20843.091%20C%20686.394%20831.819,%20688.962%20823.987,%20688.985%20800.750%20L%20689%20786%20711.500%20786%20L%20734%20786%20734%20799.816%20C%20734%20815.825,%20735.172%20823.433,%20738.715%20830.425%20C%20747.142%20847.053,%20760.959%20855,%20781.447%20855%20L%20791.683%20855%20792.821%20858.795%20C%20794.813%20865.447,%20803.571%20882.292,%20808.265%20888.500%20C%20830.274%20917.614,%20869.314%20933.665,%20903.500%20927.654%20C%20926.212%20923.661,%20942.703%20915.166,%20959.016%20899.057%20C%20978.348%20879.968,%20987.601%20858.690,%20988.726%20830.738%20L%20989.281%20816.977%201000.890%20811.335%20C%201054.752%20785.160,%201060.377%20782.143,%201065.249%20776.815%20C%201073.988%20767.258,%201074.135%20766.342,%201073.795%20723.592%20L%201073.500%20686.500%201070.914%20681%20C%201065.701%20669.914,%201059.530%20664.701,%201041.039%20655.766%20C%201031.943%20651.370,%201016.351%20643.805,%201006.392%20638.955%20L%20988.284%20630.136%20972.020%20598.318%20C%20963.075%20580.818,%20952.099%20559.327,%20947.628%20550.559%20C%20938.437%20532.534,%20933.083%20526.090,%20923.117%20521.059%20C%20913.444%20516.176,%20908.975%20515.862,%20853.977%20516.194%20L%20803.453%20516.500%20796.834%20519.760%20C%20789.131%20523.553,%20783.841%20528.977,%20780.135%20536.880%20L%20777.500%20542.500%20777.219%20599.628%20L%20776.938%20656.756%20763.164%20665.891%20C%20746.747%20676.780,%20742.195%20681.197,%20737.804%20690.500%20L%20734.500%20697.500%20734.177%20724.250%20L%20733.855%20751%20711.606%20751%20L%20689.358%20751%20684.812%20746.644%20C%20682.312%20744.249,%20674.131%20738.826,%20666.633%20734.593%20C%20659.135%20730.361,%20653%20726.687,%20653%20726.429%20C%20653%20725.805,%20677.369%20670.472,%20685.999%20651.500%20C%20689.752%20643.250,%20697.324%20626.375,%20702.825%20614%20C%20718.180%20579.458,%20730.072%20552.999,%20737.655%20536.500%20L%20744.550%20521.500%20749.033%20520.981%20C%20767.876%20518.799,%20771.810%20493.724,%20754.541%20485.880%20C%20750.807%20484.183,%20747.084%20484.048,%20705.500%20484.092%20C%20668.474%20484.131,%20659.636%20484.405,%20655.624%20485.637%20M%20666.833%20519.802%20C%20665.916%20520.186,%20656.294%20528.825,%20645.451%20539%20C%20606.523%20575.529,%20602.445%20579.182,%20598.500%20581.056%20C%20594.618%20582.900,%20589.332%20582.957,%20418.821%20582.978%20C%20259.059%20582.998,%20242.998%20583.145,%20241.541%20584.602%20C%20239.970%20586.173,%20223%20620.426,%20223%20622.027%20C%20223%20622.475,%20245.701%20637.948,%20273.446%20656.410%20L%20323.892%20689.978%20454.196%20690.239%20L%20584.500%20690.500%20591%20693.723%20C%20594.575%20695.496,%20602.450%20699.652,%20608.500%20702.959%20C%20614.550%20706.266,%20619.776%20708.978,%20620.113%20708.986%20C%20620.451%20708.994,%20621.870%20706.413,%20623.266%20703.250%20C%20624.663%20700.087,%20630.170%20687.600,%20635.504%20675.500%20C%20648.840%20645.249,%20659.910%20620.371,%20668.211%20602%20C%20672.063%20593.475,%20677.019%20582.450,%20679.225%20577.500%20C%20681.432%20572.550,%20688.133%20557.838,%20694.118%20544.806%20C%20700.103%20531.774,%20705%20520.673,%20705%20520.137%20C%20705%20519.013,%20669.461%20518.702,%20666.833%20519.802%20M%20813.796%20609.250%20C%20813.502%20666.042,%20813.482%20666.539,%20811.271%20671.330%20C%20808.280%20677.811,%20803.721%20683.403,%20799.212%20686.123%20C%20787.151%20693.397,%20773.326%20702.470,%20772.250%20703.817%20C%20771.284%20705.026,%20771%20717.855,%20771%20760.239%20L%20771%20815.095%20773.692%20817.590%20C%20776.037%20819.764,%20777.152%20820.048,%20782.339%20819.793%20L%20788.294%20819.500%20790.572%20809.500%20C%20801.183%20762.907,%20841.489%20730.071,%20888.140%20730.013%20C%20922.363%20729.971,%20952.048%20745.743,%20972.338%20774.750%20C%20975.128%20778.737,%20977.880%20782.010,%20978.455%20782.021%20C%20979.030%20782.033,%20992.438%20775.640,%201008.250%20767.815%20L%201037%20753.587%201037%20724.449%20C%201037%20690.758,%201038.174%20694.302,%201024.995%20688.202%20C%201020.323%20686.039,%201012.450%20682.355,%201007.500%20680.015%20C%201002.550%20677.676,%20994.450%20673.972,%20989.500%20671.785%20L%20980.500%20667.808%20930.500%20668.154%20L%20880.500%20668.500%20874.621%20666.130%20C%20870.457%20664.451,%20866.782%20661.827,%20862.020%20657.130%20C%20851.703%20646.955,%20851.628%20646.593,%20851.558%20606.666%20L%20851.500%20573.833%20854.306%20571.416%20C%20856.931%20569.155,%20857.873%20569,%20868.945%20569%20C%20879.103%20569,%20881.113%20569.270,%20883.139%20570.910%20L%20885.500%20572.821%20885.794%20602.111%20C%20885.986%20621.161,%20886.465%20631.856,%20887.167%20632.701%20C%20888.008%20633.714,%20894.927%20634,%20918.622%20634%20C%20935.330%20634,%20949%20633.773,%20949%20633.495%20C%20949%20631.474,%20908.773%20553.127,%20907.481%20552.631%20C%20906.577%20552.284,%20885.194%20552,%20859.964%20552%20L%20814.092%20552%20813.796%20609.250%20M%20879.992%20765.929%20C%20855.162%20769.335,%20833.271%20788.981,%20827.004%20813.483%20C%20816.863%20853.134,%20847.024%20892.032,%20888%20892.149%20C%20899.722%20892.182,%20904.897%20890.969,%20916.896%20885.372%20C%20942.934%20873.225,%20957.659%20842.056,%20950.612%20814%20C%20942.777%20782.806,%20911.613%20761.592,%20879.992%20765.929%20M%20327%20767.889%20C%20294.621%20778.378,%20275.764%20809.581,%20282.515%20841.500%20C%20287.160%20863.463,%20303.242%20881.190,%20325.725%20889.130%20C%20333.848%20891.999,%20350.292%20892.731,%20359.238%20890.623%20C%20393.532%20882.539,%20415.424%20846.617,%20406.544%20813%20C%20400.741%20791.030,%20382.708%20773.295,%20360.356%20767.573%20C%20351.796%20765.382,%20334.226%20765.548,%20327%20767.889%20M%20521.462%20767.473%20C%20507.957%20770.413,%20493.398%20779.561,%20485.255%20790.222%20C%20465.376%20816.248,%20468.273%20850.998,%20492.200%20873.506%20C%20515.498%20895.423,%20547.815%20897.161,%20572.500%20877.825%20C%20595.990%20859.426,%20603.617%20827.073,%20590.825%20800.088%20C%20586.506%20790.978,%20573.062%20777.512,%20564%20773.220%20C%20549.586%20766.393,%20535.294%20764.462,%20521.462%20767.473%20M%20883.045%20796.082%20C%20872.217%20798.230,%20862.937%20805.491,%20857.864%20815.784%20C%20854.339%20822.936,%20854.484%20836.542,%20858.160%20843.500%20C%20871.559%20868.866,%20906.564%20868.851,%20919.052%20843.474%20C%20922.740%20835.981,%20922.586%20822.752,%20918.720%20814.857%20C%20912.217%20801.579,%20896.645%20793.383,%20883.045%20796.082%20M%20333.264%20797.756%20C%20319.482%20803.429,%20312.133%20814.150,%20312.044%20828.712%20C%20311.964%20841.763,%20318.827%20853.366,%20330%20859.072%20C%20337.158%20862.728,%20351.025%20863.051,%20358.278%20859.730%20C%20384.752%20847.610,%20385.222%20811.615,%20359.076%20798.760%20C%20352.918%20795.732,%20339.453%20795.209,%20333.264%20797.756%20M%20524.882%20797.332%20C%20517.022%20800.246,%20509.137%20806.967,%20505.638%20813.733%20C%20503.425%20818.012,%20501.748%20828.823,%20502.501%20833.960%20C%20505.149%20852.047,%20523.658%20865.484,%20540.994%20861.903%20C%20559.887%20858.001,%20571.663%20841.201,%20567.984%20823.396%20C%20565.572%20811.721,%20559.583%20803.919,%20549.076%20798.765%20C%20543.479%20796.019,%20530.496%20795.250,%20524.882%20797.332%20M%20341%20825%20C%20337.092%20828.908,%20339.635%20835,%20345.174%20835%20C%20350.295%20835,%20352.966%20828.089,%20349.171%20824.655%20C%20346.712%20822.430,%20343.432%20822.568,%20341%20825%20M%20530.557%20825.223%20C%20527.554%20829.510,%20529.994%20835,%20534.902%20835%20C%20538.278%20835,%20541%20832.245,%20541%20828.826%20C%20541%20823.459,%20533.584%20820.900,%20530.557%20825.223%20M%20884.655%20824.829%20C%20882.469%20827.244,%20882.552%20831.284,%20884.829%20833.345%20C%20888.651%20836.804,%20894%20834.631,%20894%20829.620%20C%20894%20823.868,%20888.211%20820.900,%20884.655%20824.829%22%20fill%3D%22%23fff%22%20fill-rule%3D%22evenodd%22/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%22175%20475%20910%20470%22%3E%3Cpath%20d%3D%22M%20655.624%20485.637%20C%20648.159%20487.929,%20644.956%20490.379,%20624.917%20509.120%20C%20614.697%20518.679,%20601.345%20531.112,%20595.246%20536.748%20L%20584.158%20546.996%20408.829%20547.248%20L%20233.500%20547.500%20226.759%20550.693%20C%20214.751%20556.381,%20211.828%20560.278,%20196.520%20590.996%20C%20183.701%20616.721,%20183%20618.437,%20183%20624.096%20C%20183%20627.378,%20183.696%20631.737,%20184.546%20633.782%20C%20188.433%20643.127,%20189.389%20643.868,%20247.973%20682.964%20C%20279.070%20703.717,%20306.085%20721.552,%20308.006%20722.598%20C%20311.376%20724.433,%20316.181%20724.518,%20443.500%20725%20L%20575.500%20725.500%20601%20739.424%20C%20615.025%20747.081,%20631.508%20756.081,%20637.628%20759.424%20C%20643.748%20762.766,%20649.823%20766.233,%20651.128%20767.129%20L%20653.500%20768.758%20653.318%20791.040%20C%20653.218%20803.295,%20652.891%20814.297,%20652.592%20815.489%20C%20651.803%20818.633,%20647.889%20820,%20639.676%20820%20L%20632.447%20820%20630.836%20810.750%20C%20621.831%20759.040,%20572.821%20724.343,%20519.644%20732.031%20C%20487.812%20736.632,%20454.440%20762.492,%20442.502%20791.806%20L%20440.341%20797.112%20434.682%20785.806%20C%20421.243%20758.958,%20399.046%20740.986,%20369.175%20732.769%20C%20357.617%20729.589,%20331.758%20729.621,%20320.549%20732.829%20C%20252.576%20752.281,%20223.662%20826.656,%20261.787%20883.979%20C%20275.099%20903.994,%20297.166%20919.369,%20321.378%20925.499%20C%20333.463%20928.559,%20352.438%20928.957,%20364.792%20926.412%20C%20397.605%20919.650,%20425.693%20895.689,%20438.500%20863.531%20L%20440.081%20859.563%20443.410%20867.221%20C%20462.817%20911.864,%20510.891%20936.624,%20556.642%20925.540%20C%20587.473%20918.071,%20613.652%20895.993,%20624.681%20868.158%20C%20626.568%20863.396,%20628.511%20858.523,%20628.999%20857.329%20C%20629.835%20855.281,%20630.645%20855.136,%20643.193%20854.792%20C%20660.630%20854.314,%20665.737%20852.441,%20675.103%20843.091%20C%20686.394%20831.819,%20688.962%20823.987,%20688.985%20800.750%20L%20689%20786%20711.500%20786%20L%20734%20786%20734%20799.816%20C%20734%20815.825,%20735.172%20823.433,%20738.715%20830.425%20C%20747.142%20847.053,%20760.959%20855,%20781.447%20855%20L%20791.683%20855%20792.821%20858.795%20C%20794.813%20865.447,%20803.571%20882.292,%20808.265%20888.500%20C%20830.274%20917.614,%20869.314%20933.665,%20903.500%20927.654%20C%20926.212%20923.661,%20942.703%20915.166,%20959.016%20899.057%20C%20978.348%20879.968,%20987.601%20858.690,%20988.726%20830.738%20L%20989.281%20816.977%201000.890%20811.335%20C%201054.752%20785.160,%201060.377%20782.143,%201065.249%20776.815%20C%201073.988%20767.258,%201074.135%20766.342,%201073.795%20723.592%20L%201073.500%20686.500%201070.914%20681%20C%201065.701%20669.914,%201059.530%20664.701,%201041.039%20655.766%20C%201031.943%20651.370,%201016.351%20643.805,%201006.392%20638.955%20L%20988.284%20630.136%20972.020%20598.318%20C%20963.075%20580.818,%20952.099%20559.327,%20947.628%20550.559%20C%20938.437%20532.534,%20933.083%20526.090,%20923.117%20521.059%20C%20913.444%20516.176,%20908.975%20515.862,%20853.977%20516.194%20L%20803.453%20516.500%20796.834%20519.760%20C%20789.131%20523.553,%20783.841%20528.977,%20780.135%20536.880%20L%20777.500%20542.500%20777.219%20599.628%20L%20776.938%20656.756%20763.164%20665.891%20C%20746.747%20676.780,%20742.195%20681.197,%20737.804%20690.500%20L%20734.500%20697.500%20734.177%20724.250%20L%20733.855%20751%20711.606%20751%20L%20689.358%20751%20684.812%20746.644%20C%20682.312%20744.249,%20674.131%20738.826,%20666.633%20734.593%20C%20659.135%20730.361,%20653%20726.687,%20653%20726.429%20C%20653%20725.805,%20677.369%20670.472,%20685.999%20651.500%20C%20689.752%20643.250,%20697.324%20626.375,%20702.825%20614%20C%20718.180%20579.458,%20730.072%20552.999,%20737.655%20536.500%20L%20744.550%20521.500%20749.033%20520.981%20C%20767.876%20518.799,%20771.810%20493.724,%20754.541%20485.880%20C%20750.807%20484.183,%20747.084%20484.048,%20705.500%20484.092%20C%20668.474%20484.131,%20659.636%20484.405,%20655.624%20485.637%20M%20666.833%20519.802%20C%20665.916%20520.186,%20656.294%20528.825,%20645.451%20539%20C%20606.523%20575.529,%20602.445%20579.182,%20598.500%20581.056%20C%20594.618%20582.900,%20589.332%20582.957,%20418.821%20582.978%20C%20259.059%20582.998,%20242.998%20583.145,%20241.541%20584.602%20C%20239.970%20586.173,%20223%20620.426,%20223%20622.027%20C%20223%20622.475,%20245.701%20637.948,%20273.446%20656.410%20L%20323.892%20689.978%20454.196%20690.239%20L%20584.500%20690.500%20591%20693.723%20C%20594.575%20695.496,%20602.450%20699.652,%20608.500%20702.959%20C%20614.550%20706.266,%20619.776%20708.978,%20620.113%20708.986%20C%20620.451%20708.994,%20621.870%20706.413,%20623.266%20703.250%20C%20624.663%20700.087,%20630.170%20687.600,%20635.504%20675.500%20C%20648.840%20645.249,%20659.910%20620.371,%20668.211%20602%20C%20672.063%20593.475,%20677.019%20582.450,%20679.225%20577.500%20C%20681.432%20572.550,%20688.133%20557.838,%20694.118%20544.806%20C%20700.103%20531.774,%20705%20520.673,%20705%20520.137%20C%20705%20519.013,%20669.461%20518.702,%20666.833%20519.802%20M%20813.796%20609.250%20C%20813.502%20666.042,%20813.482%20666.539,%20811.271%20671.330%20C%20808.280%20677.811,%20803.721%20683.403,%20799.212%20686.123%20C%20787.151%20693.397,%20773.326%20702.470,%20772.250%20703.817%20C%20771.284%20705.026,%20771%20717.855,%20771%20760.239%20L%20771%20815.095%20773.692%20817.590%20C%20776.037%20819.764,%20777.152%20820.048,%20782.339%20819.793%20L%20788.294%20819.500%20790.572%20809.500%20C%20801.183%20762.907,%20841.489%20730.071,%20888.140%20730.013%20C%20922.363%20729.971,%20952.048%20745.743,%20972.338%20774.750%20C%20975.128%20778.737,%20977.880%20782.010,%20978.455%20782.021%20C%20979.030%20782.033,%20992.438%20775.640,%201008.250%20767.815%20L%201037%20753.587%201037%20724.449%20C%201037%20690.758,%201038.174%20694.302,%201024.995%20688.202%20C%201020.323%20686.039,%201012.450%20682.355,%201007.500%20680.015%20C%201002.550%20677.676,%20994.450%20673.972,%20989.500%20671.785%20L%20980.500%20667.808%20930.500%20668.154%20L%20880.500%20668.500%20874.621%20666.130%20C%20870.457%20664.451,%20866.782%20661.827,%20862.020%20657.130%20C%20851.703%20646.955,%20851.628%20646.593,%20851.558%20606.666%20L%20851.500%20573.833%20854.306%20571.416%20C%20856.931%20569.155,%20857.873%20569,%20868.945%20569%20C%20879.103%20569,%20881.113%20569.270,%20883.139%20570.910%20L%20885.500%20572.821%20885.794%20602.111%20C%20885.986%20621.161,%20886.465%20631.856,%20887.167%20632.701%20C%20888.008%20633.714,%20894.927%20634,%20918.622%20634%20C%20935.330%20634,%20949%20633.773,%20949%20633.495%20C%20949%20631.474,%20908.773%20553.127,%20907.481%20552.631%20C%20906.577%20552.284,%20885.194%20552,%20859.964%20552%20L%20814.092%20552%20813.796%20609.250%20M%20879.992%20765.929%20C%20855.162%20769.335,%20833.271%20788.981,%20827.004%20813.483%20C%20816.863%20853.134,%20847.024%20892.032,%20888%20892.149%20C%20899.722%20892.182,%20904.897%20890.969,%20916.896%20885.372%20C%20942.934%20873.225,%20957.659%20842.056,%20950.612%20814%20C%20942.777%20782.806,%20911.613%20761.592,%20879.992%20765.929%20M%20327%20767.889%20C%20294.621%20778.378,%20275.764%20809.581,%20282.515%20841.500%20C%20287.160%20863.463,%20303.242%20881.190,%20325.725%20889.130%20C%20333.848%20891.999,%20350.292%20892.731,%20359.238%20890.623%20C%20393.532%20882.539,%20415.424%20846.617,%20406.544%20813%20C%20400.741%20791.030,%20382.708%20773.295,%20360.356%20767.573%20C%20351.796%20765.382,%20334.226%20765.548,%20327%20767.889%20M%20521.462%20767.473%20C%20507.957%20770.413,%20493.398%20779.561,%20485.255%20790.222%20C%20465.376%20816.248,%20468.273%20850.998,%20492.200%20873.506%20C%20515.498%20895.423,%20547.815%20897.161,%20572.500%20877.825%20C%20595.990%20859.426,%20603.617%20827.073,%20590.825%20800.088%20C%20586.506%20790.978,%20573.062%20777.512,%20564%20773.220%20C%20549.586%20766.393,%20535.294%20764.462,%20521.462%20767.473%20M%20883.045%20796.082%20C%20872.217%20798.230,%20862.937%20805.491,%20857.864%20815.784%20C%20854.339%20822.936,%20854.484%20836.542,%20858.160%20843.500%20C%20871.559%20868.866,%20906.564%20868.851,%20919.052%20843.474%20C%20922.740%20835.981,%20922.586%20822.752,%20918.720%20814.857%20C%20912.217%20801.579,%20896.645%20793.383,%20883.045%20796.082%20M%20333.264%20797.756%20C%20319.482%20803.429,%20312.133%20814.150,%20312.044%20828.712%20C%20311.964%20841.763,%20318.827%20853.366,%20330%20859.072%20C%20337.158%20862.728,%20351.025%20863.051,%20358.278%20859.730%20C%20384.752%20847.610,%20385.222%20811.615,%20359.076%20798.760%20C%20352.918%20795.732,%20339.453%20795.209,%20333.264%20797.756%20M%20524.882%20797.332%20C%20517.022%20800.246,%20509.137%20806.967,%20505.638%20813.733%20C%20503.425%20818.012,%20501.748%20828.823,%20502.501%20833.960%20C%20505.149%20852.047,%20523.658%20865.484,%20540.994%20861.903%20C%20559.887%20858.001,%20571.663%20841.201,%20567.984%20823.396%20C%20565.572%20811.721,%20559.583%20803.919,%20549.076%20798.765%20C%20543.479%20796.019,%20530.496%20795.250,%20524.882%20797.332%20M%20341%20825%20C%20337.092%20828.908,%20339.635%20835,%20345.174%20835%20C%20350.295%20835,%20352.966%20828.089,%20349.171%20824.655%20C%20346.712%20822.430,%20343.432%20822.568,%20341%20825%20M%20530.557%20825.223%20C%20527.554%20829.510,%20529.994%20835,%20534.902%20835%20C%20538.278%20835,%20541%20832.245,%20541%20828.826%20C%20541%20823.459,%20533.584%20820.900,%20530.557%20825.223%20M%20884.655%20824.829%20C%20882.469%20827.244,%20882.552%20831.284,%20884.829%20833.345%20C%20888.651%20836.804,%20894%20834.631,%20894%20829.620%20C%20894%20823.868,%20888.211%20820.900,%20884.655%20824.829%22%20fill%3D%22%23fff%22%20fill-rule%3D%22evenodd%22/%3E%3C/svg%3E");
+}
+.icon-matrix {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%2218%22%20height%3D%2218%22%20rx%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M9%203v18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%203v18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%209h18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2015h18%22%20/%3E%0A%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%2218%22%20height%3D%2218%22%20rx%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M9%203v18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M15%203v18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%209h18%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2015h18%22%20/%3E%0A%3C/svg%3E");
 }
 .icon-list {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M3%205h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2012h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2019h.01%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%205h13%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%2012h13%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M8%2019h13%22%20/%3E%0A%3C/svg%3E");
@@ -842,6 +1661,21 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20width%3D%2218%22%20height%3D%2218%22%20x%3D%223%22%20y%3D%223%22%20rx%3D%222%22%20ry%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%229%22%20cy%3D%229%22%20r%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m21%2015-3.086-3.086a2%202%200%200%200-2.828%200L6%2021%22%20/%3E%0A%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20width%3D%2218%22%20height%3D%2218%22%20x%3D%223%22%20y%3D%223%22%20rx%3D%222%22%20ry%3D%222%22%20/%3E%0A%20%20%3Ccircle%20cx%3D%229%22%20cy%3D%229%22%20r%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m21%2015-3.086-3.086a2%202%200%200%200-2.828%200L6%2021%22%20/%3E%0A%3C/svg%3E");
 }
+/* Agregados: íconos de "categoría usuarios" que faltaban (Bloquear, Cambiar
+   usuario, Reset password) — mismo set real de Lucide, mismo patrón de las
+   reglas anteriores. */
+.icon-lock {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20width%3D%2218%22%20height%3D%2211%22%20x%3D%223%22%20y%3D%2211%22%20rx%3D%222%22%20ry%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M7%2011V7a5%205%200%200%201%2010%200v4%22%20/%3E%0A%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Crect%20width%3D%2218%22%20height%3D%2211%22%20x%3D%223%22%20y%3D%2211%22%20rx%3D%222%22%20ry%3D%222%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M7%2011V7a5%205%200%200%201%2010%200v4%22%20/%3E%0A%3C/svg%3E");
+}
+.icon-repeat {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22m17%202%204%204-4%204%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2011v-1a4%204%200%200%201%204-4h14%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m7%2022-4-4%204-4%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M21%2013v1a4%204%200%200%201-4%204H3%22%20/%3E%0A%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22m17%202%204%204-4%204%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%2011v-1a4%204%200%200%201%204-4h14%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m7%2022-4-4%204-4%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M21%2013v1a4%204%200%200%201-4%204H3%22%20/%3E%0A%3C/svg%3E");
+}
+.icon-rotate-ccw {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M3%2012a9%209%200%201%200%209-9%209.75%209.75%200%200%200-6.74%202.74L3%208%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%203v5h5%22%20/%3E%0A%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M3%2012a9%209%200%201%200%209-9%209.75%209.75%200%200%200-6.74%202.74L3%208%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3%203v5h5%22%20/%3E%0A%3C/svg%3E");
+}
 /* ---------------- Pantalla de información rápida al escanear un QR ---------------- */
 .qr-info-card { display: flex; flex-direction: column; gap: 4px; }
 .qr-info-status { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
@@ -870,19 +1704,52 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
   margin-bottom: 6px; background: var(--surface-2); font-size: 13px;
 }
+/* Móvil: nombre/fecha en su propia línea, "Restaurar" debajo a todo el
+   ancho — antes el botón podía apretar/cortar nombres largos contra el
+   borde de la tarjeta. */
+@media (max-width: 600px) {
+  .trash-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .trash-row .trash-restore { width: 100%; }
+  .trash-block h4 { font-size: 12px; }
+}
 
-/* ---------------- Engrase atrasado (capturado retroactivamente) ---------------- */
-.retro-box { border: 1px dashed var(--amber); border-radius: 10px; padding: 12px; background: rgba(230,126,34,0.06); }
+/* ---------------- Engrase atrasado (capturado retroactivamente) ----------------
+   UI/Responsive Fase 4: antes era "span-2" dentro de .form-grid (heredaba el gap
+   de la grilla); ahora es un subsector propio ("Registro retroactivo") fuera del
+   grid, así que necesita su propio margin-top para no pegarse a Tipo de grasa/
+   Cantidad. */
+/* "Opciones avanzadas" (lote occurrences/carryover, §2) — el registro
+   retroactivo (uso poco frecuente, solo Planificador/Administrador) queda
+   colapsado por defecto en vez de siempre visible, para no competir con
+   los campos normales del engrase. Nativo (<details>), sin JS propio. */
+.reg-advanced summary {
+  cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-dim);
+  margin-top: var(--sp-3); list-style: none;
+}
+.reg-advanced summary::-webkit-details-marker { display: none; }
+.reg-advanced summary::before { content: '▸ '; }
+.reg-advanced[open] summary::before { content: '▾ '; }
+.retro-box { margin-top: var(--sp-3); border: 1px dashed var(--amber); border-radius: 10px; padding: 12px; background: rgba(230,126,34,0.06); }
 .retro-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
 .retro-toggle input { width: 20px; height: 20px; flex: none; }
 .retro-tag {
   display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
   background: var(--amber); color: #1a1400; border-radius: 4px; padding: 1px 5px; margin-left: 4px;
 }
+.oop-badge {
+  display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  background: var(--purple, #7c5cff); color: #fff; border-radius: 4px; padding: 3px 8px; margin-bottom: 8px;
+}
+/* "No ejecutado" en Historial (cierre histórico §12) — mismo rojo que
+   celda-no-realizado/hist-compliance-alert, para que sea el MISMO color en
+   toda la app cuando algo NO se hizo. */
+.hist-noexec-badge {
+  display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  background: var(--red); color: #fff; border-radius: 4px; padding: 3px 8px;
+}
+.hist-row-skip { background: rgba(229,72,77,0.04); }
 
 /* ---------------- Puntos no engrasados / sin horómetro ---------------- */
-.nohm-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
-.nohm-toggle input { width: 20px; height: 20px; flex: none; }
 .input-disabled { opacity: 0.45; }
 .skipped-summary { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 6px; }
 .skipped-chip {
@@ -907,23 +1774,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   margin-left: 3px; vertical-align: middle;
 }
 
-/* ---------------- Registrar Engrase en escritorio ----------------
-   El formulario está pensado para móvil (una columna, botones grandes). En pantallas
-   anchas se veía muy angosto con mucho espacio desaprovechado a los lados: aquí se
-   ensancha y el checklist pasa a dos columnas cuando hay sitio. */
-@media (min-width: 900px) {
-  #reg-flow-area { max-width: 1100px; }
-  #reg-flow-area .form-grid { grid-template-columns: repeat(3, 1fr); }
-  #reg-flow-area .form-grid .span-2 { grid-column: span 3; }
-  #reg-flow-area #checklist {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start;
-  }
-  #reg-flow-area .checklist-item { break-inside: avoid; }
-  #reg-flow-area .big-input { font-size: 22px !important; }
-}
-@media (min-width: 1300px) {
-  #reg-flow-area #checklist { grid-template-columns: repeat(3, 1fr); }
-}
+/* Registrar Engrase (Administrador/Planificador/Supervisor): #reg-flow-area
+   solo aloja el diseño en cards de .grease-flow-panel (ver más abajo, que ya
+   resuelve el ancho de escritorio por su cuenta) — mantiene el ancho de
+   .app-content, sin límite propio. */
 
 /* Formulario de punto de engrase simplificado */
 .pt-main-label { display: block; margin-bottom: 6px; }
@@ -976,16 +1830,35 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .fam-img-preview img { max-width: 100%; max-height: 170px; object-fit: contain; border-radius: 6px; }
 .fam-img-preview svg { width: 100%; max-height: 150px; }
 
-/* ---------------- Matriz semanal (formato de la planilla en papel) ---------------- */
+/* ---------------- Matriz semanal (formato de la planilla en papel) ----------------
+   REDISEÑO: navegación de semana compacta (‹/›, rango "21–27 Sep"), filtros y
+   leyenda colapsables en móvil (botón toggle, "mantiene el comportamiento
+   actual" en desktop: siempre visibles), columna del día actual destacada
+   (borde/fondo discreto, NUNCA toca el color semántico de la celda), sticky
+   real (columna Equipo + encabezado de días) DENTRO de cada matriz (scroll
+   propio, nunca de la página), y celdas ligeramente más compactas. */
+.mtz-nav-row { flex-wrap: wrap; }
 .matriz-rango { font-weight: 700; font-size: 13px; padding: 0 8px; letter-spacing: 0.01em; }
+/* Filtros/leyenda: botón toggle SOLO existe visualmente en móvil (≤600px);
+   en desktop el panel de siempre queda visible y el botón se oculta —
+   "mantener comportamiento actual" ahí. */
+.mtz-filters-toggle-row, .mtz-legend-toggle-row { display: none; }
+.mtz-toggle-chevron { display: inline-block; transition: transform 0.15s ease; }
+@media (max-width: 600px) {
+  .mtz-filters-toggle-row, .mtz-legend-toggle-row { display: flex; margin-bottom: 8px; }
+  .mtz-collapsible-mobile.mtz-collapsed-mobile { display: none; }
+  #mtz-filters-toggle[aria-expanded="true"] .mtz-toggle-chevron,
+  #mtz-legend-toggle[aria-expanded="true"] .mtz-toggle-chevron { transform: rotate(180deg); }
+}
+
 .matriz-wrap {
-  overflow-x: auto; margin-bottom: 20px; border-radius: 12px;
+  overflow: auto; max-height: 68vh; margin-bottom: 20px; border-radius: 12px;
   border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
 }
 table.matriz { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 680px; }
 table.matriz th, table.matriz td {
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  padding: 9px 10px; text-align: center; font-size: 12px; white-space: nowrap;
+  padding: 7px 9px; text-align: center; font-size: 12px; white-space: nowrap;
 }
 table.matriz tr td:last-child, table.matriz tr th:last-child { border-right: none; }
 table.matriz tbody tr:last-child td { border-bottom: none; }
@@ -993,21 +1866,46 @@ table.matriz tbody tr:last-child td { border-bottom: none; }
 .matriz-titulo {
   background: linear-gradient(180deg, #26457A 0%, #1F3864 100%);
   color: #fff; font-size: 13px; letter-spacing: 0.06em;
-  font-family: var(--font-display); text-transform: uppercase; padding: 11px !important;
+  font-family: var(--font-display); text-transform: uppercase; padding: 9px 11px !important;
   border-right: none !important;
 }
+/* Resumen "N equipos · XX%" — mismo dato ya calculado (resumenTurno(), misma
+   fórmula que el KPI de Cumplimiento), nunca un cálculo nuevo. */
+.matriz-titulo-resumen {
+  font-family: var(--font-body); text-transform: none; letter-spacing: normal;
+  font-size: 11px; font-weight: 400; opacity: 0.85; margin-top: 2px;
+}
+/* Encabezado de días: sticky DENTRO de .matriz-wrap (que ahora sí tiene su
+   propio scroll vertical vía max-height) — nunca sticky contra la página. */
 table.matriz thead tr:nth-child(2) th {
   background: var(--surface-2); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
   padding-top: 8px; padding-bottom: 8px;
+  position: sticky; top: 0; z-index: 2;
 }
 .matriz-fecha { font-weight: 400; font-size: 10px; color: var(--text-dim); margin-top: 2px; opacity: 0.75; }
+/* Día actual: acento MUY discreto (fondo tenue + borde superior), nunca toca
+   el color de estado de la celda — se ve igual "REALIZADO"/"NO REALIZADO"/
+   etc. que en cualquier otro día, solo la columna queda trazada. */
+table.matriz thead tr:nth-child(2) th.is-today {
+  background: rgba(242,169,0,0.14); color: var(--text); border-top: 2px solid var(--accent);
+}
+.matriz-hoy-tag {
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent);
+  margin-top: 1px;
+}
+table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 rgba(242,169,0,0.5), inset -2px 0 0 rgba(242,169,0,0.5); }
 
+/* Columna "Equipo/No.": sticky a la izquierda (siempre visible al deslizar
+   horizontalmente en móvil) Y, en el encabezado, sticky también hacia
+   arriba — la esquina superior-izquierda queda fija en ambos ejes, por
+   encima del resto de celdas sticky (z-index más alto). */
 .matriz-eq {
   text-align: left !important; font-weight: 700; background: var(--surface-2);
   position: sticky; left: 0; z-index: 1; font-size: 12.5px;
   box-shadow: 1px 0 0 var(--border);
 }
+table.matriz thead tr:nth-child(2) th.matriz-eq { z-index: 3; }
 /* Filas alternas para seguir la línea con la vista en tablas largas */
 table.matriz tbody tr:nth-child(even) .matriz-eq { background: var(--surface); }
 table.matriz tbody tr:hover td { background: rgba(255,255,255,0.03); }
@@ -1017,8 +1915,29 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
   background: #00B050; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
+/* "Realizado atrasado" (lote occurrences/carryover) — mismo turquesa que
+   .hist-compliance-teal (Historial/Reportes), para que sea el MISMO color
+   en toda la app cuando un engrase se hizo en un turno distinto al
+   planificado el mismo día (ej. Noche cerrando lo pendiente de Día). */
+.celda-hecho-atrasado {
+  background: #2DB6A3; color: #fff; font-weight: 700; font-style: italic;
+  font-size: 10.5px; letter-spacing: 0.03em;
+}
+/* "Realizado adelantado" (lote engrase fuera de plan) — un OUT_OF_PLAN que
+   ya satisfizo esta ocurrencia futura. Color propio (azulado), distinto de
+   verde/turquesa/naranja/rojo ya usados — nunca se había wireado esta
+   celda en la matriz interactiva (quedaba en blanco), corregido junto con
+   hecho_atrasado. */
+.celda-hecho-adelantado {
+  background: #5B7FBF; color: #fff; font-weight: 700; font-style: italic;
+  font-size: 10.5px; letter-spacing: 0.03em;
+}
 .celda-pendiente { background: #F4B183; }
 .celda-futuro { background: #F4B183; opacity: 0.5; }
+/* Equipo no operativo (Detenido/En mantenimiento/Fuera de servicio): gris, igual
+   código de color que "GRIS" en el resto del sistema (statusFor()/STATUS_COLOR) —
+   nunca rojo/naranja, para no leerse como una falta del lubricador. */
+.celda-pausado { background: var(--gray-status); color: #fff; font-size: 10px; }
 /* Al pasar el mouse sobre una celda hecha, se resalta sin perder el color */
 table.matriz tbody tr:hover .celda-hecho { background: #009648; }
 table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
@@ -1026,8 +1945,26 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 @media (max-width: 640px) {
   table.matriz th, table.matriz td { padding: 6px 7px; font-size: 11px; }
   .celda-hecho { font-size: 9px; }
-  .matriz-eq { font-size: 11px; }
-  .matriz-rango { font-size: 12px; display: block; width: 100%; text-align: center; padding: 4px 0; }
+  .matriz-eq { font-size: 11px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+  /* Las celdas de estado ("NO REALIZADO", "PENDIENTE HOY"…) ya no fuerzan el
+     ancho de columna al de su palabra más larga en una sola línea — al
+     envolver en 2 líneas, cada columna de día puede ser bastante más
+     angosta, lo que reduce el ancho total de la tabla y con él el scroll
+     horizontal necesario (evita que un estado quede "cortado" a la mitad al
+     borde de la pantalla). La columna Equipo NUNCA envuelve (los códigos
+     deben leerse en una sola línea) — de ahí el :not(.matriz-eq). */
+  table.matriz td:not(.matriz-eq) { white-space: normal; overflow-wrap: break-word; line-height: 1.15; }
+}
+@media (max-width: 420px) {
+  table.matriz th, table.matriz td { padding: 5px 5px; font-size: 10px; }
+  .matriz-eq { font-size: 10px; max-width: 74px; }
+}
+@media (max-width: 600px) {
+  /* Navegación compacta: "‹ 21–27 SEP ›" — se ocultan las etiquetas largas,
+     quedan los símbolos + controles accesibles (44px, ya heredado de .btn). */
+  .mtz-nav-label { display: none; }
+  .matriz-rango { font-size: 12px; text-transform: uppercase; order: -1; flex: 1 1 100%; text-align: center; padding: 2px 0 6px; }
+  .mtz-nav-row { justify-content: center; }
 }
 
 /* ---------------- Panel de notificaciones por tipo ---------------- */
@@ -1157,6 +2094,9 @@ input[type="checkbox"], input[type="radio"] {
 /* En el checklist de engrase, que es lo que más se toca en campo, más grandes aún */
 .checklist-item input[type="checkbox"],
 .chk-done { width: 26px; height: 26px; }
+/* Registrar Engrase (.grease-flow-panel): el checkbox de "sin horómetro" vive en
+   una fila táctil completa, un poco más grande que el checkbox genérico. */
+.grease-flow-toggle-row input[type="checkbox"] { width: 22px; height: 22px; flex: none; }
 
 /* Campos de formulario cómodos en móvil (16px evita que el móvil haga zoom al enfocar) */
 .form-grid input, .form-grid select, .form-grid textarea, .input {
@@ -1168,6 +2108,13 @@ input[type="checkbox"], input[type="radio"] {
    Se normalizan los tamaños al sistema de escalas, respetando la intención original. */
 .kpi-value { font-size: var(--fs-xl); }
 .panel-head h3 { font-size: var(--fs-lg); }
+/* Móvil (pulido pre-cutover): ver el comentario junto a `.panel-head` más
+   arriba — títulos largos dominaban la pantalla en 390/412px. Declarada
+   aquí, después de la regla de arriba, para ganarle en cascada (misma
+   especificidad, misma convención ya usada en este archivo). */
+@media (max-width: 600px) {
+  .panel-head h3 { font-size: 23px; line-height: 1.15; }
+}
 .dim, .field-hint { font-size: var(--fs-sm); }
 .data-table th { font-size: var(--fs-xs); }
 .data-table td { font-size: var(--fs-base); }
@@ -1304,3 +2251,187 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   font-size: 13px; line-height: 1.5;
 }
 .copy-plan-opcion input { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+
+/* ---------------- Historial: buscador de equipo + encabezado compacto ----------------
+   Rediseño de "Historial por equipo": el <select> pequeño dentro de una card grande se
+   reemplaza por un buscador full-width (mismo campo/función equipoMatchesQuery() que
+   "Buscar en todo el historial", sin duplicar lógica). Al elegir un equipo, el buscador
+   se reemplaza por un encabezado compacto — reutiliza el patrón ya existente de
+   .qf-item/.qf-vacio (quick-find del topbar) para la lista de resultados, con clases
+   propias para no acoplar esta pantalla a esa (ancho/posicionamiento muy distintos:
+   quick-find es angosto y flotante en el topbar, esto es un panel full-width). Va al
+   final del archivo a propósito, igual que el bloque de tablas-como-tarjetas más abajo:
+   .data-table.hist-table necesita ganarle en cascada a las reglas base de .data-table
+   (arriba) sin depender de trucos de especificidad. */
+/* Padding propio del contenedor (16px lateral, alineado con .panel-head;
+   14px abajo, 0 arriba porque panel-head ya deja su propio margin-bottom) —
+   .panel no trae padding por defecto (ver comentario sobre .chk-reason más
+   arriba); sin esto el buscador/encabezado tocaban el borde del panel. */
+/* Título más compacto (mismo tamaño/tipografía, menos aire alrededor) — solo
+   estas 2 pantallas, sin tocar .panel-head en el resto del sistema. */
+.hist-global-panel .panel-head, #hist-eq-panel .panel-head { padding: 10px 16px; margin-bottom: 2px; }
+
+/* ---------------- Historial: pestañas Por equipo / Historial global ----------------
+   Debajo del título HISTORIAL (topbar), compactas, ~44px de alto (tap). Cambiar de
+   pestaña solo alterna [data-hist-panel] vía .hidden — ningún dato se recarga ni se
+   pierde (ver renderHistorial() en app.js). */
+.hist-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.hist-tab {
+  background: none; border: none; color: var(--text-dim); font-family: var(--font-display);
+  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; font-size: 13px;
+  padding: 12px 16px; min-height: var(--tap); cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.hist-tab:hover { color: var(--text); }
+.hist-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+@media (max-width: 480px) { .hist-tab { flex: 1; text-align: center; padding: 12px 8px; font-size: 12px; } }
+/* CAUSA RAÍZ del reporte "el buscador no funciona": .panel trae
+   overflow:hidden (y una regla posterior solo pisa overflow-x, dejando
+   overflow-y:hidden vigente) — el dropdown de resultados (position:absolute,
+   se abre HACIA ABAJO del input) quedaba recortado/invisible dentro del
+   panel, aunque el DOM y la lógica de filtrado ya funcionaban bien
+   (confirmado con tests/ui/historial-eq-search-flow.spec.js). Se libera SOLO
+   en este panel (no contiene tablas ni nada que necesite recortarse). */
+#hist-eq-panel { overflow: visible; }
+#hist-eq-search-area { padding: 0 16px 14px; }
+.hist-eq-search-wrap { position: relative; }
+.hist-eq-search { width: 100%; max-width: 900px; min-height: 44px; padding: 9px 14px; }
+.hist-eq-results {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35); max-height: 320px; overflow-y: auto;
+}
+.hist-eq-result {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border); color: var(--text);
+  padding: 10px 14px; cursor: pointer; min-height: var(--tap);
+}
+.hist-eq-result:last-child { border-bottom: none; }
+.hist-eq-result:hover { background: var(--surface-2); }
+.hist-eq-empty { padding: 14px; color: var(--text-dim); font-size: 13px; text-align: center; }
+.hist-eq-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 16px;
+}
+.hist-eq-header-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hist-eq-header-code { font-family: var(--font-mono); font-weight: 700; font-size: 18px; }
+.hist-eq-header-model { color: var(--text-dim); font-size: 13px; }
+/* Familia/Ubicación/Estado (A4): fila compacta de texto, no una segunda card. */
+.hist-eq-header-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--text-dim); }
+.hist-eq-header-meta span:not(:last-child)::after { content: '·'; margin-left: 10px; opacity: 0.5; }
+.hist-eq-header-status { text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+
+/* ---------------- Historial: tabla de engrases ---------------- */
+/* KPI del equipo (A5): 4 columnas en desktop, 2×2 en tablet, 1-2 en móvil —
+   sobre-escribe a propósito la progresión de 6 columnas de .kpi-grid (pensada
+   para el Dashboard), que no tiene sentido con solo 4 tarjetas aquí. */
+.hist-kpi-grid { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
+@media (max-width: 900px) { .hist-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 400px) { .hist-kpi-grid { grid-template-columns: 1fr; } }
+/* Filtro de período (Desde/Hasta) del equipo seleccionado — independiente de
+   los filtros de Historial global (ids distintos: hist-eq-from/to vs
+   gh-from/to). "Limpiar fechas" solo aparece cuando hay algún filtro activo. */
+.hist-eq-period-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 14px; }
+.hist-eq-period-filter { flex: 0 1 150px; min-width: 120px; font-size: 10px; }
+.hist-eq-period-filter .input { width: 100%; min-height: 44px; padding: 8px; font-size: 12.5px; }
+.hist-eq-clear-dates {
+  display: inline-flex; align-items: center; gap: 4px; background: none; border: none;
+  color: var(--text-dim); font-size: 12px; cursor: pointer; padding: 6px 4px; text-decoration: underline;
+  align-self: flex-end; margin-bottom: 2px;
+}
+.hist-eq-clear-dates:hover { color: var(--accent); }
+#hist-area .hist-table th, #hist-area .hist-table td { padding: 11px 14px; }
+.hist-cond-badge { font-size: 13px; }
+/* Cumplimiento del plan (B): insignia discreta, nunca un bloque de color grande
+   — "no saturar la tabla con colores". Cumplido = positivo tenue, Fuera de plan
+   = alerta, No evaluable = gris/neutro (no es un juicio, es falta de dato),
+   Anticipado (tolerancia ±10%, ver docs/PLAN_COMPLIANCE_ANTICIPADO.md) = ámbar
+   tenue — ni positivo ni negativo, es una categoría separada a vigilar. */
+.hist-compliance-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 10.5px;
+  font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap;
+}
+.hist-compliance-ok { background: rgba(63,185,80,0.12); color: var(--green); }
+.hist-compliance-alert { background: rgba(229,72,77,0.12); color: var(--red); }
+.hist-compliance-neutral { background: var(--surface-2); color: var(--text-dim); }
+.hist-compliance-early { background: rgba(232,163,61,0.12); color: var(--amber); }
+/* VALIDADO_ENCARGADO: positivo pero distinguible de VALIDADO_OPERADOR (verde) — sin variable de marca "teal", tono propio fijo. */
+.hist-compliance-teal { background: rgba(45,182,163,0.14); color: #2DB6A3; }
+
+/* ---------------- Validación del engrase con firma (modal) — MOCK LOCAL,
+   ver docs/GREASE_VALIDATION_AUDIT.md. Info del engrase ANTES de firmar +
+   formulario + canvas de firma manuscrita. ---- */
+.val-info { display: flex; flex-direction: column; gap: 4px; padding: 0 0 14px; font-size: 13px; }
+.val-info-row { display: flex; justify-content: space-between; gap: 10px; }
+.val-info-row span:first-child { color: var(--text-dim); }
+.val-signature-wrap { margin-top: 14px; }
+.val-signature-label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+.val-signature-canvas {
+  width: 100%; height: 180px; background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  touch-action: none; cursor: crosshair;
+}
+.val-error { color: var(--red); font-size: 12px; margin-top: 8px; }
+.val-signature-actions { display: flex; gap: 8px; margin-top: 10px; }
+.val-signature-actions .btn { flex: 1; min-height: var(--tap, 44px); }
+/* Conflicto de validación (2+ firmas activas para el mismo registro) — se
+   muestran TODAS, una tras otra, nunca se elige ni se oculta ninguna. */
+.val-conflict-item { padding: 12px 0; border-top: 1px solid var(--border); }
+.val-conflict-item:first-of-type { border-top: none; }
+.val-conflict-item-head { font-size: 12px; font-weight: 700; color: var(--red); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.02em; }
+/* "Validar ahora" / "Validar después" tras Finalizar engrase — la validación
+   NUNCA es obligatoria en el momento, ver docs/GREASE_VALIDATION_AUDIT.md. */
+.grease-validate-choice { padding: 14px; text-align: center; }
+.grease-validate-choice-actions { display: flex; gap: 8px; margin-top: 8px; }
+.grease-validate-choice-actions .btn { flex: 1; min-height: var(--tap, 44px); }
+.hist-cond-link {
+  display: block; background: none; border: none; color: var(--accent); font-size: 11px;
+  font-weight: 600; cursor: pointer; padding: 2px 0 0; text-decoration: underline;
+}
+/* Eliminar como acción secundaria discreta (antes .btn-danger dominaba cada fila) —
+   la confirmación (confirm()) y el borrado lógico NO cambian, solo el estilo del botón. */
+.hist-del-btn { color: var(--text-dim); border-radius: 8px; }
+.hist-del-btn:hover, .hist-del-btn:focus-visible { color: var(--red); background: rgba(229,72,77,0.12); }
+#hist-area .photo-thumb { width: 52px; height: 52px; }
+
+/* ---------------- Historial: buscador + filtros GLOBALES ----------------
+   Contenedor único con el padding (16px lateral, 16px abajo, 0 arriba —
+   mismo criterio que #hist-eq-search-area) — .panel no trae padding propio.
+   Fila 1: textbox de texto libre (código/familia/marca/modelo/ubicación,
+   equipoMatchesQuery() — mismo criterio y función que el buscador de equipo
+   de arriba, sin duplicar lógica), full-width con altura compacta (44px),
+   sin botón (debounce ~280ms). Fila 2: Desde/Hasta/Turno/Estado compactos +
+   contador/CSV empujados a la derecha (.hist-global-summary, margin-left:
+   auto) — todo en una sola fila cuando cabe. Todos los filtros se combinan
+   con AND (ver runGeneralSearch() en app.js). Espaciado 12/16px consistente,
+   tabla pegada justo debajo de los filtros (sin hueco vacío). */
+.hist-global-body { padding: 0 16px 16px; }
+.hist-global-search { width: 100%; min-height: 44px; padding: 9px 14px; font-size: 14px; margin: 12px 0; }
+.hist-global-filters-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.hist-global-filter { flex: 0 1 130px; min-width: 100px; max-width: 170px; font-size: 10px; }
+.hist-global-filter .input { width: 100%; min-width: 0; min-height: 44px; padding: 8px; font-size: 12.5px; }
+.hist-global-summary { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+/* Contador como texto secundario (antes badge/pill) — "42 resultados", sin caja. */
+.hist-global-count { font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+/* Botón secundario real (antes link subrayado): reutiliza .btn tal cual (mismo
+   lenguaje visual del sistema — fondo var(--surface-2), borde sutil var(--border),
+   ~44px de alto vía la regla compartida de área táctil), sin acento ni subrayado. */
+.hist-export-btn { flex: none; }
+/* Fondo del color de página (var(--bg), más oscuro que .panel/var(--surface)) para que
+   la tabla se lea como resultados EMBEBIDOS dentro del panel de búsqueda, no como una
+   pantalla propia — la tabla "por equipo" (arriba) sigue en su propio .panel normal. */
+.hist-global-table-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+#gh-results .hist-global-table th { background: var(--surface); }
+@media (max-width: 680px) { .hist-global-table-wrap { background: none; border: none; } }
+
+/* ---------------- Matriz: aviso "sin plan" (D) ----------------
+   Deliberadamente SIN color de fondo/dot (a diferencia de PAUSADO=gris,
+   NO REALIZADO=rojo, PENDIENTE=naranja de la leyenda) para no confundirse con
+   un tipo de celda — es un aviso de resumen, no un estado de celda. */
+.mtz-sin-plan-note {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 14px; color: var(--text-dim); font-size: 12.5px; cursor: pointer;
+}
+.mtz-sin-plan-note:hover { border-color: var(--accent); color: var(--text); }
+.mtz-sin-plan-note .btn-icon { width: 14px; height: 14px; flex: none; }
