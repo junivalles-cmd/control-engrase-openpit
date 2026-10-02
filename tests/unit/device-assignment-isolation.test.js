@@ -1,11 +1,23 @@
 // tests/unit/device-assignment-isolation.test.js
 //
-// §3 del cierre de lote operativo — garantía explícita de que
-// getDeviceAssignment()/saveDeviceAssignment() (app.js) aíslan
-// COMPLETAMENTE la cuadrilla de un dispositivo de la de cualquier otro,
-// incluso después de sincronizar (push_tokens es una tabla COMPARTIDA — el
-// aislamiento lo da que cada dispositivo SOLO lee/escribe la fila de SU
-// PROPIO deviceId, nunca las demás). Contra el código REAL de app.js, con
+// CORRECCIÓN ARQUITECTÓNICA 2026-10-02 — reescrito por completo. El viejo
+// §3 ("aislamiento de device assignment") probaba que cada DISPOSITIVO
+// (`getDeviceId()`) leía/escribía SOLO su propia fila en una tabla
+// compartida. Ese mecanismo fue eliminado por pedido explícito del
+// usuario: "CONTROL DE ENGRASE NO PUEDE DEPENDER DE UN DISPOSITIVO FÍSICO
+// REGISTRADO" — ver docs/OPERATIONAL_SCOPE.md.
+//
+// La garantía equivalente ahora es por USUARIO, no por dispositivo:
+// getSelectedCrewId(userId)/setSelectedCrewId(userId, crewId) guardan
+// SOLO la última cuadrilla elegida por ESA persona para la sesión actual
+// (comodidad local, nunca autorización real) bajo una única clave de
+// `localStorage` — si otra persona usa el MISMO teléfono después, su
+// propio userId no coincide con el guardado, así que nunca hereda la
+// cuadrilla de quien usó el aparato antes. La autorización REAL siempre
+// viene de `cuadrillas[].memberUserIds` (servidor, sincronizado) vía
+// resolveOperationalScope() — nunca de este valor local.
+//
+// Contra el código REAL de app.js + src/core/operational-scope.js, con
 // IndexedDB/localStorage reemplazados por fakes en memoria — sin red, sin
 // dispositivos reales.
 
@@ -27,126 +39,94 @@ function makeFakeDB(seed = {}) {
       if (i >= 0) data[store][i] = obj; else data[store].push(obj);
       return obj;
     },
+    async allActive(store) { return (data[store] || []).filter(r => r.active !== false); },
   };
 }
 
-// Simula localStorage por dispositivo: cada "dispositivo" en este test es
-// simplemente un valor distinto guardado bajo 'engrase_device_id' — en la
-// realidad cada teléfono tiene su PROPIO localStorage físico y nunca ve el
-// de otro; aquí se simula cambiando el valor antes de cada llamada, que es
-// justo lo que hace getDeviceId() puertas adentro (leer esa única clave).
 function makeFakeLocalStorage() {
   let store = {};
   return {
     getItem: (k) => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = String(v); },
     removeItem: (k) => { delete store[k]; },
-    _asDevice(id) { store['engrase_device_id'] = id; },
   };
 }
 
-describe('Aislamiento de device assignment entre dispositivos (§3)', () => {
-  let db, ls, fullSyncCalls, App;
+describe('Aislamiento de la selección de cuadrilla de sesión, por USUARIO (reemplaza el viejo aislamiento por dispositivo)', () => {
+  let db, ls, App;
 
   beforeEach(() => {
-    db = makeFakeDB({ push_tokens: [] });
+    db = makeFakeDB({ cuadrillas: [] });
     ls = makeFakeLocalStorage();
-    fullSyncCalls = 0;
     vi.stubGlobal('localStorage', ls);
     vi.stubGlobal('window', { Capacitor: undefined });
-    vi.stubGlobal('Sync', { fullSync: () => { fullSyncCalls++; } });
-    App = { currentUser: { id: 'u1', name: 'Junior Valles' } };
+    vi.stubGlobal('Sync', { fullSync: () => {} });
+    App = { currentUser: { id: 'u_lub1', name: 'Ana', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
   });
 
-  it('dispositivo A guarda su cuadrilla sin crear ninguna fila para B', async () => {
-    const { getDeviceAssignment, saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    ls._asDevice('dev_A');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon', nombre: 'Teléfono Mojón' });
-
-    expect(db._data.push_tokens).toHaveLength(1);
-    expect(db._data.push_tokens[0]).toMatchObject({ id: 'dev_A', cuadrillaId: 'crew_mojon' });
-
-    const asigA = await getDeviceAssignment();
-    expect(asigA.cuadrillaId).toBe('crew_mojon');
+  it('usuario A elige su cuadrilla de sesión sin afectar la selección de usuario B, en el MISMO localStorage (mismo teléfono compartido)', () => {
+    const { setSelectedCrewId, getSelectedCrewId } = loadDeviceIdentityLogic(db, App);
+    setSelectedCrewId('u_A', 'crew_mojon');
+    expect(getSelectedCrewId('u_A')).toBe('crew_mojon');
+    expect(getSelectedCrewId('u_B')).toBe(''); // nunca hereda la de A
   });
 
-  it('cambiar A a Taller NO toca la fila de B (aunque ambas ya existan en la tabla compartida tras sync)', async () => {
-    const { getDeviceAssignment, saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-
-    ls._asDevice('dev_A');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon', nombre: 'Teléfono Mojón' });
-    ls._asDevice('dev_B');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_volcan', nombre: 'Teléfono Volcán' });
-    expect(db._data.push_tokens).toHaveLength(2);
-
-    // A cambia a Taller
-    ls._asDevice('dev_A');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_taller' });
-
-    const filaA = db._data.push_tokens.find(r => r.id === 'dev_A');
-    const filaB = db._data.push_tokens.find(r => r.id === 'dev_B');
-    expect(filaA.cuadrillaId).toBe('crew_taller');
-    expect(filaB.cuadrillaId).toBe('crew_volcan'); // NUNCA tocada
-    expect(filaB.deviceName).toBe('Teléfono Volcán'); // ningún otro campo de B se movió tampoco
-
-    // getDeviceAssignment() de B sigue leyendo SU PROPIA fila, ignorando el cambio de A
-    ls._asDevice('dev_B');
-    const asigB = await getDeviceAssignment();
-    expect(asigB.cuadrillaId).toBe('crew_volcan');
+  it('B elige la suya DESPUÉS (mismo localStorage) — A ya no ve su propia selección anterior (solo se guarda la ÚLTIMA, por diseño — ver punto 2 del pedido: "conservar localmente la última selección únicamente como comodidad")', () => {
+    const { setSelectedCrewId, getSelectedCrewId } = loadDeviceIdentityLogic(db, App);
+    setSelectedCrewId('u_A', 'crew_mojon');
+    setSelectedCrewId('u_B', 'crew_volcan');
+    expect(getSelectedCrewId('u_B')).toBe('crew_volcan');
+    expect(getSelectedCrewId('u_A')).toBe(''); // A tendría que volver a elegir si entra de nuevo — esperado, no un bug
   });
 
-  it('leer la asignación de A nunca devuelve datos de B, incluso con ambas filas ya sincronizadas localmente', async () => {
-    db._data.push_tokens = [
-      { id: 'dev_A', cuadrillaId: 'crew_mojon', deviceName: 'Tel A' },
-      { id: 'dev_B', cuadrillaId: 'crew_volcan', deviceName: 'Tel B' },
-    ];
-    const { getDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-
-    ls._asDevice('dev_A');
-    expect((await getDeviceAssignment()).cuadrillaId).toBe('crew_mojon');
-    ls._asDevice('dev_B');
-    expect((await getDeviceAssignment()).cuadrillaId).toBe('crew_volcan');
+  it('setSelectedCrewId()/getSelectedCrewId() escriben/leen ÚNICAMENTE localStorage — nunca tocan IndexedDB (DB.put nunca se llama)', () => {
+    const { setSelectedCrewId } = loadDeviceIdentityLogic(db, App);
+    setSelectedCrewId('u_A', 'crew_mojon');
+    expect(db._puts).toHaveLength(0);
   });
 
-  it('saveDeviceAssignment() escribe ÚNICAMENTE en push_tokens — nunca en settings/general ni ninguna otra tabla "global"', async () => {
-    const { saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    ls._asDevice('dev_A');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon' });
-    expect(db._puts.every(p => p.store === 'push_tokens')).toBe(true);
+  it('un dispositivo/localStorage NUEVO (nunca se usó aquí) -> getSelectedCrewId() de cualquier usuario da "", nunca lanza ni hereda nada', () => {
+    const { getSelectedCrewId } = loadDeviceIdentityLogic(db, App);
+    expect(getSelectedCrewId('u_lub1')).toBe('');
+    expect(getSelectedCrewId('cualquier_otro')).toBe('');
   });
 
-  it('logout/Quick Unlock/offline: getDeviceId() nunca depende de App.currentUser ni de sesión — conserva el mismo id sin importar si hay usuario logueado', async () => {
-    const { getDeviceId } = loadDeviceIdentityLogic(db, App);
-    ls._asDevice('dev_A');
-    const idConSesion = getDeviceId();
-    App.currentUser = null; // logout
-    const idSinSesion = getDeviceId();
-    expect(idSinSesion).toBe(idConSesion);
+  it('sin userId (nadie logueado todavía) -> getSelectedCrewId()/setSelectedCrewId() no lanzan, dan "" sin escribir nada falso', () => {
+    const { getSelectedCrewId, setSelectedCrewId } = loadDeviceIdentityLogic(db, App);
+    expect(getSelectedCrewId(null)).toBe('');
+    expect(() => setSelectedCrewId(null, 'crew_mojon')).not.toThrow();
   });
 
-  it('getDeviceAssignment() funciona sin red (fakeDB no simula fetch alguno) — offline no rompe ni cambia la cuadrilla', async () => {
-    db._data.push_tokens = [{ id: 'dev_A', cuadrillaId: 'crew_mojon' }];
-    const { getDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    ls._asDevice('dev_A');
-    const asig = await getDeviceAssignment();
-    expect(asig.cuadrillaId).toBe('crew_mojon');
-  });
+  // Punto E del pedido de corrección arquitectónica: "Usuario no puede
+  // seleccionar una cuadrilla sin permiso" — la selección LOCAL nunca es
+  // la fuente de autorización. Prueba end-to-end contra
+  // getCurrentOperationalScope() real (no solo contra el helper de
+  // localStorage) para que quede certificado con el código que de verdad
+  // decide el scope.
+  describe('la selección local NUNCA eleva permisos — getCurrentOperationalScope() ignora un selectedCrewId no autorizado', () => {
+    it('usuario con 1 cuadrilla autorizada real + un selectedCrewId local de OTRA cuadrilla (nunca autorizada) -> CREW_SCOPED usa la ÚNICA autorizada real, ignora la selección local', async () => {
+      db._data.cuadrillas = [
+        { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub1'] },
+        { id: 'crew_taller', locationId: 'loc_taller', active: true, memberUserIds: [] }, // NUNCA autorizó a u_lub1
+      ];
+      const { setSelectedCrewId, getCurrentOperationalScope } = loadDeviceIdentityLogic(db, App);
+      setSelectedCrewId('u_lub1', 'crew_taller'); // intento de "colarse" a una cuadrilla ajena
+      const scope = await getCurrentOperationalScope();
+      expect(scope.kind).toBe('CREW_SCOPED');
+      expect(scope.crewId).toBe('crew_mojon'); // la única REAL autorizada, nunca crew_taller
+    });
 
-  it('un dispositivo NUEVO (localStorage vacío) genera su propio id único y arranca sin cuadrilla — nunca hereda la de otro', async () => {
-    const { getDeviceId, getDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    db._data.push_tokens = [{ id: 'dev_A', cuadrillaId: 'crew_mojon' }];
-    // localStorage recién instalado: sin 'engrase_device_id' todavía
-    const nuevoId = getDeviceId();
-    expect(nuevoId).not.toBe('dev_A');
-    expect(nuevoId.startsWith('dev_')).toBe(true);
-    const asig = await getDeviceAssignment();
-    expect(asig.cuadrillaId).toBe(''); // sin cuadrilla — nunca cae a la de dev_A
-  });
-
-  it('guardar la asignación llama a Sync.fullSync() (sube el cambio, nunca queda solo local sin intentar sincronizar)', async () => {
-    const { saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    ls._asDevice('dev_A');
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon' });
-    expect(fullSyncCalls).toBe(1);
+    it('usuario con 2+ cuadrillas autorizadas reales + selectedCrewId local apuntando a una NO autorizada -> NEEDS_CREW_SELECTION (se ignora, nunca se acepta a ciegas)', async () => {
+      db._data.cuadrillas = [
+        { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub1'] },
+        { id: 'crew_volcan', locationId: 'loc_volcan', active: true, memberUserIds: ['u_lub1'] },
+        { id: 'crew_taller', locationId: 'loc_taller', active: true, memberUserIds: [] },
+      ];
+      const { setSelectedCrewId, getCurrentOperationalScope } = loadDeviceIdentityLogic(db, App);
+      setSelectedCrewId('u_lub1', 'crew_taller');
+      const scope = await getCurrentOperationalScope();
+      expect(scope.kind).toBe('NEEDS_CREW_SELECTION');
+      expect(scope.authorizedCrews.map(c => c.id).sort()).toEqual(['crew_mojon', 'crew_volcan']);
+    });
   });
 });

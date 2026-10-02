@@ -11,7 +11,8 @@ import { loadOperationalScopeLogic } from '../helpers/loadLubricationLogic.js';
 
 const {
   ASSIGNMENT_STATUS,
-  canManageAssignments, canMoveEquipment, canMoveCrew, canConfigureDevice, canRegisterOutOfPlan,
+  canManageAssignments, canMoveEquipment, canMoveCrew, canManageCrewMembership, canRegisterOutOfPlan,
+  getAuthorizedCrews,
   computeOccurrenceKey, resolveDefaultCrewForLocation, resolveOperationalScope,
   classifyEquipmentWork, findActivePendingAssignment, createAssignment,
   reassignAssignment, cancelAssignment, completeAssignmentIfPending,
@@ -47,11 +48,11 @@ describe('Permisos por rol (§AB)', () => {
       expect(fn('VISOR')).toBe(false);
     }
   });
-  it('canConfigureDevice: ADMIN/PLANIFICADOR editan, el resto no (LUBRICADOR ve solo lectura en la UI, no aquí)', () => {
-    expect(canConfigureDevice('ADMINISTRADOR')).toBe(true);
-    expect(canConfigureDevice('PLANIFICADOR')).toBe(true);
-    expect(canConfigureDevice('SUPERVISOR')).toBe(false);
-    expect(canConfigureDevice('LUBRICADOR')).toBe(false);
+  it('canManageCrewMembership: ADMIN/PLANIFICADOR autorizan miembros de una cuadrilla, el resto no (reemplaza al viejo canConfigureDevice)', () => {
+    expect(canManageCrewMembership('ADMINISTRADOR')).toBe(true);
+    expect(canManageCrewMembership('PLANIFICADOR')).toBe(true);
+    expect(canManageCrewMembership('SUPERVISOR')).toBe(false);
+    expect(canManageCrewMembership('LUBRICADOR')).toBe(false);
   });
 });
 
@@ -102,63 +103,145 @@ describe('resolveDefaultCrewForLocation() — máximo una cuadrilla default por 
   });
 });
 
-describe('resolveOperationalScope() (§I) — CASO 1/8/13 del pedido', () => {
-  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
+describe('getAuthorizedCrews() — única fuente de autorización (corrección arquitectónica 2026-10-02, reemplaza deviceAssignment)', () => {
+  const cuadrillas = [
+    { id: 'crew_mojon', active: true, memberUserIds: ['u1', 'u2'] },
+    { id: 'crew_volcan', active: true, memberUserIds: ['u1'] },
+    { id: 'crew_borrada', active: false, memberUserIds: ['u1'] },
+    { id: 'crew_sin_nadie', active: true, memberUserIds: [] },
+  ];
 
-  it('jefaturas (ADMIN/PLANIFICADOR/SUPERVISOR/VISOR) -> GLOBAL, sin scope de dispositivo', () => {
-    for (const role of ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'VISOR']) {
-      const scope = resolveOperationalScope({ currentUser: { id: 'u1', role }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+  it('devuelve TODAS las cuadrillas activas donde el userId está en memberUserIds, ninguna más', () => {
+    expect(getAuthorizedCrews(cuadrillas, 'u1').map(c => c.id).sort()).toEqual(['crew_mojon', 'crew_volcan']);
+    expect(getAuthorizedCrews(cuadrillas, 'u2').map(c => c.id)).toEqual(['crew_mojon']);
+  });
+
+  it('cuadrilla inactiva nunca cuenta, aunque el userId esté en memberUserIds', () => {
+    expect(getAuthorizedCrews(cuadrillas, 'u1').find(c => c.id === 'crew_borrada')).toBeUndefined();
+  });
+
+  it('fila vieja sin memberUserIds (undefined) se trata como [] — nunca "todos autorizados"', () => {
+    const vieja = [{ id: 'crew_vieja', active: true }];
+    expect(getAuthorizedCrews(vieja, 'cualquier_usuario')).toEqual([]);
+  });
+
+  it('sin userId -> [] siempre, nunca lanza', () => {
+    expect(getAuthorizedCrews(cuadrillas, null)).toEqual([]);
+    expect(getAuthorizedCrews(cuadrillas, undefined)).toEqual([]);
+  });
+});
+
+describe('resolveOperationalScope() (§I) — reescrito 2026-10-02: autorización por USUARIO (cuadrillas[].memberUserIds), nunca por dispositivo', () => {
+  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u_lub1', 'u_lub3', 'u_lub4'] }];
+
+  it('jefaturas (ADMIN/PLANIFICADOR/VISOR) -> GLOBAL, sin scope de cuadrilla', () => {
+    for (const role of ['ADMINISTRADOR', 'PLANIFICADOR', 'VISOR']) {
+      const scope = resolveOperationalScope({ currentUser: { id: 'u1', role }, cuadrillas, shiftId: 'shift_dia' });
       expect(scope.kind).toBe('GLOBAL');
       expect(scope.crewId).toBeNull();
     }
   });
 
-  it('CASO 1 — LUBRICADOR con dispositivo MOJON-01 -> DEVICE_SCOPED, crewLocationId=Mojón', () => {
+  it('CORRECCIÓN: SUPERVISOR ya NO es GLOBAL — ahora es crew-scoped igual que LUBRICADOR (pedido explícito: "SUPERVISOR y LUBRICADOR: cargar las cuadrillas autorizadas")', () => {
+    const scope = resolveOperationalScope({
+      currentUser: { id: 'u_sup1', role: 'SUPERVISOR' },
+      cuadrillas: [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_sup1'] }],
+      shiftId: 'shift_dia'
+    });
+    expect(scope.kind).toBe('CREW_SCOPED');
+    expect(scope.crewId).toBe('crew_mojon');
+  });
+
+  it('CASO 1 — LUBRICADOR autorizado en 1 sola cuadrilla real -> CREW_SCOPED, se autoselecciona SOLA, crewLocationId=Mojón', () => {
     const scope = resolveOperationalScope({
       currentUser: { id: 'u_lub1', role: 'LUBRICADOR' },
-      deviceAssignment: { deviceId: 'dev_mojon01', cuadrillaId: 'crew_mojon' },
       cuadrillas, shiftId: 'shift_dia'
     });
-    expect(scope.kind).toBe('DEVICE_SCOPED');
+    expect(scope.kind).toBe('CREW_SCOPED');
     expect(scope.crewId).toBe('crew_mojon');
     expect(scope.crewLocationId).toBe('loc_mojon');
     expect(scope.shiftId).toBe('shift_dia');
   });
 
-  it('CASO 8 — dispositivo SIN cuadrilla -> DEVICE_UNASSIGNED, nunca fallback global', () => {
+  it('CASO 8 — LUBRICADOR sin ninguna cuadrilla que lo autorice -> NO_CREW_ASSIGNED, nunca fallback global', () => {
     const scope = resolveOperationalScope({
       currentUser: { id: 'u_lub2', role: 'LUBRICADOR' },
-      deviceAssignment: { deviceId: 'dev_x', cuadrillaId: '' },
       cuadrillas, shiftId: 'shift_dia'
     });
-    expect(scope.kind).toBe('DEVICE_UNASSIGNED');
+    expect(scope.kind).toBe('NO_CREW_ASSIGNED');
     expect(scope.crewId).toBeNull();
   });
 
-  it('cuadrilla asignada al dispositivo ya no existe/inactiva -> mismo tratamiento que sin cuadrilla', () => {
+  it('la ÚNICA cuadrilla que lo autorizaba ya no existe/está inactiva -> mismo tratamiento que sin autorización (NO_CREW_ASSIGNED)', () => {
+    const cuadrillasConBorrada = [{ id: 'crew_borrada', locationId: 'loc_x', active: false, memberUserIds: ['u_lub_x'] }];
     const scope = resolveOperationalScope({
-      currentUser: { id: 'u_lub3', role: 'LUBRICADOR' },
-      deviceAssignment: { deviceId: 'dev_y', cuadrillaId: 'crew_borrada' },
-      cuadrillas, shiftId: 'shift_noche'
+      currentUser: { id: 'u_lub_x', role: 'LUBRICADOR' },
+      cuadrillas: cuadrillasConBorrada, shiftId: 'shift_noche'
     });
-    expect(scope.kind).toBe('DEVICE_UNASSIGNED');
+    expect(scope.kind).toBe('NO_CREW_ASSIGNED');
   });
 
-  it('CASO 13 — el turno viene SIEMPRE del parámetro shiftId (hora real), nunca de deviceAssignment', () => {
+  it('CASO 13 — el turno viene SIEMPRE del parámetro shiftId (hora real), nunca de ningún dato guardado', () => {
     const scope = resolveOperationalScope({
-      currentUser: { id: 'u_lub4', role: 'LUBRICADOR' },
-      deviceAssignment: { deviceId: 'dev_z', cuadrillaId: 'crew_mojon', shiftId: 'shift_noche' }, // campo legacy del dispositivo, si existiera
+      currentUser: { id: 'u_lub1', role: 'LUBRICADOR' },
       cuadrillas, shiftId: 'shift_dia' // la hora real dice Día
     });
-    expect(scope.shiftId).toBe('shift_dia'); // nunca 'shift_noche' del dispositivo
+    expect(scope.shiftId).toBe('shift_dia');
+  });
+
+  it('2+ cuadrillas autorizadas, SIN selectedCrewId -> NEEDS_CREW_SELECTION, nunca se adivina ni se toma la primera (punto D del pedido)', () => {
+    const cuadrillas2 = [
+      { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub3'] },
+      { id: 'crew_volcan', locationId: 'loc_volcan', active: true, memberUserIds: ['u_lub3'] },
+    ];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u_lub3', role: 'LUBRICADOR' }, cuadrillas: cuadrillas2, shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('NEEDS_CREW_SELECTION');
+    expect(scope.crewId).toBeNull();
+    expect(scope.authorizedCrews.map(c => c.id).sort()).toEqual(['crew_mojon', 'crew_volcan']);
+  });
+
+  it('2+ cuadrillas autorizadas, CON selectedCrewId válido (una de las autorizadas) -> CREW_SCOPED con esa', () => {
+    const cuadrillas2 = [
+      { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub3'] },
+      { id: 'crew_volcan', locationId: 'loc_volcan', active: true, memberUserIds: ['u_lub3'] },
+    ];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u_lub3', role: 'LUBRICADOR' }, cuadrillas: cuadrillas2, selectedCrewId: 'crew_volcan', shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('CREW_SCOPED');
+    expect(scope.crewId).toBe('crew_volcan');
+    expect(scope.crewLocationId).toBe('loc_volcan');
+  });
+
+  it('CASO E del pedido — selectedCrewId apuntando a una cuadrilla NO autorizada (ni siquiera autorizada para otra cosa) -> se ignora, NEEDS_CREW_SELECTION', () => {
+    const cuadrillas2 = [
+      { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub4'] },
+      { id: 'crew_volcan', locationId: 'loc_volcan', active: true, memberUserIds: ['u_lub4'] },
+      { id: 'crew_ajena', locationId: 'loc_z', active: true, memberUserIds: ['otro_usuario'] },
+    ];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u_lub4', role: 'LUBRICADOR' }, cuadrillas: cuadrillas2, selectedCrewId: 'crew_ajena', shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('NEEDS_CREW_SELECTION');
+    expect(scope.crewId).toBeNull();
+  });
+
+  it('CASO C del pedido — usuario con 1 sola cuadrilla autorizada entra DIRECTO (CREW_SCOPED), sin pantalla de selección', () => {
+    const scope = resolveOperationalScope({ currentUser: { id: 'u_lub1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('CREW_SCOPED'); // nunca NEEDS_CREW_SELECTION con una sola autorizada
+  });
+
+  it('CASO F del pedido — cambiar de dispositivo (mismo usuario, mismas cuadrillas en el servidor) conserva EXACTAMENTE los mismos permisos remotos', () => {
+    // "Cambiar de dispositivo" = resolver el scope de nuevo sin ningún
+    // dato local previo (selectedCrewId vacío, como un localStorage
+    // nuevo) — el resultado depende SOLO de cuadrillas[].memberUserIds.
+    const scopeDispositivoViejo = resolveOperationalScope({ currentUser: { id: 'u_lub1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
+    const scopeDispositivoNuevo = resolveOperationalScope({ currentUser: { id: 'u_lub1', role: 'LUBRICADOR' }, cuadrillas, selectedCrewId: '', shiftId: 'shift_dia' });
+    expect(scopeDispositivoNuevo).toEqual(scopeDispositivoViejo);
   });
 });
 
 describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () => {
   const cuadrillas = [
-    { id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01' },
-    { id: 'crew_volcan_aux', locationId: 'loc_volcan', active: true, isDefault: false, createdAt: '2026-02-01' },
-    { id: 'crew_taller', locationId: 'loc_taller', active: true, isDefault: true, createdAt: '2026-01-01' },
+    { id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u1'] },
+    { id: 'crew_volcan_aux', locationId: 'loc_volcan', active: true, isDefault: false, createdAt: '2026-02-01', memberUserIds: ['u3'] },
+    { id: 'crew_taller', locationId: 'loc_taller', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u2'] },
   ];
   const equipos = [
     { id: 'eq_0568', locationId: 'loc_volcan' },
@@ -170,8 +253,8 @@ describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () =
     const assignments = [
       { id: 'a1', occurrenceKey: occFn(equipos[0]), equipmentId: 'eq_0568', assignedCrewId: 'crew_taller', status: ASSIGNMENT_STATUS.PENDING, active: true }
     ];
-    const scopeVolcan = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_volcan' }, cuadrillas, shiftId: 'shift_dia' });
-    const scopeTaller = resolveOperationalScope({ currentUser: { id: 'u2', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd2', cuadrillaId: 'crew_taller' }, cuadrillas, shiftId: 'shift_dia' });
+    const scopeVolcan = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
+    const scopeTaller = resolveOperationalScope({ currentUser: { id: 'u2', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
 
     const volcanWork = classifyEquipmentWork({ scope: scopeVolcan, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn: occFn });
     expect(volcanWork.normal.find(e => e.id === 'eq_0568')).toBeUndefined(); // ya no es normal-ejecutable en Volcán
@@ -187,14 +270,14 @@ describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () =
   });
 
   it('CASO 7 — dos cuadrillas en Volcán: solo la default recibe trabajo NORMAL, la auxiliar no ve nada normal sin asignación', () => {
-    const scopeAux = resolveOperationalScope({ currentUser: { id: 'u3', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd3', cuadrillaId: 'crew_volcan_aux' }, cuadrillas, shiftId: 'shift_dia' });
+    const scopeAux = resolveOperationalScope({ currentUser: { id: 'u3', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
     const work = classifyEquipmentWork({ scope: scopeAux, equipos, cuadrillas, assignments: [], equipoOccurrenceKeyFn: occFn });
     expect(work.normal).toHaveLength(0); // nunca ve el trabajo normal de Volcán (esa es la default)
     expect(work.assigned).toHaveLength(0);
   });
 
   it('scope GLOBAL (jefaturas) -> ve todo, sin filtrar por cuadrilla default', () => {
-    const scopeGlobal = resolveOperationalScope({ currentUser: { id: 'admin1', role: 'ADMINISTRADOR' }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+    const scopeGlobal = resolveOperationalScope({ currentUser: { id: 'admin1', role: 'ADMINISTRADOR' }, cuadrillas, shiftId: 'shift_dia' });
     const work = classifyEquipmentWork({ scope: scopeGlobal, equipos, cuadrillas, assignments: [], equipoOccurrenceKeyFn: occFn });
     expect(work.normal).toHaveLength(2);
   });
@@ -233,9 +316,9 @@ describe('Motor de asignaciones (§L, §O, §P, §Q, §R) — CASO 3/11 del pedi
     const cancelada = cancelAssignment(asg, { now: NOW });
     expect(cancelada.status).toBe(ASSIGNMENT_STATUS.CANCELLED);
 
-    const cuadrillas = [{ id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01' }];
+    const cuadrillas = [{ id: 'crew_volcan', locationId: 'loc_volcan', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u1'] }];
     const equipos = [{ id: 'eq3', locationId: 'loc_volcan' }];
-    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_volcan' }, cuadrillas, shiftId: 'shift_dia' });
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
     const work = classifyEquipmentWork({ scope, equipos, cuadrillas, assignments: [cancelada], equipoOccurrenceKeyFn: () => 'plan3:2026-09-28' });
     expect(work.normal.find(e => e.id === 'eq3')).toBeDefined(); // vuelve al flujo normal (preferencia documentada en §Q)
   });
@@ -251,8 +334,8 @@ describe('Motor de asignaciones (§L, §O, §P, §Q, §R) — CASO 3/11 del pedi
 });
 
 describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => {
-  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
-  const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_mojon' }, cuadrillas, shiftId: 'shift_dia' });
+  const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u1'] }];
+  const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
 
   it('equipo dentro de su ubicación normal -> siempre ejecutable', () => {
     expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e1', locationId: 'loc_mojon' }, assignments: [] })).toBe(true);
@@ -265,7 +348,7 @@ describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => 
     expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments })).toBe(true);
   });
   it('jefaturas (scope GLOBAL) -> siempre pueden (esta función no restringe scope global)', () => {
-    const scopeAdmin = resolveOperationalScope({ currentUser: { id: 'a1', role: 'ADMINISTRADOR' }, deviceAssignment: null, cuadrillas, shiftId: 'shift_dia' });
+    const scopeAdmin = resolveOperationalScope({ currentUser: { id: 'a1', role: 'ADMINISTRADOR' }, cuadrillas, shiftId: 'shift_dia' });
     expect(canLubricadorExecuteEquipment({ scope: scopeAdmin, equipo: { id: 'e3', locationId: 'loc_volcan' }, assignments: [] })).toBe(true);
   });
 });
@@ -414,8 +497,8 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
   });
 
   it('CASO H — Lubricador fuera de scope sigue bloqueado (OUT_OF_PLAN NO permite saltarse permisos, §2/§21D)', () => {
-    const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01' }];
-    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, deviceAssignment: { deviceId: 'd1', cuadrillaId: 'crew_mojon' }, cuadrillas, shiftId: 'shift_dia' });
+    const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u1'] }];
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'LUBRICADOR' }, cuadrillas, shiftId: 'shift_dia' });
     const equipoFuera = { id: 'e_fuera', locationId: 'loc_volcan' };
     expect(canLubricadorExecuteEquipment({ scope, equipo: equipoFuera, assignments: [] })).toBe(false);
   });

@@ -1,10 +1,37 @@
-# Rediseño operativo — dispositivos, cuadrillas, ubicaciones y asignación manual de engrases
+# Rediseño operativo — cuadrillas, ubicaciones y asignación manual de engrases
 
 Fecha: 2026-09-28. Implementa el "LOTE OPERATIVO GLOBAL" pedido para modelar
-la operación real de campo: teléfonos/tablets COMPARTIDOS entre lubricadores
-de una misma cuadrilla, cuadrillas que pertenecen a una ubicación, y la
+la operación real de campo: cuadrillas que pertenecen a una ubicación, y la
 posibilidad de asignar manualmente UN engrase pendiente a otra cuadrilla sin
 mover el equipo.
+
+## ⚠ CORRECCIÓN ARQUITECTÓNICA 2026-10-02 — ya NO hay dispositivos vinculados a cuadrilla
+
+El diseño original de este documento (2026-09-28, ver más abajo) ataba la
+cuadrilla a un **dispositivo físico** ("un mismo teléfono lo usan los 4
+lubricadores de una cuadrilla"). El usuario pidió explícitamente eliminar
+esa dependencia: **el mismo APK y la misma Web deben funcionar en
+cualquier teléfono/tablet/PC compatible**, sin APK por ubicación/
+cuadrilla/turno/usuario/dispositivo, y sin IMEI/serial/modelo/Android ID
+como requisito de acceso.
+
+**Reemplazado por:** la cuadrilla ahora autoriza USUARIOS reales
+(`cuadrillas[].memberUserIds`, array de `app_user_id`), nunca un aparato.
+Un Lubricador/Supervisor con 1 sola cuadrilla autorizada la usa
+automáticamente; con 2+ elige con cuál trabajar en la sesión actual (ver
+`getSelectedCrewId()`/`setSelectedCrewId()` en `app.js` — SOLO una
+comodidad local, nunca la fuente de autorización). Un usuario autorizado
+puede iniciar sesión en cualquier dispositivo nuevo y trabajar normalmente
+de inmediato — no hace falta "asignar" nada al aparato. El viejo panel
+"Dispositivo operativo" de Configuración desapareció; ahora se autorizan
+miembros desde **Configuración → Cuadrillas → Editar → Miembros
+autorizados**.
+
+El resto de este documento describe el modelo DE ESE MOMENTO (2026-09-28)
+— se deja tal cual por valor histórico, pero cualquier mención a
+"dispositivo"/`getDeviceAssignment()`/`saveDeviceAssignment()` como fuente
+de scope ya NO aplica: reemplazado por `getAuthorizedCrews()` en
+`src/core/operational-scope.js`.
 
 ## Modelo de dominio
 
@@ -12,24 +39,21 @@ mover el equipo.
   que un ADMIN/PLANIFICADOR lo mueva).
 - **Ubicación** (`locations`): catálogo dinámico existente, sin cambios de
   schema.
-- **Cuadrilla** (`cuadrillas`): AMPLIADA con dos campos nuevos, opcionales,
-  sin migración de datos (quedan `undefined`/`null` en filas viejas):
+- **Cuadrilla** (`cuadrillas`): AMPLIADA con tres campos nuevos, opcionales,
+  sin migración de datos (quedan `undefined`/`null`/`[]` en filas viejas):
   - `locationId` — a qué ubicación pertenece esta cuadrilla.
   - `isDefault` — si es la cuadrilla que recibe el trabajo NORMAL de esa
     ubicación (máximo una `isDefault:true` activa por `locationId`, ver
     `resolveDefaultCrewForLocation()`).
-- **Dispositivo**: identidad local (`getDeviceId()`, `localStorage`,
-  sobrevive logout/Quick Unlock/`adb install -r`), asignado a UNA cuadrilla
-  vía `getDeviceAssignment()`/`saveDeviceAssignment()` — infraestructura que
-  YA EXISTÍA (guardada en el store sincronizado `push_tokens`, pensado
-  originalmente para push) pero nunca se usaba para decidir scope operativo.
-  Se reutiliza tal cual: cada dispositivo sincroniza SU PROPIA fila, nunca es
-  una config global compartida.
-- **Usuario** (Auth): solo aporta identidad + rol. Nunca
-  `location`/`cuadrilla` fijos (ver `currentUserFromAuthProfile()`) — eso
-  ahora es 100% responsabilidad del dispositivo para LUBRICADOR.
+  - `memberUserIds` (agregado 2026-10-02, ver corrección arriba) — qué
+    `app_user_id` (Auth) están autorizados a trabajar como esta cuadrilla,
+    desde cualquier dispositivo.
+- **Usuario** (Auth): aporta identidad + rol SIEMPRE; para
+  SUPERVISOR/LUBRICADOR, también su cuadrilla autorizada (resuelta en vivo
+  contra `cuadrillas[].memberUserIds`, nunca guardada en el perfil — ver
+  `currentUserFromAuthProfile()`/`getAuthorizedCrews()`).
 - **Turno** (Día/Noche): SIEMPRE se resuelve en vivo con `currentShiftId()`.
-  Nunca se lee ni se guarda en el dispositivo para decidir scope.
+  Nunca se lee ni se guarda en ningún identificador de dispositivo.
 
 ## Autoridad central: `src/core/operational-scope.js`
 
@@ -62,13 +86,13 @@ Módulo puro (sin DOM/DB/red), mismo patrón que `weekly-matrix.js` /
   dentro de su ubicación normal siempre puede, fuera de ella solo si hay una
   asignación PENDING hacia su cuadrilla.
 
-## Regla de arquitectura Android — UN SOLO APK (confirmado 2026-10-02)
+## Regla de arquitectura Android/Web — UN SOLO APK, SIN dispositivo registrado (confirmado 2026-10-02, actualizado tras la corrección arquitectónica)
 
-Pedido explícito del usuario: debe existir un único APK de Control de
-Engrase Open Pit para todos los teléfonos/tablets compatibles — nunca uno
-por ubicación, cuadrilla, turno, usuario ni tipo de dispositivo. Verificado
-que el diseño de arriba YA cumple esto por construcción, sin necesitar
-ningún cambio:
+Pedido explícito del usuario: debe existir un único APK/una sola Web de
+Control de Engrase Open Pit para todos los teléfonos/tablets/PC
+compatibles — nunca uno por ubicación, cuadrilla, turno, usuario ni tipo
+de dispositivo, y **sin ninguna dependencia funcional de IMEI/serial/
+modelo/Android ID/"dispositivo ya vinculado a una cuadrilla"**:
 
 - **`CONTROL_ENGRASE_APP_ANDROID/android/app/build.gradle`**: un solo
   `applicationId` (`com.conequisa.engraseopenpit`), sin
@@ -77,21 +101,26 @@ ningún cambio:
 - **Usuario**: identidad + rol vienen 100% de Auth (`app_profiles`,
   `currentUserFromAuthProfile()`) — nunca una ubicación/cuadrilla fija por
   persona, nunca hardcodeada en el build.
-- **Dispositivo**: `getDeviceId()` genera un ID aleatorio en
-  `localStorage` la primera vez que arranca ese teléfono — no viene del
-  APK, no se hardcodea, sobrevive reinstalar (`adb install -r`).
-- **Cuadrilla/ubicación del dispositivo**: `getDeviceAssignment()`/
-  `saveDeviceAssignment()` guardan y leen una fila real en `push_tokens`
-  (sincronizada), configurable desde la propia app (Configuración →
-  Dispositivos) — cambiarla es una pantalla, nunca una recompilación.
+- **Cuadrilla/ubicación**: YA NO depende de ningún dispositivo (ver
+  corrección arquitectónica arriba) — `cuadrillas[].memberUserIds`
+  autoriza al USUARIO, resuelto en vivo por
+  `getAuthorizedCrews()`/`resolveOperationalScope()`
+  (`src/core/operational-scope.js`). Un usuario autorizado entra desde
+  CUALQUIER dispositivo nuevo y trabaja de inmediato, sin "vincular" nada
+  primero. La única huella local (`getSelectedCrewId()`/
+  `setSelectedCrewId()`, `localStorage`) es qué cuadrilla autorizada eligió
+  para ESTA sesión si tiene 2+ — una comodidad de UI, nunca una fuente de
+  permiso (se ignora si ya no está autorizada).
 - **Turno**: siempre `currentShiftId()` en vivo (hora real del
   dispositivo) — nunca guardado, nunca fijo por build.
-- **Conclusión**: el mismo APK, instalado en cualquier teléfono/tablet
-  Android compatible, se comporta distinto según quién inicia sesión +
-  qué dispositivo es + qué cuadrilla/ubicación tiene asignada en ese
-  momento — exactamente el modelo pedido. Un cambio de cuadrilla,
-  ubicación o usuario es una operación dentro de la app, nunca un nuevo
-  build.
+- **Quick Unlock** (PIN): 100% local al dispositivo (comodidad de
+  desbloqueo) — nunca determina permisos/cuadrilla/ubicación; usar otro
+  dispositivo exige autenticarse normal y configurar un PIN nuevo ahí.
+- **Conclusión**: el mismo APK/la misma Web, en cualquier
+  teléfono/tablet/PC compatible, se comporta distinto SOLO según quién
+  inicia sesión + qué cuadrilla(s) tiene autorizadas esa persona + el
+  turno real — nunca según qué aparato es. Cambiar de dispositivo
+  conserva exactamente los mismos permisos remotos de esa persona.
 
 Tests de dominio: `tests/unit/operational-scope.test.js` (29 casos, cubren
 CASO 1/3/7/8/11/12/13 del pedido original entre otros).
@@ -128,13 +157,15 @@ previousCrewId, notes, active }`. `status` ∈ `PENDING|COMPLETED|CANCELLED`
   - Panel "Cuadrillas de lubricación" dedicado (reemplaza el genérico
     `simpleListPanelHTML`): ubicación + cuadrilla por defecto por fila,
     `logAudit('CREW_LOCATION_CHANGED', ...)` al cambiar ubicación.
-  - Panel nuevo "Dispositivo operativo": muestra/edita la cuadrilla de ESTE
-    dispositivo. ADMIN/PLANIFICADOR editan, SUPERVISOR/LUBRICADOR solo
-    lectura, VISOR no lo ve (`canConfigureDevice()`).
+  - ~~Panel "Dispositivo operativo"~~ — ELIMINADO 2026-10-02 (corrección
+    arquitectónica, ver arriba). Reemplazado por "Miembros autorizados"
+    dentro del propio formulario de cada cuadrilla (`canManageCrewMembership()`,
+    mismos roles que antes editaban: ADMIN/PLANIFICADOR).
 
 ## Eventos de auditoría nuevos
 
-`DEVICE_CREW_CHANGED`, `CREW_LOCATION_CHANGED`, `EQUIPMENT_LOCATION_CHANGED`,
+`CREW_MEMBERSHIP_CHANGED` (reemplaza `DEVICE_CREW_CHANGED`, eliminado
+2026-10-02), `CREW_LOCATION_CHANGED`, `EQUIPMENT_LOCATION_CHANGED`,
 `GREASE_ASSIGNED`, `GREASE_REASSIGNED`, `GREASE_ASSIGNMENT_CANCELLED`,
 `GREASE_ASSIGNMENT_COMPLETED` — todos vía `logAudit()` (db.js), visibles en
 Configuración → Registro de auditoría.
@@ -224,39 +255,41 @@ Disparo **sin polling nuevo**: `onSyncStateChange()` (ya existente) llama a
 `refreshLocalNotifications()` cuando `state.pulled > 0` — reutiliza el ciclo
 de sync YA configurado (30s-10min), nunca un timer adicional.
 
-### 3) Aislamiento del device assignment — garantía verificada
+### 3) Aislamiento de la selección de cuadrilla de sesión — garantía verificada (reescrito 2026-10-02)
 
-`getDeviceAssignment()`/`saveDeviceAssignment()` (app.js) SOLO leen/escriben
-la fila `push_tokens` cuyo `id === getDeviceId()` — nunca iteran ni tocan
-otras filas, aunque `push_tokens` sea una tabla COMPARTIDA que sincroniza
-las filas de TODOS los dispositivos. `tests/unit/device-assignment-isolation.test.js`
-(8 tests) verifica contra el código real: dispositivo A y B mantienen
-cuadrillas independientes incluso con ambas filas ya sincronizadas
-localmente; cambiar A nunca toca ningún campo de B; `saveDeviceAssignment()`
-escribe ÚNICAMENTE en `push_tokens` (nunca en `settings/general` ni ninguna
-tabla global); `getDeviceId()` no depende de `App.currentUser` (logout no lo
-afecta); un dispositivo nuevo (localStorage vacío) nunca hereda la cuadrilla
-de otro.
+Reemplaza la vieja garantía de aislamiento por DISPOSITIVO (`getDeviceId()`)
+por aislamiento por USUARIO, consistente con la corrección arquitectónica de
+arriba. `getSelectedCrewId(userId)`/`setSelectedCrewId(userId, crewId)`
+(app.js) guardan `{ userId, crewId }` bajo UNA sola clave de `localStorage`
+(`engrase_session_crew`) — `getSelectedCrewId()` solo devuelve un valor si
+el `userId` guardado coincide EXACTAMENTE con quien lo pide; si otra persona
+inicia sesión en el MISMO teléfono, su `userId` no coincide, así que nunca
+hereda por error la cuadrilla que había elegido la persona anterior (cae a
+`NEEDS_CREW_SELECTION` si tiene 2+ autorizadas, o se autoselecciona si tiene
+solo 1 — nunca una herencia silenciosa). `tests/unit/device-assignment-isolation.test.js`
+(renombrado conceptualmente a "aislamiento de sesión de cuadrilla", mismo
+archivo) verifica contra el código real: usuario A y B mantienen selecciones
+independientes en el mismo `localStorage`; cambiar la de A nunca toca la de
+B; la autorización REAL siempre viene de `cuadrillas[].memberUserIds`
+(servidor, sincronizado), nunca de este valor local — un `selectedCrewId`
+local para una cuadrilla de la que ya se le quitó la autorización se ignora.
 
-**Logout/Quick Unlock/offline**: ninguno de los tres toca las claves
-`engrase_device_id`/`engrase_device_name` de `localStorage` (auditado: cero
-referencias fuera del bloque de identidad de dispositivo) — la cuadrilla del
-dispositivo sobrevive los tres casos por construcción, no por un mecanismo
-especial.
+**Logout/Quick Unlock/offline**: ninguno de los tres borra
+`engrase_session_crew` (es una comodidad de UI, no una credencial) — pero
+tampoco hace falta que la borren: al volver a resolver el scope, el check
+de `userId` ya garantiza que solo APLICA si sigue siendo la misma persona
+Y esa cuadrilla sigue en su lista autorizada real.
 
-**Reinstalación — comportamiento REAL, sin sobreprometer:**
-- `adb install -r` (reinstalar SOBRE la instalación existente, mismo
-  paquete) preserva `localStorage`/IndexedDB en Android — confirmado
-  empíricamente en una sesión previa (ver `docs/SESSION_HANDOFF.md`,
-  verificación con CDP). La cuadrilla del dispositivo sobrevive.
-- `adb uninstall` (o `pm clear`) seguido de una instalación nueva **borra**
-  `localStorage` — `getDeviceId()` genera un id nuevo (`Math.random()` +
-  `Date.now()`, sin ningún componente de hardware) y el dispositivo aparece
-  como "sin cuadrilla" (`DEVICE_UNASSIGNED`) hasta que alguien lo reconfigure
-  a mano en Configuración → Dispositivo operativo. **No existe ningún
-  mecanismo de recuperación** (no hay lookup por IMEI/Android ID/serial ni
-  backend que asocie un teléfono físico a su fila anterior) — no afirmar lo
-  contrario ante el usuario.
+**Reinstalación/dispositivo nuevo — comportamiento REAL (ya no es un
+problema, por diseño):** reinstalar (`adb install -r`), hacer `adb
+uninstall`+instalar de cero, o iniciar sesión en un teléfono/tablet/PC
+COMPLETAMENTE NUEVO ya no afecta la autorización de cuadrilla en absoluto
+— esta vive en `cuadrillas[].memberUserIds` (servidor, sincronizado), no en
+ese dispositivo. Lo único que se pierde al reinstalar/cambiar de aparato es
+`engrase_session_crew` (la comodidad de "cuál cuadrilla elegí la última
+vez"): con 1 sola cuadrilla autorizada no se nota (se autoselecciona
+igual); con 2+, simplemente se vuelve a preguntar una vez. Nunca hace falta
+que un Administrador "reconfigure" nada por un cambio de hardware.
 
 ## Engrase fuera de plan (lote 2026-09-28c)
 

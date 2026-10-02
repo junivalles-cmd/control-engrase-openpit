@@ -4,22 +4,22 @@
 // la auditoría de notify-vencidos/notify-push (Edge Functions): esos
 // Edge Functions filtran Lubricador por `disp.shiftId`/`disp.locationId`/
 // `disp.cuadrillaId`, pero saveOneSignalId() nunca escribía esos campos en
-// la fila push_tokens de LA PERSONA (solo existían en la fila APARTE del
-// DISPOSITIVO, que nunca tiene un `token` real) — en la práctica ese
-// filtro de zona/turno para Lubricador nunca hacía nada. Corregido
-// copiando el scope del dispositivo (cuadrillaId/locationId/shiftId)
-// sobre la fila de la persona, refrescado también cuando cambia la
-// asignación del dispositivo mientras alguien sigue conectado (§6/§7 del
-// pedido: "El dispositivo pertenece a una cuadrilla... push identity →
-// Auth user", pero el SCOPE de push sigue necesitando saber a qué
-// cuadrilla/ubicación pertenece el dispositivo en este momento).
+// la fila push_tokens de LA PERSONA.
+//
+// REESCRITO 2026-10-02 (corrección arquitectónica — ver
+// docs/OPERATIONAL_SCOPE.md): el scope de push ya NO viene del dispositivo
+// (`saveDeviceAssignment()`, eliminado) — viene de la cuadrilla AUTORIZADA
+// del usuario (`cuadrillas[].memberUserIds`, resuelta por
+// getCurrentOperationalScope()/resolveOperationalScope()), con
+// `setSelectedCrewId()` como la única huella local (comodidad de sesión
+// cuando hay 2+ cuadrillas autorizadas, nunca la fuente del dato).
 //
 // También cubre notificationShift/notificationAvailability/receiveAllShifts
 // (autoservicio, §2/§29) vía saveOneSignalId()/saveNotificationPreferences().
 //
-// Contra el código REAL de app.js, con IndexedDB/localStorage/Sync
-// reemplazados por fakes en memoria — mismo patrón que
-// device-assignment-isolation.test.js.
+// Contra el código REAL de app.js + src/core/operational-scope.js, con
+// IndexedDB/localStorage/Sync reemplazados por fakes en memoria — mismo
+// patrón que device-assignment-isolation.test.js.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loadDeviceIdentityLogic } from '../helpers/loadLubricationLogic.js';
@@ -45,37 +45,46 @@ function makeFakeLocalStorage() {
     getItem: (k) => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = String(v); },
     removeItem: (k) => { delete store[k]; },
-    _asDevice(id) { store['engrase_device_id'] = id; },
   };
 }
 
-describe('saveOneSignalId() — copia el scope del dispositivo sobre la fila de la persona (bug real corregido)', () => {
+describe('saveOneSignalId() — copia el scope de la cuadrilla AUTORIZADA sobre la fila de la persona (bug real corregido, ahora sin dispositivo)', () => {
   let db, ls, fullSyncCalls, App;
 
   beforeEach(() => {
-    db = makeFakeDB({ push_tokens: [], cuadrillas: [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true }] });
+    db = makeFakeDB({ push_tokens: [], cuadrillas: [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub1'] }] });
     ls = makeFakeLocalStorage();
     fullSyncCalls = 0;
     vi.stubGlobal('localStorage', ls);
     vi.stubGlobal('window', { Capacitor: undefined });
     vi.stubGlobal('Sync', { fullSync: () => { fullSyncCalls++; } });
-    App = { currentUser: { id: 'u_lub1', name: 'Ana', role: 'LUBRICADOR' } };
-    ls._asDevice('dev_mojon');
+    App = { currentUser: { id: 'u_lub1', name: 'Ana', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
   });
 
-  it('el dispositivo ya tiene cuadrilla/turno asignados -> la fila de la persona copia cuadrillaId/locationId/shiftId reales (ANTES quedaban vacíos/undefined, que es justo por qué el filtro del Edge Function nunca funcionaba)', async () => {
-    const { saveDeviceAssignment, saveOneSignalId } = loadDeviceIdentityLogic(db, App);
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon', shiftId: 'shift_noche', nombre: 'Tel Mojón' });
-
+  it('el usuario está autorizado en 1 sola cuadrilla (se autoselecciona) -> la fila de la persona copia cuadrillaId/locationId/shiftId reales (ANTES quedaban vacíos/undefined con el viejo scope de dispositivo)', async () => {
+    const { saveOneSignalId } = loadDeviceIdentityLogic(db, App);
     await saveOneSignalId('sub_123', 'android');
 
     const fila = db._data.push_tokens.find(r => r.id === 'tok_u_lub1_android');
-    expect(fila).toMatchObject({ cuadrillaId: 'crew_mojon', locationId: 'loc_mojon', shiftId: 'shift_noche', token: 'sub_123' });
+    expect(fila.cuadrillaId).toBe('crew_mojon');
+    expect(fila.locationId).toBe('loc_mojon');
+    expect(fila.shiftId).toMatch(/^shift_(dia|noche)$/); // currentShiftId() real, hora del momento del test
+    expect(fila.token).toBe('sub_123');
   });
 
-  it('dispositivo SIN cuadrilla asignada -> campos de scope quedan vacíos, nunca undefined/erróneos', async () => {
+  it('usuario SIN ninguna cuadrilla autorizada -> campos de scope quedan vacíos, nunca undefined/erróneos', async () => {
+    db._data.cuadrillas = [];
     const { saveOneSignalId } = loadDeviceIdentityLogic(db, App);
     await saveOneSignalId('sub_456', 'android');
+    const fila = db._data.push_tokens.find(r => r.id === 'tok_u_lub1_android');
+    expect(fila.cuadrillaId).toBe('');
+    expect(fila.locationId).toBe('');
+  });
+
+  it('usuario con 2+ cuadrillas autorizadas SIN elegir ninguna todavía (NEEDS_CREW_SELECTION) -> campos de scope vacíos, nunca adivina una', async () => {
+    db._data.cuadrillas.push({ id: 'crew_taller', locationId: 'loc_taller', active: true, memberUserIds: ['u_lub1'] });
+    const { saveOneSignalId } = loadDeviceIdentityLogic(db, App);
+    await saveOneSignalId('sub_789', 'android');
     const fila = db._data.push_tokens.find(r => r.id === 'tok_u_lub1_android');
     expect(fila.cuadrillaId).toBe('');
     expect(fila.locationId).toBe('');
@@ -108,47 +117,58 @@ describe('saveOneSignalId() — copia el scope del dispositivo sobre la fila de 
   });
 });
 
-describe('refreshPushTokenDeviceScope() — el scope de push se actualiza si cambia la cuadrilla del dispositivo mientras la persona sigue conectada', () => {
+describe('refreshPushTokenCrewScope() — el scope de push se actualiza si la persona cambia su cuadrilla de sesión, sin tocar el dispositivo', () => {
   let db, ls, App;
 
   beforeEach(() => {
     db = makeFakeDB({
       push_tokens: [{ id: 'tok_u_lub1_android', userId: 'u_lub1', userName: 'Ana', role: 'LUBRICADOR', token: 'sub_existente', platform: 'android', active: true, cuadrillaId: 'crew_volcan', locationId: 'loc_volcan', shiftId: 'shift_dia' }],
-      cuadrillas: [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true }],
+      cuadrillas: [
+        { id: 'crew_volcan', locationId: 'loc_volcan', active: true, memberUserIds: ['u_lub1'] },
+        { id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub1'] },
+      ],
     });
     ls = makeFakeLocalStorage();
     vi.stubGlobal('localStorage', ls);
-    // window.Capacitor presente (verdadero) para que resuelva la MISMA
-    // plataforma ('android') de la fila sembrada (tok_u_lub1_android) —
-    // si no coincidieran, refreshPushTokenDeviceScope() buscaría
-    // 'tok_u_lub1_web' (inexistente) y no haría nada, sin que sea un bug
-    // real (solo un dispositivo real siempre resuelve SU plataforma real).
     vi.stubGlobal('window', { Capacitor: {} });
     vi.stubGlobal('Sync', { fullSync: () => {} });
-    App = { currentUser: { id: 'u_lub1', name: 'Ana' } };
-    ls._asDevice('dev_mojon');
+    App = { currentUser: { id: 'u_lub1', name: 'Ana', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
   });
 
-  it('saveDeviceAssignment() a una NUEVA cuadrilla refresca de inmediato la fila de push de quien está conectado', async () => {
-    const { saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon', shiftId: 'shift_noche' });
+  it('elegir una NUEVA cuadrilla de sesión (setSelectedCrewId) + refreshPushTokenCrewScope() actualiza de inmediato la fila de push de quien está conectado', async () => {
+    const { setSelectedCrewId, refreshPushTokenCrewScope } = loadDeviceIdentityLogic(db, App);
+    setSelectedCrewId('u_lub1', 'crew_mojon');
+    await refreshPushTokenCrewScope();
 
     const fila = db._data.push_tokens.find(r => r.id === 'tok_u_lub1_android');
-    expect(fila).toMatchObject({ cuadrillaId: 'crew_mojon', locationId: 'loc_mojon', shiftId: 'shift_noche' });
+    expect(fila.cuadrillaId).toBe('crew_mojon');
+    expect(fila.locationId).toBe('loc_mojon');
     expect(fila.token).toBe('sub_existente'); // el subscription id NUNCA se toca aquí
   });
 
   it('sin push_token existente para la persona (nunca activó push en este dispositivo): no inventa una fila', async () => {
     db._data.push_tokens = [];
-    const { saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    await saveDeviceAssignment({ cuadrillaId: 'crew_mojon' });
+    const { setSelectedCrewId, refreshPushTokenCrewScope } = loadDeviceIdentityLogic(db, App);
+    setSelectedCrewId('u_lub1', 'crew_mojon');
+    await refreshPushTokenCrewScope();
     expect(db._data.push_tokens.find(r => r.id === 'tok_u_lub1_android')).toBeUndefined();
   });
 
-  it('sin App.currentUser (nadie conectado en este dispositivo ahora): no lanza, no hace nada', async () => {
+  it('sin App.currentUser (nadie conectado ahora mismo): no lanza, no hace nada', async () => {
     App.currentUser = null;
-    const { saveDeviceAssignment } = loadDeviceIdentityLogic(db, App);
-    await expect(saveDeviceAssignment({ cuadrillaId: 'crew_mojon' })).resolves.toBeUndefined();
+    const { refreshPushTokenCrewScope } = loadDeviceIdentityLogic(db, App);
+    await expect(refreshPushTokenCrewScope()).resolves.toBeUndefined();
+  });
+});
+
+describe('aislamiento por USUARIO de la selección de cuadrilla de sesión (reemplaza el viejo aislamiento por dispositivo)', () => {
+  it('getSelectedCrewId() de un usuario nunca devuelve la selección guardada para OTRO usuario en el MISMO localStorage', () => {
+    const ls = makeFakeLocalStorage();
+    vi.stubGlobal('localStorage', ls);
+    const { setSelectedCrewId, getSelectedCrewId } = loadDeviceIdentityLogic(makeFakeDB(), { currentUser: null });
+    setSelectedCrewId('u_lub1', 'crew_mojon');
+    expect(getSelectedCrewId('u_lub1')).toBe('crew_mojon');
+    expect(getSelectedCrewId('u_lub2')).toBe(''); // otra persona en el mismo teléfono: nunca hereda
   });
 });
 

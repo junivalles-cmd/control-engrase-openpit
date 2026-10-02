@@ -237,9 +237,10 @@ const OPERATIONAL_SCOPE_SOURCES = [
   [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
   [OPERATIONAL_SCOPE_JS_PATH, [
     'ASSIGNMENT_STATUS', 'ROLES_CAN_MANAGE_ASSIGNMENTS', 'ROLES_CAN_MOVE_EQUIPMENT',
-    'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_CONFIGURE_DEVICE', 'ROLES_CAN_REGISTER_OUT_OF_PLAN',
-    'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canConfigureDevice',
-    'canRegisterOutOfPlan',
+    'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_MANAGE_CREW_MEMBERSHIP', 'ROLES_CAN_REGISTER_OUT_OF_PLAN',
+    'ROLES_CREW_SCOPED',
+    'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canManageCrewMembership',
+    'canRegisterOutOfPlan', 'getAuthorizedCrews',
     'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveOperationalScope',
     'classifyEquipmentWork', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
@@ -285,21 +286,24 @@ export function loadNotificationRoutingLogic() {
   return factory();
 }
 
-// Identidad del dispositivo (§3 del cierre de lote — teléfonos compartidos
-// por cuadrilla, ver docs/OPERATIONAL_SCOPE.md). getDeviceId()/
-// getDeviceAssignment()/saveDeviceAssignment() leen `localStorage`/`DB`/
-// `App`/`Sync`/`window` como globales, igual que en el navegador — el test
-// los stubea con vi.stubGlobal() antes de llamar (mismo patrón que
-// loadDbSeedLogic con localStorage/navigator/fetch).
+// Selección de cuadrilla de sesión (corrección arquitectónica 2026-10-02,
+// reemplaza la vieja "identidad del dispositivo" — ver
+// docs/OPERATIONAL_SCOPE.md §3). getSelectedCrewId()/setSelectedCrewId()/
+// getCurrentOperationalScope() leen `localStorage`/`DB`/`App`/`Sync`/
+// `window` como globales, igual que en el navegador — el test los stubea
+// con vi.stubGlobal() antes de llamar (mismo patrón que loadDbSeedLogic
+// con localStorage/navigator/fetch).
 const DEVICE_IDENTITY_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'stamp']],
+  [SHIFTS_JS_PATH, ['currentShiftId']],
+  [OPERATIONAL_SCOPE_JS_PATH, ['ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveOperationalScope']],
   [APP_JS_PATH, [
-    'getDeviceId', 'getDeviceName', 'setDeviceName', 'getDeviceAssignment', 'saveDeviceAssignment',
-    // saveDeviceAssignment() ahora también refresca el scope de push de la
-    // persona conectada (lote arquitectura de notificaciones, §6/§7) — se
-    // incluyen sus dependencias para que la extracción siga ejecutando sin
-    // ReferenceError.
-    'refreshPushTokenDeviceScope', 'currentDeviceScopeSnapshotForPush',
+    'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
+    // getCurrentOperationalScope() ahora también alimenta el scope de push
+    // de la persona conectada (lote arquitectura de notificaciones, §6/§7)
+    // — se incluyen sus dependencias para que la extracción siga
+    // ejecutando sin ReferenceError.
+    'refreshPushTokenCrewScope', 'currentUserCrewScopeSnapshotForPush',
     // saveOneSignalId()/saveNotificationPreferences() comparten el mismo
     // patrón de prueba (DB/App/window/Sync fakes, ver
     // tests/unit/push-token-scope.test.js).
@@ -313,10 +317,10 @@ const DEVICE_IDENTITY_SOURCES = [
 ];
 
 /**
- * Devuelve las funciones REALES de identidad de dispositivo de app.js,
- * ligadas a un `DB`/`App` de prueba. `localStorage`/`window`/`Sync` deben
- * quedar stubeados globalmente por el test ANTES de invocar la función
- * devuelta (ver tests/unit/device-assignment-isolation.test.js).
+ * Devuelve las funciones REALES de selección de cuadrilla de sesión de
+ * app.js, ligadas a un `DB`/`App` de prueba. `localStorage`/`window`/`Sync`
+ * deben quedar stubeados globalmente por el test ANTES de invocar la
+ * función devuelta (ver tests/unit/device-assignment-isolation.test.js).
  */
 export function loadDeviceIdentityLogic(fakeDB, fakeApp) {
   const body = buildBodyFromSources(DEVICE_IDENTITY_SOURCES);

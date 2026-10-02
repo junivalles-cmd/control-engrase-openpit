@@ -654,63 +654,34 @@ function wirePushListeners() {
 }
 
 /* ============================================================
-   IDENTIDAD DEL DISPOSITIVO (teléfonos compartidos por cuadrilla)
+   SELECCIÓN DE CUADRILLA DE SESIÓN (corrección arquitectónica 2026-10-02)
    ------------------------------------------------------------
-   En el pit un mismo teléfono lo usan los 4 lubricadores de una cuadrilla, turnándose
-   con su propio PIN. Por eso las notificaciones NO se registran por persona sino por
-   TELÉFONO: si se registraran por usuario, el mismo aviso llegaría varias veces al
-   mismo aparato y al cambiar de turno el sistema no sabría a quién avisarle.
+   REEMPLAZA la vieja "identidad del dispositivo" (un teléfono fijo
+   asignado a una cuadrilla en Configuración). Esa idea acoplaba el
+   alcance operativo a un IDENTIFICADOR FÍSICO de hardware — el mismo
+   APK/la misma Web deben funcionar en cualquier teléfono/tablet/PC
+   compatible, así que la cuadrilla ahora es una propiedad del USUARIO
+   AUTENTICADO (ver cuadrillas[].memberUserIds, resolveOperationalScope()
+   en src/core/operational-scope.js), nunca del aparato.
 
-   Cada teléfono tiene su propio identificador fijo y se le asigna una cuadrilla y un
-   turno desde Configuración. Los avisos se filtran por esa asignación, no por quién
-   tenga la sesión abierta en ese momento.
-   ============================================================ */
-function getDeviceId() {
-  let id = null;
-  try { id = localStorage.getItem('engrase_device_id'); } catch (e) {}
-  if (!id) {
-    id = 'dev_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    try { localStorage.setItem('engrase_device_id', id); } catch (e) {}
-  }
-  return id;
+   `localStorage` SOLO guarda la última cuadrilla elegida para ESTA
+   sesión, como comodidad (si la persona tiene 2+ cuadrillas autorizadas,
+   no tiene que re-elegir cada vez que abre la app en el MISMO
+   dispositivo) — nunca es la fuente de autorización: resolveOperationalScope()
+   ignora un `selectedCrewId` que ya no esté en la lista autorizada real
+   del usuario (p. ej. si un Administrador le quitó esa cuadrilla). Guardada
+   por userId para que la sesión de OTRA persona en el mismo teléfono
+   nunca herede por error la cuadrilla de quien usó el aparato antes. */
+function getSelectedCrewId(userId) {
+  if (!userId) return '';
+  try {
+    const raw = JSON.parse(localStorage.getItem('engrase_session_crew') || 'null');
+    if (raw && raw.userId === userId) return raw.crewId || '';
+  } catch (e) {}
+  return '';
 }
-
-function getDeviceName() {
-  try { return localStorage.getItem('engrase_device_name') || ''; } catch (e) { return ''; }
-}
-function setDeviceName(nombre) {
-  try { localStorage.setItem('engrase_device_name', nombre); } catch (e) {}
-}
-
-// Cuadrilla y turno asignados a ESTE teléfono (no al usuario que tenga la sesión)
-async function getDeviceAssignment() {
-  const reg = await DB.get('push_tokens', getDeviceId()).catch(() => null);
-  return {
-    cuadrillaId: reg?.cuadrillaId || '',
-    shiftId: reg?.shiftId || '',
-    nombre: reg?.deviceName || getDeviceName(),
-    roles: reg?.roles || []
-  };
-}
-
-async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
-  const id = getDeviceId();
-  const actual = await DB.get('push_tokens', id).catch(() => null);
-  if (nombre !== undefined) setDeviceName(nombre);
-  await DB.put('push_tokens', stamp({
-    ...(actual || {}),
-    id,
-    deviceName: nombre !== undefined ? nombre : (actual?.deviceName || ''),
-    cuadrillaId: cuadrillaId !== undefined ? cuadrillaId : (actual?.cuadrillaId || ''),
-    shiftId: shiftId !== undefined ? shiftId : (actual?.shiftId || ''),
-    roles: roles !== undefined ? roles : (actual?.roles || []),
-    token: actual?.token || null,
-    platform: actual?.platform || (window.Capacitor ? 'android' : 'web'),
-    ultimoUsuario: App.currentUser ? App.currentUser.name : (actual?.ultimoUsuario || ''),
-    active: true
-  }, App.currentUser ? App.currentUser.name : 'sistema'));
-  await refreshPushTokenDeviceScope();
-  Sync.fullSync();
+function setSelectedCrewId(userId, crewId) {
+  try { localStorage.setItem('engrase_session_crew', JSON.stringify({ userId, crewId: crewId || '' })); } catch (e) {}
 }
 
 /* ============================================================
@@ -721,17 +692,20 @@ async function saveDeviceAssignment({ cuadrillaId, shiftId, nombre, roles }) {
    nunca se reimplementan.
    ============================================================ */
 
-// Scope vigente EN ESTE MOMENTO para el usuario/dispositivo actual. El turno
-// SIEMPRE viene de currentShiftId() en vivo, nunca de un valor guardado en
-// el dispositivo (ver §H del pedido — resolveOperationalScope() ya lo
-// garantiza, esto solo junta los datos que necesita).
+// Scope vigente EN ESTE MOMENTO para el usuario autenticado. El turno
+// SIEMPRE viene de currentShiftId() en vivo, nunca de un valor guardado; la
+// cuadrilla SIEMPRE viene de cuadrillas[].memberUserIds (autorización real
+// del usuario), nunca de ningún identificador de dispositivo —
+// resolveOperationalScope() ya lo garantiza, esto solo junta los datos que
+// necesita (incluida la última cuadrilla elegida en ESTA sesión, si tiene
+// 2+ autorizadas — ver getSelectedCrewId()).
 async function getCurrentOperationalScope() {
-  const deviceAssignment = await getDeviceAssignment();
   const cuadrillas = await DB.allActive('cuadrillas');
+  const selectedCrewId = App.currentUser ? getSelectedCrewId(App.currentUser.id) : '';
   return resolveOperationalScope({
     currentUser: App.currentUser,
-    deviceAssignment,
     cuadrillas,
+    selectedCrewId,
     shiftId: currentShiftId()
   });
 }
@@ -828,28 +802,26 @@ async function moverEquipoDeUbicacion(equipo, newLocationId, locations) {
   Sync.fullSync();
 }
 
-// Snapshot del scope del DISPOSITIVO (cuadrilla/ubicación/turno asignado,
-// ver getDeviceAssignment()) para copiarlo sobre la fila push_tokens de LA
-// PERSONA. BUG REAL encontrado en este lote (auditoría de notify-vencidos/
-// notify-push): esos Edge Functions ya filtran Lubricador por
-// `disp.shiftId`/`disp.locationId`/`disp.cuadrillaId`, pero la fila que
-// saveOneSignalId() escribía nunca tenía esos campos (solo existían en la
-// fila APARTE del dispositivo, keyed por getDeviceId(), que jamás tiene un
-// `token` real) — en la práctica ese filtro nunca hacía nada: TODOS los
-// tokens de Lubricador recibían TODOS los avisos sin importar turno/zona/
-// cuadrilla. Corregido copiando el scope del dispositivo aquí; se vuelve a
-// llamar cada vez que cambia la suscripción Y cada vez que cambia la
-// asignación del dispositivo (ver saveDeviceAssignment()) para que nunca
-// quede desactualizado mientras la persona sigue conectada.
-async function currentDeviceScopeSnapshotForPush() {
-  const deviceAssignment = await getDeviceAssignment();
-  if (!deviceAssignment.cuadrillaId) return { cuadrillaId: '', locationId: '', shiftId: deviceAssignment.shiftId || '' };
-  const cuadrilla = await DB.get('cuadrillas', deviceAssignment.cuadrillaId).catch(() => null);
-  return {
-    cuadrillaId: deviceAssignment.cuadrillaId,
-    locationId: cuadrilla?.locationId || '',
-    shiftId: deviceAssignment.shiftId || ''
-  };
+// Snapshot del scope de la CUADRILLA AUTORIZADA DEL USUARIO (reemplaza el
+// viejo scope del dispositivo — corrección arquitectónica 2026-10-02) para
+// copiarlo sobre la fila push_tokens de LA PERSONA. Mismo fix real de
+// fondo que antes (auditoría de notify-vencidos/notify-push: esos Edge
+// Functions filtran Lubricador por `disp.shiftId`/`disp.locationId`/
+// `disp.cuadrillaId`, así que la fila de la persona necesita tenerlos) —
+// ahora la fuente es getCurrentOperationalScope() (usuario autenticado +
+// cuadrillas[].memberUserIds), nunca un identificador de hardware.
+// `shiftId` ahora SÍ se puede poblar de verdad (antes el panel de
+// "Dispositivo operativo" nunca exponía un campo para fijarlo, así que
+// siempre quedaba vacío) — scope.shiftId ya viene resuelto en vivo por
+// currentShiftId() dentro de getCurrentOperationalScope(), se reutiliza
+// tal cual, nunca un cálculo aparte. Se vuelve a llamar cada vez que
+// cambia la suscripción Y cada vez que la persona elige/cambia su
+// cuadrilla de sesión (ver setSelectedCrewId()) para que nunca quede
+// desactualizada mientras sigue conectada.
+async function currentUserCrewScopeSnapshotForPush() {
+  const scope = await getCurrentOperationalScope();
+  if (scope.kind !== 'CREW_SCOPED') return { cuadrillaId: '', locationId: '', shiftId: '' };
+  return { cuadrillaId: scope.crewId || '', locationId: scope.crewLocationId || '', shiftId: scope.shiftId || '' };
 }
 
 async function saveOneSignalId(subscriptionId, plataforma) {
@@ -864,12 +836,12 @@ async function saveOneSignalId(subscriptionId, plataforma) {
     // se preservan si ya existían, con default BOTH/AVAILABLE/false solo
     // para una fila nueva.
     const actual = await DB.get('push_tokens', id).catch(() => null);
-    const deviceScope = await currentDeviceScopeSnapshotForPush();
+    const crewScope = await currentUserCrewScopeSnapshotForPush();
     await DB.put('push_tokens', stamp({
       ...(actual || {}),
       id, userId: App.currentUser.id, userName: App.currentUser.name,
       role: App.currentUser.role, token: subscriptionId, platform: plat, active: true,
-      cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId,
+      cuadrillaId: crewScope.cuadrillaId, locationId: crewScope.locationId, shiftId: crewScope.shiftId,
       notificationShift: actual?.notificationShift || 'BOTH',
       notificationAvailability: actual?.notificationAvailability || 'AVAILABLE',
       receiveAllShifts: actual?.receiveAllShifts || false
@@ -878,25 +850,25 @@ async function saveOneSignalId(subscriptionId, plataforma) {
   } catch (e) { console.warn('No se pudo guardar el ID de notificaciones push', e); }
 }
 
-// Refresca el scope de dispositivo (cuadrillaId/locationId/shiftId) sobre
-// la fila push_tokens de QUIEN TENGA SESIÓN ABIERTA ahora mismo — se llama
-// desde saveDeviceAssignment() (cambia la cuadrilla/turno del dispositivo
-// mientras alguien sigue conectado en él) para que esa fila nunca quede
-// desactualizada hasta la próxima vez que cambie la suscripción. Si la
-// persona actual no tiene todavía un push_token (nunca activó push), no
-// hace nada — no se inventa una fila sin un subscription id real.
-async function refreshPushTokenDeviceScope() {
+// Refresca el scope de cuadrilla (cuadrillaId/locationId) sobre la fila
+// push_tokens de QUIEN TENGA SESIÓN ABIERTA ahora mismo — se llama después
+// de que la persona elige/cambia su cuadrilla de sesión (ver
+// setSelectedCrewId()) para que esa fila nunca quede desactualizada hasta
+// la próxima vez que cambie la suscripción. Si la persona actual no tiene
+// todavía un push_token (nunca activó push), no hace nada — no se inventa
+// una fila sin un subscription id real.
+async function refreshPushTokenCrewScope() {
   if (!App.currentUser) return;
   try {
     const plat = window.Capacitor ? 'android' : 'web';
     const id = `tok_${App.currentUser.id}_${plat}`;
     const actual = await DB.get('push_tokens', id).catch(() => null);
     if (!actual || !actual.token) return;
-    const deviceScope = await currentDeviceScopeSnapshotForPush();
+    const crewScope = await currentUserCrewScopeSnapshotForPush();
     await DB.put('push_tokens', stamp({
-      ...actual, cuadrillaId: deviceScope.cuadrillaId, locationId: deviceScope.locationId, shiftId: deviceScope.shiftId
+      ...actual, cuadrillaId: crewScope.cuadrillaId, locationId: crewScope.locationId, shiftId: crewScope.shiftId
     }, App.currentUser.name));
-  } catch (e) { console.warn('No se pudo actualizar el scope de push del dispositivo', e); }
+  } catch (e) { console.warn('No se pudo actualizar el scope de push de la cuadrilla', e); }
 }
 
 // Preferencias de notificación PROPIAS (lote arquitectura de
@@ -930,8 +902,7 @@ async function saveNotificationPreferences(prefs) {
 // Notificaciones push → "Editar" en la lista de dispositivos) — mismo
 // mecanismo de escritura que el autoservicio de arriba, apuntando a las
 // filas de la persona elegida en vez de App.currentUser. Nunca toca una
-// fila de DISPOSITIVO (sin userId, ver saveDeviceAssignment()) — solo las
-// filas de PERSONA del userId recibido.
+// fila sin userId — solo las filas de PERSONA del userId recibido.
 async function saveNotificationPreferencesForUser(targetUserId, prefs) {
   if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') throw new Error('Solo un administrador puede editar las notificaciones de otra persona.');
   const ajenos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
@@ -1075,13 +1046,16 @@ async function disablePushForCurrentUser() {
 /* ============================================================
    IDENTIDAD ONESIGNAL (lote arquitectura de notificaciones, §9-§13) —
    ata la identidad de push al USUARIO Auth actual (App.currentUser.id,
-   que en AUTH_MODE='supabase' es profile.appUserId), NUNCA al
-   deviceId/cuadrillaId (esos siguen siendo del dispositivo, ver bloque de
-   arriba — no se tocan aquí). Así, en un dispositivo compartido, la
-   identidad de push SIEMPRE es la de quien tiene sesión iniciada, no la
-   de quien lo usó por última vez. Sin efecto mientras ONESIGNAL_APP_ID
-   esté vacío (feature apagada hoy) — mismo guard que el resto de este
-   bloque, nunca lanza si OneSignal no está disponible.
+   que en AUTH_MODE='supabase' es profile.appUserId), NUNCA a ningún
+   identificador de dispositivo. La cuadrilla/ubicación de la fila de push
+   (`cuadrillaId`/`locationId`) tampoco vienen del dispositivo desde la
+   corrección arquitectónica 2026-10-02 — vienen de la cuadrilla
+   AUTORIZADA del usuario (ver getCurrentOperationalScope(),
+   currentUserCrewScopeSnapshotForPush()). Así, en un teléfono/tablet
+   compartido, la identidad de push SIEMPRE es la de quien tiene sesión
+   iniciada, no la de quien lo usó por última vez. Sin efecto mientras
+   ONESIGNAL_APP_ID esté vacío (feature apagada hoy) — mismo guard que el
+   resto de este bloque, nunca lanza si OneSignal no está disponible.
    ============================================================ */
 function oneSignalHandle() {
   return window.plugins?.OneSignal || window.OneSignal || null;
@@ -1385,7 +1359,7 @@ async function refreshLocalNotifications() {
     // porque el rol ya está fijo (LUBRICADOR) en el `if` de abajo.
     if (rol === 'LUBRICADOR' && isUserEligibleForNotification({ user: personaElegible, currentShiftId: turnoReal })) {
       const scopeNotif = await getCurrentOperationalScope();
-      if (scopeNotif.kind === 'DEVICE_SCOPED') {
+      if (scopeNotif.kind === 'CREW_SCOPED') {
         // Mismo criterio EXACTO que "ASIGNADOS A MI CUADRILLA" en Mi Turno
         // (renderLubricadorHome) — reutiliza classifyEquipmentWork() en vez
         // de repetir el filtro PENDING+assignedCrewId por separado.
@@ -2760,19 +2734,38 @@ async function renderLubricadorHome() {
   const cuadrillas = await DB.allActive('cuadrillas');
   const myCrew = cuadrillas.find(cq => cq.id === scope.crewId);
 
-  // Dispositivo sin cuadrilla asignada (§G del pedido): NUNCA cae a la lista
-  // global de equipos — se muestra un mensaje claro y se pide contactar a
-  // un Planificador/Administrador para asignarlo desde "Dispositivo
-  // operativo" en Configuración.
-  if (scope.kind === 'DEVICE_UNASSIGNED') {
+  // Corrección arquitectónica 2026-10-02: el usuario, no el dispositivo, es
+  // quien está (o no) autorizado para una cuadrilla. Sin ninguna cuadrilla
+  // autorizada, NUNCA cae a la lista global de equipos — se pide contactar
+  // a un Planificador/Administrador para autorizarlo en Configuración →
+  // Cuadrillas (reemplaza el viejo "Dispositivo operativo").
+  if (scope.kind === 'NO_CREW_ASSIGNED') {
     c.innerHTML = `
-      <div class="lub-header-row"><div><h2 class="lub-heading">Este dispositivo no tiene cuadrilla</h2></div></div>
+      <div class="lub-header-row"><div><h2 class="lub-heading">No tienes ninguna cuadrilla autorizada</h2></div></div>
       <div class="empty-state">
-        Este teléfono/tablet todavía no está asignado a ninguna cuadrilla, así que no se le puede mostrar ningún equipo.
-        Pide a un Administrador o Planificador que lo configure en <b>Configuración → Dispositivo operativo</b>.
+        Todavía no estás autorizado en ninguna cuadrilla, así que no se te puede mostrar ningún equipo.
+        Pide a un Administrador o Planificador que te autorice en <b>Configuración → Cuadrillas</b>.
       </div>
       <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>`;
     $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
+    return;
+  }
+
+  // 2+ cuadrillas autorizadas y todavía sin elegir cuál trabajar en ESTA
+  // sesión (o la elección guardada ya no es válida, p. ej. le quitaron esa
+  // autorización) — se pide elegir, nunca se asume ni se toma la primera.
+  if (scope.kind === 'NEEDS_CREW_SELECTION') {
+    c.innerHTML = `
+      <div class="lub-header-row"><div><h2 class="lub-heading">Elige tu cuadrilla de trabajo</h2></div></div>
+      <p class="dim" style="padding:0 2px 10px">Estás autorizado en más de una cuadrilla — elige con cuál vas a trabajar ahora. Puedes cambiarla después.</p>
+      <div class="lub-eq-list">
+        ${scope.authorizedCrews.map(cq => `<button class="btn btn-accent crew-select-btn" style="width:100%;margin-bottom:8px" data-crew-id="${esc(cq.id)}">${esc(cq.name)}</button>`).join('')}
+      </div>`;
+    $$('.crew-select-btn', c).forEach(b => b.addEventListener('click', async () => {
+      setSelectedCrewId(App.currentUser.id, b.dataset.crewId);
+      await refreshPushTokenCrewScope();
+      renderLubricadorHome();
+    }));
     return;
   }
 
@@ -2808,7 +2801,9 @@ async function renderLubricadorHome() {
     <div class="lub-header-row">
       <div>
         <h2 class="lub-heading">Equipos asignados</h2>
-        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}</p>
+        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}
+          ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? ` · <button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button>` : ''}
+        </p>
       </div>
       <div class="lub-header-actions">
         <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
@@ -2830,6 +2825,14 @@ async function renderLubricadorHome() {
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-scan-qr').addEventListener('click', () => openQrScanner());
   $('#lub-out-of-plan').addEventListener('click', () => openOutOfPlanEquipmentPicker());
+  // "Cambiar cuadrilla" (punto 2 del pedido — permitir cambiarla cuando
+  // tenga autorización): borra la selección de ESTA sesión y vuelve a
+  // pedir elegir entre las autorizadas — nunca pierde la autorización en
+  // sí (sigue viniendo de cuadrillas[].memberUserIds).
+  $('#lub-change-crew')?.addEventListener('click', () => {
+    setSelectedCrewId(App.currentUser.id, '');
+    renderLubricadorHome();
+  });
   $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.recentId)));
 }
 
@@ -2859,7 +2862,7 @@ async function openOutOfPlanEquipmentPicker() {
 
   if (App.currentUser.role === 'LUBRICADOR') {
     const scope = await getCurrentOperationalScope();
-    if (scope.kind !== 'DEVICE_SCOPED') { candidatos = []; } else {
+    if (scope.kind !== 'CREW_SCOPED') { candidatos = []; } else {
       const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
       const { normal, assigned } = classifyEquipmentWork({
         scope, equipos, cuadrillas, assignments,
@@ -6774,14 +6777,15 @@ async function startGreaseFlow(equipmentId, target, options) {
         : null;
       // Si había una asignación manual activa, la cuadrilla RESPONSABLE es la
       // asignada (aunque quien tenga la sesión sea una jefatura registrando en
-      // nombre de otro); si no, la cuadrilla del DISPOSITIVO — solo cuando
-      // quien registra es Lubricador con dispositivo configurado. Nunca se
-      // inventa una cuadrilla cuando no se puede saber (jefatura registrando
-      // sin asignación activa: queda null a propósito).
+      // nombre de otro); si no, la cuadrilla AUTORIZADA DEL USUARIO (ver
+      // getCurrentOperationalScope()) — solo cuando quien registra es
+      // Lubricador con scope CREW_SCOPED. Nunca se inventa una cuadrilla
+      // cuando no se puede saber (jefatura registrando sin asignación
+      // activa: queda null a propósito).
       let crewIdDeEsteEngrase = asignacionActivaDeEsteEngrase ? asignacionActivaDeEsteEngrase.assignedCrewId : null;
       if (!crewIdDeEsteEngrase && App.currentUser.role === 'LUBRICADOR') {
         const scopeDeEsteEngrase = await getCurrentOperationalScope();
-        if (scopeDeEsteEngrase.kind === 'DEVICE_SCOPED') crewIdDeEsteEngrase = scopeDeEsteEngrase.crewId;
+        if (scopeDeEsteEngrase.kind === 'CREW_SCOPED') crewIdDeEsteEngrase = scopeDeEsteEngrase.crewId;
       }
       const crewLocationIdDeEsteEngrase = crewIdDeEsteEngrase
         ? ((await DB.allActive('cuadrillas')).find(c => c.id === crewIdDeEsteEngrase) || {}).locationId || null
@@ -10517,7 +10521,14 @@ function wireSimpleListPanel(container, store, onChange) {
    máximo una cuadrilla `isDefault:true` por ubicación, la que recibe el
    trabajo normal (ver resolveDefaultCrewForLocation() en
    operational-scope.js). Cambiar la ubicación de una cuadrilla queda en
-   auditoría (CREW_LOCATION_CHANGED). ---------- */
+   auditoría (CREW_LOCATION_CHANGED).
+
+   `memberUserIds` (corrección arquitectónica 2026-10-02): reemplaza la
+   vieja asignación cuadrilla<->dispositivo — la cuadrilla ahora autoriza
+   USUARIOS reales (app_user_id de app_profiles), nunca un teléfono/tablet
+   en particular. Un usuario autorizado puede entrar desde cualquier
+   dispositivo compatible (ver getAuthorizedCrews() en
+   src/core/operational-scope.js). ---------- */
 async function cuadrillasPanelHTML() {
   const cuadrillas = await DB.allActive('cuadrillas');
   const locations = await DB.allActive('locations');
@@ -10525,20 +10536,21 @@ async function cuadrillasPanelHTML() {
   return `
     <div class="panel" data-cuadrillas-panel>
       <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo.</div>
+      <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo. "Miembros autorizados" son las personas (Supervisor/Lubricador) que pueden trabajar como esta cuadrilla, desde cualquier dispositivo — editar la lista requiere conexión.</div>
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Por defecto</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Por defecto</th><th>Miembros autorizados</th><th></th></tr></thead>
         <tbody>
           ${cuadrillas.map(cq => `
             <tr data-id="${cq.id}">
               <td>${esc(cq.name)}</td>
               <td>${esc(locName(cq.locationId))}</td>
               <td>${cq.isDefault ? '✓' : '—'}</td>
+              <td>${(cq.memberUserIds || []).length}</td>
               <td class="row-actions">
                 <button class="btn btn-sm cq-edit">${ic("edit")}Editar</button>
                 <button class="btn btn-sm btn-danger cq-remove">${ic("trash")}Eliminar</button>
               </td>
-            </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin cuadrillas todavía.</td></tr>'}
+            </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin cuadrillas todavía.</td></tr>'}
         </tbody>
       </table>
       <div class="toolbar" style="padding:10px 14px">
@@ -10553,6 +10565,32 @@ function wireCuadrillasPanel(container, onChange) {
 
   async function openCuadrillaForm(cuadrilla) {
     const locations = await DB.allActive('locations');
+    const memberIdsActuales = (cuadrilla && cuadrilla.memberUserIds) || [];
+
+    // Miembros autorizados: requiere la lista real de usuarios Auth
+    // (app_profiles), que solo existe en el servidor — mismo límite que la
+    // pantalla Usuarios (Configuración → Usuarios), nunca una lista local
+    // inventada. Sin conexión, se muestra la lista actual sin poder
+    // cambiarla, en vez de bloquear el resto del formulario.
+    let miembrosFieldHTML = '<p class="dim">Sin conexión — no se puede cargar la lista de usuarios para autorizar miembros.</p>';
+    let usuariosElegibles = [];
+    if (navigator.onLine) {
+      try {
+        const res = await Auth.manageUsers('LIST_USERS');
+        usuariosElegibles = (res.users || []).filter(u => u.role === 'LUBRICADOR' || u.role === 'SUPERVISOR');
+        miembrosFieldHTML = usuariosElegibles.length ? `
+          <div class="form-grid" style="padding:0">
+            ${usuariosElegibles.map(u => `
+              <label class="check-row">
+                <input type="checkbox" class="chk-done member-check" value="${esc(u.app_user_id)}" ${memberIdsActuales.includes(u.app_user_id) ? 'checked' : ''}/>
+                <span class="check-row-text">${esc(u.display_name)} · ${u.role}${u.active ? '' : ' (inactivo)'}</span>
+              </label>`).join('')}
+          </div>` : '<p class="dim">Todavía no hay usuarios reales con rol Lubricador/Supervisor — créalos primero en Configuración → Usuarios.</p>';
+      } catch (e) {
+        miembrosFieldHTML = `<p class="dim">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</p>`;
+      }
+    }
+
     openModal(cuadrilla ? `Editar ${esc(cuadrilla.name)}` : 'Nueva cuadrilla', `
       <form id="cq-form">
         <label>Nombre<input required name="name" value="${cuadrilla ? esc(cuadrilla.name) : ''}"/></label>
@@ -10567,6 +10605,11 @@ function wireCuadrillasPanel(container, onChange) {
           <span class="check-row-text">Cuadrilla por defecto de esa ubicación (recibe el trabajo normal)</span>
         </label>
         <span class="field-hint">Si la marcas como default, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
+        <div style="margin-top:14px">
+          <b>Miembros autorizados</b>
+          <p class="field-hint" style="margin:2px 0 8px">Personas que pueden trabajar como esta cuadrilla, desde cualquier teléfono/tablet/PC compatible — nunca un dispositivo en particular.</p>
+          ${miembrosFieldHTML}
+        </div>
         <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
       </form>
     `);
@@ -10577,6 +10620,8 @@ function wireCuadrillasPanel(container, onChange) {
       const isDefault = !!fd.isDefault;
       const anterior = cuadrilla ? await DB.get('cuadrillas', cuadrilla.id) : null;
       const cambioUbicacion = !!anterior && anterior.locationId !== locationId;
+      const memberUserIds = $$('.member-check', $('.modal-body')).filter(chk => chk.checked).map(chk => chk.value);
+      const cambioMiembros = JSON.stringify([...memberIdsActuales].sort()) !== JSON.stringify([...memberUserIds].sort());
 
       // Máximo una default por ubicación (§K): marcar esta desmarca las demás de esa ubicación.
       if (isDefault && locationId) {
@@ -10593,12 +10638,18 @@ function wireCuadrillasPanel(container, onChange) {
       item.name = fd.name.trim();
       item.locationId = locationId;
       item.isDefault = isDefault;
+      // Sin conexión (usuariosElegibles nunca se cargó) se conserva la
+      // lista actual tal cual — nunca se vacía por no haber podido mostrar
+      // los checkboxes.
+      item.memberUserIds = navigator.onLine ? memberUserIds : memberIdsActuales;
       await DB.put('cuadrillas', stamp(item, App.currentUser.name));
 
       if (cambioUbicacion) {
         const nombreAntes = locName2(locations, anterior.locationId);
         const nombreDespues = locName2(locations, locationId);
         await logAudit('CREW_LOCATION_CHANGED', `${esc(item.name)}: ${esc(nombreAntes)} → ${esc(nombreDespues)}`, App.currentUser.name);
+      } else if (cambioMiembros) {
+        await logAudit('CREW_MEMBERSHIP_CHANGED', `cuadrilla "${esc(item.name)}": ${memberUserIds.length} miembro(s) autorizado(s)`, App.currentUser.name);
       } else {
         await logAudit('LISTA_ACTUALIZADA', `cuadrillas: "${esc(item.name)}" guardada`, App.currentUser.name);
       }
@@ -10622,80 +10673,11 @@ function wireCuadrillasPanel(container, onChange) {
       const row = btn.closest('tr');
       const id = row.dataset.id;
       const item = await DB.get('cuadrillas', id);
-      if (!confirm(`¿Eliminar la cuadrilla "${esc(item.name)}"? Los dispositivos que ya la tengan asignada no se modifican, pero dejará de aparecer como opción.`)) return;
+      if (!confirm(`¿Eliminar la cuadrilla "${esc(item.name)}"? Sus miembros autorizados dejan de poder trabajar como esta cuadrilla de inmediato — tendrán que elegir otra (si están en alguna más) o esperar una nueva autorización.`)) return;
       item.active = false;
       await DB.put('cuadrillas', stamp(item, App.currentUser.name));
       await logAudit('LISTA_ACTUALIZADA', `cuadrillas: eliminada "${esc(item.name)}"`, App.currentUser.name);
       showInAppToast(`✓ "${esc(item.name)}" eliminada`);
-      onChange();
-    });
-  });
-}
-
-/* ---------- Dispositivo operativo (Configuración) ----------
-   Conecta getDeviceAssignment()/saveDeviceAssignment() (app.js, ya
-   existían para push pero nunca se usaban para scope operativo — ver
-   docs/OPERATIONAL_SCOPE.md) con una UI real. Visibilidad por rol (§F):
-   ADMIN/PLANIFICADOR editan, SUPERVISOR y LUBRICADOR solo lectura,
-   VISOR no ve este panel. ---------- */
-async function devicePanelHTML() {
-  const role = App.currentUser.role;
-  if (role === 'VISOR') return '';
-  const assignment = await getDeviceAssignment();
-  const cuadrillas = await DB.allActive('cuadrillas');
-  const locations = await DB.allActive('locations');
-  const crew = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
-  const crewLocationName = crew ? (locations.find(l => l.id === crew.locationId) || {}).name : null;
-  const canEditDevice = canConfigureDevice(role);
-  return `
-    <div class="panel" data-device-panel>
-      <div class="panel-head"><h3>Dispositivo operativo</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Este teléfono/tablet se asigna a UNA cuadrilla — de ahí sale qué equipos ve "Mi Turno" de cualquier Lubricador que inicie sesión aquí. La asignación es de ESTE dispositivo, no de la persona, y sigue guardada aunque cierres sesión, uses el PIN rápido o reinstales la app. El turno (Día/Noche) nunca se guarda aquí: siempre se calcula por la hora real.</p>
-        <div class="detail-grid" style="margin:10px 0">
-          <div><b>Identificador</b><div class="mono" style="font-size:11px">${esc(getDeviceId())}</div></div>
-          <div><b>Cuadrilla asignada</b><div>${crew ? esc(crew.name) : 'Sin asignar'}</div></div>
-          <div><b>Ubicación (según la cuadrilla)</b><div>${crewLocationName ? esc(crewLocationName) : '—'}</div></div>
-        </div>
-        ${canEditDevice
-          ? `<button class="btn btn-accent" id="btn-device-config">${ic("edit")}${crew ? 'Cambiar cuadrilla' : 'Asignar cuadrilla'}</button>`
-          : role === 'LUBRICADOR'
-            ? '<p class="dim">Solo un Administrador o Planificador puede cambiar la cuadrilla de este dispositivo.</p>'
-            : ''}
-      </div>
-    </div>`;
-}
-
-function wireDevicePanel(container, onChange) {
-  const panel = container.querySelector('[data-device-panel]');
-  if (!panel) return;
-  panel.querySelector('#btn-device-config')?.addEventListener('click', async () => {
-    const assignment = await getDeviceAssignment();
-    const cuadrillas = (await DB.allActive('cuadrillas')).filter(cq => cq.active !== false);
-    openModal('Dispositivo operativo', `
-      <form id="device-form">
-        <label>Nombre de este dispositivo (opcional, para identificarlo)
-          <input name="nombre" value="${esc(assignment.nombre || '')}" placeholder="Ej: Teléfono Volcán 1"/>
-        </label>
-        <label>Cuadrilla asignada
-          <select name="cuadrillaId">
-            <option value="">— Sin asignar —</option>
-            ${cuadrillas.map(cq => `<option value="${cq.id}" ${assignment.cuadrillaId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
-          </select>
-          <span class="field-hint">Los lubricadores que inicien sesión en este dispositivo verán el trabajo de esta cuadrilla en "Mi Turno".</span>
-        </label>
-        <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
-      </form>
-    `);
-    $('#device-form').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const fd = Object.fromEntries(new FormData(ev.target).entries());
-      const crewAnterior = cuadrillas.find(cq => cq.id === assignment.cuadrillaId);
-      const crewNueva = cuadrillas.find(cq => cq.id === fd.cuadrillaId);
-      await saveDeviceAssignment({ cuadrillaId: fd.cuadrillaId || '', nombre: fd.nombre });
-      await logAudit('DEVICE_CREW_CHANGED', `${esc(getDeviceId())}: ${esc(crewAnterior ? crewAnterior.name : 'sin asignar')} → ${esc(crewNueva ? crewNueva.name : 'sin asignar')}`, App.currentUser.name);
-      showInAppToast('✓ Dispositivo actualizado');
-      closeModal();
       onChange();
     });
   });
@@ -11079,7 +11061,6 @@ async function renderConfig() {
           : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
       </div>
     </div>` : ''}
-    ${await devicePanelHTML()}
     <div class="panel">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
@@ -11289,7 +11270,6 @@ async function renderConfig() {
   });
 
   wireCuadrillasPanel(c, () => renderConfig());
-  wireDevicePanel(c, () => renderConfig());
   wireSimpleListPanel(c, 'locations', () => renderConfig());
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
 
@@ -11357,9 +11337,10 @@ async function renderConfig() {
   // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
   const pushTokensListEl = $('#push-tokens-list');
   if (pushTokensListEl) {
-    // Filtra las filas de DISPOSITIVO (sin userId, ver saveDeviceAssignment())
-    // — esta tabla es "Usuario/Rol", nunca tuvo sentido mostrarlas aquí
-    // (tienen su propio panel en Configuración → Cuadrillas/Dispositivo).
+    // Filtra cualquier fila histórica sin userId (del viejo esquema de
+    // dispositivo->cuadrilla, ya eliminado — corrección arquitectónica
+    // 2026-10-02) — esta tabla es "Usuario/Rol", nunca tuvo sentido
+    // mostrar ahí filas sin una persona real detrás.
     const pushTokens = (await DB.allActive('push_tokens')).filter(t => t.userId);
     pushTokensListEl.innerHTML = pushTokens.length ? `
       <table class="data-table">

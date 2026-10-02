@@ -28,14 +28,15 @@ const opScopeSource = readSource(OPERATIONAL_SCOPE_JS_PATH);
 
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'fmtDate', 'STATUS_COLOR',
-  'getDeviceId', 'getDeviceName', 'getDeviceAssignment', 'getCurrentOperationalScope',
+  'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
   'loadAssignmentContext', 'openModal', 'closeModal',
   'showEquipmentQrInfo',
 ];
 const STATUS_NAMES = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const SHIFTS_NAMES = ['currentShiftId'];
 const OP_SCOPE_NAMES = [
-  'ASSIGNMENT_STATUS', 'resolveOperationalScope', 'computeOccurrenceKey', 'toISODateUTCLocal',
+  'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveOperationalScope',
+  'computeOccurrenceKey', 'toISODateUTCLocal',
   'findActivePendingAssignment', 'canLubricadorExecuteEquipment', 'findExistingWorkForEquipment',
 ];
 
@@ -57,7 +58,12 @@ const HOY_NOMBRE = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viern
 const HOY_ISO = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
 
 const LOCATIONS = [{ id: 'loc_volcan', name: 'Volcán', active: true }];
-const CUADRILLAS = [{ id: 'crew_volcan', name: 'Cuadrilla Volcán', locationId: 'loc_volcan', isDefault: true, active: true, createdAt: '2026-01-01' }];
+// memberUserIds siempre incluye 'u1' (corrección arquitectónica 2026-10-02
+// — la cuadrilla autoriza al USUARIO, nunca a un dispositivo): inerte para
+// los roles de jefatura (GLOBAL, ni siquiera consultan authorizedCrews),
+// real para LUBRICADOR — con 1 sola cuadrilla autorizada se autoselecciona
+// sola (CREW_SCOPED), sin necesitar el viejo parámetro `deviceCrewId`.
+const CUADRILLAS = [{ id: 'crew_volcan', name: 'Cuadrilla Volcán', locationId: 'loc_volcan', isDefault: true, active: true, createdAt: '2026-01-01', memberUserIds: ['u1'] }];
 
 // eq_planned: plan "Día y turno" programado HOY, sin assignment -> PLANNED
 // eq_assigned: mismo plan, CON assignment activa para la ocurrencia de hoy -> ASSIGNED
@@ -80,19 +86,19 @@ const ASSIGNMENTS = [
   { id: 'asg1', occurrenceKey: `plan_assigned:${HOY_ISO}`, equipmentId: 'eq_assigned', assignedCrewId: 'crew_volcan', status: 'PENDING', active: true },
 ];
 
-async function bootPage(page, { role, deviceCrewId } = {}) {
+async function bootPage(page, { role } = {}) {
   // `page.setContent()` a secas deja la página en `about:blank` (origen
-  // opaco) — `localStorage` ahí lanza SecurityError en Chromium, así que
-  // `getDeviceId()` real (que usa localStorage) nunca leería el id fijo de
-  // abajo y el mock de `deviceCrewId` sería inerte en silencio (mismo patrón
-  // de fallo silencioso que el bug que este archivo prueba). Navegar a la
-  // baseURL real del webServer de Playwright da un origen real para
-  // localStorage — pero esa baseURL sirve la app REAL (index.html con
-  // <script src="app.js"> de verdad): dejarla cargar declararía de nuevo
-  // (colisión de nombres) todo lo que este archivo ya inyecta por su cuenta
-  // más abajo. Se bloquea toda request de red y se sirve un HTML vacío en su
-  // lugar — el origen queda siendo real (http://localhost:4173), pero sin
-  // que la app real llegue a ejecutarse.
+  // opaco) — `localStorage` ahí lanza SecurityError en Chromium, y
+  // getSelectedCrewId()/setSelectedCrewId() (comodidad de sesión, corrección
+  // arquitectónica 2026-10-02) lo usan — mismo motivo que antes (patrón de
+  // fallo silencioso que este archivo ya evitaba). Navegar a la baseURL real
+  // del webServer de Playwright da un origen real para localStorage — pero
+  // esa baseURL sirve la app REAL (index.html con <script src="app.js"> de
+  // verdad): dejarla cargar declararía de nuevo (colisión de nombres) todo
+  // lo que este archivo ya inyecta por su cuenta más abajo. Se bloquea toda
+  // request de red y se sirve un HTML vacío en su lugar — el origen queda
+  // siendo real (http://localhost:4173), pero sin que la app real llegue a
+  // ejecutarse.
   await page.route('**/*', route => {
     if (route.request().resourceType() === 'document') {
       route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body></body></html>' });
@@ -115,16 +121,12 @@ async function bootPage(page, { role, deviceCrewId } = {}) {
       window.openEquipmentDetail = (...args) => { window.__calls.openEquipmentDetail.push(args); };
       window.showInAppToast = () => {};
 
-      // Device id fijo para poder controlar qué cuadrilla tiene asignada este
-      // "teléfono" en cada test — usa el localStorage REAL (window.localStorage
-      // es una propiedad de solo lectura en Chromium: reasignar window.localStorage
-      // a un objeto propio falla en silencio, igual de silencioso que el bug que
-      // este archivo reproduce/corrige — por eso se usa localStorage.setItem()
-      // de verdad en vez de reemplazar el objeto completo).
+      // Comodidad de sesión (corrección arquitectónica 2026-10-02): sin
+      // ninguna selección previa, un Lubricador con 1 sola cuadrilla
+      // autorizada (ver CUADRILLAS, memberUserIds siempre incluye 'u1') se
+      // autoselecciona sola — no hace falta sembrar nada en localStorage
+      // para estos tests. Se limpia igual, por higiene entre tests.
       try { localStorage.clear(); } catch (e) {}
-      if (${JSON.stringify(!!deviceCrewId)}) {
-        try { localStorage.setItem('engrase_device_id', 'dev_test'); } catch (e) {}
-      }
 
       window.DB = {
         allActive: async (store) => ({
@@ -134,14 +136,9 @@ async function bootPage(page, { role, deviceCrewId } = {}) {
           lubrication_plans: ${JSON.stringify(PLANS)},
           cuadrillas: ${JSON.stringify(CUADRILLAS)},
           lubrication_assignments: ${JSON.stringify(ASSIGNMENTS)},
-          push_tokens: ${deviceCrewId ? `[{ id: 'dev_test', cuadrillaId: ${JSON.stringify(deviceCrewId)} }]` : '[]'},
         }[store] || []),
         get: async (store, id) => {
           if (store === 'equipment') return ${JSON.stringify(EQUIPOS)}.find(e => e.id === id) || null;
-          if (store === 'push_tokens') {
-            const tokens = ${deviceCrewId ? `[{ id: 'dev_test', cuadrillaId: ${JSON.stringify(deviceCrewId)} }]` : '[]'};
-            return tokens.find(t => t.id === id) || null;
-          }
           return null;
         },
       };
@@ -179,7 +176,7 @@ test.describe('A/B/C — jefaturas, QR "Registrar engrase ahora" (bug del target
 
 test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)', () => {
   test('D — Lubricador CON dispositivo asignado a la cuadrilla del equipo: puede registrar (botón visible)', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     await abrirQr(page, 'eq_planned'); // loc_volcan, misma ubicación que la cuadrilla del dispositivo
     await expect(page.locator('#qr-info-register')).toBeVisible();
     await page.locator('#qr-info-register').click();
@@ -188,7 +185,7 @@ test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)'
   });
 
   test('E — Lubricador FUERA de su cuadrilla/ubicación y sin assignment: bloqueado, sin botón de registrar', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     // eq_out_of_scope: otra ubicación (loc_taller) y SIN ninguna assignment
     // hacia crew_volcan -> canLubricadorExecuteEquipment() debe bloquear.
     await abrirQr(page, 'eq_out_of_scope');
@@ -202,21 +199,21 @@ test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)'
 
 test.describe('F/G/H — prioridad ASSIGNED > PLANNED > OUT_OF_PLAN vía QR (Lubricador, mismo dispositivo)', () => {
   test('F — equipo con assignment activa hacia mi cuadrilla: se ofrece "Registrar engrase ahora" (abre ASSIGNED), NUNCA "fuera de plan"', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     await abrirQr(page, 'eq_assigned'); // fuera de ubicación normal, pero con assignment a crew_volcan
     await expect(page.locator('#qr-info-register')).toBeVisible();
     await expect(page.locator('#qr-info-out-of-plan')).toHaveCount(0);
   });
 
   test('G — equipo con occurrence normal pendiente hoy (dentro de mi ubicación): "Registrar engrase ahora", nunca "fuera de plan"', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     await abrirQr(page, 'eq_planned');
     await expect(page.locator('#qr-info-register')).toBeVisible();
     await expect(page.locator('#qr-info-out-of-plan')).toHaveCount(0);
   });
 
   test('H — equipo sin ninguna ocurrencia aplicable hoy (dentro de mi ubicación): SOLO se ofrece "Registrar fuera de plan"', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     await abrirQr(page, 'eq_none'); // loc_volcan, plan programado otro día, sin assignment
     await expect(page.locator('#qr-info-out-of-plan')).toBeVisible();
     await expect(page.locator('#qr-info-register')).toHaveCount(0);
@@ -242,7 +239,7 @@ test.describe('I — cero doble registro', () => {
   }
 
   test('Lubricador: un solo click no crea dos flujos ni dos assignments distintas para la misma ocurrencia', async ({ page }) => {
-    await bootPage(page, { role: 'LUBRICADOR', deviceCrewId: 'crew_volcan' });
+    await bootPage(page, { role: 'LUBRICADOR' });
     await abrirQr(page, 'eq_assigned');
     await page.locator('#qr-info-register').click();
     const calls = await page.evaluate(() => window.__calls.startLubricadorGreaseFlow);

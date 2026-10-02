@@ -1,18 +1,44 @@
 /* ============================================================
    CONTROL DE ENGRASE - OPEN PIT — src/core/operational-scope.js
-   Rediseño operativo (dispositivos compartidos + cuadrillas + ubicaciones +
-   asignación manual de engrases) — ver docs/OPERATIONAL_SCOPE.md.
+   Rediseño operativo (cuadrillas + ubicaciones + asignación manual de
+   engrases) — ver docs/OPERATIONAL_SCOPE.md.
+
+   CORRECCIÓN ARQUITECTÓNICA 2026-10-02 (pedido explícito del usuario):
+   el scope operativo YA NO depende de ningún identificador físico de
+   dispositivo (IMEI/serial/modelo/Android ID/"dispositivo vinculado a
+   cuadrilla"). La app (mismo APK/misma Web en cualquier teléfono/tablet/PC
+   compatible) resuelve el scope SIEMPRE a partir de:
+
+     USUARIO AUTENTICADO -> ROL/PERMISOS -> CUADRILLA(S) AUTORIZADA(S) ->
+     UBICACIÓN OPERATIVA -> TURNO ACTUAL
 
    AUTORIDAD ÚNICA — nadie más repite esta lógica:
-     - Para roles de jefatura (ADMINISTRADOR/PLANIFICADOR/SUPERVISOR/VISOR):
-       vista GLOBAL, sin scope de dispositivo/cuadrilla.
-     - Para LUBRICADOR: DISPOSITIVO -> CUADRILLA -> UBICACIÓN decide qué
-       trabajo es visible/ejecutable. El turno (Día/Noche) se resuelve
-       SIEMPRE por hora real (currentShiftId(), inyectado como parámetro —
-       este módulo no lee el reloj directamente para poder probarse con
-       una hora fija), NUNCA por un campo guardado en el dispositivo.
-       App.currentUser (identidad Auth) aporta SOLO id/rol — nunca
-       location/cuadrilla, ver §AC del pedido de cierre.
+     - ADMINISTRADOR/PLANIFICADOR: vista GLOBAL (alcance según permisos
+       existentes, sin scope de cuadrilla).
+     - SUPERVISOR/LUBRICADOR: la cuadrilla (o cuadrillas) para las que el
+       USUARIO está autorizado (`cuadrillas[].memberUserIds`, ver
+       getAuthorizedCrews()) decide qué trabajo es visible/ejecutable —
+       nunca el dispositivo. Con 1 sola cuadrilla autorizada se selecciona
+       sola; con 2+ hace falta `selectedCrewId` (la selección de ESTA
+       sesión, que el caller guarda localmente solo como comodidad — ver
+       getSelectedCrewId()/setSelectedCrewId() en app.js — NUNCA como
+       fuente de autorización: si `selectedCrewId` no está en la lista
+       autorizada del usuario, se ignora).
+     - El turno (Día/Noche) se resuelve SIEMPRE por hora real
+       (currentShiftId(), inyectado como parámetro — este módulo no lee el
+       reloj directamente para poder probarse con una hora fija), NUNCA por
+       un campo guardado en ningún lado.
+     - App.currentUser (identidad Auth) aporta SOLO id/rol — nunca
+       location/cuadrilla fijos, ver §AC del pedido de cierre original;
+       la cuadrilla de un usuario SIEMPRE se resuelve en vivo contra
+       `cuadrillas[].memberUserIds`, nunca se guarda en el perfil.
+     - VISOR se mantiene GLOBAL (rol de solo-lectura/supervisión general,
+       el pedido de corrección no lo menciona entre los roles a
+       restringir por cuadrilla).
+
+   Un usuario autorizado puede iniciar sesión en CUALQUIER dispositivo
+   nuevo y trabajar normalmente: la autorización vive en `cuadrillas`
+   (sincronizado), nunca en `localStorage` de un teléfono en particular.
 
    Todo puro: recibe los datos ya cargados (equipos, planes, cuadrillas,
    assignments, etc.) como parámetros explícitos, nunca toca DB/red/DOM —
@@ -27,16 +53,21 @@ const ROLES_CAN_MANAGE_ASSIGNMENTS = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVIS
 const ROLES_CAN_MOVE_EQUIPMENT = ['ADMINISTRADOR', 'PLANIFICADOR'];
 // Roles que pueden mover una CUADRILLA de ubicación (§Z).
 const ROLES_CAN_MOVE_CREW = ['ADMINISTRADOR', 'PLANIFICADOR'];
-// Roles que pueden cambiar la cuadrilla asignada a UN DISPOSITIVO (§F).
-const ROLES_CAN_CONFIGURE_DEVICE = ['ADMINISTRADOR', 'PLANIFICADOR'];
+// Roles que pueden editar qué usuarios están autorizados en una cuadrilla
+// (reemplaza al viejo ROLES_CAN_CONFIGURE_DEVICE — ya no se configura un
+// dispositivo, se autorizan personas).
+const ROLES_CAN_MANAGE_CREW_MEMBERSHIP = ['ADMINISTRADOR', 'PLANIFICADOR'];
 // Roles que pueden registrar un engrase FUERA DE PLAN (lote "engrase fuera
 // de plan" §2/§28) — VISOR nunca registra nada, igual que en el resto de la app.
 const ROLES_CAN_REGISTER_OUT_OF_PLAN = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'LUBRICADOR'];
+// Roles cuyo scope operativo depende de la(s) cuadrilla(s) autorizada(s)
+// del usuario — el resto (ADMINISTRADOR/PLANIFICADOR/VISOR) es GLOBAL.
+const ROLES_CREW_SCOPED = ['LUBRICADOR', 'SUPERVISOR'];
 
 function canManageAssignments(role) { return ROLES_CAN_MANAGE_ASSIGNMENTS.includes(role); }
 function canMoveEquipment(role) { return ROLES_CAN_MOVE_EQUIPMENT.includes(role); }
 function canMoveCrew(role) { return ROLES_CAN_MOVE_CREW.includes(role); }
-function canConfigureDevice(role) { return ROLES_CAN_CONFIGURE_DEVICE.includes(role); }
+function canManageCrewMembership(role) { return ROLES_CAN_MANAGE_CREW_MEMBERSHIP.includes(role); }
 function canRegisterOutOfPlan(role) { return ROLES_CAN_REGISTER_OUT_OF_PLAN.includes(role); }
 
 /* ============================================================
@@ -184,40 +215,60 @@ function resolveDefaultCrewForLocation(cuadrillas, locationId) {
 }
 
 /* ============================================================
+   CUADRILLAS AUTORIZADAS DE UN USUARIO (corrección arquitectónica
+   2026-10-02) — reemplaza la asignación cuadrilla<->dispositivo.
+   ============================================================
+   `cuadrillas[].memberUserIds` (array de app_user_id, opcional — filas
+   viejas sin este campo se tratan como `[]`, nunca como "todos
+   autorizados") es la ÚNICA fuente de autorización. Un usuario puede
+   estar en 0, 1 o varias cuadrillas a la vez; cuáles exactamente lo
+   decide quien administra Cuadrillas (ADMIN/PLANIFICADOR), nunca el
+   dispositivo desde el que se conecta. */
+function getAuthorizedCrews(cuadrillas, userId) {
+  if (!userId) return [];
+  return (cuadrillas || []).filter(c => c.active !== false && (c.memberUserIds || []).includes(userId));
+}
+
+/* ============================================================
    SCOPE OPERATIVO (§I) — AUTORIDAD CENTRAL, se llama UNA vez por pantalla
    ============================================================
    `currentShiftId` se recibe ya calculado (currentShiftId() de
-   src/core/shifts.js) — nunca se guarda ni se lee de deviceAssignment
-   (§H: el turno NUNCA es una propiedad fija del dispositivo). */
-function resolveOperationalScope({ currentUser, deviceAssignment, cuadrillas, shiftId }) {
+   src/core/shifts.js) — nunca se guarda ni se lee de ningún identificador
+   de dispositivo (el turno NUNCA es una propiedad fija del hardware).
+   `selectedCrewId` es la selección de ESTA sesión (comodidad local del
+   caller, ver getSelectedCrewId() en app.js) — SOLO se usa si de verdad
+   está en la lista de cuadrillas autorizadas del usuario; si no, se
+   ignora en silencio (nunca eleva permisos que el usuario no tiene). */
+function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId }) {
   if (!currentUser) return { kind: 'NONE' };
-  if (currentUser.role !== 'LUBRICADOR') {
+  if (!ROLES_CREW_SCOPED.includes(currentUser.role)) {
     return {
       kind: 'GLOBAL', userId: currentUser.id, role: currentUser.role,
-      shiftId: shiftId || null, deviceId: null, crewId: null, crewLocationId: null
+      shiftId: shiftId || null, crewId: null, crewLocationId: null, authorizedCrews: []
     };
   }
-  const deviceId = deviceAssignment ? deviceAssignment.deviceId : null;
-  const crewId = deviceAssignment && deviceAssignment.cuadrillaId ? deviceAssignment.cuadrillaId : null;
-  if (!crewId) {
-    return { kind: 'DEVICE_UNASSIGNED', userId: currentUser.id, role: currentUser.role, shiftId, deviceId, crewId: null, crewLocationId: null };
+  const authorizedCrews = getAuthorizedCrews(cuadrillas, currentUser.id);
+  if (!authorizedCrews.length) {
+    return { kind: 'NO_CREW_ASSIGNED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: null, crewLocationId: null, authorizedCrews };
   }
-  const crew = (cuadrillas || []).find(c => c.id === crewId && c.active !== false);
-  if (!crew) {
-    // La cuadrilla asignada a este dispositivo ya no existe/está inactiva
-    // — mismo tratamiento que "sin cuadrilla" (§G), nunca un fallback global.
-    return { kind: 'DEVICE_UNASSIGNED', userId: currentUser.id, role: currentUser.role, shiftId, deviceId, crewId: null, crewLocationId: null };
+  if (authorizedCrews.length === 1) {
+    const crew = authorizedCrews[0];
+    return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: crew.id, crewLocationId: crew.locationId || null, authorizedCrews };
   }
-  return {
-    kind: 'DEVICE_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, deviceId,
-    crewId: crew.id, crewLocationId: crew.locationId || null
-  };
+  // 2+ cuadrillas autorizadas: hace falta una selección de sesión válida
+  // (una de las YA autorizadas) — nunca se adivina ni se toma la primera.
+  const selected = selectedCrewId ? authorizedCrews.find(c => c.id === selectedCrewId) : null;
+  if (!selected) {
+    return { kind: 'NEEDS_CREW_SELECTION', userId: currentUser.id, role: currentUser.role, shiftId, crewId: null, crewLocationId: null, authorizedCrews };
+  }
+  return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: selected.id, crewLocationId: selected.locationId || null, authorizedCrews };
 }
 
 /* ============================================================
    CLASIFICACIÓN DE TRABAJO VISIBLE/EJECUTABLE (§J, §K, §L, §AH)
    ============================================================
-   Para un scope DEVICE_SCOPED (Lubricador con dispositivo configurado):
+   Para un scope CREW_SCOPED (Lubricador/Supervisor con cuadrilla de
+   sesión resuelta):
      - "normal": equipos cuya locationId coincide con crewLocationId, Y
        cuya cuadrilla-por-defecto de esa ubicación es la de este scope
        (así, con 2+ cuadrillas en la misma ubicación, el trabajo normal
@@ -236,7 +287,7 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
   const porOccurrence = new Map(pendientes.map(a => [a.occurrenceKey, a]));
 
   if (!scope || scope.kind === 'NONE') return { normal: [], assigned: [] };
-  if (scope.kind !== 'DEVICE_SCOPED') {
+  if (scope.kind !== 'CREW_SCOPED') {
     // Jefaturas: vista global — devuelve todo, sin filtrar (la pantalla
     // decide qué mostrar; este módulo solo evita doble conteo para
     // Lubricador, que es donde "ejecutar" importa de verdad).
@@ -550,7 +601,7 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
    QR — permiso de ejecución fuera de scope (§AO)
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
-  if (!scope || scope.kind !== 'DEVICE_SCOPED') return true; // jefaturas: sin restricción aquí
+  if (!scope || scope.kind !== 'CREW_SCOPED') return true; // jefaturas: sin restricción aquí
   if (equipo.locationId === scope.crewLocationId) return true; // dentro de su ubicación normal
   const pendientes = (assignments || []).filter(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING);
   return pendientes.some(a => a.equipmentId === equipo.id && a.assignedCrewId === scope.crewId);
