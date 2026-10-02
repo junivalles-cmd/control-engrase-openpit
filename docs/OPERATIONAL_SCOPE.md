@@ -62,6 +62,37 @@ Módulo puro (sin DOM/DB/red), mismo patrón que `weekly-matrix.js` /
   dentro de su ubicación normal siempre puede, fuera de ella solo si hay una
   asignación PENDING hacia su cuadrilla.
 
+## Regla de arquitectura Android — UN SOLO APK (confirmado 2026-10-02)
+
+Pedido explícito del usuario: debe existir un único APK de Control de
+Engrase Open Pit para todos los teléfonos/tablets compatibles — nunca uno
+por ubicación, cuadrilla, turno, usuario ni tipo de dispositivo. Verificado
+que el diseño de arriba YA cumple esto por construcción, sin necesitar
+ningún cambio:
+
+- **`CONTROL_ENGRASE_APP_ANDROID/android/app/build.gradle`**: un solo
+  `applicationId` (`com.conequisa.engraseopenpit`), sin
+  `productFlavors`/`flavorDimensions` — Gradle solo distingue
+  debug/release, nunca una variante por ubicación/cuadrilla/turno.
+- **Usuario**: identidad + rol vienen 100% de Auth (`app_profiles`,
+  `currentUserFromAuthProfile()`) — nunca una ubicación/cuadrilla fija por
+  persona, nunca hardcodeada en el build.
+- **Dispositivo**: `getDeviceId()` genera un ID aleatorio en
+  `localStorage` la primera vez que arranca ese teléfono — no viene del
+  APK, no se hardcodea, sobrevive reinstalar (`adb install -r`).
+- **Cuadrilla/ubicación del dispositivo**: `getDeviceAssignment()`/
+  `saveDeviceAssignment()` guardan y leen una fila real en `push_tokens`
+  (sincronizada), configurable desde la propia app (Configuración →
+  Dispositivos) — cambiarla es una pantalla, nunca una recompilación.
+- **Turno**: siempre `currentShiftId()` en vivo (hora real del
+  dispositivo) — nunca guardado, nunca fijo por build.
+- **Conclusión**: el mismo APK, instalado en cualquier teléfono/tablet
+  Android compatible, se comporta distinto según quién inicia sesión +
+  qué dispositivo es + qué cuadrilla/ubicación tiene asignada en ese
+  momento — exactamente el modelo pedido. Un cambio de cuadrilla,
+  ubicación o usuario es una operación dentro de la app, nunca un nuevo
+  build.
+
 Tests de dominio: `tests/unit/operational-scope.test.js` (29 casos, cubren
 CASO 1/3/7/8/11/12/13 del pedido original entre otros).
 
