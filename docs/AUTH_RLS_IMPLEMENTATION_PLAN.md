@@ -383,12 +383,24 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
 
 ## 15. Gates de cutover (todos deben estar en PASS antes de correr la Sección "CUTOVER" del SQL draft)
 
-- [ ] Auth funciona en Web (login real, sesión persistida, logout).
-- [ ] Auth funciona en Android/Capacitor (mismo flujo, WebView).
+- [ ] Auth funciona en Web (login real, sesión persistida, logout) — **sin
+  probar todavía**: el sitio desplegado (`junivalles-cmd.github.io`) está
+  caído (404 de GitHub Pages) desde al menos 2026-10-02, verificado por
+  lectura pública (sin login). Pendiente resolver el hosting antes de
+  poder marcar esto.
+- [x] Auth funciona en Android/Capacitor (mismo flujo, WebView) — **PASS,
+  2026-10-02**, confirmado por el usuario en dispositivo real (serial
+  `99FQVGVWRW795LW4`, build del mismo día reinstalado antes de la prueba):
+  logout real (vuelve a pedir credencial completa, no Quick Unlock) y
+  cambio de usuario en el mismo dispositivo (sin mezclar datos del usuario
+  anterior) — ambos PASS.
 - [ ] Login real con las 7 cuentas reales migradas (o el subconjunto que
   corresponda tras auditar producción — ver §2) — PASS.
 - [ ] Offline: captura local sin red, con sesión previa válida — PASS.
-- [ ] Reconexión: refresca sesión, releer perfil, luego sync — PASS.
+- [x] Reconexión: refresca sesión, releer perfil, luego sync — **PASS,
+  2026-10-02**, confirmado por el usuario en el mismo dispositivo Android
+  (modo avión → reconectar, sin pedir login de nuevo, sin quedar pegado en
+  offline).
 - [ ] CAS de P0-1 (PATCH condicionado / POST ignore-duplicates) sigue
   devolviendo 0/1 fila correctamente bajo JWT real, no solo bajo anon key
   — PASS.
