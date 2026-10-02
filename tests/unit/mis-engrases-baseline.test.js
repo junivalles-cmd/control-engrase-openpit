@@ -48,7 +48,8 @@ describe('Causa raíz: navigate(App.route) es el router de ESCRITORIO, nunca deb
   });
 
   it('actualiza la pestaña activa del bottom-nav a "historial" al aterrizar en Mis Engrases', () => {
-    expect(irAMisEngrasesSrc).toContain("x.classList.toggle('active', x.dataset.route === 'historial')");
+    expect(irAMisEngrasesSrc).toContain("const active = x.dataset.route === 'historial';");
+    expect(irAMisEngrasesSrc).toContain("x.classList.toggle('active', active);");
   });
 });
 

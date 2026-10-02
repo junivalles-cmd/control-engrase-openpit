@@ -102,7 +102,7 @@ function addPhotoToField(container, dataUrl) {
   const slot = document.createElement('div');
   slot.className = 'photo-slot';
   slot.dataset.photo = dataUrl;
-  slot.innerHTML = `<img src="${dataUrl}"/><button type="button" class="photo-slot-remove" title="Quitar esta foto">✕</button>`;
+  slot.innerHTML = `<img src="${dataUrl}" alt="Foto agregada"/><button type="button" class="photo-slot-remove" title="Quitar esta foto">✕</button>`;
   slot.querySelector('.photo-slot-remove').addEventListener('click', () => {
     slot.remove();
     renderPhotoStrip(container);
@@ -233,7 +233,7 @@ async function printAllQRCodes(equipos) {
     <div class="grid">
       ${items.map(({ e, dataUrl }) => `
         <div class="label">
-          <img src="${dataUrl}"/>
+          <img src="${dataUrl}" alt="Código QR de ${esc(e.code)}"/>
           <h4>${esc(e.code)}${e.shortCode ? ' · ' + esc(e.shortCode) : ''}</h4>
           <p>${esc(e.brand)} ${esc(e.model)}</p>
         </div>`).join('')}
@@ -306,7 +306,7 @@ function openEquipmentQR(equipment) {
       <div style="text-align:center; padding:20px">
         <h2>${esc(equipment.code)}${equipment.shortCode ? ' · ' + esc(equipment.shortCode) : ''}</h2>
         <p>${esc(equipment.brand)} ${esc(equipment.model)}</p>
-        <img src="${$('#qr-canvas').toDataURL()}" style="width:260px"/>
+        <img src="${$('#qr-canvas').toDataURL()}" style="width:260px" alt="Código QR de ${esc(equipment.code)}"/>
       </div>`);
   });
 }
@@ -2580,7 +2580,9 @@ function updateShiftBadge() {
 function navigate(route) {
   App.route = route;
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
-    b.classList.toggle('active', b.dataset.route === route);
+    const active = b.dataset.route === route;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   const item = MENU.find(m => m.id === route);
   // Estos dos elementos SOLO existen en la interfaz de escritorio. La del lubricador no
@@ -2639,7 +2641,7 @@ function bootLubricador() {
       <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
       <main id="app-content" class="lub-content"></main>
       <nav class="lub-bottom-nav">
-        <button class="lub-nav-item active" data-route="turno"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
+        <button class="lub-nav-item active" data-route="turno" aria-current="page"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
         <button class="lub-nav-item" data-route="anomalias"><span class="menu-icon icon-alert"></span><span>Anomalías</span></button>
         <button class="lub-nav-item" data-route="historial"><span class="menu-icon icon-history"></span><span>Mis Engrases</span></button>
         <button class="lub-nav-item" data-route="ayuda"><span class="menu-icon icon-help"></span><span>Ayuda</span></button>
@@ -2663,8 +2665,9 @@ function bootLubricador() {
     // true para siempre y el sync dejaba de refrescar Anomalías/Mis Engrases/
     // Ayuda/Mi Turno hasta recargar la app entera.
     App.lubricadorGreaseFlowActive = false;
-    $$('.lub-nav-item').forEach(x => x.classList.remove('active'));
+    $$('.lub-nav-item').forEach(x => { x.classList.remove('active'); x.removeAttribute('aria-current'); });
     b.classList.add('active');
+    b.setAttribute('aria-current', 'page');
     App.route = b.dataset.route;
     if (b.dataset.route === 'turno') renderLubricadorHome();
     else if (b.dataset.route === 'anomalias') renderAnomalias();
@@ -6064,7 +6067,11 @@ function irAMisEngrasesTrasRegistrar() {
   App.lubricadorGreaseFlowActive = false; // el flujo terminó de verdad: llegó a Mis Engrases
   if (document.querySelector('.lub-shell')) {
     App.route = 'historial';
-    $$('.lub-nav-item').forEach(x => x.classList.toggle('active', x.dataset.route === 'historial'));
+    $$('.lub-nav-item').forEach(x => {
+      const active = x.dataset.route === 'historial';
+      x.classList.toggle('active', active);
+      if (active) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current');
+    });
     renderLubricadorHistorial();
   } else {
     navigate(App.route);
@@ -6237,7 +6244,7 @@ async function startGreaseFlow(equipmentId, target, options) {
             ${points.length ? points.map(p => `
               <div class="checklist-item" data-point="${p.id}">
                 <label class="check-row">
-                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}"/>` : ''}
+                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}" alt="Foto de ${esc(p.point)}"/>` : ''}
                   <input type="checkbox" class="chk-done" checked/>
                   <span class="check-row-text">${esc(p.point)}</span>
                   <span class="check-row-mark">✓</span>
@@ -8048,10 +8055,10 @@ async function renderReportes() {
     <div class="panel">
       <div class="panel-head"><h3>Consumo de grasa</h3></div>
       <div id="rep-consumo-stats"></div>
-      <div class="rep-tabs" id="rep-consumo-tabs">
-        <button type="button" class="rep-tab active" data-tab="equipo">Por equipo</button>
-        <button type="button" class="rep-tab" data-tab="familia">Por familia</button>
-        <button type="button" class="rep-tab" data-tab="lubricante">Por lubricante</button>
+      <div class="rep-tabs" id="rep-consumo-tabs" role="tablist">
+        <button type="button" class="rep-tab active" data-tab="equipo" role="tab" aria-selected="true">Por equipo</button>
+        <button type="button" class="rep-tab" data-tab="familia" role="tab" aria-selected="false">Por familia</button>
+        <button type="button" class="rep-tab" data-tab="lubricante" role="tab" aria-selected="false">Por lubricante</button>
       </div>
       <div class="chart-box rep-chart-consumo-box" id="chart-consumo-box"></div>
     </div>
@@ -8446,7 +8453,7 @@ async function renderReportes() {
 
   function dibujarConsumoTab(tab) {
     consumoTabActual = tab;
-    $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    $$('.rep-tab', $('#rep-consumo-tabs')).forEach(b => { b.classList.toggle('active', b.dataset.tab === tab); b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'); });
     destroyChart('consumo');
     const box = $('#chart-consumo-box');
     const entries = (consumoDatasets && consumoDatasets[tab]) || [];
@@ -8705,7 +8712,7 @@ async function renderReportes() {
       const srcs = await Promise.all(tanda.map(p => resolveEvidenceSrc(p.photo)));
       const html = tanda.map((p, i) => `
         <div class="photo-report-item">
-          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}"${evidenceValueAttr(p.photo)}/>
+          <img src="${srcs[i]}" class="photo-thumb-lg" loading="lazy" data-full="${srcs[i]}" data-caption="${esc(p.eq)} · ${esc(p.type)} · ${fmtDate(p.date)}" alt="Foto de ${esc(p.eq)} · ${esc(p.type)}"${evidenceValueAttr(p.photo)}/>
           <div class="photo-report-caption"><b>${esc(p.eq)}</b> · ${esc(p.type)}<br/>${fmtDate(p.date)} · ${esc(p.by)}</div>
         </div>`).join('');
 
@@ -9330,7 +9337,7 @@ function wireEvidenceImgFallbackOnce() {
 }
 
 function openPhotoLightbox(src, caption) {
-  openModal(caption || 'Fotografía', `<img src="${src}" style="width:100%; border-radius:8px; display:block"/>`);
+  openModal(caption || 'Fotografía', `<img src="${src}" style="width:100%; border-radius:8px; display:block" alt="${esc(caption || 'Fotografía')}"/>`);
 }
 
 function photoThumbHTML(src, caption, rawValue) {

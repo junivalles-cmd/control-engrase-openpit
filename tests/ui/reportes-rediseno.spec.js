@@ -88,10 +88,10 @@ function reportesFixture() {
         <div class="panel">
           <div class="panel-head"><h3>Consumo de grasa</h3></div>
           <div id="rep-consumo-stats"></div>
-          <div class="rep-tabs" id="rep-consumo-tabs">
-            <button type="button" class="rep-tab active" data-tab="equipo">Por equipo</button>
-            <button type="button" class="rep-tab" data-tab="familia">Por familia</button>
-            <button type="button" class="rep-tab" data-tab="lubricante">Por lubricante</button>
+          <div class="rep-tabs" id="rep-consumo-tabs" role="tablist">
+            <button type="button" class="rep-tab active" data-tab="equipo" role="tab" aria-selected="true">Por equipo</button>
+            <button type="button" class="rep-tab" data-tab="familia" role="tab" aria-selected="false">Por familia</button>
+            <button type="button" class="rep-tab" data-tab="lubricante" role="tab" aria-selected="false">Por lubricante</button>
           </div>
           <div class="chart-box rep-chart-consumo-box" id="chart-consumo-box"><canvas></canvas></div>
         </div>
