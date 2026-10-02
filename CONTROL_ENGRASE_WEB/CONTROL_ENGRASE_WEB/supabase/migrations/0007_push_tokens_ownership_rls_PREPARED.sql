@@ -35,6 +35,13 @@
 --   - Cualquier otro store (no push_tokens): sin cambio, mismo
 --     comportamiento exacto que 0002 — la condición nueva es un no-op.
 --
+-- Excepción ADMINISTRADOR: un ADMINISTRADOR activo puede escribir la fila
+-- de PERSONA de cualquier otro (necesario para la pantalla "editar
+-- notificaciones de otra persona" en Configuración → Usuarios, que ya
+-- escribe push_tokens igual que el autoservicio de cada quien, solo que
+-- apuntando a un userId ajeno) — mismo criterio de override que ya usan
+-- las policies de app_profiles en 0002 (admin edita otros).
+--
 -- Qué NO hace este archivo (a propósito, fuera de alcance):
 --   - No toca SELECT — leer el listado de dispositivos de otra persona ya
 --     es necesario hoy (panel de Dispositivos de Configuración, solo
@@ -64,6 +71,7 @@ create policy "engrase_sync: crear según matriz"
       or engrase_sync.payload->>'userId' = (
         select app_user_id from app_profiles where auth_user_id = auth.uid()
       )
+      or (current_app_role() = 'ADMINISTRADOR' and current_app_active())
     )
   );
 
@@ -84,6 +92,7 @@ create policy "engrase_sync: actualizar según matriz"
       or engrase_sync.payload->>'userId' = (
         select app_user_id from app_profiles where auth_user_id = auth.uid()
       )
+      or (current_app_role() = 'ADMINISTRADOR' and current_app_active())
     )
   )
   with check (
@@ -103,6 +112,7 @@ create policy "engrase_sync: actualizar según matriz"
       or engrase_sync.payload->>'userId' = (
         select app_user_id from app_profiles where auth_user_id = auth.uid()
       )
+      or (current_app_role() = 'ADMINISTRADOR' and current_app_active())
     )
   );
 

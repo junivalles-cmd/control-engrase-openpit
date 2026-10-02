@@ -907,19 +907,82 @@ async function refreshPushTokenDeviceScope() {
 // restricción de rol aquí, esa regla vive en notification-routing.js).
 // Actualiza TODAS las filas push_tokens de la persona (puede tener una por
 // plataforma: android Y web) — nunca solo la primera que encuentre.
-async function saveNotificationPreferences({ notificationShift, notificationAvailability, receiveAllShifts }) {
-  if (!App.currentUser) throw new Error('No hay sesión activa.');
-  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
-  if (!propios.length) throw new Error('Todavía no activaste las notificaciones push en este dispositivo — no hay nada que configurar.');
-  for (const tok of propios) {
+async function applyNotificationPreferencesToRows(rows, { notificationShift, notificationAvailability, receiveAllShifts }, stampedBy) {
+  for (const tok of rows) {
     await DB.put('push_tokens', stamp({
       ...tok,
       notificationShift: notificationShift || tok.notificationShift || 'BOTH',
       notificationAvailability: notificationAvailability || tok.notificationAvailability || 'AVAILABLE',
       receiveAllShifts: receiveAllShifts !== undefined ? !!receiveAllShifts : !!tok.receiveAllShifts
-    }, App.currentUser.name));
+    }, stampedBy));
   }
   Sync.fullSync();
+}
+
+async function saveNotificationPreferences(prefs) {
+  if (!App.currentUser) throw new Error('No hay sesión activa.');
+  const propios = (await DB.allActive('push_tokens')).filter(t => t.userId === App.currentUser.id);
+  if (!propios.length) throw new Error('Todavía no activaste las notificaciones push en este dispositivo — no hay nada que configurar.');
+  await applyNotificationPreferencesToRows(propios, prefs, App.currentUser.name);
+}
+
+// Un ADMINISTRADOR ajusta las preferencias de OTRA persona (Configuración →
+// Notificaciones push → "Editar" en la lista de dispositivos) — mismo
+// mecanismo de escritura que el autoservicio de arriba, apuntando a las
+// filas de la persona elegida en vez de App.currentUser. Nunca toca una
+// fila de DISPOSITIVO (sin userId, ver saveDeviceAssignment()) — solo las
+// filas de PERSONA del userId recibido.
+async function saveNotificationPreferencesForUser(targetUserId, prefs) {
+  if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') throw new Error('Solo un administrador puede editar las notificaciones de otra persona.');
+  const ajenos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
+  if (!ajenos.length) throw new Error('Esa persona todavía no activó las notificaciones push en ningún dispositivo.');
+  await applyNotificationPreferencesToRows(ajenos, prefs, App.currentUser.name);
+}
+
+// Modal de edición — mismos 3 campos que el autoservicio "Mis
+// notificaciones" (renderConfig()), prellenados con la primera fila activa
+// de esa persona (misma convención que usa el propio autoservicio: las
+// preferencias son iguales en todas sus plataformas).
+async function openEditUserNotificationPrefsModal(targetUserId, targetUserName) {
+  const suyos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
+  const actual = suyos[0] || {};
+  openModal(`Notificaciones de ${esc(targetUserName)}`, `
+    <form id="edit-user-notif-form" class="form-grid">
+      <label>Turno en el que recibe avisos
+        <select name="notificationShift">
+          <option value="BOTH" ${actual.notificationShift === 'BOTH' || !actual.notificationShift ? 'selected' : ''}>Ambos turnos</option>
+          <option value="DAY" ${actual.notificationShift === 'DAY' ? 'selected' : ''}>Solo Turno Día</option>
+          <option value="NIGHT" ${actual.notificationShift === 'NIGHT' ? 'selected' : ''}>Solo Turno Noche</option>
+        </select>
+      </label>
+      <label>Disponibilidad
+        <select name="notificationAvailability">
+          <option value="AVAILABLE" ${actual.notificationAvailability !== 'RESTING' ? 'selected' : ''}>Disponible</option>
+          <option value="RESTING" ${actual.notificationAvailability === 'RESTING' ? 'selected' : ''}>De descanso (no recibir avisos operativos)</option>
+        </select>
+      </label>
+      <label class="retro-toggle span-2">
+        <input type="checkbox" name="receiveAllShifts" ${actual.receiveAllShifts ? 'checked' : ''}/>
+        <span>Recibir alertas de todos los turnos (ignora el filtro de turno para esta persona)</span>
+      </label>
+      <div class="modal-actions span-2">
+        <button type="submit" class="btn btn-accent">Guardar</button>
+      </div>
+    </form>`);
+  $('#edit-user-notif-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    try {
+      await saveNotificationPreferencesForUser(targetUserId, {
+        notificationShift: fd.notificationShift,
+        notificationAvailability: fd.notificationAvailability,
+        receiveAllShifts: fd.receiveAllShifts === 'on'
+      });
+      closeModal();
+      showInAppToast(`✓ Notificaciones de ${targetUserName} guardadas`);
+      renderConfig();
+    } catch (e) { alert(e.message || 'No se pudo guardar.'); }
+  });
 }
 
 // Contexto de elegibilidad de QUIEN tiene sesión en ESTE dispositivo ahora
@@ -11251,13 +11314,19 @@ async function renderConfig() {
   // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
   const pushTokensListEl = $('#push-tokens-list');
   if (pushTokensListEl) {
-    const pushTokens = (await DB.allActive('push_tokens'));
+    // Filtra las filas de DISPOSITIVO (sin userId, ver saveDeviceAssignment())
+    // — esta tabla es "Usuario/Rol", nunca tuvo sentido mostrarlas aquí
+    // (tienen su propio panel en Configuración → Cuadrillas/Dispositivo).
+    const pushTokens = (await DB.allActive('push_tokens')).filter(t => t.userId);
     pushTokensListEl.innerHTML = pushTokens.length ? `
       <table class="data-table">
-        <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th></tr></thead>
-        <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th><th></th></tr></thead>
+        <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td><td><button type="button" class="btn btn-sm" data-edit-notif-user="${esc(t.userId)}" data-edit-notif-name="${esc(t.userName)}">Editar</button></td></tr>`).join('')}</tbody>
       </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
     makeTablesResponsive($('#push-tokens-list'));
+    $$('[data-edit-notif-user]', pushTokensListEl).forEach(btn => {
+      btn.addEventListener('click', () => openEditUserNotificationPrefsModal(btn.dataset.editNotifUser, btn.dataset.editNotifName));
+    });
   }
   // UI-FULL-103: navigate() ya aplica makeTablesResponsive() en la primera entrada a
   // Configuración, pero renderConfig() se vuelve a llamar directamente (sin pasar por

@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v65'; // v65: últimos 2 hallazgos de accesibilidad cerrados — .icon-btn ahora con min-width: var(--tap) (antes solo tenía min-height, quedaba ~26-34px de ancho), colores semánticos (--green/--amber/--red) del modo claro ya no heredan el valor de modo oscuro (daban ~2.2-3.9:1 de contraste sobre blanco, bajo WCAG) y Chart.js (Reportes → Tendencia/Consumo, animación en <canvas>, fuera del alcance de CSS) ahora respeta prefers-reduced-motion. Nada tocó producción/Supabase.
+const CACHE = 'engrase-openpit-v66'; // v66: Configuración → Notificaciones push: un ADMINISTRADOR ya puede editar las preferencias (turno/disponibilidad/recibir todos los turnos) de OTRA persona desde la tabla de dispositivos ("Editar"), antes autoservicio únicamente. La tabla ahora filtra las filas de dispositivo (sin userId) — solo lista personas. Nada tocó producción/Supabase.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
