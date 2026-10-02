@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v64'; // v64: 3 hallazgos de la auditoría de accesibilidad (parte 12) cerrados — role="tab"+aria-selected en .rep-tab (Reportes → Consumo de grasa, igual que .hist-tab), aria-current="page" en el ítem de navegación activo (sidebar/bottom-nav de escritorio y bottom-nav del Lubricador), y alt real en 6 <img> que no tenían (fotos de puntos de engrase, QR de equipo, galería de Reportes, visor de foto a pantalla completa). Nada tocó producción/Supabase.
+const CACHE = 'engrase-openpit-v65'; // v65: últimos 2 hallazgos de accesibilidad cerrados — .icon-btn ahora con min-width: var(--tap) (antes solo tenía min-height, quedaba ~26-34px de ancho), colores semánticos (--green/--amber/--red) del modo claro ya no heredan el valor de modo oscuro (daban ~2.2-3.9:1 de contraste sobre blanco, bajo WCAG) y Chart.js (Reportes → Tendencia/Consumo, animación en <canvas>, fuera del alcance de CSS) ahora respeta prefers-reduced-motion. Nada tocó producción/Supabase.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

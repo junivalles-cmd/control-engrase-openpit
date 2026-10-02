@@ -1442,6 +1442,13 @@ function esc(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+// El media query CSS prefers-reduced-motion (styles.css) ya apaga toda
+// transición/animación DECLARADA EN CSS, pero Chart.js anima sus gráficos
+// (Reportes → Tendencia/Consumo) dibujando directo en <canvas>, fuera del
+// alcance de CSS — necesita apagarse desde JS.
+function prefersReducedMotion() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 /* fmt() se movió a src/core/lubrication-status.js (sigue disponible como
    global, ver docs/MODULARIZATION.md). */
@@ -8370,6 +8377,7 @@ async function renderReportes() {
       data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.10)', fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },
       options: {
         responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        ...(prefersReducedMotion() ? { animation: false } : {}),
         scales: {
           y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
           // Todos los datos siguen ahí (no se recorta ningún punto) — solo se
@@ -8466,7 +8474,7 @@ async function renderReportes() {
     charts.consumo = new Chart($('#chart-consumo'), {
       type: 'bar',
       data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: '#E8A33D' }] },
-      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, ...(prefersReducedMotion() ? { animation: false } : {}), scales: { x: { beginAtZero: true } } }
     });
   }
 

@@ -61,6 +61,15 @@
   --border: #DADCD7;
   --text: #1B1F23;
   --text-dim: #656C73;
+  /* --green/--amber/--red del modo oscuro (auditoría de accesibilidad) daban
+     ~2.2-3.9:1 de contraste sobre fondo blanco (fallan el mínimo 3:1 de WCAG
+     para texto/íconos) — se ajustaron oscureciéndolos hasta pasar 4.5:1,
+     verificado con la fórmula de luminancia relativa de WCAG. El modo
+     contraste (sol directo, más abajo) ya tenía su propio ajuste; este es
+     el mismo criterio para el modo claro normal. */
+  --green: #1E7A34;
+  --amber: #8A5A00;
+  --red: #C0262B;
 }
 [data-mode="light"] .lub-eq-btn,
 [data-mode="light"] .eq-card,
@@ -396,7 +405,11 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .lub-heading { font-size: 19px; }
 }
 
-.icon-btn { background: none; border: none; color: var(--text); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+/* min-width (auditoría de accesibilidad): a diferencia de .btn/.menu-item/etc,
+   .icon-btn puede quedar solo-ícono sin texto al lado — su ancho real quedaba
+   en ~26-34px (18px de ícono + 4px/8px de padding), bajo el objetivo táctil
+   de 44px. min-height ya lo ponía la regla de "Área táctil" más abajo. */
+.icon-btn { background: none; border: none; color: var(--text); font-size: 18px; cursor: pointer; padding: 4px 8px; min-width: var(--tap); display: inline-flex; align-items: center; justify-content: center; }
 
 /* ---------------- KPI cards ----------------
    6 tarjetas KPI reales (ver kpiCard() en app.js). Progresión de columnas
