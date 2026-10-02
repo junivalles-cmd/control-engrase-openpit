@@ -437,6 +437,19 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
   junto con el punto anterior, después de 0003.
 - [ ] `anon` SELECT sobre `engrase_sync` → DENIED.
 - [ ] `anon` INSERT/UPDATE sobre `engrase_sync` → DENIED.
+
+  **Guión preparado para estos 4 gates (2026-10-02, NO ejecutado):**
+  `tools/verify-rls-matrix.mjs` — parsea la matriz REAL directo de
+  `0002_auth_profiles_rls_PREPARED.sql` (nunca una copia a mano, cero
+  riesgo de que se desactualice), prueba SELECT por rol contra stores con
+  datos reales conocidos, y opcionalmente (`--write`) INSERT/UPDATE con
+  limpieza inmediata (soft-delete) de cualquier fila de prueba. Corre
+  SOLO con JWTs reales pasados por variable de entorno — nunca
+  hardcodeados, nunca pedidos por este script a Claude. Se salta con
+  aviso cualquier rol sin cuenta real todavía (hoy: PLANIFICADOR, VISOR,
+  y no existe ninguna cuenta inactiva real para ese gate). **Correrlo
+  ANTES de 0003 da falsos positivos (ver el encabezado del archivo) — es
+  para usarse DESPUÉS, cuando 0003 esté autorizado y aplicado.**
 - [ ] Storage (`engrase-photos`) — explícitamente **fuera de alcance del
   cutover de P0-2**, se resuelve en P0-3; su estado actual (público) no
   bloquea este cutover pero queda pendiente después.
