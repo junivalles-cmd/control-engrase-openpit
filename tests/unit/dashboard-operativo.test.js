@@ -166,7 +166,11 @@ describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia
     const iFinSeccion = src.indexOf('</section>', iSecHero);
     const seccionSrc = src.slice(iSecHero, iFinSeccion);
     expect(seccionSrc).not.toContain('GREASE_VALIDATION_ENABLED_FROM'); // sin excepción propia de pantalla
-    expect(seccionSrc).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)");
+    // Clicable SIEMPRE (incluso en 0), igual que "Vencidos"/"Próximos" — el
+    // modal ya maneja su propio estado vacío ("Sin pendientes"), así que
+    // condicionar la ACCIÓN por conteo solo desactivaba la tarjeta sin razón
+    // (asimetría real encontrada y corregida: ver docs/SESSION_HANDOFF.md).
+    expect(seccionSrc).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')");
   });
 
   it('"Conflictos de validación" usa isRecordInConflict() (función central) — nunca hasValidationConflict() directo, para no contar un conflicto que Historial ya muestra como Histórico', () => {

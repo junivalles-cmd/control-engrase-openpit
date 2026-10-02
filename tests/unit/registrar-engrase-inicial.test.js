@@ -119,3 +119,50 @@ describe('YA_ENGRASADO — búsqueda automática de match antes de conciliación
     expect(startGreaseFlowSrc).toContain("$('#noexec-confirm').addEventListener('click', () => guardarNoEjecucion());");
   });
 });
+
+describe('BUG REAL encontrado y corregido — "Registrar" sin target (Dashboard/Equipos) nunca mostraba "Validar ahora/después" tras guardar', () => {
+  // Causa raíz: renderRegistrar() es ASYNC. Justo después de navigate('registrar'),
+  // #reg-flow-area TODAVÍA no existe (la pantalla anterior sigue en el DOM) — por
+  // eso ya existía un setTimeout(30ms) que esperaba y volvía a buscar el contenedor.
+  // Pero ese setTimeout declaraba su PROPIA variable local `area` (misma palabra,
+  // shadowing) — wireGreaseForm() es una función hermana, definida en el scope
+  // EXTERIOR, así que su propio `area.innerHTML = ...` (al guardar, para pintar
+  // "Validar ahora/después") seguía resolviendo la variable EXTERIOR original,
+  // nunca la reasignada dentro del setTimeout. Sin `target` esa variable exterior
+  // era `null` (capturada ANTES de que renderRegistrar() terminara de pintar) —
+  // el guardado funcionaba (toast incluido), pero `area.innerHTML = ...` reventaba
+  // sobre `null` y la pantalla se quedaba congelada en el formulario.
+  it('`area` es `let` (reasignable), nunca `const` — wireGreaseForm() necesita ver la reasignación posterior', () => {
+    expect(startGreaseFlowSrc).toContain('let area = target;');
+    expect(startGreaseFlowSrc).not.toMatch(/const area = target/);
+  });
+
+  it('el setTimeout REASIGNA la misma `area` exterior (`area = ...`), nunca la vuelve a declarar (`const area =`/`let area =` adentro, que la taparía)', () => {
+    const iTimeout = startGreaseFlowSrc.indexOf('setTimeout(() => {');
+    const iFinTimeout = startGreaseFlowSrc.indexOf('}, 30);');
+    const timeoutBody = startGreaseFlowSrc.slice(iTimeout, iFinTimeout);
+    expect(timeoutBody).toContain("area = $('#reg-flow-area');");
+    expect(timeoutBody).not.toMatch(/const area =|let area =/);
+  });
+
+  it('sin `target`, navigate(\'registrar\') se llama ANTES del setTimeout que resuelve `area` (nunca dentro de una IIFE síncrona que la deja en null)', () => {
+    const iNavigate = startGreaseFlowSrc.indexOf("navigate('registrar');");
+    const iTimeout = startGreaseFlowSrc.indexOf('setTimeout(() => {');
+    expect(iNavigate).toBeGreaterThan(-1);
+    expect(iTimeout).toBeGreaterThan(-1);
+    expect(iNavigate).toBeLessThan(iTimeout);
+  });
+
+  it('con `target` sí presente, wireGreaseForm() se llama en el mismo momento que se pinta el HTML (sin esperar ningún setTimeout)', () => {
+    const iTargetBranch = startGreaseFlowSrc.indexOf('if (target) {');
+    const iElse = startGreaseFlowSrc.indexOf('} else {', iTargetBranch);
+    const targetBranch = startGreaseFlowSrc.slice(iTargetBranch, iElse);
+    expect(targetBranch).toContain('target.innerHTML = html;');
+    expect(targetBranch).toContain('wireGreaseForm();');
+  });
+
+  it('"Validar ahora/después" sigue escribiendo sobre `area` (la misma variable, ahora reasignable) — no se cambió a qué contenedor apunta', () => {
+    expect(startGreaseFlowSrc).toContain('area.innerHTML = `<div class="panel">');
+    expect(startGreaseFlowSrc).toContain('¿Quién valida este engrase?');
+  });
+});

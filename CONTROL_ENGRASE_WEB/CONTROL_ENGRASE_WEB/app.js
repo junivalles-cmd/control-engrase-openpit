@@ -2633,7 +2633,6 @@ function boot() {
   wireQuickFind();
   navigate(allowed.includes('dashboard') ? 'dashboard' : allowed[0]);
   handleQrDeepLink();
-  setTimeout(() => revisarRecordatorioRespaldo(), 4000); // tras dejar cargar la pantalla
 }
 
 function updateShiftBadge() {
@@ -3504,10 +3503,10 @@ async function renderDashboard() {
       <h2 class="dash-section-title">Qué requiere acción</h2>
       <div class="dash-hero-grid">
         ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
-        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', null)}
+        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', 'pendientes-hoy')}
         ${dashHeroCard('Próximos', proximosSinHoy.length, proximosSinHoy.length ? 'amber' : 'neutral', 'proximos')}
         ${dashHeroCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
-        ${dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', recordsPendientesValidacion.length ? 'pendientes-validacion' : null)}
+        ${dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')}
         <div class="dash-hero-card tone-${cumplHoy.pct === null ? 'neutral' : cumplHoy.pct >= App.generalSettings.complianceTarget ? 'green' : cumplHoy.pct >= 80 ? 'amber' : 'red'}">
           <div class="dash-hero-value">${cumplHoy.pct === null ? '—' : cumplHoy.pct + '%'}</div>
           <div class="dash-hero-label">Cumplimiento hoy</div>
@@ -3658,6 +3657,29 @@ async function renderDashboard() {
     wireDashListActions($('.modal-body'));
   }
 
+  // KPI "Pendientes hoy" del Dashboard (requiere acción, ver dashHeroCard
+  // más arriba) — mismo patrón que openRealizadosHoyModal: tabla +
+  // dashListRowActionsHTML (Ver equipo/Historial/Registrar), para que la
+  // tarjeta mande directo a la acción real en vez de solo informar.
+  function openPendientesHoyModal() {
+    openModal('Pendientes hoy', `
+      <p class="dim">${pendientesHoyList.length} equipo(s) programado(s) para hoy, todavía sin registrar, según los filtros de Ubicación/Familia actuales.</p>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Familia</th><th>Modelo</th><th>Ubicación</th><th>Plan</th><th></th></tr></thead>
+        <tbody>${pendientesHoyList.map(e => `<tr>
+          <td class="mono">${esc(e.code)}</td>
+          <td>${esc((typePorId[e.typeId] || {}).name || '—')}</td>
+          <td>${esc(e.brand)} ${esc(e.model)}</td>
+          <td>${esc((locPorId[e.locationId] || {}).name || '—')}</td>
+          <td>${esc(planLabelFor(planByEquipoId[e.id]))}</td>
+          ${dashListRowActionsHTML(e.id)}
+        </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin pendientes.</td></tr>'}</tbody>
+      </table>
+    `);
+    makeTablesResponsive($('.modal-body'));
+    wireDashListActions($('.modal-body'));
+  }
+
   function openRealizadosHoyModal() {
     openModal('Engrases realizados hoy', `
       <p class="dim">${recordsHoy.length} engrase(s) hoy, según los filtros de Ubicación/Familia actuales.</p>
@@ -3770,6 +3792,8 @@ async function renderDashboard() {
         openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
       } else if (action === 'proximos') {
         openDashStatusModal('Próximos a engrase', `${proximosSinHoy.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximosSinHoy);
+      } else if (action === 'pendientes-hoy') {
+        openPendientesHoyModal();
       } else if (action === 'vencidos') {
         openDashStatusModal('Equipos vencidos', `${vencidos.length} equipo(s) vencidos, los más atrasados primero.`, vencidos);
       } else if (action === 'total-equipos') {
@@ -6373,21 +6397,38 @@ async function startGreaseFlow(equipmentId, target, options) {
       </form>
     </div>`;
 
-  const area = target || (() => { navigate('registrar'); return $('#reg-flow-area'); })();
+  // BUG REAL encontrado y corregido (ver docs/BUG_REGISTER.md): esta variable
+  // es `let`, nunca `const`, porque wireGreaseForm() la lee más adelante (al
+  // guardar, para pintar la pantalla "Validar ahora/después") desde DENTRO de
+  // un closure — necesita ver la reasignación de abajo, no un valor fijo.
+  // Sin `target` (todos los "Registrar" del Dashboard/Equipos, que SOLO pasan
+  // el equipmentId): `renderRegistrar()` es ASYNC, así que justo después de
+  // llamar a `navigate('registrar')` el DOM todavía tiene la pantalla
+  // ANTERIOR — `$('#reg-flow-area')` en ese instante síncrono siempre daba
+  // `null`. Antes, ese `null` quedaba congelado en un `const area` de este
+  // scope exterior (el `setTimeout` de abajo solo actualizaba una variable
+  // LOCAL del mismo nombre, que no es la misma que ve wireGreaseForm) — el
+  // formulario se dibujaba bien igual (vía esa variable local), pero al
+  // guardar, `area.innerHTML = ...` (dentro de wireGreaseForm) intentaba
+  // escribir sobre `null` y reventaba en silencio: el engrase SÍ quedaba
+  // guardado (ese código corre antes), pero la pantalla nunca cambiaba a
+  // "Validar ahora/después".
+  let area = target;
   if (target) {
     target.innerHTML = html;
+    wireGreaseForm();
   } else {
+    navigate('registrar');
     // Se espera un instante a que la pantalla termine de dibujarse. Si para entonces el
     // usuario ya cambió de vista, el contenedor no existe: hay que comprobarlo antes de
     // escribir, o la app se rompe justo al tocar algo mientras carga.
     setTimeout(() => {
-      const area = $('#reg-flow-area');
+      area = $('#reg-flow-area');
       if (!area) return; // el usuario se fue a otra pantalla; no hay nada que hacer
       area.innerHTML = html;
       wireGreaseForm();
     }, 30);
   }
-  if (target) wireGreaseForm();
 
   function collectDraftState() {
     const form = $('#grease-form');
@@ -10639,54 +10680,6 @@ function wireDevicePanel(container, onChange) {
 }
 
 /* ---------- Respaldo completo: exportar / restaurar todos los datos ---------- */
-/* ---------- Recordatorio de respaldo ----------
-   El respaldo depende de que alguien se acuerde de bajarlo. Esto avisa al Administrador
-   cuando pasó una semana sin hacerlo, y le ofrece descargarlo en el momento. No se
-   descarga solo: el navegador no permite bajar archivos sin que la persona lo pida. */
-const DIAS_ENTRE_RESPALDOS = 7;
-
-function ultimoRespaldo() {
-  try { return localStorage.getItem('engrase_ultimo_respaldo'); } catch (e) { return null; }
-}
-function marcarRespaldoHecho() {
-  try { localStorage.setItem('engrase_ultimo_respaldo', nowISO()); } catch (e) {}
-}
-
-async function revisarRecordatorioRespaldo() {
-  if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') return;
-  const ultimo = ultimoRespaldo();
-  const dias = ultimo ? Math.floor((Date.now() - new Date(ultimo).getTime()) / 86400000) : null;
-
-  // La primera vez no molesta enseguida: espera a que haya datos que valga la pena guardar
-  if (!ultimo) {
-    const registros = await DB.all('lubrication_records');
-    if (registros.length < 20) return;
-  } else if (dias < DIAS_ENTRE_RESPALDOS) return;
-
-  // Se pospone si ya se avisó hoy, para no repetir en cada entrada
-  const avisadoHoy = localStorage.getItem('engrase_aviso_respaldo') === new Date().toDateString();
-  if (avisadoHoy) return;
-  try { localStorage.setItem('engrase_aviso_respaldo', new Date().toDateString()); } catch (e) {}
-
-  openModal('Respaldo de seguridad', `
-    <p>${ultimo
-      ? `El último respaldo fue hace <b>${dias} día(s)</b>.`
-      : 'Todavía no se ha descargado ningún respaldo de este sistema.'}</p>
-    <p class="dim">Un respaldo es un archivo con todo: equipos, planes, engrases, anomalías y usuarios.
-    Sirve si el servidor falla o si alguien borra algo por error. Guárdalo fuera de la nube
-    (en la computadora o en una memoria USB).</p>
-    <div class="modal-actions">
-      <button class="btn" id="resp-luego">Recordármelo mañana</button>
-      <button class="btn btn-accent" id="resp-ahora">${ic("download")}Descargar ahora</button>
-    </div>
-  `);
-  $('#resp-ahora').addEventListener('click', async () => {
-    closeModal();
-    await exportFullBackup();
-  });
-  $('#resp-luego').addEventListener('click', () => closeModal());
-}
-
 async function exportFullBackup() {
   const backup = { exportedAt: nowISO(), exportedBy: App.currentUser.name, appVersion: DB_VERSION, data: {} };
   for (const store of STORES) {
@@ -10699,7 +10692,6 @@ async function exportFullBackup() {
   a.download = `respaldo_engrase_${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  marcarRespaldoHecho();
   await logAudit('RESPALDO_DESCARGADO', `${Object.values(backup.data).reduce((s, r) => s + r.length, 0)} registros`, App.currentUser.name);
   showInAppToast('✓ Respaldo descargado');
 }

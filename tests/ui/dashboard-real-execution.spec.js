@@ -47,6 +47,8 @@ const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
+  'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -70,8 +72,8 @@ async function bootPage(page, {
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
       };
       window.navigate = () => {};
-      window.startGreaseFlow = () => {};
-      window.openModal = () => {}; window.closeModal = () => {};
+      window.__startGreaseFlowCalls = [];
+      window.startGreaseFlow = (id) => window.__startGreaseFlowCalls.push(id);
       window.makeTablesResponsive = () => {};
       window.showInAppToast = () => {};
       window.DB = {
@@ -102,6 +104,9 @@ async function bootPage(page, {
       ${appSrc}
       window.currentShiftId = currentShiftId;
       window.renderDashboard = renderDashboard;
+      window.openModal = openModal; window.closeModal = closeModal;
+      window.dashListRowActionsHTML = dashListRowActionsHTML;
+      window.wireDashListActions = wireDashListActions;
     `,
   });
 }
@@ -170,4 +175,88 @@ test('FIX real (DATA-PENDING-A02, ver docs/BUG_REGISTER.md) — un equipo con la
   const lineas = await page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-line2').allTextContents();
   expect(lineas.length).toBeGreaterThan(0);
   for (const linea of lineas) expect(linea).toContain('· Botadero Norte');
+});
+
+test('tarjeta "Pendientes hoy" (categoría "Qué requiere acción") es clicable y manda a la acción real (Registrar), no solo informa', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // e1 programado HOY (Día y turno de la semana) sin registro de hoy → cae
+  // en pendientesHoyList. hoyWeekday calculado en Node con la MISMA tabla
+  // real (lubrication-status.js) para que el test valga cualquier día.
+  const WEEKDAY_NAMES_NODE = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const hoyWeekday = WEEKDAY_NAMES_NODE[new Date().getDay()];
+
+  await bootPage(page, {
+    plans: [{ id: 'plan1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }],
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  // Antes del fix: esta tarjeta no tenía data-kpi-action (null) — no era
+  // clicable, a diferencia de "Vencidos"/"Próximos" en la misma sección.
+  const card = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes hoy' }) });
+  await expect(card).toHaveClass(/kpi-clickable/);
+  await card.click();
+
+  const modal = page.locator('.modal');
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('45-77');
+  const registrarBtn = modal.locator('.dash-list-registrar');
+  await expect(registrarBtn).toBeVisible();
+
+  await registrarBtn.click();
+
+  expect(errors).toEqual([]);
+  const calls = await page.evaluate(() => window.__startGreaseFlowCalls);
+  expect(calls).toEqual(['e1']); // la acción real (Registrar engrase), no un listado de solo lectura
+  await expect(modal).toBeHidden(); // wireDashListActions cierra el modal antes de startGreaseFlow
+});
+
+test('tarjeta "Pendientes de validación" es clicable y manda a la acción real (botón Validar), verificado contra un registro real pendiente', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // Registro de HOY, sujeto a validación (posterior a GREASE_VALIDATION_
+  // ENABLED_FROM, 2026-09-27), 0 firmas activas y dentro de plazo (mismo
+  // turno en que se engrasó) → isRecordPendingValidation() real = true.
+  const turnoDeAhora = new Function('App', `${shiftsSrc}\nreturn currentShiftId();`)({ generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } });
+  const nowISO = new Date().toISOString();
+
+  await bootPage(page, {
+    records: [{ id: 'rec1', equipmentId: 'e1', date: nowISO, createdAt: nowISO, shiftId: turnoDeAhora, userName: 'Junior' }],
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  const card = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes de validación' }) });
+  await expect(card).toHaveClass(/kpi-clickable/);
+  await card.click();
+
+  const modal = page.locator('.modal');
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('45-77');
+  await expect(modal.locator('.dash-validar-btn')).toBeVisible();
+
+  expect(errors).toEqual([]);
+});
+
+test('"Pendientes hoy" y "Pendientes de validación" son clicables incluso en 0 (consistente con "Vencidos"/"Próximos", nunca se desactiva la tarjeta solo por estar vacía)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page); // flota vacía de trabajo pendiente: ambas listas dan 0
+  await page.evaluate(() => window.renderDashboard());
+
+  const pendientesHoyCard = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes hoy' }) });
+  const pendientesValidacionCard = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes de validación' }) });
+  await expect(pendientesHoyCard).toHaveClass(/kpi-clickable/);
+  await expect(pendientesValidacionCard).toHaveClass(/kpi-clickable/);
+
+  await pendientesHoyCard.click();
+  await expect(page.locator('.modal')).toContainText('Sin pendientes');
+  await page.evaluate(() => window.closeModal());
+
+  await pendientesValidacionCard.click();
+  await expect(page.locator('.modal')).toContainText('Sin pendientes');
+
+  expect(errors).toEqual([]);
 });
