@@ -87,6 +87,15 @@ async function bootPage(page, plans = [], validations = []) {
           lubrication_plans: ${JSON.stringify(plans)},
           grease_validations: ${JSON.stringify(validations)},
         }[store] || []),
+        // DATA-PENDING-A02 (docs/BUG_REGISTER.md): renderHistorial() ahora
+        // pide equipment_types/locations vía DB.all() (TODAS, no solo
+        // activas) para que una ubicación/familia desactivada no le quite
+        // el nombre a un equipo ya existente — esta fixture no tiene filas
+        // inactivas, así que el resultado es idéntico a allActive().
+        all: async (store) => ({
+          equipment_types: ${JSON.stringify(TYPES)},
+          locations: ${JSON.stringify(LOCATIONS)},
+        }[store] || []),
         get: async (store, id) => (store === 'equipment' ? ${JSON.stringify(EQUIPOS)}.find(e => e.id === id) : null),
       };
       window.computeAllStatuses = async () => [];

@@ -40,8 +40,8 @@ describe('renderDashboard() — conteo de equipos sin plan', () => {
     expect(src).toContain("'sin-plan'");
   });
 
-  it('el click en el KPI abre el modal con la lista completa (equipos, types, locations)', () => {
-    expect(src).toContain("openSinPlanModal(sinPlan, types, locations)");
+  it('el click en el KPI abre el modal con la lista completa (equipos, typesAll, locationsAll — TODAS, no solo activas, para que una ubicación/familia ya desactivada no muestre "—", ver DATA-PENDING-A02)', () => {
+    expect(src).toContain("openSinPlanModal(sinPlan, typesAll, locationsAll)");
   });
 });
 

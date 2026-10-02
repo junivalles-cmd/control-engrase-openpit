@@ -57,7 +57,10 @@ const EQUIPOS = [
   { id: 'e2', code: 'EXC-02', brand: 'Komatsu', model: 'PC200', status: 'Operativo', typeId: 't1', locationId: 'l1' },
 ];
 
-async function bootPage(page, { skips = [], records = [], assignments = [], plans = [], anomalies = [], validations = [] } = {}) {
+async function bootPage(page, {
+  skips = [], records = [], assignments = [], plans = [], anomalies = [], validations = [],
+  types = TYPES, locations = LOCATIONS, typesAll = types, locationsAll = locations,
+} = {}) {
   await page.setContent('<div id="app-content"></div>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
@@ -72,16 +75,24 @@ async function bootPage(page, { skips = [], records = [], assignments = [], plan
       window.makeTablesResponsive = () => {};
       window.showInAppToast = () => {};
       window.DB = {
+        // DB.allActive filtra a solo activas (lo que ya pasaba antes del fix
+        // de DATA-PENDING-A02); DB.all() devuelve TODAS — distinción real
+        // que renderDashboard ahora explota a propósito para equipment_types/
+        // locations (ver docs/BUG_REGISTER.md).
         allActive: async (store) => ({
           equipment: ${JSON.stringify(EQUIPOS)},
-          equipment_types: ${JSON.stringify(TYPES)},
-          locations: ${JSON.stringify(LOCATIONS)},
+          equipment_types: ${JSON.stringify(types)},
+          locations: ${JSON.stringify(locations)},
           lubrication_plans: ${JSON.stringify(plans)},
           lubrication_records: ${JSON.stringify(records)},
           anomalies: ${JSON.stringify(anomalies)},
           grease_validations: ${JSON.stringify(validations)},
           lubrication_assignments: ${JSON.stringify(assignments)},
           lubrication_skips: ${JSON.stringify(skips)},
+        }[store] || []),
+        all: async (store) => ({
+          equipment_types: ${JSON.stringify(typesAll)},
+          locations: ${JSON.stringify(locationsAll)},
         }[store] || []),
       };
       ${shiftsSrc}
@@ -132,4 +143,31 @@ test('REGRESIÓN real (ver tests/unit/dashboard-carryover.test.js) — con un ca
 
   expect(errors).toEqual([]); // el bug real de TDZ reventaba la pantalla ENTERA exactamente en este escenario
   await expect(page.locator('#dash-pendientes-anterior-panel')).toContainText('45-77');
+});
+
+test('FIX real (DATA-PENDING-A02, ver docs/BUG_REGISTER.md) — un equipo con la ubicación ya desactivada sigue mostrando su nombre real en "Mayor tiempo sin engrasar", nunca "—"', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // "Botadero Norte" se desactivó DESPUÉS de que e1/e2 se la asignaran — el
+  // equipo nunca cambió su propio locationId (el soft-delete de una
+  // ubicación, por diseño, "no modifica" los equipos que ya la tenían
+  // asignada, ver confirm() de wireSimpleListPanel/.sl-remove en app.js).
+  // `locations` (activas, alimenta el <select> de filtro) queda vacía a
+  // propósito — el caso más estricto — mientras `locationsAll` (DB.all(),
+  // lo que el fix ahora usa para el NOMBRE en pantalla) sí la trae.
+  await bootPage(page, {
+    locations: [], locationsAll: [{ id: 'l1', name: 'Botadero Norte', active: false }],
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  expect(errors).toEqual([]);
+  // Línea "marca modelo · ubicación" (dash-exc-line2) — se apunta a esa
+  // línea en particular (no al panel entero) porque "días sin engrasar" SÍ
+  // muestra "—" legítimamente cuando el equipo nunca tiene un registro
+  // (otro dato, sin relación con este fix). e1 Y e2 comparten locationId
+  // 'l1' — las 2 líneas deben terminar con el nombre real, nunca "—".
+  const lineas = await page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-line2').allTextContents();
+  expect(lineas.length).toBeGreaterThan(0);
+  for (const linea of lineas) expect(linea).toContain('· Botadero Norte');
 });

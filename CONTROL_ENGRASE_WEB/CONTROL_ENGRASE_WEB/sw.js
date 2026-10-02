@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v66'; // v66: Configuración → Notificaciones push: un ADMINISTRADOR ya puede editar las preferencias (turno/disponibilidad/recibir todos los turnos) de OTRA persona desde la tabla de dispositivos ("Editar"), antes autoservicio únicamente. La tabla ahora filtra las filas de dispositivo (sin userId) — solo lista personas. Nada tocó producción/Supabase.
+const CACHE = 'engrase-openpit-v67'; // v67: DATA-PENDING-A02 resuelto (docs/BUG_REGISTER.md) — un equipo con su ubicación/familia ya desactivada (soft-delete, el equipo nunca pierde su propio locationId/typeId) dejaba de mostrar el nombre real ("—" para siempre) en Dashboard/Historial/Reportes/Matriz Semanal, porque el lookup de nombre se construía desde la lista YA FILTRADA a activas-solo. Corregido en los 4 sitios: el lookup de nombre ahora usa DB.all() (todas), el <select> de filtro sigue activas-solo. Nada tocó producción/Supabase.
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben

@@ -54,8 +54,8 @@ describe('KPI "Pausados" — equipos CON plan pero no operativos', () => {
   it('cuenta equipos con status distinto de Operativo Y con plan asociado (no confunde con sinPlan)', () => {
     expect(src).toContain("const pausados = equipos.filter(e => e.status !== 'Operativo' && planPorEquipoId.has(e.id));");
   });
-  it('abre un modal propio (no reutiliza el de sin-plan, son conjuntos distintos)', () => {
-    expect(src).toContain("openPausadosModal(pausados, types, locations)");
+  it('abre un modal propio (no reutiliza el de sin-plan, son conjuntos distintos), con typesAll/locationsAll (TODAS, no solo activas — DATA-PENDING-A02)', () => {
+    expect(src).toContain("openPausadosModal(pausados, typesAll, locationsAll)");
   });
 });
 

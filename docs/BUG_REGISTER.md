@@ -523,31 +523,57 @@
 
 ## DATA-PENDING-A02 — Equipo A-02 pendiente de validación de locationId/typeId en runtime
 
-- **Fecha:** 2026-09-25
-- **Prioridad:** P3 (un solo equipo reportado, sin evidencia de que sea un
-  problema general)
-- **Estado:** PENDIENTE DE VALIDACIÓN DE DATOS — NO es un bug de código
+- **Fecha:** 2026-09-25 — **RESUELTO (causa raíz de código real encontrada): 2026-10-02**
+- **Prioridad:** P3 → cerrado
+- **Estado:** CORREGIDO (código) — ya no requiere acceso a producción para confirmarse
 - **Origen:** reportado por el usuario durante la revisión visual del
   rediseño del Dashboard — el panel "Mayor tiempo sin engrasar" mostraba
   "—" en Ubicación (y aparentemente Familia) para el equipo A-02, cuando
   antes mostraba "Botadero Norte".
-- **Auditoría realizada (código, sin tocar datos):** se confirmó que
-  `app.js` no tiene ningún equipo "A-02" hardcodeado — `equipment` y
-  `locations` viven en IndexedDB/Supabase (runtime), fuera del repositorio.
-  Se comparó el lookup nuevo (`locPorId[e.locationId]`, un mapa `id → objeto`
-  construido desde `locations`) contra el lookup anterior
-  (`locations.find(l => l.id === e.locationId)`) usado en la misma pantalla
-  antes del rediseño: son equivalentes — ambos resuelven el nombre por
-  `equipment.locationId` contra el mismo catálogo `locations`, sin cambio de
-  campo ni de fuente de datos. Mismo análisis para `typeId`/Familia.
-  **No se encontró error de campo en el render.**
-- **Acción actual:** NO se investigó más allá del código (no se usó
-  automatización de navegador ni acceso a Supabase, sin autorización
-  explícita para eso). NO se inventó ni se completó ningún valor de
-  ubicación/familia. Queda pendiente que alguien con acceso a la base real
-  confirme si el registro de A-02 en `equipment` tiene `locationId`/`typeId`
-  vacíos, o si esos ids ya no existen en `locations`/`equipment_types`
-  (por ejemplo, por un registro renombrado o eliminado).
+- **Auditoría original (2026-09-25, código, sin tocar datos):** se
+  confirmó que el lookup `locPorId[e.locationId]` (post-rediseño) era
+  EQUIVALENTE al `locations.find(l => l.id === e.locationId)` de antes —
+  ambos lookups resuelven igual contra el mismo catálogo `locations`. Se
+  concluyó (correctamente, hasta donde llegaba esa comparación) que no
+  había error de campo en el render, y se dejó pendiente de validar con
+  datos reales — sin autorización para leer producción en ese momento.
+- **Causa raíz real (2026-10-02, encontrada sin tocar ningún dato de
+  producción — puro razonamiento de código):** el lookup en sí era
+  correcto, pero su FUENTE no. `locPorId`/`typePorId` se construían desde
+  `DB.allActive('locations'/'equipment_types')` — la MISMA lista que
+  alimenta el `<select>` de filtro Ubicación/Familia. `wireSimpleListPanel`
+  (`.sl-remove`, el botón "Eliminar" de Ubicaciones/Familias en
+  Configuración) hace un soft-delete real (`active = false`) y lo dice
+  explícitamente en su propio `confirm()`: *"Los equipos... que ya lo
+  tengan asignado no se modifican, pero dejará de aparecer como opción
+  para elegir."* — es decir, `equipment.locationId` NUNCA cambia al
+  desactivar una ubicación, pero `DB.allActive('locations')` deja de
+  incluirla → `locPorId[e.locationId]` pasa a `undefined` → `(undefined ||
+  {}).name || '—'` → "—" para siempre, aunque el dato real en `equipment`
+  nunca se tocó. Coincide EXACTO con el síntoma reportado ("antes mostraba
+  Botadero Norte, ahora —"): alguien desactivó esa ubicación en algún
+  momento entre medio, sin saber que afectaría la visualización de equipos
+  ya existentes (el soft-delete está diseñado para no ser destructivo,
+  pero el display sí lo era).
+- **Fix aplicado (4 sitios, mismo patrón — `app.js`):** `renderDashboard()`,
+  `renderMatrizSemanal()` (su modal "Equipos sin plan") y `renderReportes()`
+  ahora piden ADEMÁS `DB.all(...)` (TODAS, activas e inactivas) en
+  `typesAll`/`locationsAll`, usadas SOLO para construir `typePorId`/
+  `locPorId` (el nombre en pantalla) — el `<select>` de filtro de cada
+  pantalla sigue alimentado por la lista activas-solo de siempre (nunca
+  debe poder elegirse una ubicación/familia ya desactivada). `renderHistorial()`
+  no tiene ningún `<select>` de Ubicación/Familia, así que su fetch se
+  cambió directo a `DB.all(...)`.
+- **Tests:** `tests/ui/dashboard-real-execution.spec.js` (nuevo, ejecución
+  REAL de `renderDashboard()` con una ubicación desactivada referenciada
+  por un equipo activo — confirma el nombre real en pantalla, nunca "—");
+  `tests/unit/data-pending-a02-fix.test.js` (9 tests, verifica el mismo
+  patrón en los otros 3 sitios por fuente).
+- **Fuera de alcance, a propósito:** los otros ~20 usos de
+  `DB.allActive('locations'/'equipment_types')` en `app.js` que alimentan
+  ÚNICAMENTE un `<select>`/picker (nunca un lookup de nombre) no tienen
+  este bug — no se tocaron. `renderEquipos()`/`equipmentCard()` no usan el
+  patrón `typePorId`/`locPorId` en absoluto (no mostraban "—" para empezar).
 
 ## SYNC-PULL-ECHO-001 — `fullSync()` volvía a subir a Supabase las filas que acababa de descargar
 

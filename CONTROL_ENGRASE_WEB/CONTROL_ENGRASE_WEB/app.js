@@ -3143,6 +3143,16 @@ async function renderDashboard() {
   const plans = await DB.allActive('lubrication_plans');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
+  // TODAS (no solo activas) — SOLO para el lookup de nombres de abajo
+  // (typePorId/locPorId, puro texto en pantalla). `types`/`locations` de
+  // arriba siguen activas-solo a propósito: alimentan los <select> de
+  // filtro Ubicación/Familia, donde SÍ no debe poder elegirse algo ya
+  // desactivado. BUG REAL encontrado (DATA-PENDING-A02, docs/BUG_REGISTER.md):
+  // un equipo cuya ubicación/familia se desactiva DESPUÉS sigue mostrando
+  // "—" para siempre en vez de su nombre real, aunque el dato en `equipment`
+  // nunca cambió — por construir este lookup desde la lista YA FILTRADA.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
   const validations = await DB.allActive('grease_validations');
   const assignments = await DB.allActive('lubrication_assignments');
   const skips = await DB.allActive('lubrication_skips');
@@ -3237,8 +3247,8 @@ async function renderDashboard() {
   // Datos de apoyo para el rediseño operativo del Dashboard (solo
   // presentación — ningún cálculo de negocio nuevo, reutiliza `statuses`/
   // `attention`/`equipos` ya filtrados por Ubicación/Familia arriba).
-  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
-  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  const typePorId = {}; typesAll.forEach(t => typePorId[t.id] = t);
+  const locPorId = {}; locationsAll.forEach(l => locPorId[l.id] = l);
   const alDia = statuses.filter(x => x.s.code === 'VERDE');
   const proximos = attention.filter(x => x.s.code === 'AMARILLO'); // `attention` ya viene ordenado por urgencia
   const vencidos = attention.filter(x => x.s.code === 'ROJO'); // idem: más vencido (remaining más negativo) primero
@@ -3753,9 +3763,9 @@ async function renderDashboard() {
       if (action === 'anomalias') {
         navigate('anomalias');
       } else if (action === 'sin-plan') {
-        openSinPlanModal(sinPlan, types, locations);
+        openSinPlanModal(sinPlan, typesAll, locationsAll);
       } else if (action === 'pausados') {
-        openPausadosModal(pausados, types, locations);
+        openPausadosModal(pausados, typesAll, locationsAll);
       } else if (action === 'al-dia') {
         openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
       } else if (action === 'proximos') {
@@ -5586,6 +5596,12 @@ async function renderMatrizSemanal() {
   const records = await DB.allActive('lubrication_records');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
+  // TODAS (no solo activas) — solo para el modal "Equipos sin plan" de abajo
+  // (mismo bug real que renderDashboard, ver DATA-PENDING-A02 en
+  // docs/BUG_REGISTER.md). `types`/`locations` de arriba siguen
+  // activas-solo: alimentan los <select> de filtro de esta pantalla.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
 
   // Semana visible (se puede navegar hacia atrás/adelante)
   if (!App.matrizOffset) App.matrizOffset = 0;
@@ -5777,7 +5793,7 @@ async function renderMatrizSemanal() {
     </div>
   `;
 
-  $('#mtz-sin-plan-btn')?.addEventListener('click', () => openSinPlanModal(sinPlan, types, locations));
+  $('#mtz-sin-plan-btn')?.addEventListener('click', () => openSinPlanModal(sinPlan, typesAll, locationsAll));
   $('#mtz-filters-toggle')?.addEventListener('click', (e) => {
     const abierto = $('#mtz-filters-panel').classList.toggle('mtz-collapsed-mobile') === false;
     e.currentTarget.setAttribute('aria-expanded', String(abierto));
@@ -7260,8 +7276,14 @@ async function renderHistorial() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   const equipos = await DB.allActive('equipment');
-  const types = await DB.allActive('equipment_types');
-  const locations = await DB.allActive('locations');
+  // TODAS (no solo activas) — esta pantalla nunca usa `types`/`locations`
+  // para un <select> (a diferencia de Dashboard/Reportes/Matriz), solo para
+  // mostrar el nombre de la ubicación/familia de cada equipo del historial
+  // — un equipo con una ubicación YA desactivada debe seguir mostrando su
+  // nombre real, nunca "—" (mismo bug real que DATA-PENDING-A02, ver
+  // docs/BUG_REGISTER.md).
+  const types = await DB.all('equipment_types');
+  const locations = await DB.all('locations');
   const plans = await DB.allActive('lubrication_plans');
   const planPorEquipoIdHist = {}; plans.forEach(p => planPorEquipoIdHist[p.equipmentId] = p);
   const today = new Date().toISOString().slice(0, 10);
@@ -8027,6 +8049,13 @@ async function renderReportes() {
   const locations = await DB.allActive('locations');
   const lubricants = await DB.allActive('lubricants');
   const types = await DB.allActive('equipment_types');
+  // TODAS (no solo activas) — solo para typePorId/locPorId (texto en
+  // pantalla/exports). `types`/`locations` de arriba siguen activas-solo:
+  // alimentan los <select> de filtro de esta pantalla. Mismo bug real que
+  // DATA-PENDING-A02 (docs/BUG_REGISTER.md): un equipo con ubicación/familia
+  // ya desactivada no debe perder su nombre en Reportes/exports.
+  const typesAll = await DB.all('equipment_types');
+  const locationsAll = await DB.all('locations');
   const plans = await DB.allActive('lubrication_plans');
   const validations = await DB.allActive('grease_validations');
   // Exportación de "No ejecutados" (§4 del pedido, columna "Cuadrilla"): el
@@ -8039,9 +8068,9 @@ async function renderReportes() {
 
   const equiposPorId = {}; equipos.forEach(e => equiposPorId[e.id] = e);
   const planByEquipoId = {}; plans.forEach(p => planByEquipoId[p.equipmentId] = p);
-  const typePorId = {}; types.forEach(t => typePorId[t.id] = t);
+  const typePorId = {}; typesAll.forEach(t => typePorId[t.id] = t);
   const lubPorId = {}; lubricants.forEach(l => lubPorId[l.id] = l);
-  const locPorId = {}; locations.forEach(l => locPorId[l.id] = l);
+  const locPorId = {}; locationsAll.forEach(l => locPorId[l.id] = l);
   const usersPorId = {}; users.forEach(u => usersPorId[u.id] = u);
   const cuadrillasPorId = {}; cuadrillas.forEach(cq => cuadrillasPorId[cq.id] = cq);
 
