@@ -399,19 +399,42 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
   logout real (vuelve a pedir credencial completa, no Quick Unlock) y
   cambio de usuario en el mismo dispositivo (sin mezclar datos del usuario
   anterior) — ambos PASS.
-- [ ] Login real con las 7 cuentas reales migradas (o el subconjunto que
-  corresponda tras auditar producción — ver §2) — PASS.
-- [ ] Offline: captura local sin red, con sesión previa válida — PASS.
+- [x] Login real con las 7 cuentas reales migradas (o el subconjunto que
+  corresponda tras auditar producción — ver §2) — **esta línea estaba mal
+  redactada/obsoleta** (encontrado 2026-10-02, releyendo el propio plan):
+  §2/§17 ya decidieron, desde el inicio, que **0 de las 7 cuentas legacy
+  se migran** (congeladas como `LEGACY_SHARED`/`TEST_SEED`/
+  `LEGACY_OPERATIONAL_ALIAS`, sin login futuro, decisión ya tomada y
+  documentada). El "subconjunto que corresponda" ya ocurrió por otra vía:
+  3 cuentas Auth NUEVAS y reales (ADMINISTRADOR/LUBRICADOR/SUPERVISOR,
+  parte 2026-09-30 del handoff) — exactamente los roles que el plan exige
+  para operar el teléfono en el pit. PLANIFICADOR/VISOR sin cuenta real
+  todavía, pero el plan nunca los exigió para este gate.
+- [x] Offline: captura local sin red, con sesión previa válida — **PASS**,
+  ya confirmado por el usuario en dispositivo real el 2026-09-30 (parte
+  11 del handoff) — esta casilla nunca se había marcado.
 - [x] Reconexión: refresca sesión, releer perfil, luego sync — **PASS,
   2026-10-02**, confirmado por el usuario en el mismo dispositivo Android
   (modo avión → reconectar, sin pedir login de nuevo, sin quedar pegado en
   offline).
 - [ ] CAS de P0-1 (PATCH condicionado / POST ignore-duplicates) sigue
   devolviendo 0/1 fila correctamente bajo JWT real, no solo bajo anon key
-  — PASS.
+  — PASS. Cubierto a nivel de código/tests (`sync-auth-gate.test.js`,
+  escenario G — JWT real simulado, nunca anon key) y el fix de código real
+  de `pushAll()`/JWT (commit `4645e31`, 2026-09-27) — **sin una prueba
+  contra producción real todavía**, por eso sigue sin marcar.
 - [ ] Cada rol (ADMINISTRADOR/PLANIFICADOR/SUPERVISOR/LUBRICADOR/VISOR)
-  probado contra la matriz completa de §7 — PASS.
-- [ ] Usuario inactivo bloqueado en todos los stores — PASS.
+  probado contra la matriz completa de §7 — PASS. **BLOQUEADO, no por
+  falta de prueba sino por diseño**: mientras la policy legacy de
+  `engrase_sync` siga activa (0003 sin aplicar), CUALQUIER rol pasa
+  CUALQUIER prueba — Postgres combina policies permisivas por OR, así que
+  este gate es literalmente imposible de evaluar con sentido hasta que
+  0003 se aplique. No tiene caso intentarlo antes.
+- [ ] Usuario inactivo bloqueado en todos los stores — PASS. **Mismo
+  bloqueo de diseño que el ítem de arriba**: `current_app_active()` ya
+  está en las 3 policies de `engrase_sync` (0002), pero mientras la
+  legacy siga activa no hay forma de observar un DENY real — se evalúa
+  junto con el punto anterior, después de 0003.
 - [ ] `anon` SELECT sobre `engrase_sync` → DENIED.
 - [ ] `anon` INSERT/UPDATE sobre `engrase_sync` → DENIED.
 - [ ] Storage (`engrase-photos`) — explícitamente **fuera de alcance del
@@ -419,11 +442,17 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
   bloquea este cutover pero queda pendiente después.
 - [ ] Rollback probado en un entorno de prueba (re-crear la policy legacy
   y confirmar que el cliente viejo vuelve a funcionar sin cambios).
-- [ ] **Bootstrap inseguro eliminado** (§13): `seedIfEmpty()` y
-  `seedSoloUsuarioInicial()` ya no generan usuarios con PIN default
-  (`1111`/`2222`/`3333`/`4444`), y la comparación `pin === selected.pin`
-  ya no es la autoridad de acceso (reemplazada por Auth real + quick
-  unlock opcional, §4).
+- [x] **Bootstrap inseguro eliminado** (§13) — **PASS, verificado por
+  código el 2026-10-02** (`db.js`): `seedSoloSiElSistemaEstaVacio()`,
+  `seedSoloUsuarioInicial()` y `seedIfEmpty()` tienen guard
+  `isSupabaseAuthMode()` en los 3 (el 2do y 3ro lo tienen ADEMÁS como
+  defensa propia, no solo confiando en el llamador) — con
+  `AUTH_MODE='supabase'` (default actual del código), ninguno de los 4
+  usuarios/PIN semilla (`1111`/`2222`/`3333`/`4444`) se crea jamás.
+  `pin === selected.pin` (`app.js` L2180) vive dentro de `renderLogin()`,
+  que ya es inalcanzable con `AUTH_MODE='supabase'` — `boot()` (L1813-1814)
+  llama `renderAuthGateSupabase()` en su lugar. Esta rama queda como
+  código muerto en la práctica mientras el flag siga en `'supabase'`.
 - [ ] **Ninguna de las 7 cuentas legacy productivas recibió login Auth**
   (§17) — confirmado antes del cutover, no solo antes de crear
   `app_profiles`.
