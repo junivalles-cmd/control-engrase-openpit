@@ -383,11 +383,16 @@ se creó — todo quedó en código/tests/migraciones sin ejecutar.
 
 ## 15. Gates de cutover (todos deben estar en PASS antes de correr la Sección "CUTOVER" del SQL draft)
 
-- [ ] Auth funciona en Web (login real, sesión persistida, logout) — **sin
-  probar todavía**: el sitio desplegado (`junivalles-cmd.github.io`) está
-  caído (404 de GitHub Pages) desde al menos 2026-10-02, verificado por
-  lectura pública (sin login). Pendiente resolver el hosting antes de
-  poder marcar esto.
+- [ ] Auth funciona en Web (login real, sesión persistida, logout) —
+  **PARCIAL**: login real contra Supabase confirmado por el usuario desde
+  `npm run dev` (localhost) el 2026-10-02 — logout/sesión-persistida en
+  Web específicamente NO se confirmaron por separado todavía. El sitio
+  público desplegado (`junivalles-cmd.github.io`) sigue devolviendo 404 de
+  GitHub Pages (reverificado 2026-10-02 tras un intento de re-publicar) —
+  el usuario dijo haberlo subido, pero la lectura pública sigue sin verlo;
+  pendiente de que el usuario confirme en GitHub (Settings → Pages: repo
+  público, rama/carpeta correcta, build sin errores) antes de poder marcar
+  este gate completo.
 - [x] Auth funciona en Android/Capacitor (mismo flujo, WebView) — **PASS,
   2026-10-02**, confirmado por el usuario en dispositivo real (serial
   `99FQVGVWRW795LW4`, build del mismo día reinstalado antes de la prueba):
