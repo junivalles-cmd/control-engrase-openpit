@@ -3429,6 +3429,7 @@ async function renderDashboard() {
   }
   function motivoFor(x) {
     if (x.s.nextHour !== undefined) return x.s.code === 'ROJO' ? 'Vencido por horómetro' : 'Próximo por horómetro';
+    if (x.s.label === 'PROGRAMADO MAÑANA') return 'Programado para mañana';
     return x.s.code === 'ROJO' ? 'Vencido por día/turno' : 'Programado hoy';
   }
   function urgenciaFor(x) {
@@ -3447,7 +3448,30 @@ async function renderDashboard() {
   // principales a la vez. `x.s.label === 'PROGRAMADO HOY'` es el MISMO
   // campo que weekdayStatusFor() (lubrication-status.js) ya pone — no se
   // inventa un criterio nuevo, solo se usa para filtrar.
-  const proximosSinHoy = proximos.filter(x => x.s.label !== 'PROGRAMADO HOY');
+  //
+  // Equipos con plan "Día y turno de la semana" NUNCA pasaban por "Próximos"
+  // (weekdayStatusFor() solo da AMARILLO el mismo día, nunca con
+  // anticipación — ver src/core/lubrication-status.js) — se agregan aquí,
+  // a propósito con 1 solo día de margen (pedido explícito del usuario,
+  // 2026-10-02): equipos HOY "al día" (VERDE, ya engrasados o sin que les
+  // toque todavía) cuyo PRÓXIMO día asignado es mañana. Respeta
+  // reprogramadoHasta (si el equipo ya fue reprogramado a otra fecha
+  // distinta de mañana, no avisa un día que ya no aplica esta semana — ver
+  // weekdayStatusFor()). Son equipos REALMENTE "al día" (no vencidos ni
+  // pendientes de nada ahora mismo) — la copia envuelta abajo NUNCA muta
+  // `x.s` original (eso rompería `counts`/`alDia`, ya calculados arriba),
+  // solo cambia cómo se VE en "Próximos"/la cola de atención.
+  const mananaDate = new Date(nowTs); mananaDate.setDate(mananaDate.getDate() + 1); mananaDate.setHours(0, 0, 0, 0);
+  const mananaWeekday = WEEKDAY_NAMES[mananaDate.getDay()];
+  const proximosDiaTurnoManana = alDia
+    .filter(x => {
+      const plan = x.s.plan;
+      if (!plan || plan.controlType !== 'Día y turno de la semana') return false;
+      if (x.s.reprogramado) return x.s.scheduleDate && x.s.scheduleDate.getTime() === mananaDate.getTime();
+      return (plan.assignedDays || []).includes(mananaWeekday);
+    })
+    .map(x => ({ e: x.e, s: { ...x.s, code: 'AMARILLO', label: 'PROGRAMADO MAÑANA', scheduleDate: mananaDate } }));
+  const proximosSinHoy = [...proximos.filter(x => x.s.label !== 'PROGRAMADO HOY'), ...proximosDiaTurnoManana];
   const colaAtencion = [
     ...vencidos.map(x => ({ estado: 'Vencido', tone: 'red', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
     // Pendiente turno anterior (§6/§25 del pedido): MISMA lista ya
@@ -3791,7 +3815,7 @@ async function renderDashboard() {
       } else if (action === 'al-dia') {
         openDashStatusModal('Equipos al día', `${alDia.length} equipo(s) al día.`, alDia);
       } else if (action === 'proximos') {
-        openDashStatusModal('Próximos a engrase', `${proximosSinHoy.length} equipo(s) próximos a vencer, ordenados por mayor urgencia.`, proximosSinHoy);
+        openDashStatusModal('Próximos a engrase', `${proximosSinHoy.length} equipo(s) próximos a vencer por horómetro o programados para mañana.`, proximosSinHoy);
       } else if (action === 'pendientes-hoy') {
         openPendientesHoyModal();
       } else if (action === 'vencidos') {
@@ -4942,19 +4966,21 @@ async function printGreasePlan(rango, equipos, plans, types) {
   const records = await DB.allActive('lubrication_records');
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
 
-  // Rango de días (lunes a sábado; el domingo se muestra como columna fija de descanso)
+  // Rango de días (lunes a domingo — el usuario confirmó 2026-10-02 que sí
+  // se engrasa domingo, igual que el resto de la semana; antes el domingo
+  // quedaba fuera de este rango y se mostraba aparte como columna fija).
   let inicio, fin;
   if (rango === 'semana') {
     inicio = new Date(hoy);
     const dow = inicio.getDay();
     inicio.setDate(inicio.getDate() - (dow === 0 ? 6 : dow - 1)); // lunes de esta semana
-    fin = new Date(inicio); fin.setDate(inicio.getDate() + 5);    // sábado
+    fin = new Date(inicio); fin.setDate(inicio.getDate() + 6);    // domingo
   } else {
     inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
     fin = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
   }
 
-  const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
   // Fechas de cada día del rango (para el mes, se agrupan por semana)
   function fechasDeSemana(lunes) {
@@ -5006,19 +5032,17 @@ async function printGreasePlan(rango, equipos, plans, types) {
     return `
       <table class="matriz">
         <thead>
-          <tr><th class="tit" colspan="8">${esc(titulo)}</th></tr>
+          <tr><th class="tit" colspan="${fechas.length + 1}">${esc(titulo)}</th></tr>
           <tr>
             <th class="eqcol">Equipo/No.</th>
             ${fechas.map((d, i) => `<th>${DIAS_SEMANA[i]}<div class="fechita">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
-            <th class="domingo-h">Domingo</th>
           </tr>
         </thead>
         <tbody>
-          ${listaEquipos.map(({ eq, plan }, idx) => `
+          ${listaEquipos.map(({ eq, plan }) => `
             <tr>
               <td class="eqcol"><b>${esc(eq.code)}</b>${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
               ${fechas.map(d => celda(eq, plan, d)).join('')}
-              ${idx === 0 ? `<td class="domingo" rowspan="${listaEquipos.length}"><span>ENGRASE A FLOTA DE VOLQUETES</span></td>` : ''}
             </tr>`).join('')}
         </tbody>
       </table>`;
@@ -5059,8 +5083,6 @@ async function printGreasePlan(rango, equipos, plans, types) {
     .matriz td.ok   { background: #ECFDF3; color: #175E45; font-weight: bold; }
     .matriz td.no   { background: #FEF3F2; color: #912018; font-weight: bold; }
     .matriz td.prog { background: #FEFAE8; color: #7A5200; }
-    .matriz .domingo, .matriz .domingo-h { background: #F2F4F7; color: #475467; font-weight: bold; }
-    .matriz .domingo span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-size: 11px; }
     .semana-tit { font-size: 13px; margin: 16px 0 6px; color: #1D2939; border-bottom: 2px solid #F2A900; padding-bottom: 3px; }
     .leyenda { display: flex; gap: 10px; font-size: 10.5px; margin-bottom: 12px; flex-wrap: wrap; }
     .leyenda span { padding: 3px 10px; border: 1px solid #D0D5DD; font-weight: bold; }

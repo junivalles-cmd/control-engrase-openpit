@@ -487,10 +487,12 @@
 
 ## MATRIZ-DOMINGO-001 — La Matriz Semanal nunca incluye el domingo
 
-- **Fecha:** 2026-09-23
-- **Prioridad:** P3 (los 6 días que sí muestra son correctos; es una
-  omisión de cobertura, no un dato erróneo)
-- **Estado:** REPRODUCIDO, NO CORREGIDO
+- **Fecha:** 2026-09-23 — **CORREGIDO: 2026-09-26** (commit `46246a9`,
+  confirmado en código el 2026-10-02 — este registro nunca se había
+  actualizado para reflejarlo)
+- **Prioridad:** P3 → cerrado
+- **Estado:** CORREGIDO — probado automáticamente
+  (`tests/unit/matriz-domingo.test.js`, 10/10)
 - **Origen:** PREEXISTENTE — confirmado presente ya en el commit de
   producción anterior a este deploy (`4e74527`) y, por lo tanto, en
   cualquier versión previa también. No relacionado con la Modularización
@@ -498,28 +500,38 @@
 - **Reportado por:** usuario, durante `PROD-WEB-07` (validación manual de
   la Matriz Semanal en producción, tras el primer deploy de `dist/` a
   GitHub Pages).
-- **Descripción:** `renderMatrizSemanal()` (`app.js`) calcula el lunes de
-  la semana visible y genera un arreglo `dias` con exactamente 6
-  entradas:
-  ```js
-  const dias = [];
-  for (let i = 0; i < 6; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
-  ```
-  Esto produce siempre Lunes–Sábado — el domingo nunca se agrega al
-  arreglo, así que nunca aparece una columna para ese día en la grilla,
-  sin importar si algún equipo tiene "Domingo" en sus `assignedDays`.
-- **Confirmado que es preexistente, no introducido por este deploy:** el
-  mismo bucle de 6 iteraciones existe, sin ninguna diferencia, en
-  `app.js` del commit de producción anterior (`4e74527`, previo a
-  cualquier cambio de esta migración) — verificado con
-  `git show 4e74527:app.js`.
-- **Acción actual:** NO corregir todavía. El usuario clasificó
-  `PROD-WEB-07` como PASS (la lógica y los datos de los 6 días mostrados
-  son correctos) con este hallazgo registrado aparte, mismo patrón que
-  `UI-ANDROID-005`. Queda pendiente decidir en una fase futura si el
-  domingo debe incluirse (y si `estadoCelda()`, ya extraída a
-  `src/core/weekly-matrix.js`, necesitaría el séptimo día) o si es
-  intencional (algunos ciclos de trabajo minero no operan los domingos).
+- **Descripción original:** `renderMatrizSemanal()` (`app.js`) calculaba
+  el lunes de la semana visible y generaba un arreglo `dias` con
+  exactamente 6 entradas (`for (let i = 0; i < 6; i++)`), produciendo
+  siempre Lunes–Sábado — el domingo nunca se agregaba al arreglo, sin
+  importar si algún equipo tenía "Domingo" en sus `assignedDays`.
+- **Causa de la confusión en este registro:** la decisión de si incluir
+  domingo o no (§ "Acción actual" original) quedó pendiente de que el
+  usuario confirmara si de verdad operan domingo. El fix real se hizo de
+  todos modos 3 días después (`46246a9`, "feat: complete lubrication
+  workflows, validation and reporting") como parte de un lote mucho más
+  grande, sin que se actualizara este registro — quedó "abierto" en los
+  documentos mientras el código ya lo tenía resuelto.
+- **Confirmado el 2026-10-02 (solo lectura de código, sin tocar nada):**
+  `renderMatrizSemanal()` ya genera 7 días (`for (let i = 0; i < 7; i++)`,
+  usa `dias[6]` como último día); `SCHEDULE_WEEKDAYS` ya incluye
+  `'Domingo'` (única fuente para el picker de días asignados del Plan de
+  Engrase Y el filtro "Día asignado" del Dashboard); `estadoCelda()`
+  (`src/core/weekly-matrix.js`) ya era genérico por nombre de día
+  (`WEEKDAY_NAMES[fecha.getDay()]`), sin necesitar ningún caso especial
+  para el 7º día. El usuario confirmó el 2026-10-02 que sí se engrasan
+  equipos los domingos — la inclusión de este día era, en efecto, lo
+  correcto operativamente, no solo una corrección de cobertura.
+- **Fuera de alcance, a propósito, sin tocar:** `printGreasePlan()`
+  (Plan de Engrase imprimible, botón "Imprimir" de Plan de Engrase) trata
+  el domingo de forma DISTINTA y deliberada — una sola columna fija,
+  combinada para toda la tabla ("ENGRASE A FLOTA DE VOLQUETES"), en vez de
+  una celda por equipo como Lunes–Sábado. No es necesariamente el mismo
+  bug: podría ser una convención real de la planilla física (domingo =
+  día dedicado a la flota de volquetes, distinto de `assignedDays` por
+  equipo). Pendiente de que el usuario confirme si esa hoja impresa
+  también debe cambiar a una celda por equipo como las demás, antes de
+  tocarla.
 
 ## DATA-PENDING-A02 — Equipo A-02 pendiente de validación de locationId/typeId en runtime
 

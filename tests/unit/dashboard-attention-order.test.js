@@ -42,7 +42,19 @@ describe('§15 — no double count: "Pendientes hoy" y "Próximos" son mutuament
   });
 
   it('"Próximos" excluye explícitamente lo que weekdayStatusFor() etiquetó "PROGRAMADO HOY" (mismo campo que ya usa el semáforo, no un criterio inventado)', () => {
-    expect(src).toContain("const proximosSinHoy = proximos.filter(x => x.s.label !== 'PROGRAMADO HOY');");
+    expect(src).toContain("proximos.filter(x => x.s.label !== 'PROGRAMADO HOY')");
+  });
+
+  it('"Próximos" también incluye equipos Día/turno "al día" (VERDE) cuyo próximo día asignado es MAÑANA — sin mutar `x.s` original (alDia/counts no cambian)', () => {
+    expect(src).toContain("const proximosDiaTurnoManana = alDia");
+    expect(src).toContain("plan.controlType !== 'Día y turno de la semana'");
+    expect(src).toContain("return (plan.assignedDays || []).includes(mananaWeekday);");
+    expect(src).toContain("s: { ...x.s, code: 'AMARILLO', label: 'PROGRAMADO MAÑANA', scheduleDate: mananaDate }");
+    expect(src).toContain("const proximosSinHoy = [...proximos.filter(x => x.s.label !== 'PROGRAMADO HOY'), ...proximosDiaTurnoManana];");
+  });
+
+  it('respeta reprogramadoHasta — si el equipo ya fue reprogramado a OTRA fecha (no mañana), no avisa un día que ya no aplica esta semana', () => {
+    expect(src).toContain('if (x.s.reprogramado) return x.s.scheduleDate && x.s.scheduleDate.getTime() === mananaDate.getTime();');
   });
 
   it('el KPI y la cola de atención usan proximosSinHoy (nunca `proximos` crudo) — así el número mostrado y la lista siempre coinciden', () => {

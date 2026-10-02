@@ -260,3 +260,64 @@ test('"Pendientes hoy" y "Pendientes de validación" son clicables incluso en 0 
 
   expect(errors).toEqual([]);
 });
+
+test('"Próximos" incluye un equipo Día/turno "al día" (VERDE) cuyo PRÓXIMO día asignado es MAÑANA — pedido explícito del usuario (2026-10-02)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // e1: plan con 2 días asignados — AYER (ya engrasado, por eso queda VERDE
+  // "al día" y no ROJO) y MAÑANA (su próxima ocurrencia real). Calculado en
+  // Node con la MISMA tabla real para que el test valga cualquier día.
+  const WEEKDAY_NAMES_NODE = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const hoyIdx = new Date().getDay();
+  const ayerWeekday = WEEKDAY_NAMES_NODE[(hoyIdx + 6) % 7];
+  const mananaWeekday = WEEKDAY_NAMES_NODE[(hoyIdx + 1) % 7];
+  const ayerISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  await bootPage(page, {
+    plans: [{ id: 'plan1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [ayerWeekday, mananaWeekday] }],
+    records: [{ id: 'r1', equipmentId: 'e1', date: ayerISO, createdAt: ayerISO, shiftId: 'shift_dia' }],
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  expect(errors).toEqual([]);
+  const card = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Próximos' }) });
+  await card.click();
+
+  const modal = page.locator('.modal');
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('45-77');
+  await expect(modal).toContainText('PROGRAMADO MAÑANA');
+});
+
+test('"Próximos" NO incluye un equipo Día/turno reprogramado a una fecha DISTINTA de mañana (respeta reprogramadoHasta, no avisa un día que ya no aplica)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const WEEKDAY_NAMES_NODE = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const hoyIdx = new Date().getDay();
+  const mananaWeekday = WEEKDAY_NAMES_NODE[(hoyIdx + 1) % 7];
+  // Reprogramado 4 días adelante (NO a mañana) — margen amplio a propósito
+  // (nunca 48h) para que la comparación sea inequívoca sin importar la zona
+  // horaria de la máquina que corre el test: reprogramadoHasta es un string
+  // de solo fecha ("YYYY-MM-DD", mismo formato que manda un <input
+  // type="date">), que el motor JS interpreta en UTC — con 4 días de
+  // diferencia real, ningún desfase de huso horario puede confundirlo con
+  // "mañana" (que sí se calcula en hora local). El reprogramado activo
+  // manda sobre el día habitual del plan, aunque "mañana" esté en
+  // assignedDays.
+  const en4DiasISO = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  await bootPage(page, {
+    plans: [{
+      id: 'plan1', equipmentId: 'e1', controlType: 'Día y turno de la semana',
+      assignedDays: [mananaWeekday], reprogramadoHasta: en4DiasISO,
+    }],
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  expect(errors).toEqual([]);
+  const proximosValue = await page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Próximos' }) })
+    .locator('.dash-hero-value').textContent();
+  expect(proximosValue.trim()).toBe('0');
+});
