@@ -13,8 +13,12 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<!-- jsQR/QRious (lote QR offline) — vendorizadas localmente en vez de CDN,
+     para que el escáner/generador de QR funcione incluso en el primer
+     arranque sin Internet. Mismas librerías, mismas versiones, mismo
+     contenido que antes — ver vendor/LICENSES.md. -->
+<script src="vendor/qrious.min.js"></script>
+<script src="vendor/jsqr.js"></script>
 <!-- El SDK Web de OneSignal (notificaciones push en el NAVEGADOR, que lleguen
      aunque la pestaña esté cerrada) YA NO se carga aquí de forma incondicional.
      app.js -> initWebPush() lo inyecta dinámicamente solo cuando corresponde
