@@ -1,12 +1,12 @@
 /* ============================================================
    CONTROL DE ENGRASE - OPEN PIT — src/core/auth.js
-   P0-2 Etapa B1 — capa cliente de Supabase Auth, DETRÁS de un feature
-   flag desactivado por defecto (AUTH_MODE = 'legacy'). Mientras el flag
-   siga en 'legacy', NADA de este archivo cambia el comportamiento actual
-   de la app — el login PIN sigue siendo la única autoridad real (ver
-   app.js, renderLogin()). Este módulo es la base para activar
-   AUTH_MODE = 'supabase' en una etapa posterior — ver
-   docs/AUTH_RLS_MIGRATION_DESIGN.md / docs/AUTH_RLS_IMPLEMENTATION_PLAN.md.
+   P0-2 Etapa B1 — capa cliente de Supabase Auth, detrás de un feature
+   flag (AUTH_MODE). AUTH_MODE = 'supabase' es el default real y
+   definitivo ya committeado (ver la constante más abajo) — el login PIN
+   legacy (app.js, renderLogin()) ya no es un flujo normal mientras este
+   flag esté en 'supabase'. Este módulo sigue siendo la base del diseño
+   documentado en docs/AUTH_RLS_MIGRATION_DESIGN.md /
+   docs/AUTH_RLS_IMPLEMENTATION_PLAN.md.
 
    Diseño: SIN @supabase/supabase-js (mismo criterio que sync.js: fetch
    crudo contra los endpoints REST de Supabase, sin SDK) — llama

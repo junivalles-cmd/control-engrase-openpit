@@ -21,7 +21,7 @@ const {
   resolveRecordCrewId, resolveRecordCrewLocationId,
   EXECUTION_TYPE, EXECUTION_COMPLETENESS, OUT_OF_PLAN_REASONS,
   computeExecutionCompleteness, findNextApplicableOccurrenceForWeekdayPlan,
-  findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, findExistingWorkForEquipment,
+  findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, canAdvanceHourCycle, findExistingWorkForEquipment,
   resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
   NO_EXECUTION_REASONS, validateNoExecutionInput, buildNoExecutionRecord, findCarriedOverSkipForToday,
   GREASE_MATCH_STATUS, findMatchingGreaseRecordForOccurrence,
@@ -537,6 +537,50 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
     expect(resolveRecordExecutionType(viejo)).toEqual({ value: 'PLANNED', source: 'legacy_fallback' });
     expect(resolveRecordOutOfPlanReason(viejo)).toBeNull();
     expect(resolveRecordCompleteness(viejo)).toBeNull();
+  });
+});
+
+describe('canAdvanceHourCycle() — F-01 (auditoría pre-release): PARTIAL no reinicia el ciclo de un plan por horas', () => {
+  it('A) plan por horas + COMPLETE: puede avanzar (actualiza lastGreaseHour/reinicia el ciclo)', () => {
+    expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: 'COMPLETE' })).toBe(true);
+  });
+
+  it('B) plan por horas + PARTIAL: NO puede avanzar (el ciclo sigue abierto, igual que resolveOutOfPlanSatisfaction exige COMPLETE)', () => {
+    expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: 'PARTIAL' })).toBe(false);
+  });
+
+  it('E) PARTIAL fuera de plan (OUT_OF_PLAN) en plan por horas: tampoco reinicia un ciclo completo — la función no distingue por executionType, solo por completeness', () => {
+    // El caller (app.js) pasa el mismo completenessDeEsteEngrase sin importar
+    // si executionTypeDeEsteEngrase es PLANNED/ASSIGNED/OUT_OF_PLAN — un
+    // PARTIAL siempre deja el ciclo abierto, consistente con CASO B de
+    // resolveOutOfPlanSatisfaction() arriba (OUT_OF_PLAN + PARTIAL -> null).
+    expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: EXECUTION_COMPLETENESS.PARTIAL })).toBe(false);
+  });
+
+  it('plan "Día y turno de la semana" (no usa lastGreaseHour para su ciclo): siempre puede avanzar, incluso con PARTIAL', () => {
+    expect(canAdvanceHourCycle({ controlType: 'Día y turno de la semana', completeness: 'PARTIAL' })).toBe(true);
+    expect(canAdvanceHourCycle({ controlType: 'Día y turno de la semana', completeness: 'COMPLETE' })).toBe(true);
+  });
+
+  it('D) composición con computeOccurrenceKey(): tras un PARTIAL, lastGreaseHour no avanza -> la "próxima ocurrencia" sigue siendo la MISMA (desde el último COMPLETE real), nunca una nueva', () => {
+    const plan = { id: 'plan_f01', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 4800 };
+    const claveAntes = computeOccurrenceKey(plan, {});
+
+    // app.js solo escribe plan.lastGreaseHour = newHourmeter cuando
+    // canAdvanceHourCycle() devuelve true — con PARTIAL, nunca se llega a
+    // escribir, así que el plan (y su clave de ocurrencia) no cambian.
+    if (canAdvanceHourCycle({ controlType: plan.controlType, completeness: 'PARTIAL' })) {
+      plan.lastGreaseHour = 5000; // no debería ejecutarse
+    }
+    expect(computeOccurrenceKey(plan, {})).toBe(claveAntes);
+    expect(plan.lastGreaseHour).toBe(4800);
+
+    // Con un COMPLETE real, sí avanza y nace una ocurrencia nueva distinta.
+    if (canAdvanceHourCycle({ controlType: plan.controlType, completeness: 'COMPLETE' })) {
+      plan.lastGreaseHour = 5000;
+    }
+    expect(computeOccurrenceKey(plan, {})).not.toBe(claveAntes);
+    expect(plan.lastGreaseHour).toBe(5000);
   });
 });
 

@@ -2,8 +2,9 @@
 //
 // Administración segura de usuarios reales (P0-2). service_role SOLO vive
 // aquí — NUNCA en app.js, Android, IndexedDB, Git ni logs (ver
-// docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §11). NO desplegada todavía — este
-// archivo se preparó para revisión, no se ejecutó/deployó a producción.
+// docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §11). DESPLEGADA en producción
+// (ACTIVE, ver docs/SESSION_HANDOFF.md) — este archivo es la fuente real
+// que corre ahí, no una preparación pendiente de revisión.
 //
 // Invocación (desde src/core/auth.js, Auth.manageUsers()):
 //   POST /functions/v1/manage-users

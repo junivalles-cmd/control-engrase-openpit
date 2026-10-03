@@ -165,8 +165,9 @@ const DB = {
   // app_config (LOCAL_STORES, NUNCA sincroniza — nunca viaja por
   // pushAll()/pullAll(), ver STORES arriba). NUNCA contiene PIN ni
   // password — eso vive únicamente en auth.users, gestionado por
-  // Supabase Auth, jamás en el cliente. Mientras AUTH_MODE sea 'legacy'
-  // (default), nada llama a estos métodos.
+  // Supabase Auth, jamás en el cliente. Con AUTH_MODE='supabase' (el
+  // default real y definitivo, ver src/core/auth.js), estos métodos se
+  // usan activamente en cada login/restoreSession.
   async getAuthTokens() {
     return new Promise((res, rej) => {
       const r = tx('app_config').get('auth_tokens');

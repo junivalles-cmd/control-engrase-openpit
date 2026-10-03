@@ -53,6 +53,17 @@ const MAX_PHOTOS = 5;
 // valor ni de significado, solo el texto que los acompaña (docs/DECISIONS.md).
 const GREASE_UNIT = 'lb';
 
+// RF-01 (auditoría pre-release): si TODOS los puntos del checklist quedaron
+// marcados como realizados, el consumo de grasa no puede ser 0/negativo —
+// sería contradictorio (se engrasó todo el equipo sin gastar nada de
+// lubricante). Sin puntos configurados (totalPoints === 0) no hay nada que
+// exigir, mismo criterio que computeExecutionCompleteness() en
+// operational-scope.js. PARTIAL (incompleteCount > 0) y SKIP (que ni llama
+// a esta función — ver buildNoExecutionRecord()) no se ven afectados.
+function shouldBlockCompleteChecklistWithoutGrease(totalPoints, incompleteCount, qty) {
+  return totalPoints > 0 && incompleteCount === 0 && !(qty > 0);
+}
+
 function photoFieldHTML() {
   return `
     <label class="span-2">Fotografías (opcional, hasta ${MAX_PHOTOS})
@@ -6715,8 +6726,8 @@ async function startGreaseFlow(equipmentId, target, options) {
       // checklist, siempre se considera completo).
       const totalPuntosChecklist = $$('.checklist-item').length;
       const qtyIngresada = parseFloat(fd.qty || 0);
-      if (totalPuntosChecklist > 0 && incomplete.length === 0 && !(qtyIngresada > 0)) {
-        alert(`Marcaste los ${totalPuntosChecklist} puntos de engrase como realizados, pero la cantidad de grasa es 0. Anota la cantidad real utilizada.`);
+      if (shouldBlockCompleteChecklistWithoutGrease(totalPuntosChecklist, incomplete.length, qtyIngresada)) {
+        alert('Indique el consumo de grasa en lb antes de guardar el engrase completo.');
         return;
       }
 
@@ -6871,7 +6882,12 @@ async function startGreaseFlow(equipmentId, target, options) {
             equipment.hourmeter = newHourmeter;
             await DB.put('equipment', stamp(equipment, App.currentUser.name));
           }
-          if (plan) {
+          // F-01: plan.lastGreaseHour es la base de computeOccurrenceKey() para
+          // "Horas de operación" (operational-scope.js) — avanzarla "reinicia el
+          // ciclo". canAdvanceHourCycle() exige COMPLETE para ese controlType,
+          // igual que resolveOutOfPlanSatisfaction() ya exige COMPLETE para
+          // OUT_OF_PLAN; otros controlType no usan lastGreaseHour para su ciclo.
+          if (plan && canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })) {
             plan.lastGreaseHour = newHourmeter;
             await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
           }
@@ -7120,9 +7136,9 @@ async function renderAnomalias() {
         <td>${esc(a.component)}${a.autoGenerada ? ` <span class="auto-tag" title="Creada automáticamente al registrar un engrase">auto</span>` : ''}${a.repeticiones > 1 ? ` <span class="repeat-tag" title="Se ha reportado ${a.repeticiones} veces">×${a.repeticiones}</span>` : ''}</td>
         <td>${esc(a.description)}${a.resolutionNote ? `<div class="dim" style="margin-top:4px">Resuelto: ${esc(a.resolutionNote)}</div>` : ''}</td>
         <td>${fmtDate(a.createdAt)}</td>
-        <td>${esc(a.createdBy)}</td>
+        <td class="col-secondary">${esc(a.createdBy)}</td>
         <td>${esc(a.status)}</td>
-        <td>${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`, photoSrcs[i])}</td>
+        <td class="col-secondary">${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`, photoSrcs[i])}</td>
         <td class="row-actions">
           <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
           ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm anom-close" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
@@ -7556,14 +7572,14 @@ async function renderHistorial() {
           return `<tr>
             <td>${fmtDate(r.date)}</td>
             <td class="mono">${eq ? eq.code : '—'}</td>
-            <td>${eq ? eq.brand + ' ' + eq.model : '—'}</td>
+            <td class="col-secondary">${eq ? eq.brand + ' ' + eq.model : '—'}</td>
             <td>${r.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</td>
-            <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
+            <td class="col-secondary">${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
             <td class="mono">${fmt(r.hourmeter)} h</td>
             <td>${(lubPorId[r.greaseType] || {}).name || '—'}</td>
             <td>${esc(r.condition)}</td>
             <td>${complianceBadgeHTML(compliance)}</td>
-            <td>${photoThumbsHTML(r, eq ? eq.code : '', photoSrcsVisibles[i])}</td>
+            <td class="col-secondary">${photoThumbsHTML(r, eq ? eq.code : '', photoSrcsVisibles[i])}</td>
           </tr>`;
         }).join('') || '<tr><td colspan="10" class="empty-state">Sin resultados para estos filtros.</td></tr>'}</tbody>
       </table>
@@ -7943,13 +7959,13 @@ async function drawHistory(equipmentId) {
                 <td>—</td>
                 <td><span class="hist-noexec-badge">No ejecutado</span></td>
                 <td class="mono">—</td>
-                <td>${esc(s.userName)}</td>
-                <td>—</td>
+                <td class="col-secondary">${esc(s.userName)}</td>
+                <td class="col-secondary">—</td>
                 <td>—</td>
                 <td><button type="button" class="btn btn-sm hist-skip-detail" data-skip="${s.id}">${esc(NO_EXECUTION_REASON_LABELS[s.reason] || s.reason)}</button></td>
                 <td>—</td>
                 <td>—</td>
-                <td>—</td>
+                <td class="col-secondary">—</td>
                 ${isAdmin ? '<td></td>' : ''}
               </tr>`;
               }
@@ -7975,13 +7991,13 @@ async function drawHistory(equipmentId) {
               <td>${ubicacionRecordHTML(r)}</td>
               <td>${tipoRecordHTML(r)}</td>
               <td class="mono">${fmt(r.hourmeter)} h</td>
-              <td>${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
-              <td>${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
+              <td class="col-secondary">${esc(r.userName)}${r.retroactivo ? ` <span class="retro-tag" title="Capturado después por ${esc(r.capturadoPor || '')}">atrasado</span>` : ''}</td>
+              <td class="col-secondary">${(lubricants.find(l => l.id === r.greaseType) || {}).name || '—'}</td>
               <td class="mono">${fmt(r.qty, 1)} ${GREASE_UNIT}</td>
               <td><span class="hist-cond-badge">${esc(r.condition)}</span>${condDetails[r.id] ? ` <button type="button" class="hist-cond-link" data-rec="${r.id}">Ver detalle</button>` : ''}</td>
               <td>${complianceBadgeHTML(compliance)}</td>
               <td>${validationBadgeHTML(valStatus)} ${valAction}</td>
-              <td>${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[iRecords])}</td>
+              <td class="col-secondary">${photoThumbsHTML(r, `${esc(equipment.code)} · ${fmtDate(r.date)}`, recordPhotoSrcs[iRecords])}</td>
               ${isAdmin ? `<td><button type="button" class="icon-btn hist-del-btn btn-del-record" data-id="${r.id}" title="Eliminar registro">${ic("trash")}</button></td>` : ''}
             </tr>`;
             }).join('') || `<tr><td colspan="${isAdmin ? 13 : 12}" class="empty-state">${filtered ? 'Sin registros en este período.' : 'Sin registros.'}</td></tr>`}
@@ -11044,6 +11060,7 @@ async function renderConfig() {
   const quickUnlockConfigured = quickUnlockAvailable && await QuickUnlock.isConfigured(Auth.getProfile().appUserId);
 
   c.innerHTML = `
+    <div id="config-grid">
     <div class="panel">
       <div class="panel-head"><h3>Apariencia</h3></div>
       <div style="padding:14px">
@@ -11199,6 +11216,7 @@ async function renderConfig() {
         <thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th><th>Usuario</th></tr></thead>
         <tbody>${log.map(l => `<tr><td>${fmtDate(l.createdAt)}</td><td>${l.action}</td><td>${esc(l.detail)}</td><td>${l.user}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin actividad.</td></tr>'}</tbody>
       </table>
+    </div>
     </div>`;
 
   await renderTrash();

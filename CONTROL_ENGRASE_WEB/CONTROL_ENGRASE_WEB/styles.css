@@ -653,6 +653,22 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .progress-track { height: 10px; background: var(--surface-2); border-radius: 20px; margin: 4px 16px 16px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 20px; transition: width 0.4s ease; }
 
+/* UI-NEW-02 (auditoría pre-release, lote final): Configuración (renderConfig(),
+   app.js) apilaba sus ~10 paneles en 1 sola columna incluso con mucho ancho
+   disponible (mismo scroll larguísimo en 1920 que en 360). Scoped a
+   #config-grid (el contenedor que renderConfig() ya envuelve alrededor de
+   TODOS sus paneles) — nunca toca `.panel` global, así que no afecta
+   Dashboard/Reportes/Historial/Plan/Registrar Engrase ni ninguna otra
+   pantalla que también use `.panel`. 2 columnas desde ~1024px (donde ya
+   sobra espacio real); `align-items:start` evita que un panel corto se
+   estire para igualar a uno largo (ej. "Apariencia" junto a "Notificaciones").
+   El orden de los paneles no cambia — un grid de 2 columnas los coloca
+   fila por fila en el mismo orden en que ya los genera renderConfig(). */
+@media (min-width: 1024px) {
+  #config-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
+  #config-grid > .panel { margin-bottom: 0; }
+}
+
 /* ---------------- Equipment cards / semaforo ---------------- */
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 14px; }
 .eq-card {

@@ -3,8 +3,9 @@
    P0-2 — "PIN rápido" para volver a entrar SIN INTERNET después de un
    login real de Supabase Auth. Módulo separado a propósito: NO reutiliza
    ni toca la lógica del login PIN legacy (app.js renderLogin()/doLogin(),
-   comparación en texto plano) — mientras AUTH_MODE sea 'legacy' (default),
-   nada de este archivo se usa.
+   comparación en texto plano) — solo se usa con AUTH_MODE='supabase'
+   (el default real y definitivo, ver src/core/auth.js), nunca en modo
+   legacy.
 
    Principio de seguridad, sin excepción: Supabase Auth sigue siendo la
    ÚNICA identidad real. Este PIN:

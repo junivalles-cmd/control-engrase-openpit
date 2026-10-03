@@ -56,6 +56,8 @@ const APP_LOGIC_SOURCES = [
     'normalizeSyncInterval',
     'syncIntervalLabel',
     'currentUserFromAuthProfile',
+    'shouldBlockCompleteChecklistWithoutGrease',
+    'GREASE_UNIT',
   ]],
 ];
 
@@ -250,7 +252,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'EXECUTION_TYPE', 'EXECUTION_COMPLETENESS', 'OUT_OF_PLAN_REASONS',
     'toISODateUTCLocal',
     'computeExecutionCompleteness', 'findNextApplicableOccurrenceForWeekdayPlan',
-    'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'findExistingWorkForEquipment',
+    'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'canAdvanceHourCycle', 'findExistingWorkForEquipment',
     'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness',
     'NO_EXECUTION_REASONS', 'validateNoExecutionInput', 'buildNoExecutionRecord', 'findCarriedOverSkipForToday',
     'GREASE_MATCH_STATUS', 'findMatchingGreaseRecordForOccurrence',

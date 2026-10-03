@@ -147,6 +147,19 @@ function resolveOutOfPlanSatisfaction({ plan, completeness, existingRecords, tod
   return found ? found.occurrenceKey : null;
 }
 
+// F-01 (auditoría pre-release): ¿puede esta ejecución avanzar plan.lastGreaseHour
+// de un plan "Horas de operación"? Esa fecha/hora es la base de
+// computeOccurrenceKey() para ese controlType (ver comentario arriba) —
+// avanzarla equivale a "reiniciar el ciclo". Un PARTIAL (puntos pendientes)
+// NUNCA debe reiniciarlo, igual que resolveOutOfPlanSatisfaction() ya exige
+// COMPLETE para satisfacer una ocurrencia OUT_OF_PLAN. "Día y turno de la
+// semana" (o cualquier otro controlType) no usa lastGreaseHour para su
+// ciclo — esos casos siempre pueden avanzarlo, sin cambio de comportamiento.
+function canAdvanceHourCycle({ controlType, completeness }) {
+  if (controlType !== 'Horas de operación') return true;
+  return completeness === EXECUTION_COMPLETENESS.COMPLETE;
+}
+
 /* ============================================================
    DETECCIÓN DE TRABAJO EXISTENTE ANTES DE ABRIR "FUERA DE PLAN" (§5)
    ============================================================
