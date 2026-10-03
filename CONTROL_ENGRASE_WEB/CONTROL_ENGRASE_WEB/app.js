@@ -443,7 +443,7 @@ async function showEquipmentQrInfo(equipmentId) {
       <div class="modal-actions" style="flex-wrap:wrap">
         ${canRegister && !ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
         ${ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-out-of-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
-        ${App.currentUser.role !== 'LUBRICADOR' ? `<button class="btn" id="qr-info-detail">Ver ficha completa</button>` : ''}
+        <button class="btn" id="qr-info-detail">Ver ficha completa</button>
       </div>
     </div>
   `);
@@ -1845,15 +1845,20 @@ function wireQuickFind() {
   let resultados = [];
   let seleccion = -1;
 
+  // Consulta universal (§3 del lote): mismo criterio de coincidencia que ya
+  // usa y prueba Historial (equipoMatchesQuery(), código/ahorrativo/marca/
+  // modelo/descripción/serie/categoría/ubicación) — antes esta búsqueda solo
+  // miraba código/marca/modelo, más angosta que la de Historial para el
+  // mismo tipo de dato. Nunca una segunda implementación del filtro.
   async function buscar() {
     const q = input.value.trim().toLowerCase();
     if (q.length < 2) { caja.classList.add('hidden'); caja.innerHTML = ''; return; }
-    const equipos = await DB.allActive('equipment');
-    resultados = equipos.filter(e =>
-      (e.code || '').toLowerCase().includes(q) ||
-      (e.shortCode || '').toLowerCase().includes(q) ||
-      `${e.brand} ${e.model}`.toLowerCase().includes(q)
-    ).slice(0, 8);
+    const [equipos, tiposQF, locationsQF] = await Promise.all([
+      DB.allActive('equipment'), DB.allActive('equipment_types'), DB.allActive('locations'),
+    ]);
+    resultados = equipos.filter(e => equipoMatchesQuery(
+      e, tiposQF.find(t => t.id === e.typeId), locationsQF.find(l => l.id === e.locationId), q
+    )).slice(0, 8);
     seleccion = -1;
 
     if (!resultados.length) {
@@ -2426,8 +2431,9 @@ function offerQuickUnlockSetup(profile) {
         <p class="login-hint">¿Configurar un PIN rápido (4 o 6 dígitos) para entrar sin escribir tu contraseña cada vez, incluso sin Internet?</p>
         <form id="quick-unlock-setup-form" class="form-grid">
           <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-          <div id="quick-unlock-setup-error" class="login-error"></div>
-          <button type="submit" class="btn btn-accent">Configurar PIN</button>
+          <label>Confirmar PIN<input required name="pinConfirm" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+          <div id="quick-unlock-setup-error" class="login-error span-2"></div>
+          <button type="submit" class="btn btn-accent span-2">Configurar PIN</button>
         </form>
         <button type="button" id="quick-unlock-setup-skip" class="btn">Ahora no</button>
       </div>
@@ -2436,6 +2442,10 @@ function offerQuickUnlockSetup(profile) {
   $('#quick-unlock-setup-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
+    if (fd.pin !== fd.pinConfirm) {
+      $('#quick-unlock-setup-error').textContent = 'Los PIN no coinciden. Vuelve a escribirlos.';
+      return;
+    }
     try {
       await QuickUnlock.configure(profile.appUserId, fd.pin);
       enterAppAsProfile(profile);
@@ -2452,13 +2462,20 @@ function offerQuickUnlockSetup(profile) {
 // (formato, PIN trivial) — nunca duplica esa validación.
 function quickUnlockConfigureModal(mode) {
   openModal(mode === 'change' ? 'Cambiar PIN rápido' : 'Configurar PIN rápido', `
+    <p class="dim" style="margin-top:-4px">PIN de 4 o 6 dígitos para desbloquear este dispositivo sin escribir tu contraseña. Nunca reemplaza tu rol ni tus permisos.</p>
     <form id="quick-unlock-modal-form" class="form-grid">
-      <label>PIN (4 o 6 dígitos)<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
+      <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+      <label>Confirmar PIN<input required name="pinConfirm" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
+      <div id="quick-unlock-modal-error" class="login-error span-2"></div>
+      <div class="modal-actions span-2"><button type="submit" class="btn btn-accent">Guardar</button></div>
     </form>`);
   $('#quick-unlock-modal-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
+    if (fd.pin !== fd.pinConfirm) {
+      $('#quick-unlock-modal-error').textContent = 'Los PIN no coinciden. Vuelve a escribirlos.';
+      return;
+    }
     try {
       const appUserId = Auth.getProfile().appUserId;
       await QuickUnlock.changePin(appUserId, fd.pin);
@@ -2467,7 +2484,7 @@ function quickUnlockConfigureModal(mode) {
       closeModal();
       renderConfig();
     } catch (e) {
-      showInAppToast('✗ ' + e.message);
+      $('#quick-unlock-modal-error').textContent = e.message;
     }
   });
 }
@@ -2608,6 +2625,7 @@ function boot() {
               <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
               <div id="quick-find-results" class="quick-find-results hidden"></div>
             </div>
+            <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
             <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
             <span class="topbar-shift" id="topbar-shift"></span>
             <span class="topbar-user">${esc(App.currentUser.name)} · ${App.currentUser.role}</span>
@@ -2639,6 +2657,10 @@ function boot() {
   if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
   wireQuickFind();
+  // Consulta universal (§2 del lote): buscar (quick-find, arriba) + escanear
+  // QR, las dos mismas acciones ya disponibles en el shell del Lubricador —
+  // reutiliza openQrScanner(), nunca una segunda implementación.
+  $('#btn-scan-qr-topbar').addEventListener('click', () => openQrScanner());
   navigate(allowed.includes('dashboard') ? 'dashboard' : allowed[0]);
   handleQrDeepLink();
 }
@@ -2709,6 +2731,12 @@ function bootLubricador() {
           </div>
         </div>
         <div class="lub-topbar-right">
+          <div class="quick-find">
+            <button type="button" id="quick-find-toggle" class="icon-btn quick-find-toggle" aria-label="Buscar equipo">${ic('search')}</button>
+            <input type="search" id="quick-find" placeholder="Buscar equipo (código)…" autocomplete="off" aria-label="Buscar equipo por código"/>
+            <div id="quick-find-results" class="quick-find-results hidden"></div>
+          </div>
+          <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
@@ -2733,6 +2761,12 @@ function bootLubricador() {
   $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-lock-app')?.addEventListener('click', lockApp);
   $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
+  // Consulta universal (§2 del lote): mismas dos acciones que el shell de
+  // escritorio (buscar/escanear QR), visibles en las 4 pestañas del
+  // Lubricador — nunca solo en Mi Turno. wireQuickFind()/openQrScanner() son
+  // las mismas funciones reales, nunca una copia para este shell.
+  wireQuickFind();
+  $('#btn-scan-qr-topbar').addEventListener('click', () => openQrScanner());
   $$('.lub-nav-item').forEach(b => b.addEventListener('click', () => {
     // La barra inferior vive FUERA de #app-content (nunca se borra al entrar a
     // Registrar Engrase) — tocar cualquiera de estas 4 secciones es una salida
@@ -4406,6 +4440,12 @@ async function handleEquipmentExcelImport(file, types, locations) {
   });
 }
 
+// Ficha de Engrase (consulta universal, §6/§7 del lote): SOLO lectura de
+// datos ya calculados por funciones existentes (statusFor/operational-scope/
+// grease-validation) — nunca reimplementa estado, matching, carryover ni
+// validación aquí. Accesible a TODOS los roles autenticados (consultar ≠
+// modificar: las acciones de abajo siguen gateadas una por una, igual que
+// antes de este lote).
 async function openEquipmentDetail(id) {
   trackRecentEquipment(id);
   const e = await DB.get('equipment', id);
@@ -4422,16 +4462,53 @@ async function openEquipmentDetail(id) {
   const anomaliasAbiertas = (await DB.allActive('anomalies'))
     .filter(a => a.equipmentId === id && a.status !== 'Cerrada')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  // Contexto operativo de solo lectura (§7) — mismas funciones que ya usan
+  // Dashboard/Historial/Plan, nunca una segunda implementación.
+  const locationsDet = await DB.allActive('locations');
+  const ubicacionActualDet = e.locationId ? (locationsDet.find(l => l.id === e.locationId) || null) : null;
+  const planDet = s.plan || null;
+  const pointsDet = planDet ? (await DB.allActive('lubrication_points')).filter(p => p.planId === planDet.id) : [];
+  const ultimoRecordDet = ultimos[0] || null;
+  const cuadrillasDet = await DB.allActive('cuadrillas');
+  const crewUltimoId = ultimoRecordDet ? resolveRecordCrewId(ultimoRecordDet).value : null;
+  const crewUltimoDet = crewUltimoId ? (cuadrillasDet.find(c => c.id === crewUltimoId) || null) : null;
+  const occurrenceKeyHoyDet = planDet ? computeOccurrenceKey(planDet, { dateISO: todayDateISO() }) : null;
+  const assignmentActivoDet = occurrenceKeyHoyDet ? findActivePendingAssignment(await DB.allActive('lubrication_assignments'), occurrenceKeyHoyDet) : null;
+  const crewAsignadaDet = assignmentActivoDet ? (cuadrillasDet.find(c => c.id === assignmentActivoDet.assignedCrewId) || null) : null;
+  const skipsDet = (await DB.allActive('lubrication_skips')).filter(sk => sk.equipmentId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const carryoverHoyDet = findCarriedOverSkipForToday(skipsDet, { equipmentId: id, dateISO: todayDateISO() });
+  const ultimoSkipDet = skipsDet[0] || null;
+  const validationsDet = await DB.allActive('grease_validations');
+  const valStatusUltimoDet = ultimoRecordDet ? validationStatusForRecord(ultimoRecordDet, validationsDet, new Date(), App.generalSettings) : null;
+  const TIPO_PLAN_LABELS_DET = { 'Horas de operación': 'Por horas de operación', 'Día y turno de la semana': 'Día y turno de la semana' };
+
   openModal(`${esc(e.code)}${e.shortCode ? ' · ' + e.shortCode : ''} · ${esc(e.brand)} ${esc(e.model)}`, `
     <div class="detail-grid">
       <div><b>Código</b><div class="mono">${esc(e.code)}</div></div>
       <div><b>Código ahorrativo</b><div class="mono">${e.shortCode || '—'}</div></div>
       <div><b>Categoría</b><div>${(types.find(t => t.id === e.typeId) || {}).name || '—'}</div></div>
       <div><b>Serie</b><div>${e.serial || '—'}</div></div>
+      <div><b>Ubicación actual</b><div>${ubicacionActualDet ? esc(ubicacionActualDet.name) : 'Sin ubicación'}</div></div>
       <div><b>Estado</b><div>${esc(e.status)}</div></div>
       <div><b>Horómetro</b><div class="mono">${fmt(e.hourmeter)} h</div></div>
       <div><b>Estado de engrase</b><div><span class="dot" style="background:${STATUS_COLOR[s.code]}"></span> ${s.label}</div></div>
       ${s.nextHour !== undefined ? `<div><b>Próximo engrase</b><div class="mono">${fmt(s.nextHour)} h</div></div>` : ''}
+    </div>
+
+    <div class="ficha-bloque">
+      <h4>${ic("list")}Plan y ejecución</h4>
+      <div class="detail-grid">
+        <div><b>Tipo de plan</b><div>${planDet ? esc(TIPO_PLAN_LABELS_DET[planDet.controlType] || planDet.controlType) : 'Sin plan'}</div></div>
+        ${planDet && planDet.controlType === 'Día y turno de la semana' ? `<div><b>Turno programado</b><div>${planDet.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</div></div>` : ''}
+        ${ultimoRecordDet ? `<div><b>Último consumo</b><div class="mono">${fmt(ultimoRecordDet.qty, 1)} ${GREASE_UNIT}</div></div>` : ''}
+        ${crewUltimoDet ? `<div><b>Cuadrilla (último engrase)</b><div>${esc(crewUltimoDet.name)}</div></div>` : ''}
+        ${valStatusUltimoDet ? `<div><b>Validación</b><div>${validationBadgeHTML(valStatusUltimoDet)}</div></div>` : ''}
+      </div>
+      ${assignmentActivoDet ? `<div class="qr-info-alert" style="background:var(--surface-2); color:var(--text)">📌 Asignación activa a <b>${crewAsignadaDet ? esc(crewAsignadaDet.name) : 'otra cuadrilla'}</b> para el engrase pendiente de hoy.</div>` : ''}
+      ${carryoverHoyDet ? `<div class="qr-info-alert">⚠ El turno ${carryoverHoyDet.shiftId === 'shift_dia' ? 'Día' : 'Noche'} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carryoverHoyDet.reason] || carryoverHoyDet.reason)}.</div>`
+        : (ultimoSkipDet ? `<div class="dim">Último no ejecutado: ${fmtDate(ultimoSkipDet.date)} · ${esc(NO_EXECUTION_REASON_LABELS[ultimoSkipDet.reason] || ultimoSkipDet.reason)}</div>` : '')}
+      ${pointsDet.length ? `<div class="dim" style="margin-top:6px">Puntos de engrase (${pointsDet.length}): ${pointsDet.slice(0, 6).map(p => esc(p.point)).join(', ')}${pointsDet.length > 6 ? ` y ${pointsDet.length - 6} más…` : ''}</div>` : ''}
     </div>
 
     ${anomaliasAbiertas.length ? `

@@ -58,6 +58,10 @@ const APP_LOGIC_SOURCES = [
     'currentUserFromAuthProfile',
     'shouldBlockCompleteChecklistWithoutGrease',
     'GREASE_UNIT',
+    'PERMISSIONS',
+    'qrValueForEquipment',
+    'parseEquipmentIdFromScan',
+    'equipoMatchesQuery',
   ]],
 ];
 
