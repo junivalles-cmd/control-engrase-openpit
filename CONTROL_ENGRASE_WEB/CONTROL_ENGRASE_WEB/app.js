@@ -5978,6 +5978,7 @@ async function renderMatrizSemanal() {
       </div>
       <div class="color-legend mtz-collapsible-mobile mtz-collapsed-mobile" id="mtz-legend">
         <span class="color-legend-item"><span class="dot" style="background:#00B050"></span>Realizado</span>
+        <span class="color-legend-item"><span class="dot" style="background:#8A5A00"></span>Realizado atrasado (turno distinto al planificado)</span>
         <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado (día ya pasado)</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente hoy</span>
         <span class="color-legend-item"><span class="dot" style="background:#F4B183; opacity:0.5"></span>Programado más adelante</span>
@@ -6130,7 +6131,7 @@ async function renderMatrizSemanal() {
           } else if (s.tipo === 'hecho_atrasado') {
             fila.push(celda('REALIZADO ATRASADO', {
               font: { bold: true, italic: true, sz: 8, color: { rgb: 'FFFFFF' } },
-              fill: { fgColor: { rgb: '2DB6A3' } },
+              fill: { fgColor: { rgb: '8A5A00' } },
               alignment: { horizontal: 'center', vertical: 'center' },
               border: bordes
             }));
@@ -11292,13 +11293,16 @@ async function renderConfig() {
 
   c.innerHTML = `
     <div id="config-root">
-      <div class="config-tabs" role="tablist" aria-label="Categorías de configuración">
-        ${CONFIG_CATEGORIES.map(cat => `<button type="button" class="config-tab" role="tab" id="config-tab-${cat.key}" aria-controls="config-cat-${cat.key}" aria-selected="false" tabindex="-1" data-category="${cat.key}">${cat.label}</button>`).join('')}
-      </div>
       <div class="config-mobile-menu" id="config-mobile-menu">
         ${CONFIG_CATEGORIES.map(cat => `<button type="button" class="config-mobile-item" data-category="${cat.key}">${cat.label}<span class="config-mobile-chevron">›</span></button>`).join('')}
       </div>
       <button type="button" class="config-mobile-back hidden" id="config-mobile-back">← Volver a Configuración</button>
+
+      <div class="config-desktop-grid">
+      <nav class="config-tabs" role="tablist" aria-label="Categorías de configuración" aria-orientation="vertical">
+        ${CONFIG_CATEGORIES.map(cat => `<button type="button" class="config-tab" role="tab" id="config-tab-${cat.key}" aria-controls="config-cat-${cat.key}" aria-selected="false" tabindex="-1" data-category="${cat.key}">${cat.label}</button>`).join('')}
+      </nav>
+      <div class="config-content">
 
       <div class="config-category hidden" id="config-cat-general" data-category="general" role="tabpanel" aria-labelledby="config-tab-general">
     <div class="panel config-narrow">
@@ -11484,6 +11488,9 @@ async function renderConfig() {
         <tbody>${log.map(l => `<tr><td>${fmtDate(l.createdAt)}</td><td>${l.action}</td><td>${esc(l.detail)}</td><td>${l.user}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin actividad.</td></tr>'}</tbody>
       </table>
     </div>
+      </div>
+
+      </div>
       </div>
     </div>`;
 

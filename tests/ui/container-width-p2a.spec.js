@@ -1,11 +1,25 @@
 // tests/ui/container-width-p2a.spec.js
 //
 // UI/Responsive — LOTE P2-A (docs/UI_RESPONSIVE_FULL_AUDIT.md): UI-FULL-105
-// (Anomalías, vista Lubricador), UI-FULL-109 (Mis Engrases, Lubricador) y
-// UI-FULL-304 (Configuración — paneles apilados en desktop). No requiere
-// login: fragmentos estáticos con la estructura/clases REALES de
-// renderAnomalias()/renderLubricadorHistorial()/renderConfig() (app.js) —
-// datos de relleno, nunca registros de producción.
+// (Anomalías, vista Lubricador) y UI-FULL-109 (Mis Engrases, Lubricador).
+// No requiere login: fragmentos estáticos con la estructura/clases REALES
+// de renderAnomalias()/renderLubricadorHistorial() (app.js) — datos de
+// relleno, nunca registros de producción.
+//
+// UI-FULL-304 (Configuración: paneles en grid de 2 columnas dentro de
+// .app-content) se ELIMINÓ en el lote "fix: refine settings layout and
+// matrix status styling" (HALLAZGO 1): probaba un fixture con .panel
+// sueltos como hijos directos de .app-content — un markup que renderConfig()
+// ya NO genera desde el lote de categorías/tabs (y mucho menos desde el
+// lote de sidebar vertical). La regla CSS que ejercía
+// (".app-content:has(#audit-log-panel) { display:grid; ... }") era la
+// causa raíz confirmada del hallazgo "contenido estrecho + hueco vacío a la
+// derecha" en Configuración — se eliminó la regla, y con ella este test que
+// la ejercía contra un fixture ya irreal. La cobertura real y vigente de
+// "Configuración usa el espacio del desktop correctamente" vive ahora en
+// tests/ui/config-desktop-grid.spec.js (pruebas A/E/F-G, sobre la
+// estructura REAL #config-root > .config-desktop-grid > .config-tabs +
+// .config-content).
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -42,25 +56,6 @@ const MIS_ENGRASES_FIXTURE = `
           <div class="lub-eq-model">Marca Modelo</div>
           <div class="lub-eq-bottom"><span class="mono">1200.0 h</span><span>Normal</span></div>
         </div>`).join('')}
-    </div>
-  </main>
-</div>
-`;
-
-const CONFIG_FIXTURE = `
-<div class="app-shell">
-  <main class="app-content">
-    <div class="panel"><div class="panel-head"><h3>Apariencia</h3></div><div style="padding:14px">Corto</div></div>
-    <div class="panel"><div class="panel-head"><h3>Turnos y umbrales generales</h3></div><div style="padding:14px">Formulario corto</div></div>
-    <div class="panel" data-simple-store="cuadrillas"><div class="panel-head"><h3>Cuadrillas</h3></div><div style="padding:14px">Lista corta</div></div>
-    <div class="panel" data-simple-store="locations"><div class="panel-head"><h3>Ubicaciones</h3></div><div style="padding:14px">Lista corta</div></div>
-    <div class="panel" id="notif-panel"><div class="panel-head"><h3>Notificaciones — control por tipo</h3></div><div style="padding:14px; min-height:200px">6 tarjetas de aviso</div></div>
-    <div class="panel"><div class="panel-head"><h3>Sincronización</h3></div><div style="padding:14px">2 campos</div></div>
-    <div class="panel" id="audit-log-panel">
-      <div class="panel-head"><h3>Registro de auditoría</h3></div>
-      <table class="data-table"><thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th><th>Usuario</th></tr></thead>
-        <tbody><tr><td>24/09/2026</td><td>LOGIN</td><td>Detalle</td><td>admin</td></tr></tbody>
-      </table>
     </div>
   </main>
 </div>
@@ -113,40 +108,6 @@ test.describe('UI-FULL-109 — Mis Engrases (Lubricador): grid de tarjetas', () 
       // En grid: la segunda tarjeta queda a la derecha de la primera, misma fila.
       expect(Math.abs(box1.y - box0.y)).toBeLessThan(2);
       expect(box1.x).toBeGreaterThan(box0.x);
-    }
-  });
-});
-
-test.describe('UI-FULL-304 — Configuración: paneles en desktop', () => {
-  test('1 columna hasta 1023px, grid de 2 columnas desde 1024px, paneles grandes a todo el ancho', async ({ page }, testInfo) => {
-    await page.setContent(CONFIG_FIXTURE);
-    await page.addStyleTag({ path: STYLES_PATH });
-
-    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-      scrollWidth: document.documentElement.scrollWidth,
-      clientWidth: document.documentElement.clientWidth,
-    }));
-    expect(scrollWidth, `scroll horizontal no deseado en ${testInfo.project.name}`).toBeLessThanOrEqual(clientWidth);
-
-    const width = testInfo.project.use.viewport?.width;
-    const panels = await page.locator('.app-content > .panel').all();
-    const p0 = await panels[0].boundingBox(); // Apariencia
-    const p1 = await panels[1].boundingBox(); // Turnos y umbrales
-    const notifPanel = await page.locator('#notif-panel').boundingBox();
-    const auditPanel = await page.locator('#audit-log-panel').boundingBox();
-    const appContentBox = await page.locator('.app-content').boundingBox();
-
-    if (width && width <= 1023) {
-      // 1 columna: cada panel ocupa el ancho completo, apilados verticalmente.
-      expect(p1.y).toBeGreaterThan(p0.y);
-      expect(Math.abs(p1.width - p0.width)).toBeLessThan(2);
-    } else {
-      // Desktop (≥1024): Apariencia y Turnos comparten fila (2 columnas)...
-      expect(Math.abs(p0.y - p1.y)).toBeLessThan(2);
-      expect(p1.x).toBeGreaterThan(p0.x);
-      // ...pero Notificaciones y Auditoría ocupan TODO el ancho del contenedor.
-      expect(notifPanel.width).toBeGreaterThan(p0.width * 1.8);
-      expect(auditPanel.width).toBeGreaterThan(p0.width * 1.8);
     }
   });
 });

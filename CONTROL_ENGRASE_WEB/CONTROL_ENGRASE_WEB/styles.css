@@ -686,27 +686,36 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .progress-track { height: 10px; background: var(--surface-2); border-radius: 20px; margin: 4px 16px 16px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 20px; transition: width 0.4s ease; }
 
-/* Configuración — tabs/categorías (lote dashboard+config UX, reemplaza el
-   #config-grid de 2 columnas fijas del lote anterior, que a 1920px dejaba
-   ~65% de la pantalla vacío). Mismo contenedor `.panel` de siempre, solo
-   cambia cómo se agrupa — nunca toca Dashboard/Reportes/Historial/Plan.
-   Desktop (≥1024px): tabs arriba (mismo lenguaje visual que .hist-tabs,
-   subrayado de acento) + SOLO la categoría activa visible. Móvil (<1024px):
-   lista de categorías primero, categoría elegida + "Volver" después — nunca
-   los 13 paneles seguidos. Ambos chrome (tabs y lista) viven siempre en el
-   DOM; este bloque decide cuál se VE según el ancho, wireConfigCategoryNav()
-   (app.js) decide cuál .config-category está visible. */
+/* Configuración — navegación vertical + contenido (lote UX fix: reemplaza
+   los tabs horizontales del lote anterior, que a 1024-1920px mostraban
+   scroll horizontal propio y dejaban el panel activo angosto y pegado a la
+   izquierda con ~60-70% de la pantalla vacía a la derecha). Mismo
+   contenedor `.panel` de siempre, solo cambia cómo se agrupa — nunca toca
+   Dashboard/Reportes/Historial/Plan.
+   Desktop (≥1024px): sidebar vertical compacta (220px) + área de contenido
+   que usa el resto del ancho real — SOLO la categoría activa visible.
+   Móvil (<1024px): lista de categorías primero, categoría elegida +
+   "Volver" después — nunca los 13 paneles seguidos, nunca la sidebar
+   angosta ni tabs horizontales comprimidas. Ambos chrome (sidebar y lista)
+   viven siempre en el DOM; este bloque decide cuál se VE según el ancho,
+   wireConfigCategoryNav() (app.js) decide cuál .config-category está
+   visible. */
+.config-desktop-grid { display: block; }
+.config-content { display: block; min-width: 0; }
+
 .config-tabs {
-  display: none; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border);
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  display: none; gap: 2px;
 }
 .config-tab {
-  flex: none; background: none; border: none; border-bottom: 2px solid transparent;
+  flex: none; width: 100%; display: flex; align-items: center; text-align: left;
+  background: none; border: none; border-left: 3px solid transparent; border-radius: 0 var(--radius) var(--radius) 0;
   color: var(--text-dim); padding: 10px 14px; font-size: var(--fs-sm); font-weight: 600;
   cursor: pointer; white-space: nowrap; min-height: var(--tap);
 }
-.config-tab:hover { color: var(--text); }
-.config-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.config-tab:hover { color: var(--text); background: var(--surface-2); }
+/* Estado activo: 3 señales a la vez (fondo + borde + color/peso de texto),
+   nunca solo color — ver §5 del lote (no depender únicamente del color). */
+.config-tab.active { color: var(--accent); font-weight: 700; background: var(--surface-2); border-left-color: var(--accent); }
 .config-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .config-mobile-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -724,10 +733,20 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   padding: 10px 2px; margin-bottom: 10px; min-height: var(--tap);
 }
 
-/* ≥1024px: tabs reales, lista/volver de móvil nunca se muestran (aunque
-   wireConfigCategoryNav() los deje hidden=false por estado, CSS manda). */
+/* ≥1024px: sidebar vertical + contenido lado a lado; lista/volver de móvil
+   nunca se muestran (aunque wireConfigCategoryNav() los deje hidden=false
+   por estado, CSS manda). Sidebar compacta y fija (220px, dentro del rango
+   200-240px pedido) — el contenido usa TODO el resto del ancho real, nunca
+   un segundo ancho fijo que vuelva a dejar hueco vacío. sticky con top
+   propio para que la navegación siga visible en paneles largos (Papelera/
+   Auditoría) sin duplicar el chrome global de la app. */
 @media (min-width: 1024px) {
-  .config-tabs { display: flex; }
+  .config-desktop-grid { display: flex; align-items: flex-start; gap: 24px; }
+  .config-tabs {
+    display: flex; flex-direction: column; flex: 0 0 220px; width: 220px;
+    position: sticky; top: 16px; padding-right: 4px; border-right: 1px solid var(--border);
+  }
+  .config-content { flex: 1 1 auto; }
   .config-mobile-menu, .config-mobile-back { display: none !important; }
 }
 
@@ -1586,21 +1605,22 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   .lub-content:has(.lub-record-list),
   .lub-content:has(#anom-table) { max-width: 1500px; }
 }
-/* UI-FULL-304 (docs/UI_RESPONSIVE_FULL_AUDIT.md, LOTE P2-A): Configuración tenía
-   ~12 .panel apilados en 1 sola columna en TODOS los anchos — en desktop cada
-   uno se ensancha pero su contenido (2-4 campos, o un botón) deja mucho espacio
-   vacío. Desde 1024px (pedido explícito: "1024+, 2 columnas para paneles
-   pequeños/medianos" — NO desde 768, para no encoger de más el .form-grid
-   interno de cada panel, que reacciona al ancho del VIEWPORT, no de su columna).
-   #audit-log-panel/#notif-panel (tabla de hasta 50 filas, 6 tarjetas de aviso)
-   siguen ocupando el ancho completo — :has(#audit-log-panel) identifica esta
-   pantalla sin necesidad de una clase nueva en el HTML. */
-@media (min-width: 1024px) {
-  .app-content:has(#audit-log-panel) {
-    display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); align-items: start;
-  }
-  #notif-panel, #audit-log-panel { grid-column: 1 / -1; }
-}
+/* (UI-FULL-304 histórico, ELIMINADO en el lote "fix: refine settings layout
+   and matrix status styling" — HALLAZGO 1): esta regla era de la época en
+   que Configuración era ~12 .panel apilados sueltos, directos dentro de
+   .app-content, SIN el sistema de categorías/sidebar actual. Desde el lote
+   de tabs (y ahora el de sidebar vertical), #config-root es un único hijo
+   de .app-content con SU PROPIO layout interno (.config-desktop-grid >
+   .config-tabs + .config-content) — esta regla seguía viva y forzaba
+   .app-content ENTERO a 2 columnas, metiendo a #config-root (sidebar +
+   contenido juntos) dentro de una sola de esas 2 columnas (~mitad del
+   ancho real). Esa era la causa raíz del "contenido estrecho + hueco vacío
+   a la derecha" reportado: el culpable no eran los tabs/la sidebar, era
+   este override de un diseño anterior que nunca se limpió. #notif-panel/
+   #audit-log-panel ya NO son hijos directos de .app-content (viven dentro
+   de .config-content), así que su "grid-column:1/-1" tampoco tenía efecto
+   real desde el lote de tabs — confirmado por grep: ambos ids solo existen
+   dentro de renderConfig(). */
 /* Modo horizontal en celular: la barra inferior no debe robar tanta altura */
 @media (max-height: 420px) and (orientation: landscape) {
   .lub-bottom-nav { padding: 4px 4px; }
@@ -2012,12 +2032,18 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
   background: #00B050; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
-/* "Realizado atrasado" (lote occurrences/carryover) — mismo turquesa que
-   .hist-compliance-teal (Historial/Reportes), para que sea el MISMO color
-   en toda la app cuando un engrase se hizo en un turno distinto al
-   planificado el mismo día (ej. Noche cerrando lo pendiente de Día). */
+/* "Realizado atrasado" (lote UX fix — HALLAZGO 2/7): trabajo COMPLETADO
+   pero ejecutado fuera del turno/fecha prevista — un estado propio, nunca
+   igual a Realizado (verde)/No realizado (rojo)/Pendiente (naranja pálido).
+   #8A5A00 es una derivación EXISTENTE de --amber (es, literalmente, el
+   valor que --amber ya usa en modo oscuro/contraste, ver :root.dark/
+   :root.contrast arriba) — nunca una paleta nueva. Antes usaba el mismo
+   turquesa de .hist-compliance-teal; se cambia a ámbar porque además de la
+   corrección de hover (ver tr:hover .celda-hecho-atrasado abajo) el pedido
+   explícito es "usar un estado propio ÁMBAR/NARANJA accesible". Contraste
+   con texto blanco: 5.9:1 (AA). */
 .celda-hecho-atrasado {
-  background: #2DB6A3; color: #fff; font-weight: 700; font-style: italic;
+  background: #8A5A00; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
 /* "Realizado adelantado" (lote engrase fuera de plan) — un OUT_OF_PLAN que
@@ -2035,8 +2061,19 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
    código de color que "GRIS" en el resto del sistema (statusFor()/STATUS_COLOR) —
    nunca rojo/naranja, para no leerse como una falta del lubricador. */
 .celda-pausado { background: var(--gray-status); color: #fff; font-size: 10px; }
-/* Al pasar el mouse sobre una celda hecha, se resalta sin perder el color */
+/* Al pasar el mouse sobre una celda hecha, se resalta sin perder el color.
+   HALLAZGO 2/8 (lote UX fix): ".celda-hecho-atrasado"/".celda-hecho-adelantado"/
+   ".celda-pausado" NO tenían esta excepción — "table.matriz tbody tr:hover td"
+   (arriba) les ganaba por especificidad (2 clases: .matriz+:hover > 1 clase
+   del estado) aunque esa regla esté definida DESPUÉS en el archivo: la
+   especificidad decide, no el orden de aparición. El resultado era el
+   reportado: la celda se veía casi blanca/vacía en hover, con poco
+   contraste. Mismo patrón que .celda-hecho/.celda-pendiente para que CADA
+   estado quede cubierto, no solo el que se reportó. */
 table.matriz tbody tr:hover .celda-hecho { background: #009648; }
+table.matriz tbody tr:hover .celda-hecho-atrasado { background: #754C00; }
+table.matriz tbody tr:hover .celda-hecho-adelantado { background: #4A6BA8; }
+table.matriz tbody tr:hover .celda-pausado { background: #5F666D; }
 table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 
 @media (max-width: 640px) {
