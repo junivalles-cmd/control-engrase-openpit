@@ -1454,6 +1454,53 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--red);
   font-weight: 700; font-size: 15px; cursor: pointer;
 }
+
+/* ---------------- Dashboard del Lubricador (Mi Turno) ----------------
+   Contexto compacto (turno/ubicación/cuadrilla/sincronización), 4 KPIs
+   fijos y tarjetas de "Pendientes arrastrados" — mismo lenguaje visual
+   .lub-* ya establecido (nunca se importan clases .dash-* del Dashboard
+   administrativo, son pantallas distintas con necesidades distintas). */
+.lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 12px; }
+.lub-context-chip {
+  display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px 4px 8px;
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.4;
+}
+.lub-context-chip .dot { width: 7px; height: 7px; margin-right: 0; }
+.lub-context-chip.tone-green .dot { background: var(--green); }
+.lub-context-chip.tone-amber .dot { background: var(--amber); }
+.lub-context-chip.tone-red .dot { background: var(--red); }
+
+.lub-kpi-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 14px; }
+@media (min-width: 480px) { .lub-kpi-row { grid-template-columns: repeat(4, 1fr); } }
+.lub-kpi-card {
+  background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; min-height: 44px;
+}
+.lub-kpi-card.tone-red { border-top-color: var(--red); }
+.lub-kpi-card.tone-amber { border-top-color: var(--amber); }
+.lub-kpi-card.tone-green { border-top-color: var(--green); }
+.lub-kpi-value { font-family: var(--font-mono); font-size: 22px; font-weight: 700; line-height: 1.2; }
+.lub-kpi-label { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+
+.lub-arrastrado-card {
+  background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--amber);
+  border-radius: 12px; padding: 14px var(--sp-3); margin-bottom: 10px;
+}
+.lub-arrastrado-card.tone-red { border-left-color: var(--red); }
+.lub-arrastrado-origen {
+  display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--amber); background: rgba(232,163,61,0.12);
+  border-radius: 20px; padding: 2px 9px; margin-bottom: 8px;
+}
+.lub-arrastrado-origen.tone-red { color: var(--red); background: rgba(229,72,77,0.12); }
+.lub-arrastrado-motivo { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; }
+.lub-arrastrado-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.lub-arrastrado-actions .btn { min-height: var(--tap, 44px); flex: 1 1 140px; }
+
+.lub-quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 4px; }
+@media (min-width: 480px) { .lub-quick-actions { grid-template-columns: repeat(4, 1fr); } }
+.lub-quick-action { min-height: var(--tap, 44px); font-size: 12.5px; padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lub-back { margin-bottom: 12px; }
 .lub-record-list { display: flex; flex-direction: column; gap: 10px; }
 .lub-record-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }

@@ -2851,6 +2851,113 @@ async function renderLubricadorHome() {
   statusesNormal.sort((a, b) => order[a.s.code] - order[b.s.code]);
   statusesAssigned.sort((a, b) => order[a.s.code] - order[b.s.code]);
 
+  // ============================================================
+  // Dashboard del Lubricador (lote "Ajuste importante al Dashboard del
+  // Lubricador"): responde "¿qué tengo pendiente AHORA?" — nunca una
+  // versión reducida del Dashboard administrativo. TODO sale del MISMO
+  // `normal` ya resuelto arriba (usuario → cuadrilla autorizada → ubicación
+  // → turno, ver operational-scope.js) — nunca se calculan datos globales
+  // para ocultarlos después (§9 del pedido). Reusa funciones puras ya
+  // probadas en otras pantallas, cero lógica de negocio nueva:
+  //   - estadoCelda() (weekly-matrix.js, Matriz Semanal)
+  //   - findCarriedOverSkipForToday() (operational-scope.js, mismo
+  //     mecanismo que "pendientesTurnoAnterior" del Dashboard admin)
+  //   - statusFor()/weekdayStatusFor() (lubrication-status.js, ya corrido
+  //     arriba en computeAllStatuses — da scheduleDate para los planes de
+  //     Día y turno, que es lo que permite distinguir "día anterior" /
+  //     "mayor antigüedad" sin reinventar el cálculo de vencimiento).
+  const records = await DB.allActive('lubrication_records');
+  const skips = await DB.allActive('lubrication_skips');
+  const turnoActual = currentShiftId();
+  const today = new Date().toDateString();
+  const todayISODash = todayDateISO();
+  const normalIds = new Set(normal.map(e => e.id));
+
+  // "Turno anterior": MISMO mecanismo exacto que pendientesTurnoAnterior del
+  // Dashboard admin (renderDashboard()), solo que acotado a `normal` en vez
+  // de a los equipos filtrados por Ubicación/Familia — nunca una segunda
+  // implementación del carryover.
+  const skipsHoyScope = skips.filter(s => s.active !== false && (s.date || '').slice(0, 10) === todayISODash && normalIds.has(s.equipmentId));
+  const pendientesTurnoAnterior = normal.filter(e => {
+    const carry = findCarriedOverSkipForToday(skipsHoyScope, { equipmentId: e.id, dateISO: todayISODash });
+    if (!carry || carry.shiftId === turnoActual) return false;
+    const yaEngrasadoHoy = records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today);
+    return !yaEngrasadoHoy;
+  });
+  const turnoAnteriorIds = new Set(pendientesTurnoAnterior.map(e => e.id));
+
+  // "Vencidos" (KPI #1) = SOLO vencimiento por horómetro — nunca mezclado
+  // con lo programado por día/turno (eso es "Arrastrados", KPI #3, ver §2
+  // del pedido: "NO mezclar silenciosamente todos bajo 'Vencido'").
+  const vencidosHorometro = statusesNormal.filter(({ e, s }) =>
+    s.code === 'ROJO' && (plansByEquipoId[e.id] || {}).controlType !== 'Día y turno de la semana');
+
+  // "Día anterior"/"Mayor antigüedad": weekdayStatusFor() ya busca, para
+  // planes de Día y turno, el día asignado más reciente hasta 7 días atrás
+  // (mostRecentAssignedDate) — si no se cumplió, YA da ROJO con
+  // `scheduleDate` = ese día. Aquí solo se clasifica por antigüedad
+  // (diasAtras), sin recalcular nada del vencimiento en sí.
+  const diaAnteriorList = [];
+  const masAntiguoList = [];
+  const pendientesHoyList = [];
+  const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
+  statusesNormal.forEach(({ e, s }) => {
+    const plan = plansByEquipoId[e.id];
+    if (!plan || plan.controlType !== 'Día y turno de la semana') return;
+    if (turnoAnteriorIds.has(e.id)) return; // ya contado como "Turno anterior" — nunca doble conteo
+    if (s.code === 'ROJO' && s.scheduleDate) {
+      const diasAtras = Math.round((hoy0.getTime() - new Date(s.scheduleDate).setHours(0, 0, 0, 0)) / 86400000);
+      if (diasAtras === 1) diaAnteriorList.push({ e, s, diasAtras });
+      else if (diasAtras > 1) masAntiguoList.push({ e, s, diasAtras });
+    } else if (s.code === 'AMARILLO') {
+      // Cubre tanto "PROGRAMADO HOY" como "REPROGRAMADO PARA HOY" — ambos
+      // son, en esencia, "le toca hoy y todavía no se hace".
+      pendientesHoyList.push({ e, s });
+    }
+  });
+
+  // Motivo del último "no se pudo ejecutar" por equipo (cualquier fecha,
+  // no solo hoy) — mismo criterio que la Ficha de equipo
+  // (openEquipmentDetail), nunca una segunda consulta/formato del motivo.
+  const lastSkipByEquipoId = {};
+  skips.filter(sk => sk.active !== false).forEach(sk => {
+    if (!lastSkipByEquipoId[sk.equipmentId] || new Date(sk.createdAt) > new Date(lastSkipByEquipoId[sk.equipmentId].createdAt)) {
+      lastSkipByEquipoId[sk.equipmentId] = sk;
+    }
+  });
+
+  const realizadosHoy = records.filter(r => normalIds.has(r.equipmentId) && new Date(r.date).toDateString() === today).length;
+
+  const DIAS_ABBR_LUB = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const fmtOrigenFecha = (d) => { const dt = new Date(d); return `${DIAS_ABBR_LUB[dt.getDay()]} ${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`; };
+
+  // "3. PENDIENTES ARRASTRADOS": turno anterior > día anterior > mayor
+  // antigüedad, en ese orden — nunca una ocurrencia nueva, siempre el mismo
+  // equipo/registro real ya resuelto arriba.
+  const arrastrados = [
+    ...pendientesTurnoAnterior.map(e => ({ e, origen: 'Turno anterior', tone: 'amber' })),
+    ...diaAnteriorList.map(({ e }) => ({ e, origen: 'Día anterior', tone: 'amber' })),
+    ...masAntiguoList.map(({ e, s }) => ({ e, origen: `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}`, tone: 'red' })),
+  ];
+  const arrastradosIds = new Set(arrastrados.map(x => x.e.id));
+
+  const arrastradoRowHTML = ({ e, origen, tone }) => {
+    const skip = lastSkipByEquipoId[e.id];
+    const loc = (locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación';
+    return `
+      <div class="lub-arrastrado-card tone-${tone}">
+        <span class="lub-arrastrado-origen tone-${tone}">${esc(origen)}</span>
+        <div class="lub-eq-top"><span class="lub-eq-code">${esc(e.code)}</span></div>
+        <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+        <div class="lub-eq-location">📍 ${esc(loc)}</div>
+        ${skip ? `<div class="lub-arrastrado-motivo">Motivo: ${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</div>` : ''}
+        <div class="lub-arrastrado-actions">
+          <button type="button" class="btn btn-accent lub-arr-reg" data-id="${e.id}">${ic("check")}Registrar engrase</button>
+          <button type="button" class="btn lub-arr-ver" data-id="${e.id}">Ver ficha</button>
+        </div>
+      </div>`;
+  };
+
   const eqButtonHTML = (e, s) => `
     <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
       <div class="lub-eq-top">
@@ -2865,34 +2972,86 @@ async function renderLubricadorHome() {
       </div>
     </button>`;
 
+  const kpiTile = (label, value, tone) => `
+    <div class="lub-kpi-card tone-${tone}">
+      <div class="lub-kpi-value">${value}</div>
+      <div class="lub-kpi-label">${label}</div>
+    </div>`;
+
+  // "1. CONTEXTO COMPACTO": turno + ubicación + cuadrilla + sincronización,
+  // en una sola fila — nunca un cálculo nuevo, solo lectura de lo que ya
+  // existe (scope/myCrew/lastSyncState, este último global y ya mantenido
+  // por updateConnBadge()).
+  const syncChip = (() => {
+    const st = lastSyncState.status;
+    if (st === 'ok') return `<span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>`;
+    if (st === 'syncing') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Sincronizando…</span>`;
+    if (st === 'unconfigured' || st === 'idle') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Solo local</span>`;
+    return `<span class="lub-context-chip tone-red"><span class="dot"></span>Sin conexión</span>`;
+  })();
+  const contextChips = [
+    `<span class="lub-context-chip">${turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'}</span>`,
+    myCrew ? `<span class="lub-context-chip">📍 ${esc((locations.find(l => l.id === scope.crewLocationId) || {}).name || '—')}</span>` : '',
+    myCrew ? `<span class="lub-context-chip">👥 ${esc(myCrew.name)}</span>` : '',
+    syncChip,
+  ].join('');
+
+  // "4. TRABAJO DEL TURNO ACTUAL": el resto de `normal`, SIN repetir lo que
+  // ya se muestra en Arrastrados (cada equipo aparece una sola vez en toda
+  // la pantalla).
+  const statusesNormalRestantes = statusesNormal.filter(({ e }) => !arrastradosIds.has(e.id));
+
   c.innerHTML = `
-    <div class="lub-header-row">
-      <div>
-        <h2 class="lub-heading">Equipos asignados</h2>
-        <p class="lub-sub">Toca un equipo para registrar el engrase.${myCrew ? ' · ' + esc(myCrew.name) : ''}
-          ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? ` · <button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button>` : ''}
-        </p>
-      </div>
-      <div class="lub-header-actions">
-        <button class="btn btn-accent lub-scan-btn" id="lub-scan-qr">${ic("qr")}Escanear QR</button>
-        <button class="btn lub-outofplan-btn" id="lub-out-of-plan">${ic("plus")}Fuera de plan</button>
-      </div>
+    <div class="lub-context-row">${contextChips}</div>
+
+    <div class="lub-kpi-row">
+      ${kpiTile('Vencidos', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
+      ${kpiTile('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral')}
+      ${kpiTile('Arrastrados', arrastrados.length, arrastrados.length ? 'amber' : 'neutral')}
+      ${kpiTile('Realizados hoy', realizadosHoy, 'green')}
     </div>
-    ${await recentEquiposHTML()}
+
+    ${arrastrados.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">PENDIENTES ARRASTRADOS</span></div>
+    <div class="lub-eq-list">${arrastrados.map(arrastradoRowHTML).join('')}</div>
+    ` : ''}
+
+    ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
+
     ${statusesAssigned.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ASIGNADOS A MI CUADRILLA</span></div>
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ASIGNACIONES ACTIVAS</span></div>
     <div class="lub-eq-list">${statusesAssigned.map(({ e, s }) => eqButtonHTML(e, s)).join('')}</div>` : ''}
-    ${scope.kind === 'GLOBAL' ? '' : '<div class="lub-section-head"><span class="dim">Trabajo normal de mi cuadrilla</span></div>'}
+
+    <div class="lub-section-head"><span class="dim">Trabajo del turno actual</span></div>
     <div class="lub-eq-list">
-      ${statusesNormal.map(({ e, s }) => eqButtonHTML(e, s)).join('') || `<div class="empty-state">No hay equipos asignados a este turno${myCrew ? ' para ' + esc(myCrew.name) : ''}.</div>`}
+      ${statusesNormalRestantes.map(({ e, s }) => eqButtonHTML(e, s)).join('') || `<div class="empty-state">No hay más equipos pendientes en este turno${myCrew ? ' para ' + esc(myCrew.name) : ''}.</div>`}
     </div>
+
+    <div class="lub-section-head"><span class="dim">Acciones rápidas</span></div>
+    <div class="lub-quick-actions">
+      <button type="button" class="btn btn-accent lub-quick-action" id="lub-quick-registrar">${ic("plus")}Registrar engrase</button>
+      <button type="button" class="btn lub-quick-action" id="lub-quick-qr">${ic("qr")}Escanear QR</button>
+      <button type="button" class="btn lub-quick-action" id="lub-quick-buscar">${ic("search")}Buscar equipo</button>
+      <button type="button" class="btn lub-quick-action" id="lub-quick-matriz">${ic("matrix")}Matriz semanal</button>
+    </div>
+
     <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
   `;
   $$('.lub-eq-btn', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
+  $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
+  $$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
-  $('#lub-scan-qr').addEventListener('click', () => openQrScanner());
-  $('#lub-out-of-plan').addEventListener('click', () => openOutOfPlanEquipmentPicker());
+  $('#lub-quick-qr').addEventListener('click', () => openQrScanner());
+  // "Registrar engrase" (acción rápida, sin equipo preelegido): mismo
+  // picker ya usado por "fuera de plan" — ya detecta solo si hay trabajo
+  // pendiente/asignado y abre eso en vez de crear algo nuevo (§5), así que
+  // sirve igual para "quiero registrar un engrase ahora mismo" genérico.
+  $('#lub-quick-registrar').addEventListener('click', () => openOutOfPlanEquipmentPicker());
+  $('#lub-quick-buscar').addEventListener('click', () => $('#quick-find')?.focus());
+  $('#lub-quick-matriz').addEventListener('click', () => openLubricadorMatrizModal({
+    equipos: normal, plans: Object.values(plansByEquipoId), records, myCrew
+  }));
   // "Cambiar cuadrilla" (punto 2 del pedido — permitir cambiarla cuando
   // tenga autorización): borra la selección de ESTA sesión y vuelve a
   // pedir elegir entre las autorizadas — nunca pierde la autorización en
@@ -2901,7 +3060,66 @@ async function renderLubricadorHome() {
     setSelectedCrewId(App.currentUser.id, '');
     renderLubricadorHome();
   });
-  $$('.recents-chip', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.recentId)));
+}
+
+// "Matriz semanal" de solo lectura para el Lubricador (Acciones rápidas,
+// §6/§9 del pedido): MISMA estadoCelda() pura (weekly-matrix.js) que usa la
+// Matriz Semanal real — nunca una reimplementación del cálculo — pero
+// SIEMPRE acotada a `equipos` (ya viene filtrado a la cuadrilla/ubicación
+// autorizada de quien la abre, ver renderLubricadorHome()). A propósito SIN
+// selector de Ubicación/Familia: el Lubricador no debe poder consultar otra
+// ubicación desde aquí (§8/§9 — nunca indicadores de otras ubicaciones ni
+// estado global de flota).
+function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
+  const visibles = equipos.filter(e => {
+    const p = plans.find(pl => pl.equipmentId === e.id);
+    return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
+  }).sort((a, b) => a.code.localeCompare(b.code));
+
+  if (!visibles.length) {
+    openModal('Matriz semanal', `<div class="empty-state">Ningún equipo de tu cuadrilla tiene un plan por día y turno configurado.</div>`);
+    return;
+  }
+
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const lunes = new Date(hoy);
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
+  const dias = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+
+  const CELDA_TEXTO = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE', pausado: 'PAUSADO' };
+  const CELDA_CLASE = { hecho: 'celda-hecho', hecho_atrasado: 'celda-hecho-atrasado', hecho_adelantado: 'celda-hecho-adelantado', no_realizado: 'celda-no-realizado', pendiente: 'celda-pendiente', pausado: 'celda-pausado', futuro: 'celda-futuro' };
+
+  const html = `
+    <p class="dim">${myCrew ? esc(myCrew.name) + ' — ' : ''}solo lectura, solo los equipos de tu cuadrilla.</p>
+    <div class="matriz-wrap">
+      <table class="matriz">
+        <thead><tr>
+          <th class="matriz-eq">Equipo</th>
+          ${dias.map(d => `<th${d.toDateString() === hoy.toDateString() ? ' class="is-today"' : ''}>${WEEKDAY_NAMES[d.getDay()].slice(0, 3)}<div class="matriz-fecha">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${visibles.map(eq => `
+            <tr>
+              <td class="matriz-eq mono">${esc(eq.code)}</td>
+              ${dias.map(d => {
+                const st = estadoCelda(eq, d, plans, records, hoy);
+                const isToday = d.toDateString() === hoy.toDateString();
+                return `<td class="${CELDA_CLASE[st.tipo] || ''}${isToday ? ' is-today' : ''}">${CELDA_TEXTO[st.tipo] || ''}</td>`;
+              }).join('')}
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="color-legend">
+      <span class="color-legend-item"><span class="dot" style="background:#00B050"></span>Realizado</span>
+      <span class="color-legend-item"><span class="dot" style="background:#8A5A00"></span>Realizado atrasado</span>
+      <span class="color-legend-item"><span class="dot" style="background:#C00000"></span>No realizado</span>
+      <span class="color-legend-item"><span class="dot" style="background:#F4B183"></span>Pendiente</span>
+      <span class="color-legend-item"><span class="dot" style="background:var(--gray-status)"></span>Pausado</span>
+    </div>
+  `;
+  openModal('Matriz semanal', html);
 }
 
 async function startLubricadorGreaseFlow(equipmentId, options) {
