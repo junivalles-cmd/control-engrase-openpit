@@ -2320,7 +2320,14 @@ function renderSupabaseLoginForm() {
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        ${themeButtonHTML('login-theme-btn')}
+        <div class="brand brand-login">
+          <div class="brand-mark"></div>
+          <div>
+            <div class="brand-title">CONTROL DE ENGRASE</div>
+            <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
+          </div>
+        </div>
         ${!online ? '<p class="login-hint">Sin conexión — se necesita Internet para iniciar sesión la primera vez. Si ya configuraste un PIN rápido antes, vuelve a intentarlo con señal.</p>' : ''}
         <form id="supabase-login-form" class="form-grid">
           <label>Usuario<input required name="username" autocomplete="username" ${online ? '' : 'disabled'}/></label>
@@ -2330,6 +2337,7 @@ function renderSupabaseLoginForm() {
         </form>
       </div>
     </div>`;
+  $('#btn-theme').addEventListener('click', openThemePicker);
   $('#supabase-login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
@@ -2349,7 +2357,14 @@ function renderQuickUnlockScreen(snapshot) {
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        ${themeButtonHTML('login-theme-btn')}
+        <div class="brand brand-login">
+          <div class="brand-mark"></div>
+          <div>
+            <div class="brand-title">CONTROL DE ENGRASE</div>
+            <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
+          </div>
+        </div>
         <p class="login-hint">${esc(snapshot.displayName)}</p>
         <div id="quick-unlock-area" class="form-grid">
           <input id="quick-unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="PIN" maxlength="6"/>
@@ -2357,9 +2372,11 @@ function renderQuickUnlockScreen(snapshot) {
         </div>
         <div id="quick-unlock-error" class="login-error"></div>
         <button type="button" id="quick-unlock-use-password" class="btn">Usar contraseña</button>
+        <div class="login-footer">Funciona sin conexión · desbloqueo local de este dispositivo</div>
       </div>
     </div>`;
 
+  $('#btn-theme').addEventListener('click', openThemePicker);
   $('#quick-unlock-use-password').addEventListener('click', () => renderSupabaseLoginForm());
 
   const doUnlock = async () => {
@@ -2399,7 +2416,13 @@ function offerQuickUnlockSetup(profile) {
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">ENGRASE</div><div class="brand-sub">OPEN PIT</div></div></div>
+        <div class="brand brand-login">
+          <div class="brand-mark"></div>
+          <div>
+            <div class="brand-title">CONTROL DE ENGRASE</div>
+            <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
+          </div>
+        </div>
         <p class="login-hint">¿Configurar un PIN rápido (4 o 6 dígitos) para entrar sin escribir tu contraseña cada vez, incluso sin Internet?</p>
         <form id="quick-unlock-setup-form" class="form-grid">
           <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
@@ -6348,6 +6371,29 @@ async function startGreaseFlow(equipmentId, target, options) {
         </div>
 
         <div class="grease-flow-card">
+          <div class="grease-flow-points-head">
+            <h4 class="grease-flow-card-head">Puntos de engrase</h4>
+            ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
+          </div>
+          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
+          <div id="checklist">
+            ${points.length ? points.map(p => `
+              <div class="checklist-item" data-point="${p.id}">
+                <label class="check-row">
+                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}" alt="Foto de ${esc(p.point)}"/>` : ''}
+                  <input type="checkbox" class="chk-done" checked/>
+                  <span class="check-row-text">${esc(p.point)}</span>
+                  <span class="check-row-mark">✓</span>
+                </label>
+                <select class="chk-reason hidden">
+                  <option value="">¿Por qué no se realizó?</option>
+                  ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
+                </select>
+              </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
+          </div>
+        </div>
+
+        <div class="grease-flow-card">
           <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
           <div class="form-grid grease-flow-lube-grid">
             <label>Tipo de grasa utilizada
@@ -6378,29 +6424,6 @@ async function startGreaseFlow(equipmentId, target, options) {
               </div>
             </div>
           </details>` : ''}
-        </div>
-
-        <div class="grease-flow-card">
-          <div class="grease-flow-points-head">
-            <h4 class="grease-flow-card-head">Puntos de engrase</h4>
-            ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
-          </div>
-          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
-          <div id="checklist">
-            ${points.length ? points.map(p => `
-              <div class="checklist-item" data-point="${p.id}">
-                <label class="check-row">
-                  ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}" alt="Foto de ${esc(p.point)}"/>` : ''}
-                  <input type="checkbox" class="chk-done" checked/>
-                  <span class="check-row-text">${esc(p.point)}</span>
-                  <span class="check-row-mark">✓</span>
-                </label>
-                <select class="chk-reason hidden">
-                  <option value="">¿Por qué no se realizó?</option>
-                  ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
-                </select>
-              </div>`).join('') : `<div class="empty-state">Este equipo no tiene puntos de engrase configurados. Configúralos en "Plan de Engrase".</div>`}
-          </div>
         </div>
 
         <div class="grease-flow-card">
@@ -7847,7 +7870,10 @@ async function drawHistory(equipmentId) {
       return `<span class="oop-badge" style="margin-bottom:0" title="${esc(detalle)}">Fuera de plan</span>`;
     }
     if (tipo === 'ASSIGNED') return '<span class="status-chip" style="--c:var(--amber)">Asignado</span>';
-    return '<span class="dim">Planificado</span>';
+    // Mismo componente que ASSIGNED/OUT_OF_PLAN (nunca un marcado propio) —
+    // antes era solo texto "dim", con menos peso visual que sus hermanos;
+    // tono neutro porque PLANIFICADO es el caso normal, sin alerta.
+    return '<span class="status-chip" style="--c:var(--gray-status)">Planificado</span>';
   };
   const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
   const validations = await DB.allActive('grease_validations');

@@ -93,7 +93,7 @@ const HISTORIAL_EQUIPO_FIXTURE = `
         <td>01/10/2026</td>
         <td>Noche</td>
         <td>Volcán</td>
-        <td><span class="dim">Planificado</span></td>
+        <td><span class="status-chip" style="--c:var(--gray-status)">Planificado</span></td>
         <td class="mono">12480.5 h</td>
         <td class="col-secondary">Ana Ruiz</td>
         <td class="col-secondary">Grasa litio EP2</td>
