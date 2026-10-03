@@ -1,12 +1,18 @@
 // tests/unit/dashboard-hierarchy.test.js
 //
-// Rediseño estructural del Dashboard (cierre Parte D) — orden visual A-I
-// pedido explícitamente: Cabecera+Filtros, KPI principales, Cumplimiento,
-// Requieren atención, Pendientes del turno anterior, Estado por ubicación,
-// Assignments+Fuera de plan+No ejecutados, Mayor tiempo sin engrasar,
-// Indicadores secundarios. Prueba a nivel de FUENTE (mismo criterio que el
-// resto de dashboard-*.test.js): se confirma la posición relativa de los
-// marcadores reales del template, nunca una reimplementación del HTML.
+// Rediseño estructural del Dashboard. Orden visual vigente (lote "feat:
+// restructure dashboard and settings ux" — Prioridad 1/2/3 aprobadas):
+//   Prioridad 1: Cabecera+Filtros, KPI principales, Requieren atención,
+//     Pendientes del turno anterior.
+//   Prioridad 2: Estado por ubicación, Assignments+Fuera de plan+No
+//     ejecutados, Mayor tiempo sin engrasar.
+//   Prioridad 3 (colapsable en mobile): Cumplimiento operativo,
+//     Indicadores secundarios.
+// Cumplimiento operativo se reubicó de Prioridad 1 a Prioridad 3 — su
+// CÁLCULO no cambió (ver describe de abajo), solo su posición visual.
+// Prueba a nivel de FUENTE (mismo criterio que el resto de
+// dashboard-*.test.js): se confirma la posición relativa de los marcadores
+// reales del template, nunca una reimplementación del HTML.
 
 import { describe, it, expect } from 'vitest';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
@@ -15,16 +21,16 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 const appSource = readSource(APP_JS_PATH);
 const src = extractDeclaration(appSource, 'renderDashboard');
 
-describe('Orden A-I del Dashboard — cada bloque aparece en el orden exacto pedido', () => {
+describe('Orden del Dashboard — cada bloque aparece en el orden exacto de Prioridad 1 → 2 → 3', () => {
   const marcadores = {
     A_filtros: 'dash-filters-row',
     B_kpiPrincipales: 'dash-hero-grid',
-    C_cumplimiento: 'dash-compliance-grid',
     D_atencion: 'dash-attention-panel',
     E_turnoAnterior: 'dash-pendientes-anterior-panel',
     F_ubicacion: 'dash-ubic-panel',
     G_assignments: 'dash-panel-operativo',
     H_tiempoSinEngrasar: 'dash-tiempo-sin-engrase-panel',
+    C_cumplimiento: 'dash-compliance-grid',
     I_indicadoresSecundarios: '<h2 class="dash-section-title">Indicadores secundarios</h2>',
   };
 
@@ -34,7 +40,7 @@ describe('Orden A-I del Dashboard — cada bloque aparece en el orden exacto ped
     });
   });
 
-  it('el orden real en el texto respeta A < B < C < D < E < F < G < H < I', () => {
+  it('el orden real en el texto respeta A < B < D < E < F < G < H < C < I (Cumplimiento en Prioridad 3)', () => {
     const posiciones = Object.entries(marcadores).map(([nombre, marca]) => ({ nombre, pos: src.indexOf(marca) }));
     for (let i = 1; i < posiciones.length; i++) {
       expect(posiciones[i].pos, `${posiciones[i].nombre} debe ir después de ${posiciones[i - 1].nombre}`)

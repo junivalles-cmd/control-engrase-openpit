@@ -209,7 +209,7 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
   });
 
   it('la fila trae código (línea 1, negrita), modelo·ubicación (línea 2), "Último engrase: fecha" (línea 3) y los días como campo aparte (jerarquía visual, no dentro del texto)', () => {
-    expect(rowSrc).toContain('class="dash-exc-code mono"');
+    expect(rowSrc).toContain('class="dash-exc-code dash-code-link mono"');
     expect(rowSrc).toContain('class="dash-exc-line2"');
     expect(rowSrc).toContain('Último engrase: ${last ? fmtDate(last) : \'Sin registro\'}');
     expect(rowSrc).toContain('class="dash-exc-days${isMax ? \' is-max\' : \'\'}"');
@@ -303,7 +303,7 @@ describe('Rediseño — "Equipos que requieren atención" como cola operativa (r
 
   it('cada fila trae Estado/Código/Marca-modelo·Ubicación/Programación compacta/Plan aplicable, sin columnas que no aporten decisión', () => {
     expect(src).toContain('class="dash-cola-badge tone-${item.tone}">${item.estado}');
-    expect(src).toContain('class="dash-cola-code mono">${esc(item.e.code)}');
+    expect(src).toContain('class="dash-cola-code dash-code-link mono" data-id="${item.e.id}">${esc(item.e.code)}');
     expect(src).toContain('class="dash-cola-meta dim">');
     expect(src).toContain("Plan: ${esc(item.plan)}");
     expect(src).toContain('class="dash-cola-prog-tag"');
@@ -425,10 +425,10 @@ describe('KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — realizados
 });
 
 describe('Ajuste final — densidad visual de "Estado de lubricación"/"Actividad" y App.dashJumpEquipoId temporal', () => {
-  it('PULIDO — "Actividad" ahora SÍ ocupa todo el ancho disponible (grid responsive real, ya no ancho fijo agrupado a la izquierda)', () => {
+  it('PULIDO — "Actividad" ahora SÍ ocupa todo el ancho disponible (grid auto-fit real, ya no 4 columnas fijas con hueco/wrap forzado)', () => {
     const cssSource = readSource(STYLES_CSS_PATH);
     expect(cssSource).toContain('.dash-activity-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }');
-    expect(cssSource).toMatch(/@media \(min-width: 601px\) \{ \.dash-activity-row \{ grid-template-columns: repeat\(4, minmax\(0, 1fr\)\); \} \}/);
+    expect(cssSource).toMatch(/@media \(min-width: 601px\) \{ \.dash-activity-row \{ grid-template-columns: repeat\(auto-fit, minmax\(140px, 1fr\)\); \} \}/);
     expect(cssSource).not.toContain('minmax(150px, 240px)');
   });
 

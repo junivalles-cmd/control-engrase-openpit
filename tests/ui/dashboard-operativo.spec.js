@@ -91,31 +91,6 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
           </div>
         </section>
 
-        <div class="panel">
-          <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
-          <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
-          <div class="dash-compliance-grid">
-            <div class="dash-compliance-card">
-              <div class="dash-compliance-label">Hoy</div>
-              <div class="dash-compliance-pct">75%</div>
-              <div class="dash-compliance-frac">3 de 4 programados</div>
-              <div class="progress-track"><div class="progress-fill" style="width:75%"></div></div>
-            </div>
-            <div class="dash-compliance-card">
-              <div class="dash-compliance-label">Semana</div>
-              <div class="dash-compliance-pct">—</div>
-              <div class="dash-compliance-frac">Sin engrases programados</div>
-              <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
-            </div>
-            <div class="dash-compliance-card">
-              <div class="dash-compliance-label">Turno Día</div>
-              <div class="dash-compliance-pct">100%</div>
-              <div class="dash-compliance-frac">2 de 2 programados</div>
-              <div class="progress-track"><div class="progress-fill" style="width:100%"></div></div>
-            </div>
-          </div>
-        </div>
-
         <div class="panel" id="dash-attention-panel">
           <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
           <div class="toolbar">
@@ -178,6 +153,31 @@ function dashboardFixture({ ubicaciones = ['Rajo Principal', 'Botadero Norte'], 
           </div>
         </div>
 
+        <div class="panel">
+          <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
+          <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
+          <div class="dash-compliance-grid">
+            <div class="dash-compliance-card">
+              <div class="dash-compliance-label">Hoy</div>
+              <div class="dash-compliance-pct">75%</div>
+              <div class="dash-compliance-frac">3 de 4 programados</div>
+              <div class="progress-track"><div class="progress-fill" style="width:75%"></div></div>
+            </div>
+            <div class="dash-compliance-card">
+              <div class="dash-compliance-label">Semana</div>
+              <div class="dash-compliance-pct">—</div>
+              <div class="dash-compliance-frac">Sin engrases programados</div>
+              <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
+            </div>
+            <div class="dash-compliance-card">
+              <div class="dash-compliance-label">Turno Día</div>
+              <div class="dash-compliance-pct">100%</div>
+              <div class="dash-compliance-frac">2 de 2 programados</div>
+              <div class="progress-track"><div class="progress-fill" style="width:100%"></div></div>
+            </div>
+          </div>
+        </div>
+
         <section class="dash-section dash-section-secondary">
           <h2 class="dash-section-title">Indicadores secundarios</h2>
           <div class="dash-activity-row" id="dash-secundarios-row">
@@ -234,7 +234,7 @@ for (const width of WIDTHS) {
     await expect(page.locator('.dash-activity-label:has-text("Al día")')).toHaveCount(1);
   });
 
-  test(`Dashboard @ ${width}px — "Cumplimiento operativo" (C) va justo después de los KPI principales (B), 3 tarjetas (Hoy/Semana/Turno Día|Noche)`, async ({ page }) => {
+  test(`Dashboard @ ${width}px — "Cumplimiento operativo" es contenido de Prioridad 3 (va DESPUÉS de "Mayor tiempo sin engrasar" y ANTES de "Indicadores secundarios"), 3 tarjetas (Hoy/Semana/Turno Día|Noche)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.setContent(dashboardFixture());
     await page.addStyleTag({ path: STYLES_PATH });
@@ -253,13 +253,13 @@ for (const width of WIDTHS) {
     await expect(note).toContainText('Los planes por Horas no se incluyen.');
     await expect(note).not.toContainText('no hay forma de saber');
 
-    // Orden en el DOM: Cumplimiento aparece DESPUÉS del bloque de KPI
-    // principales (B) y ANTES de "Equipos que requieren atención" (D).
-    const heroBox = await page.locator('.dash-hero-grid').boundingBox();
+    // Orden en el DOM (Prioridad 3, aprobado): Cumplimiento aparece DESPUÉS de
+    // "Mayor tiempo sin engrasar" y ANTES de "Indicadores secundarios".
+    const tiempoBox = await page.locator('#dash-tiempo-sin-engrase-panel').boundingBox();
     const complianceBox = await page.locator('.dash-compliance-grid').boundingBox();
-    const attentionBox = await page.locator('#dash-attention-panel').boundingBox();
-    expect(complianceBox.y).toBeGreaterThan(heroBox.y);
-    expect(attentionBox.y).toBeGreaterThan(complianceBox.y);
+    const secundariosBox = await page.locator('#dash-secundarios-row').boundingBox();
+    expect(complianceBox.y).toBeGreaterThan(tiempoBox.y);
+    expect(secundariosBox.y).toBeGreaterThan(complianceBox.y);
   });
 
   test(`Dashboard @ ${width}px — "Mayor tiempo sin engrasar" (H) es una LISTA/RANKING COMPACTO de excepciones (sin ranking #1/#2), con "Historial" como acción principal visible, y va DESPUÉS de "Requieren atención"`, async ({ page }) => {
@@ -378,7 +378,7 @@ for (const width of WIDTHS) {
   });
 }
 
-test('Dashboard @ 1366px — "Indicadores secundarios" ocupa TODO el ancho de la sección en 4 columnas equilibradas (ya NO deja espacio vacío a la derecha)', async ({ page }) => {
+test('Dashboard @ 1366px — "Indicadores secundarios" ocupa TODO el ancho de la sección en una sola fila real de 5 columnas (auto-fit, ya NO deja espacio vacío a la derecha ni un patrón 4+1)', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
@@ -387,9 +387,8 @@ test('Dashboard @ 1366px — "Indicadores secundarios" ocupa TODO el ancho de la
   const rowBox = await row.boundingBox();
   const lastCardBox = await row.locator('.dash-activity-card').last().boundingBox();
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
-  expect(cols).toBe(4);
-  // La última fila puede quedar a menos del ancho total (5 tarjetas en grid de
-  // 4 columnas), pero ninguna tarjeta se sale del contenedor.
+  expect(cols).toBe(5);
+  // Ninguna tarjeta se sale del contenedor.
   expect(lastCardBox.x + lastCardBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width + 1);
 });
 
@@ -419,14 +418,14 @@ test('Dashboard @ 360px — "Indicadores secundarios" mantiene 2 columnas (sin o
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 });
 
-test('Dashboard @ 768px — "Indicadores secundarios" ya usa 4 columnas (no 2)', async ({ page }) => {
+test('Dashboard @ 768px — "Indicadores secundarios" ya usa 5 columnas reales (auto-fit, no 2)', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 900 });
   await page.setContent(dashboardFixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
   const row = page.locator('#dash-secundarios-row');
   const cols = await row.evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
-  expect(cols).toBe(4);
+  expect(cols).toBe(5);
 });
 
 test('Indicadores secundarios — el número va ARRIBA y el label ABAJO (no label-izquierda/valor-derecha), touch target >=44px', async ({ page }) => {

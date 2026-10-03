@@ -442,9 +442,29 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-section { margin-bottom: 16px; }
 .dash-section-title { font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 8px; }
 
+/* Prioridades del Dashboard: Prioridad 1 (qué requiere acción) no lleva
+   rótulo propio — ya es el primer bloque de la pantalla. Prioridad 2/3
+   llevan un rótulo discreto que las separa visualmente sin "gritar" al
+   mismo nivel que los paneles de Prioridad 1 (ver .panel-head h3). */
+.dash-tier-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-dim); margin: 18px 0 10px; padding-top: 14px; border-top: 1px dashed var(--border);
+}
+.dash-tier-summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+  min-height: var(--tap); -webkit-tap-highlight-color: transparent;
+}
+.dash-tier-summary::-webkit-details-marker { display: none; }
+.dash-tier-summary::before {
+  content: '▸'; font-size: 10px; color: var(--text-dim); transition: transform 0.15s ease; display: inline-block;
+}
+details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg); }
+.dash-tier-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .dash-hero-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-@media (min-width: 560px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1024px) { .dash-hero-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 768px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1024px) { .dash-hero-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } }
+@media (min-width: 1440px) { .dash-hero-grid { grid-template-columns: repeat(6, 1fr); } }
 .dash-hero-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 11px 12px; border-top: 4px solid var(--border); min-height: 44px;
@@ -468,7 +488,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    fila nueva con el mismo ancho de columna). */
 .dash-section-secondary { margin-top: 2px; }
 .dash-activity-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-@media (min-width: 601px) { .dash-activity-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 601px) { .dash-activity-row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); } }
 .dash-activity-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-height: 44px;
@@ -538,6 +558,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   border-radius: 20px; padding: 6px 12px;
 }
 .dash-exc-head .link-btn:hover { background: var(--surface); border-color: var(--accent); }
+/* Consulta universal desde el Dashboard (§21 del lote): el código de
+   equipo (cola de atención / mayor tiempo sin engrasar) abre la Ficha ya
+   existente (openEquipmentDetail). Reset de <button> a texto-con-acento —
+   antes en el archivo que .dash-exc-code/.dash-cola-code a propósito (ver
+   abajo), para que su font-size/weight explícito siga ganando; aquí NUNCA
+   se toca tamaño/peso, solo color/cursor/estado de foco. */
+.dash-code-link {
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer; text-align: left;
+  font: inherit; color: inherit;
+}
+.dash-code-link:hover, .dash-code-link:focus-visible { color: var(--accent); text-decoration: underline; }
+.dash-code-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
 .dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
 .dash-exc-summary { color: var(--text-dim); white-space: nowrap; }
 .dash-exc-summary .mono { color: var(--text); font-weight: 700; }
@@ -653,21 +686,62 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .progress-track { height: 10px; background: var(--surface-2); border-radius: 20px; margin: 4px 16px 16px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 20px; transition: width 0.4s ease; }
 
-/* UI-NEW-02 (auditoría pre-release, lote final): Configuración (renderConfig(),
-   app.js) apilaba sus ~10 paneles en 1 sola columna incluso con mucho ancho
-   disponible (mismo scroll larguísimo en 1920 que en 360). Scoped a
-   #config-grid (el contenedor que renderConfig() ya envuelve alrededor de
-   TODOS sus paneles) — nunca toca `.panel` global, así que no afecta
-   Dashboard/Reportes/Historial/Plan/Registrar Engrase ni ninguna otra
-   pantalla que también use `.panel`. 2 columnas desde ~1024px (donde ya
-   sobra espacio real); `align-items:start` evita que un panel corto se
-   estire para igualar a uno largo (ej. "Apariencia" junto a "Notificaciones").
-   El orden de los paneles no cambia — un grid de 2 columnas los coloca
-   fila por fila en el mismo orden en que ya los genera renderConfig(). */
-@media (min-width: 1024px) {
-  #config-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
-  #config-grid > .panel { margin-bottom: 0; }
+/* Configuración — tabs/categorías (lote dashboard+config UX, reemplaza el
+   #config-grid de 2 columnas fijas del lote anterior, que a 1920px dejaba
+   ~65% de la pantalla vacío). Mismo contenedor `.panel` de siempre, solo
+   cambia cómo se agrupa — nunca toca Dashboard/Reportes/Historial/Plan.
+   Desktop (≥1024px): tabs arriba (mismo lenguaje visual que .hist-tabs,
+   subrayado de acento) + SOLO la categoría activa visible. Móvil (<1024px):
+   lista de categorías primero, categoría elegida + "Volver" después — nunca
+   los 13 paneles seguidos. Ambos chrome (tabs y lista) viven siempre en el
+   DOM; este bloque decide cuál se VE según el ancho, wireConfigCategoryNav()
+   (app.js) decide cuál .config-category está visible. */
+.config-tabs {
+  display: none; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
 }
+.config-tab {
+  flex: none; background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-dim); padding: 10px 14px; font-size: var(--fs-sm); font-weight: 600;
+  cursor: pointer; white-space: nowrap; min-height: var(--tap);
+}
+.config-tab:hover { color: var(--text); }
+.config-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.config-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.config-mobile-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.config-mobile-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text);
+  cursor: pointer; min-height: var(--tap); text-align: left;
+}
+.config-mobile-item:hover { border-color: var(--accent); }
+.config-mobile-chevron { color: var(--text-dim); font-size: 18px; }
+.config-mobile-back {
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: none;
+  color: var(--accent); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  padding: 10px 2px; margin-bottom: 10px; min-height: var(--tap);
+}
+
+/* ≥1024px: tabs reales, lista/volver de móvil nunca se muestran (aunque
+   wireConfigCategoryNav() los deje hidden=false por estado, CSS manda). */
+@media (min-width: 1024px) {
+  .config-tabs { display: flex; }
+  .config-mobile-menu, .config-mobile-back { display: none !important; }
+}
+
+/* 1 panel por categoría (General/Seguridad/Operación/Usuarios/Sincronización):
+   ancho legible, nunca un formulario corto estirado a 1900px. */
+.config-narrow { max-width: 760px; }
+
+/* 2+ paneles relacionados (Organización: Ubicaciones+Categorías; Administración:
+   Papelera+Liberar espacio+Respaldo) — auto-fit, nunca repeat(2,1fr) fijo: a
+   1440/1920px pasa a 3 columnas solas si el ancho real alcanza, en vez de
+   dejar mitad de pantalla vacía. align-items:start evita estirar un panel
+   corto para igualar al más alto del mismo grupo. */
+.config-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.config-grid-2 > .panel { margin-bottom: 0; }
 
 /* ---------------- Equipment cards / semaforo ---------------- */
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 14px; }

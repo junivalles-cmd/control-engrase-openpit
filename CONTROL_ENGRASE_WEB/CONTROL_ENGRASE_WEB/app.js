@@ -3551,7 +3551,12 @@ async function renderDashboard() {
     ...pendientesTurnoAnterior.map(e => ({ estado: 'Turno anterior', tone: 'amber', e, motivo: 'Pendiente del turno anterior (carryover)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: planByEquipoId[e.id] || null })),
     ...pendientesHoyList.map(e => ({ estado: 'Pendiente hoy', tone: 'amber', e, motivo: 'Programado hoy', plan: planLabelFor(planByEquipoId[e.id]), urgencia: `Día: ${hoyWeekday}`, planObj: planByEquipoId[e.id] || null })),
     ...proximosSinHoy.map(x => ({ estado: 'Próximo', tone: 'amber', e: x.e, motivo: motivoFor(x), plan: planLabelFor(x.s.plan), urgencia: urgenciaFor(x), planObj: x.s.plan })),
-    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'red', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
+    // Tono NEUTRAL a propósito (lote dashboard UX): "Sin plan" es falta de
+    // CONFIGURACIÓN, no un engrase vencido — antes usaba el mismo rojo que
+    // "Vencido" y confundía la urgencia real. Mismo criterio/orden/prioridad
+    // de siempre (findExistingWorkForEquipment/estadoCelda no cambian), solo
+    // el color del badge.
+    ...[...sinPlan].sort((a, b) => a.code.localeCompare(b.code)).map(e => ({ estado: 'Sin plan', tone: 'neutral', e, motivo: 'Sin plan de engrase configurado', plan: '—', urgencia: '—', planObj: null })),
     ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
   ];
 
@@ -3594,6 +3599,7 @@ async function renderDashboard() {
       </label>
     </div>
 
+    <div class="dash-tier dash-tier-1">
     <section class="dash-section">
       <h2 class="dash-section-title">Qué requiere acción</h2>
       <div class="dash-hero-grid">
@@ -3609,16 +3615,6 @@ async function renderDashboard() {
       </div>
       ${recordsConflictoValidacion.length > 0 ? `<div class="dash-activity-row" style="margin-top:8px">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''}
     </section>
-
-    <div class="panel">
-      <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
-      <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
-      <div class="dash-compliance-grid">
-        ${dashComplianceCard('Hoy', cumplHoy)}
-        ${dashComplianceCard('Semana', cumplSemana)}
-        ${dashComplianceCard(turnoActualLabel, cumplTurno)}
-      </div>
-    </div>
 
     <div class="panel" id="dash-attention-panel">
       <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
@@ -3659,7 +3655,10 @@ async function renderDashboard() {
         </div>
       </div>` : `<div class="empty-state">Ninguno — nada heredado del turno anterior.</div>`}
     </div>
+    </div>
 
+    <div class="dash-tier dash-tier-2">
+    <div class="dash-tier-label">Estado operacional</div>
     ${estadoPorUbicacion.length > 1 ? `
     <div class="panel" id="dash-ubic-panel">
       <div class="panel-head"><h3>Estado por ubicación</h3></div>
@@ -3708,19 +3707,43 @@ async function renderDashboard() {
       </div>
       `}
     </div>
+    </div>
+
+    <details class="dash-tier dash-tier-3" id="dash-tier-3" open>
+    <summary class="dash-tier-label dash-tier-summary">Cumplimiento y más</summary>
+    <div class="panel">
+      <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
+      <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
+      <div class="dash-compliance-grid">
+        ${dashComplianceCard('Hoy', cumplHoy)}
+        ${dashComplianceCard('Semana', cumplSemana)}
+        ${dashComplianceCard(turnoActualLabel, cumplTurno)}
+      </div>
+    </div>
 
     <section class="dash-section dash-section-secondary">
       <h2 class="dash-section-title">Indicadores secundarios</h2>
       <div class="dash-activity-row">
         ${dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')}
-        ${dashActivityCard('Sin plan', sinPlan.length, sinPlan.length ? 'red' : 'neutral', 'sin-plan')}
+        ${dashActivityCard('Sin plan', sinPlan.length, 'neutral', 'sin-plan')}
         ${dashActivityCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
         ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
         ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
       </div>
     </section>
+    </details>
     </div>
   `;
+
+  // Prioridad 3 (Cumplimiento operativo + Indicadores secundarios): colapsada
+  // por defecto en mobile para no competir visualmente con lo urgente;
+  // abierta en desktop, donde hay espacio de sobra. Solo fija el estado
+  // inicial del render — el toggle nativo de <details> queda intacto.
+  const dashTier3 = $('#dash-tier-3', c);
+  if (dashTier3) {
+    const isDesktopDash = typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
+    dashTier3.open = isDesktopDash;
+  }
 
   $$('.arreglar-plan', c).forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -3872,6 +3895,9 @@ async function renderDashboard() {
     $$('.dash-exc-hist-btn', $('.modal-body')).forEach(btn => {
       btn.addEventListener('click', () => { closeModal(); App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
     });
+    $$('.dash-exc-code', $('.modal-body')).forEach(btn => {
+      btn.addEventListener('click', () => { closeModal(); openEquipmentDetail(btn.dataset.id); });
+    });
   }
 
   $$('.kpi-clickable', c).forEach(card => {
@@ -3911,6 +3937,11 @@ async function renderDashboard() {
   // Engrase.
   $$('.dash-exc-hist-btn', c).forEach(btn => {
     btn.addEventListener('click', () => { App.dashJumpEquipoId = btn.dataset.id; navigate('historial'); });
+  });
+  // Consulta universal (§21 del lote): mismo patrón que la cola de atención
+  // — el código abre la Ficha existente, nunca una nueva.
+  $$('.dash-exc-code', c).forEach(btn => {
+    btn.addEventListener('click', () => openEquipmentDetail(btn.dataset.id));
   });
 
   $('#dash-ubic')?.addEventListener('change', e => { App.dashUbic = e.target.value; renderDashboard(); });
@@ -3956,7 +3987,7 @@ async function renderDashboard() {
     cont.innerHTML = filtered.map(item => `
       <div class="dash-cola-row">
         <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
-        <span class="dash-cola-code mono">${esc(item.e.code)}</span>
+        <button type="button" class="dash-cola-code dash-code-link mono" data-id="${item.e.id}">${esc(item.e.code)}</button>
         <span class="dash-cola-meta dim">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</span>
         <span class="dash-cola-prog-tag" style="color:${item.tone === 'red' ? 'var(--red)' : item.tone === 'amber' ? 'var(--amber)' : 'var(--text-dim)'}">${esc(progCompactaFor(item))}</span>
         <span class="dash-cola-plan dim">Plan: ${esc(item.plan)}</span>
@@ -3968,6 +3999,10 @@ async function renderDashboard() {
 
     $$('.dash-cola-hist', cont).forEach(b => b.addEventListener('click', () => { App.dashJumpEquipoId = b.dataset.id; navigate('historial'); }));
     $$('.dash-cola-reg', cont).forEach(b => b.addEventListener('click', () => startGreaseFlow(b.dataset.id)));
+    // Consulta universal (§21 del lote): el código del equipo abre la misma
+    // Ficha de Engrase ya existente (openEquipmentDetail) — solo consulta,
+    // nunca cambia permisos/scope ni reemplaza Historial/Registrar.
+    $$('.dash-cola-code', cont).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   }
   drawColaAtencion();
   $('#att-turno')?.addEventListener('change', drawColaAtencion);
@@ -4125,7 +4160,7 @@ function pendienteValidacionRowHTML(r, eq) {
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
   return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
     <div class="dash-exc-main">
-      <div class="dash-exc-line1"><span class="dash-exc-code mono">${esc(e.code)}</span></div>
+      <div class="dash-exc-line1"><button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
       <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
       <div class="dash-exc-line3 dim">Último engrase: ${last ? fmtDate(last) : 'Sin registro'}</div>
     </div>
@@ -11144,6 +11179,83 @@ function notifCardHTML(clave, titulo, descripcion, cfg, conHora, conSoloSiHay, c
     </div>`;
 }
 
+// Navegación de categorías de Configuración (lote dashboard+config UX) —
+// desktop usa tabs (.config-tabs), móvil usa lista+volver (.config-mobile-
+// menu/.config-mobile-back); AMBOS chrome existen siempre en el DOM, CSS
+// decide cuál se ve según el ancho (ver styles.css) — esta función solo
+// decide cuál .config-category queda visible, nunca reconstruye HTML.
+// `_configCategoryApply` + el listener de resize se declaran FUERA de la
+// función y se reutilizan entre llamadas (renderConfig() se re-invoca
+// muchas veces por sesión: guardar, agregar cuadrilla, etc.) — agregar un
+// nuevo listener de resize en cada llamada los iría acumulando sin límite.
+let _configCategoryApply = null;
+let _configResizeListenerWired = false;
+const CONFIG_DEFAULT_CATEGORY = 'general';
+function wireConfigCategoryNav(container, categoryKeys) {
+  let active = null; // null = sin categoría elegida (estado inicial real en móvil: lista de categorías)
+
+  function isDesktopTabs() {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
+  }
+
+  function apply() {
+    const desktop = isDesktopTabs();
+    const effective = active || (desktop ? CONFIG_DEFAULT_CATEGORY : null);
+    // .hidden (clase, styles.css:1037 `display:none !important`) — NUNCA el
+    // atributo HTML `hidden` nativo: `.config-mobile-menu`/`.config-category`
+    // ya traen su propio `display` en styles.css con la MISMA especificidad
+    // que la regla `[hidden]` del navegador, y por orden de cascada le
+    // ganaría al atributo nativo, dejando el panel visible aunque
+    // `el.hidden = true`. Mismo patrón que ya usa el resto de la app
+    // (quick-find, pin-area, etc. — ver app.js, nunca `.hidden = true`).
+    $$('.config-category', container).forEach(el => { el.classList.toggle('hidden', el.dataset.category !== effective); });
+    $$('.config-tab', container).forEach(b => {
+      const on = b.dataset.category === effective;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+      b.classList.toggle('active', on);
+    });
+    const menu = container.querySelector('#config-mobile-menu');
+    const back = container.querySelector('#config-mobile-back');
+    if (menu) menu.classList.toggle('hidden', desktop || !!effective);
+    if (back) back.classList.toggle('hidden', desktop || !effective);
+  }
+
+  function select(key) {
+    if (!categoryKeys.includes(key)) return;
+    active = key;
+    apply();
+  }
+
+  const tabs = $$('.config-tab', container);
+  tabs.forEach((b, i) => {
+    b.addEventListener('click', () => select(b.dataset.category));
+    // Flechas/Home/End en el tablist — patrón WAI-ARIA Tabs estándar,
+    // navegación por teclado razonable (§24 del lote).
+    b.addEventListener('keydown', (ev) => {
+      let next = -1;
+      if (ev.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (ev.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+      else if (ev.key === 'Home') next = 0;
+      else if (ev.key === 'End') next = tabs.length - 1;
+      if (next === -1) return;
+      ev.preventDefault();
+      tabs[next].focus();
+      select(tabs[next].dataset.category);
+    });
+  });
+  $$('.config-mobile-item', container).forEach(b => b.addEventListener('click', () => select(b.dataset.category)));
+  container.querySelector('#config-mobile-back')?.addEventListener('click', () => { active = null; apply(); });
+
+  _configCategoryApply = apply;
+  if (!_configResizeListenerWired) {
+    _configResizeListenerWired = true;
+    window.addEventListener('resize', () => { _configCategoryApply?.(); });
+  }
+
+  apply();
+}
+
 async function renderConfig() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -11162,17 +11274,44 @@ async function renderConfig() {
   const quickUnlockAvailable = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
   const quickUnlockConfigured = quickUnlockAvailable && await QuickUnlock.isConfigured(Auth.getProfile().appUserId);
 
+  // Categorías de Configuración (lote dashboard+config UX): agrupa los
+  // MISMOS paneles de siempre bajo tabs/secciones — ningún panel cambia su
+  // HTML interno, ids ni lógica, solo el contenedor que los agrupa. Fuera
+  // de la lista si no aplica (Seguridad sin Quick Unlock disponible),
+  // nunca una tab vacía.
+  const CONFIG_CATEGORIES = [
+    { key: 'general', label: 'General' },
+    { key: 'seguridad', label: 'Seguridad', omit: !quickUnlockAvailable },
+    { key: 'operacion', label: 'Operación' },
+    { key: 'organizacion', label: 'Organización' },
+    { key: 'usuarios', label: 'Usuarios y acceso' },
+    { key: 'notificaciones', label: 'Notificaciones' },
+    { key: 'sincronizacion', label: 'Sincronización' },
+    { key: 'administracion', label: 'Administración' },
+  ].filter(cat => !cat.omit);
+
   c.innerHTML = `
-    <div id="config-grid">
-    <div class="panel">
+    <div id="config-root">
+      <div class="config-tabs" role="tablist" aria-label="Categorías de configuración">
+        ${CONFIG_CATEGORIES.map(cat => `<button type="button" class="config-tab" role="tab" id="config-tab-${cat.key}" aria-controls="config-cat-${cat.key}" aria-selected="false" tabindex="-1" data-category="${cat.key}">${cat.label}</button>`).join('')}
+      </div>
+      <div class="config-mobile-menu" id="config-mobile-menu">
+        ${CONFIG_CATEGORIES.map(cat => `<button type="button" class="config-mobile-item" data-category="${cat.key}">${cat.label}<span class="config-mobile-chevron">›</span></button>`).join('')}
+      </div>
+      <button type="button" class="config-mobile-back hidden" id="config-mobile-back">← Volver a Configuración</button>
+
+      <div class="config-category hidden" id="config-cat-general" data-category="general" role="tabpanel" aria-labelledby="config-tab-general">
+    <div class="panel config-narrow">
       <div class="panel-head"><h3>Apariencia</h3></div>
       <div style="padding:14px">
         <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
         <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
       </div>
     </div>
-    ${quickUnlockAvailable ? `
-    <div class="panel">
+      </div>
+      ${quickUnlockAvailable ? `
+      <div class="config-category hidden" id="config-cat-seguridad" data-category="seguridad" role="tabpanel" aria-labelledby="config-tab-seguridad">
+    <div class="panel config-narrow">
       <div class="panel-head"><h3>PIN rápido (desbloqueo sin Internet)</h3></div>
       <div style="padding:14px">
         <p class="dim">Permite volver a entrar en este dispositivo con un PIN de 4 o 6 dígitos, sin escribir tu contraseña cada vez — incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol: solo desbloquea la pantalla.</p>
@@ -11180,8 +11319,10 @@ async function renderConfig() {
           ? `<button type="button" class="btn" id="btn-quick-unlock-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="btn-quick-unlock-disable">Desactivar PIN rápido</button>`
           : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
       </div>
-    </div>` : ''}
-    <div class="panel">
+    </div>
+      </div>` : ''}
+      <div class="config-category hidden" id="config-cat-operacion" data-category="operacion" role="tabpanel" aria-labelledby="config-tab-operacion">
+    <div class="panel config-narrow">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
       <div style="padding:14px">
         <p class="dim">Estos valores controlan toda la app: qué hora se considera turno día/noche, cuánto antes se marca "próximo a vencer" un plan nuevo, y la meta de cumplimiento que se muestra en Dashboard y Reportes.</p>
@@ -11196,10 +11337,24 @@ async function renderConfig() {
         </form>
       </div>
     </div>
+      </div>
+      <div class="config-category hidden" id="config-cat-organizacion" data-category="organizacion" role="tabpanel" aria-labelledby="config-tab-organizacion">
     ${await cuadrillasPanelHTML()}
+    <div class="config-grid-2">
     ${await simpleListPanelHTML('locations', 'Ubicaciones / Flotas', 'Aparecen como opción de "Ubicación" al crear o editar un equipo.')}
     ${await simpleListPanelHTML('equipment_types', 'Categorías de equipo', 'Aparecen como opción de "Categoría" al crear o editar un equipo.')}
-
+    </div>
+      </div>
+      <div class="config-category hidden" id="config-cat-usuarios" data-category="usuarios" role="tabpanel" aria-labelledby="config-tab-usuarios">
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Usuarios</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Cuentas, roles y estado activo/inactivo. Se administran desde la pantalla de Usuarios — los permisos no cambian desde aquí.</p>
+        <button type="button" class="btn btn-accent" id="btn-config-go-usuarios">${ic("users")}Ir a Usuarios</button>
+      </div>
+    </div>
+      </div>
+      <div class="config-category hidden" id="config-cat-notificaciones" data-category="notificaciones" role="tabpanel" aria-labelledby="config-tab-notificaciones">
     <div class="panel" id="notif-panel">
       <div class="panel-head"><h3>Notificaciones — control por tipo</h3></div>
       <div style="padding:14px">
@@ -11250,11 +11405,16 @@ async function renderConfig() {
         `}
       </div>
     </div>
-    <div class="panel">
+      </div>
+      <div class="config-category hidden" id="config-cat-sincronizacion" data-category="sincronizacion" role="tabpanel" aria-labelledby="config-tab-sincronizacion">
+    <div class="panel config-narrow">
       <div class="panel-head"><h3>Sincronización con base de datos remota</h3></div>
       <div style="padding:14px">
-        <p class="dim">La app siempre guarda primero en este dispositivo (IndexedDB) y funciona sin internet. Cuando conectes una base de datos remota (Supabase), sincroniza automáticamente al recuperar conexión — así todos los equipos, lubricadores y supervisores comparten la misma información.</p>
-        <p class="dim">1. Crea un proyecto gratis en <b>supabase.com</b>. 2. Ejecuta el archivo <code>schema.sql</code> incluido en el paquete, en el "SQL Editor" de Supabase. 3. Copia la "Project URL" y la "anon public key" desde Project Settings → API y pégalas aquí.</p>
+        <details class="reg-advanced">
+          <summary>Cómo conectar una base de datos remota (Supabase)</summary>
+          <p class="dim" style="margin-top:8px">La app siempre guarda primero en este dispositivo (IndexedDB) y funciona sin internet. Cuando conectes una base de datos remota (Supabase), sincroniza automáticamente al recuperar conexión — así todos los equipos, lubricadores y supervisores comparten la misma información.</p>
+          <p class="dim">1. Crea un proyecto gratis en <b>supabase.com</b>. 2. Ejecuta el archivo <code>schema.sql</code> incluido en el paquete, en el "SQL Editor" de Supabase. 3. Copia la "Project URL" y la "anon public key" desde Project Settings → API y pégalas aquí.</p>
+        </details>
         <form id="sync-form" class="form-grid" style="margin-top:10px">
           <label>Project URL<input name="url" placeholder="https://xxxxx.supabase.co" value="${cfg.url || ''}"/></label>
           <label>Anon public key<input name="anonKey" placeholder="eyJhbGciOi..." value="${cfg.anonKey || ''}"/></label>
@@ -11280,6 +11440,9 @@ async function renderConfig() {
         </div>
       </div>
     </div>
+      </div>
+      <div class="config-category hidden" id="config-cat-administracion" data-category="administracion" role="tabpanel" aria-labelledby="config-tab-administracion">
+    <div class="config-grid-2">
     <div class="panel">
       <div class="panel-head"><h3>Papelera — recuperar lo eliminado</h3></div>
       <div style="padding:14px">
@@ -11313,6 +11476,7 @@ async function renderConfig() {
         <p class="dim" style="margin-top:6px">Restaurar NO borra lo que ya tienes — combina los datos del archivo con los actuales (si un registro existe en ambos, gana el más reciente).</p>
       </div>
     </div>
+    </div>
     <div class="panel" id="audit-log-panel">
       <div class="panel-head"><h3>Registro de auditoría (últimas 50 acciones)</h3></div>
       <table class="data-table">
@@ -11320,7 +11484,11 @@ async function renderConfig() {
         <tbody>${log.map(l => `<tr><td>${fmtDate(l.createdAt)}</td><td>${l.action}</td><td>${esc(l.detail)}</td><td>${l.user}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin actividad.</td></tr>'}</tbody>
       </table>
     </div>
+      </div>
     </div>`;
+
+  wireConfigCategoryNav(c, CONFIG_CATEGORIES.map(cat => cat.key));
+  $('#btn-config-go-usuarios')?.addEventListener('click', () => navigate('usuarios'));
 
   await renderTrash();
   renderStorageStats();
