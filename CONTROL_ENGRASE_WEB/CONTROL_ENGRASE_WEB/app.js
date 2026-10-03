@@ -4788,6 +4788,7 @@ async function openMoveEquipmentLocationModal(equipo) {
       <label class="check-row" style="margin-top:8px">
         <input type="checkbox" class="chk-done" name="cancelAssignment" checked/>
         <span class="check-row-text">Cancelar la asignación pendiente al mover (recomendado)</span>
+        <span class="check-row-mark">✓</span>
       </label>` : ''}
       <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("check")}Mover</button></div>
     </form>
@@ -10693,13 +10694,13 @@ async function cuadrillasPanelHTML() {
       <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
       <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo. "Miembros autorizados" son las personas (Supervisor/Lubricador) que pueden trabajar como esta cuadrilla, desde cualquier dispositivo — editar la lista requiere conexión.</div>
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Por defecto</th><th>Miembros autorizados</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Ubicación</th><th>Rol</th><th>Miembros autorizados</th><th></th></tr></thead>
         <tbody>
           ${cuadrillas.map(cq => `
             <tr data-id="${cq.id}">
               <td>${esc(cq.name)}</td>
               <td>${esc(locName(cq.locationId))}</td>
-              <td>${cq.isDefault ? '✓' : '—'}</td>
+              <td>${cq.isDefault ? '<span class="status-chip" style="--c:var(--green)">PRINCIPAL</span>' : '<span class="status-chip" style="--c:var(--gray-status)">APOYO</span>'}</td>
               <td>${(cq.memberUserIds || []).length}</td>
               <td class="row-actions">
                 <button class="btn btn-sm cq-edit">${ic("edit")}Editar</button>
@@ -10739,6 +10740,7 @@ function wireCuadrillasPanel(container, onChange) {
               <label class="check-row">
                 <input type="checkbox" class="chk-done member-check" value="${esc(u.app_user_id)}" ${memberIdsActuales.includes(u.app_user_id) ? 'checked' : ''}/>
                 <span class="check-row-text">${esc(u.display_name)} · ${u.role}${u.active ? '' : ' (inactivo)'}</span>
+                <span class="check-row-mark">✓</span>
               </label>`).join('')}
           </div>` : '<p class="dim">Todavía no hay usuarios reales con rol Lubricador/Supervisor — créalos primero en Configuración → Usuarios.</p>';
       } catch (e) {
@@ -10757,9 +10759,10 @@ function wireCuadrillasPanel(container, onChange) {
         </label>
         <label class="check-row" style="margin-top:8px">
           <input type="checkbox" class="chk-done" name="isDefault" ${cuadrilla && cuadrilla.isDefault ? 'checked' : ''}/>
-          <span class="check-row-text">Cuadrilla por defecto de esa ubicación (recibe el trabajo normal)</span>
+          <span class="check-row-text">Cuadrilla principal de esta ubicación<br/><span class="field-hint" style="margin:0">Recibe automáticamente el trabajo planificado normal.</span></span>
+          <span class="check-row-mark">✓</span>
         </label>
-        <span class="field-hint">Si la marcas como default, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
+        <span class="field-hint">Si la marcas como principal, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
         <div style="margin-top:14px">
           <b>Miembros autorizados</b>
           <p class="field-hint" style="margin:2px 0 8px">Personas que pueden trabajar como esta cuadrilla, desde cualquier teléfono/tablet/PC compatible — nunca un dispositivo en particular.</p>
