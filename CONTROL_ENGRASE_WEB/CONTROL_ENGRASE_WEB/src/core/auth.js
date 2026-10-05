@@ -310,6 +310,115 @@ const Auth = {
     return data;
   },
 
+  // Autoservicio "Mi Perfil" (lote del mismo nombre) — cambia la propia
+  // contraseña. Primero RE-VERIFICA la contraseña actual repitiendo el
+  // mismo grant_type=password que signIn() (nunca se asume que basta con
+  // tener una sesión ya abierta, que puede llevar horas vigente) — esa
+  // verificación NUNCA reemplaza this._session (solo confirma que la
+  // persona conoce la contraseña vigente). Después aplica la nueva con
+  // PUT /auth/v1/user (autoservicio real de GoTrue contra el access token
+  // YA autenticado) — nunca admin API, nunca service_role. La contraseña
+  // (actual o nueva) nunca se guarda ni se loggea en ningún punto de este
+  // método ni de quien lo llama.
+  async changeOwnPassword(currentPassword, newPassword) {
+    if (!this.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      throw new Error('WEAK_PASSWORD');
+    }
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+
+    // username es la ÚNICA cosa que identifica a la persona ante GoTrue
+    // (ver usernameToAuthIdentifier()) y no se guarda aparte en el
+    // perfil — se deriva de appUserId siguiendo la MISMA convención
+    // aplicada al crearlo (appUserIdFromUsername() en manage-users:
+    // `u_${username}`), nunca inventada aquí.
+    const username = (this._profile && this._profile.appUserId || '').replace(/^u_/, '');
+    let identifier;
+    try {
+      identifier = usernameToAuthIdentifier(username);
+    } catch (e) {
+      throw new Error('PROFILE_INVALID');
+    }
+
+    let verifyResp;
+    try {
+      verifyResp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
+        body: JSON.stringify({ email: identifier, password: currentPassword })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    if (!verifyResp.ok) throw new Error('CURRENT_PASSWORD_INVALID');
+
+    let updateResp;
+    try {
+      updateResp = await fetchWithTimeout(`${cfg.url}/auth/v1/user`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    if (!updateResp.ok) throw new Error('UPDATE_FAILED');
+    return true;
+  },
+
+  // Autoservicio "Mi Perfil" — cambia el PROPIO nombre visible
+  // (display_name). app_profiles bloquea por RLS cualquier auto-UPDATE
+  // directo vía PostgREST, incluso para un admin sobre su propia fila
+  // (ver supabase/migrations/0002_auth_profiles_rls_PREPARED.sql, policy
+  // "app_profiles: admin edita otros": `auth.uid() <> auth_user_id` —
+  // evita auto-ascenso/auto-sabotaje) — por eso esto llama a una Edge
+  // Function server-side NUEVA Y ACOTADA (update-own-profile, PREPARADA,
+  // NO DESPLEGADA todavía — ver supabase/functions/update-own-profile/),
+  // nunca a manage-users (ese exige ADMINISTRADOR para TODAS sus
+  // acciones, ver decideCallerAuthorization() — nunca se debilita ese
+  // gate para colar autoservicio ahí). Mismo patrón que manageUsers():
+  // SOLO anon key + JWT propio, nunca service_role desde el cliente.
+  async updateOwnDisplayName(newDisplayName) {
+    if (!this.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+    const trimmed = typeof newDisplayName === 'string' ? newDisplayName.trim() : '';
+    if (!trimmed) throw new Error('EMPTY_NAME');
+    if (trimmed.length > 80) throw new Error('NAME_TOO_LONG');
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+
+    let resp;
+    try {
+      resp = await fetchWithTimeout(`${cfg.url}/functions/v1/update-own-profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: JSON.stringify({ display_name: trimmed })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error((data && data.error) || `HTTP_${resp.status}`);
+
+    // Refleja el cambio de inmediato en el perfil cacheado localmente — el
+    // servidor ya confirmó que se guardó, no hace falta esperar al próximo
+    // refreshProfile() para que la UI muestre el nombre nuevo.
+    this._profile = { ...this._profile, displayName: trimmed };
+    await this._persistState();
+    return true;
+  },
+
   async _fetchProfile(cfg) {
     if (!this._session || !this._session.accessToken) return null;
     try {

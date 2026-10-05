@@ -2497,12 +2497,15 @@ function offerQuickUnlockSetup(profile) {
   });
 }
 
-// Configurar/Cambiar desde Configuración (ver renderConfig()) — ya dentro
-// de la app, con sesión activa confirmada por Auth.isAuthenticated()
-// (nunca se ofrece esto sin eso, ver quickUnlockAvailable en renderConfig()).
-// changePin() reutiliza exactamente las mismas reglas de configure()
-// (formato, PIN trivial) — nunca duplica esa validación.
-function quickUnlockConfigureModal(mode) {
+// Configurar/Cambiar — se llama desde Configuración (ver renderConfig())
+// Y desde Mi Perfil (ver renderMiPerfil()), ya dentro de la app, con
+// sesión activa confirmada por Auth.isAuthenticated() (nunca se ofrece
+// esto sin eso, ver quickUnlockAvailable). changePin() reutiliza
+// exactamente las mismas reglas de configure() (formato, PIN trivial) —
+// nunca duplica esa validación. `onDone` (por defecto renderConfig, para
+// no romper los call sites existentes) refresca la pantalla que abrió
+// este modal una vez guardado — nunca asume que siempre es Configuración.
+function quickUnlockConfigureModal(mode, onDone = renderConfig) {
   openModal(mode === 'change' ? 'Cambiar PIN rápido' : 'Configurar PIN rápido', `
     <p class="dim" style="margin-top:-4px">PIN de 4 o 6 dígitos para desbloquear este dispositivo sin escribir tu contraseña. Nunca reemplaza tu rol ni tus permisos.</p>
     <form id="quick-unlock-modal-form" class="form-grid">
@@ -2524,11 +2527,193 @@ function quickUnlockConfigureModal(mode) {
       await logAudit(mode === 'change' ? 'QUICK_UNLOCK_CAMBIADO' : 'QUICK_UNLOCK_CONFIGURADO', App.currentUser.name, App.currentUser.name);
       showInAppToast('✓ PIN rápido guardado');
       closeModal();
-      renderConfig();
+      onDone();
     } catch (e) {
       $('#quick-unlock-modal-error').textContent = e.message;
     }
   });
+}
+
+/* ============================================================
+   MI PERFIL (lote "Mi Perfil") — autoservicio para CUALQUIER usuario
+   autenticado, reutilizando Auth/app_profiles/QuickUnlock ya existentes,
+   SIN ampliar permisos de nadie. Solo existe en AUTH_MODE='supabase' (el
+   login PIN legacy no tiene Auth real detrás que autoeditar) — se accede
+   desde el mismo clúster de acciones de cuenta que ya tienen ambos shells
+   (Bloquear/Cambiar usuario/Cerrar sesión), NUNCA desde una sección
+   administrativa nueva (§6 del pedido).
+
+   Username: SOLO LECTURA a propósito (auditoría previa, ver respuesta
+   final del lote) — app_profiles bloquea por RLS cualquier auto-UPDATE
+   directo (incluso para un admin sobre su propia fila), y username ni
+   siquiera es una columna propia: vive codificado en el email sintético
+   de Auth (usernameToAuthIdentifier()) y determina app_user_id
+   (appUserIdFromUsername() en manage-users) — cambiarlo de forma segura
+   exigiría migrar AMBOS a la vez sin dejar ninguna referencia huérfana,
+   algo que la arquitectura actual no garantiza. Nunca se inventa un
+   workaround para esto (instrucción explícita del pedido).
+
+   Rol/activo/permisos/cuadrillas/ubicaciones/IDs internos: NUNCA
+   aparecen como editables en esta pantalla (§7) — ni siquiera se
+   construye un <input> para ellos, se muestran solo como texto.
+   ============================================================ */
+function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations) {
+  if (!scope || scope.kind === 'NONE') return '<div><b>Cuadrilla</b><div>—</div></div>';
+  if (scope.kind === 'GLOBAL') {
+    return '<div><b>Alcance</b><div>Global (según permisos del rol)</div></div>';
+  }
+  if (scope.kind === 'NO_CREW_ASSIGNED') {
+    return '<div><b>Cuadrilla</b><div>Sin cuadrilla autorizada todavía — pide a Administración/Planificación que te agregue a una.</div></div>';
+  }
+  const autorizadas = (scope.authorizedCrews || []).map(c => esc(c.name)).join(', ') || '—';
+  if (scope.kind === 'NEEDS_CREW_SELECTION') {
+    return `<div><b>Cuadrillas autorizadas</b><div>${autorizadas}</div></div>
+      <div><b>Cuadrilla activa</b><div>Elige una en el menú principal</div></div>`;
+  }
+  const crew = cuadrillas.find(c => c.id === scope.crewId);
+  const loc = locations.find(l => l.id === scope.crewLocationId);
+  return `<div><b>Cuadrilla${(scope.authorizedCrews || []).length > 1 ? 's autorizadas' : ''}</b><div>${autorizadas}</div></div>
+    <div><b>Cuadrilla activa</b><div>${crew ? esc(crew.name) : '—'}</div></div>
+    <div><b>Ubicación operativa</b><div>${loc ? esc(loc.name) : 'Sin ubicación'}</div></div>`;
+}
+
+async function renderMiPerfil() {
+  const c = $('#app-content');
+  if (!c) return;
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) {
+    c.innerHTML = '<div class="empty-state">Mi Perfil requiere una sesión real iniciada.</div>';
+    return;
+  }
+  const profile = Auth.getProfile();
+  const username = (profile.appUserId || '').replace(/^u_/, '');
+  const [cuadrillas, locations, scope] = await Promise.all([
+    DB.allActive('cuadrillas'), DB.allActive('locations'), getCurrentOperationalScope(),
+  ]);
+  const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
+  const offline = !navigator.onLine;
+
+  c.innerHTML = `
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Mis datos</h3></div>
+      <div style="padding:14px">
+        <div class="detail-grid">
+          <div><b>Nombre</b><div>${esc(profile.displayName)}</div></div>
+          <div><b>Usuario</b><div class="mono">${esc(username)}</div></div>
+          <div><b>Rol</b><div>${esc(profile.role)}</div></div>
+          ${miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations)}
+        </div>
+      </div>
+    </div>
+
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Nombre visible</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Solo tu nombre — nunca tu usuario, rol ni permisos.</p>
+        <form id="mi-perfil-nombre-form" class="form-grid">
+          <label>Nombre<input required name="displayName" maxlength="80" value="${esc(profile.displayName)}" ${offline ? 'disabled' : ''}/></label>
+          <div id="mi-perfil-nombre-error" class="login-error span-2"></div>
+          <div class="modal-actions span-2"><button type="submit" class="btn btn-accent" ${offline ? 'disabled title="Requiere conexión"' : ''}>Guardar nombre</button></div>
+        </form>
+        ${offline ? '<p class="dim">Sin conexión — cambiar el nombre requiere Internet.</p>' : ''}
+      </div>
+    </div>
+
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Contraseña</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Requiere conexión. Tu contraseña nunca se guarda ni se muestra en ningún lugar.</p>
+        <form id="mi-perfil-password-form" class="form-grid">
+          <label>Contraseña actual<input required type="password" name="currentPassword" autocomplete="current-password" ${offline ? 'disabled' : ''}/></label>
+          <label>Contraseña nueva<input required type="password" name="newPassword" minlength="8" autocomplete="new-password" ${offline ? 'disabled' : ''}/></label>
+          <label>Confirmar contraseña nueva<input required type="password" name="newPasswordConfirm" minlength="8" autocomplete="new-password" ${offline ? 'disabled' : ''}/></label>
+          <div id="mi-perfil-password-error" class="login-error span-2"></div>
+          <div class="modal-actions span-2"><button type="submit" class="btn btn-accent" ${offline ? 'disabled title="Requiere conexión"' : ''}>Cambiar contraseña</button></div>
+        </form>
+        ${offline ? '<p class="dim">Sin conexión — cambiar la contraseña requiere Internet.</p>' : ''}
+      </div>
+    </div>
+
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>PIN rápido (solo este dispositivo)</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Permite volver a entrar en este dispositivo sin escribir tu contraseña, incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol, y nunca se sincroniza a otros dispositivos.</p>
+        ${quickUnlockConfigured
+          ? `<button type="button" class="btn" id="mi-perfil-pin-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="mi-perfil-pin-disable">Desactivar PIN rápido</button>`
+          : `<button type="button" class="btn btn-accent" id="mi-perfil-pin-configure">Configurar PIN rápido</button>`}
+      </div>
+    </div>`;
+
+  $('#mi-perfil-pin-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure', renderMiPerfil));
+  $('#mi-perfil-pin-change')?.addEventListener('click', () => quickUnlockConfigureModal('change', renderMiPerfil));
+  $('#mi-perfil-pin-disable')?.addEventListener('click', async () => {
+    await QuickUnlock.disable();
+    await logAudit('QUICK_UNLOCK_DESACTIVADO', App.currentUser.name, App.currentUser.name);
+    showInAppToast('✓ PIN rápido desactivado');
+    renderMiPerfil();
+  });
+
+  $('#mi-perfil-nombre-form')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const errorEl = $('#mi-perfil-nombre-error');
+    errorEl.textContent = '';
+    await withSubmitGuard(ev.target, 'Guardando…', async () => {
+      try {
+        await Auth.updateOwnDisplayName(fd.displayName);
+        App.currentUser.name = Auth.getProfile().displayName;
+        showInAppToast('✓ Nombre actualizado');
+        renderMiPerfil();
+      } catch (e) {
+        errorEl.textContent = miPerfilErrorMessage(e);
+      }
+    });
+  });
+
+  $('#mi-perfil-password-form')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const errorEl = $('#mi-perfil-password-error');
+    errorEl.textContent = '';
+    if (fd.newPassword !== fd.newPasswordConfirm) {
+      errorEl.textContent = 'Las contraseñas nuevas no coinciden. Vuelve a escribirlas.';
+      return;
+    }
+    await withSubmitGuard(ev.target, 'Cambiando…', async () => {
+      try {
+        await Auth.changeOwnPassword(fd.currentPassword, fd.newPassword);
+        showInAppToast('✓ Contraseña actualizada');
+        ev.target.reset();
+      } catch (e) {
+        errorEl.textContent = miPerfilErrorMessage(e);
+      }
+    });
+  });
+}
+
+// Traduce los códigos estables que lanzan Auth.changeOwnPassword()/
+// Auth.updateOwnDisplayName() a mensajes legibles — mismo criterio que
+// manageUsersErrorMessage() (una sola traducción, nunca repetida por
+// formulario).
+function miPerfilErrorMessage(err) {
+  const code = (err && err.message) || '';
+  const MENSAJES = {
+    AUTH_REQUIRED: 'Tu sesión no está activa. Vuelve a ingresar.',
+    SYNC_NOT_CONFIGURED: 'La sincronización no está configurada en este dispositivo.',
+    WEAK_PASSWORD: 'La contraseña nueva debe tener al menos 8 caracteres.',
+    CURRENT_PASSWORD_INVALID: 'La contraseña actual no es correcta.',
+    PROFILE_INVALID: 'No se pudo identificar tu usuario. Vuelve a iniciar sesión.',
+    UPDATE_FAILED: 'No se pudo cambiar la contraseña. Intenta de nuevo.',
+    EMPTY_NAME: 'El nombre no puede estar vacío.',
+    NAME_TOO_LONG: 'El nombre es demasiado largo.',
+    TIMEOUT: 'La operación tardó demasiado. Intenta de nuevo.',
+    NETWORK: 'Sin conexión con el servidor. Intenta de nuevo.',
+    invalid_display_name: 'El nombre no es válido.',
+    AUTH_FORBIDDEN: 'Tu cuenta no tiene permiso para esta acción.',
+    update_failed: 'No se pudo guardar el nombre. Intenta de nuevo.',
+  };
+  if (MENSAJES[code]) return MENSAJES[code];
+  if (code.startsWith('HTTP_')) return 'El servidor respondió con un error. Intenta de nuevo.';
+  return 'No se pudo completar la acción. Intenta de nuevo.';
 }
 
 /* ---------- Cierre de sesión por inactividad ----------
@@ -2649,6 +2834,7 @@ function boot() {
             }).join('');
           })()}
         </nav>
+        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-mi-perfil"><span class="menu-icon icon-users"></span><span>Mi Perfil</span></button>` : ''}
         ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span class="menu-icon icon-lock"></span><span>Bloquear</span></button>` : ''}
         ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span class="menu-icon icon-repeat"></span><span>Cambiar usuario</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
@@ -2693,6 +2879,7 @@ function boot() {
     b.addEventListener('click', () => navigate(b.dataset.route));
   });
   $('#btn-logout').addEventListener('click', confirmLogout);
+  $('#btn-mi-perfil')?.addEventListener('click', () => navigate('miperfil'));
   $('#btn-lock-app')?.addEventListener('click', lockApp);
   $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   const toggle = $('#btn-menu-toggle');
@@ -2726,19 +2913,26 @@ function navigate(route) {
     if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   const item = MENU.find(m => m.id === route);
+  // Rutas de cuenta que a propósito NUNCA están en MENU (§6 del lote "Mi
+  // Perfil": "no crear una sección administrativa duplicada") — se llega
+  // solo desde el clúster de acciones de cuenta de cada shell, nunca
+  // desde el sidebar/bottom-nav/menú principal. MENU.find() de arriba no
+  // las encuentra, así que el título necesita esta tabla aparte.
+  const EXTRA_ROUTE_TITLES = { miperfil: 'Mi Perfil' };
   // Estos dos elementos SOLO existen en la interfaz de escritorio. La del lubricador no
   // tiene barra superior ni menú lateral, así que se accede con protección: sin esto,
   // llamar a navigate() desde su pantalla rompía la función a la mitad y la vista se
   // quedaba con datos viejos (fue la causa de que una anomalía borrada siguiera visible).
   const titulo = $('#topbar-title');
-  if (titulo) titulo.textContent = item ? item.label : '';
+  if (titulo) titulo.textContent = item ? item.label : (EXTRA_ROUTE_TITLES[route] || '');
   $('#sidebar')?.classList.remove('open');
   const renderers = {
     dashboard: renderDashboard, equipos: renderEquipos, plan: renderPlan,
     turno: renderTurno, registrar: renderRegistrar, horometros: renderHorometros,
     matriz: renderMatrizSemanal,
     anomalias: renderAnomalias, lubricantes: renderLubricantes, historial: renderHistorial,
-    reportes: renderReportes, usuarios: renderUsuarios, config: renderConfig, ayuda: renderAyuda
+    reportes: renderReportes, usuarios: renderUsuarios, config: renderConfig, ayuda: renderAyuda,
+    miperfil: renderMiPerfil
   };
   Promise.resolve((renderers[route] || renderDashboard)()).then(() => makeTablesResponsive($('#app-content')));
 }
@@ -2780,6 +2974,7 @@ function bootLubricador() {
           </div>
           <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-mi-perfil" title="Mi Perfil"><span class="lub-logout-text">Mi Perfil</span></button>` : ''}
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
           <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
@@ -2801,6 +2996,7 @@ function bootLubricador() {
   setInterval(shiftLabel, 60000);
 
   $('#btn-logout').addEventListener('click', confirmLogout);
+  $('#btn-mi-perfil')?.addEventListener('click', () => navigate('miperfil'));
   $('#btn-lock-app')?.addEventListener('click', lockApp);
   $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   // Consulta universal (§2 del lote): mismas dos acciones que el shell de

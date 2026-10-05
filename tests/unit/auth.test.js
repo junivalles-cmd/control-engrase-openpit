@@ -336,3 +336,144 @@ describe('O) Auth.manageUsers() — offline/sin sesión bloquea la administraci�
     expect(sentAuthHeader).toBe(`Bearer ${SESSION_VIGENTE.accessToken}`);
   });
 });
+
+describe('P) Auth.changeOwnPassword() — lote "Mi Perfil"', () => {
+  it('sin sesión autenticada, rechaza antes de llamar a fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.changeOwnPassword('actual', 'nueva12345')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('contraseña nueva débil (<8) rechaza sin llamar a fetch', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.changeOwnPassword('actual', 'corta')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('re-verifica la contraseña ACTUAL con grant_type=password usando el username derivado de appUserId, ANTES de aplicar la nueva con PUT /auth/v1/user', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN); // appUserId: 'u_jvalles' -> username 'jvalles'
+    await Auth.restoreSession();
+
+    const callOrder = [];
+    let verifyBody = null;
+    let updateHeaders = null;
+    let updateBody = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (String(url).includes('grant_type=password')) {
+        callOrder.push('verify');
+        verifyBody = JSON.parse(opts.body);
+        return { ok: true, status: 200, json: async () => ({ access_token: 'VERIFY-ONLY', refresh_token: 'VERIFY-ONLY', expires_in: 3600, user: { id: 'u1' } }) };
+      }
+      if (String(url).endsWith('/auth/v1/user') && opts.method === 'PUT') {
+        callOrder.push('update');
+        updateHeaders = opts.headers;
+        updateBody = JSON.parse(opts.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      throw new Error('unexpected fetch ' + url);
+    }));
+
+    const ok = await Auth.changeOwnPassword('la-actual', 'la-nueva-123');
+    expect(ok).toBe(true);
+    expect(callOrder).toEqual(['verify', 'update']);
+    expect(verifyBody).toEqual({ email: 'jvalles@engrase.internal', password: 'la-actual' });
+    expect(updateBody).toEqual({ password: 'la-nueva-123' });
+    expect(updateHeaders.Authorization).toBe(`Bearer ${SESSION_VIGENTE.accessToken}`);
+    // La verificación NUNCA reemplaza la sesión real ya autenticada.
+    expect(Auth.getSession().accessToken).toBe(SESSION_VIGENTE.accessToken);
+  });
+
+  it('contraseña actual incorrecta -> rechaza, nunca llega a llamar PUT /auth/v1/user', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('grant_type=password')) return { ok: false, status: 400, json: async () => ({}) };
+      throw new Error('no debería llegar a esta llamada');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(Auth.changeOwnPassword('mala', 'la-nueva-123')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('la contraseña (actual o nueva) nunca queda guardada en ningún storage local', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('grant_type=password')) return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({}) };
+    }));
+
+    const NUEVA_SECRETA = 'nueva-password-secreta-456';
+    await Auth.changeOwnPassword('actual-secreta-789', NUEVA_SECRETA);
+
+    const dump = JSON.stringify(db._dump());
+    expect(dump).not.toContain(NUEVA_SECRETA);
+    expect(dump).not.toContain('actual-secreta-789');
+  });
+});
+
+describe('Q) Auth.updateOwnDisplayName() — lote "Mi Perfil"', () => {
+  it('sin sesión autenticada, rechaza antes de llamar a fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.updateOwnDisplayName('Nuevo Nombre')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('nombre vacío rechaza sin llamar a fetch', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.updateOwnDisplayName('   ')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('llama a update-own-profile (nunca manage-users) con el JWT propio, y refleja el nombre nuevo de inmediato en el perfil cacheado', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+
+    let calledUrl = null;
+    let sentAuthHeader = null;
+    let sentBody = null;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      calledUrl = String(url);
+      sentAuthHeader = opts.headers.Authorization;
+      sentBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ ok: true, display_name: 'Nombre Nuevo' }) };
+    }));
+
+    const ok = await Auth.updateOwnDisplayName('  Nombre Nuevo  ');
+    expect(ok).toBe(true);
+    expect(calledUrl).toContain('/functions/v1/update-own-profile');
+    expect(calledUrl).not.toContain('manage-users');
+    expect(sentAuthHeader).toBe(`Bearer ${SESSION_VIGENTE.accessToken}`);
+    expect(sentBody).toEqual({ display_name: 'Nombre Nuevo' });
+    expect(Auth.getProfile().displayName).toBe('Nombre Nuevo');
+
+    const snapshot = await db.getAuthProfileSnapshot();
+    expect(snapshot.displayName).toBe('Nombre Nuevo');
+  });
+
+  it('error del servidor -> rechaza con el código crudo, nunca cambia el perfil cacheado', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: 'AUTH_FORBIDDEN' }) })));
+
+    await expect(Auth.updateOwnDisplayName('Otro Nombre')).rejects.toThrow('AUTH_FORBIDDEN');
+    expect(Auth.getProfile().displayName).toBe('Junior Valles');
+  });
+});

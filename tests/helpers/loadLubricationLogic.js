@@ -365,6 +365,30 @@ export function loadManageUsersLogic() {
   return factory();
 }
 
+// Lote "Mi Perfil" — autoservicio de display_name, acotado a la PROPIA
+// fila del caller (nunca requiere ADMINISTRADOR, a diferencia de
+// manage-users). Mismo criterio de extracción .ts-pero-JS-puro que
+// manage-users — PREPARADA, NO DESPLEGADA (ver cabecera del archivo real).
+export const UPDATE_OWN_PROFILE_TS_PATH = path.join(SRC_ROOT, 'supabase/functions/update-own-profile/index.ts');
+const UPDATE_OWN_PROFILE_SOURCES = [
+  [UPDATE_OWN_PROFILE_TS_PATH, [
+    'CORS_HEADERS', 'MAX_DISPLAY_NAME_LENGTH', 'isValidDisplayName', 'svHeaders', 'getCallerProfile',
+    'decideCallerAuthorization', 'handleUpdateOwnProfile',
+  ]],
+];
+
+/**
+ * Devuelve la lógica REAL de supabase/functions/update-own-profile/index.ts
+ * (validación pura + la operación completa, recibiendo `env` explícito en
+ * vez de leer Deno.env). Usa el `fetch` global — el test lo stubea con
+ * vi.stubGlobal('fetch', ...), igual que manage-users/sync.js/auth.js.
+ */
+export function loadUpdateOwnProfileLogic() {
+  const body = buildBodyFromSources(UPDATE_OWN_PROFILE_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
 // Lote arquitectura de notificaciones (2026-09-30) — la función PURA de
 // elegibilidad de cada Edge Function (isRecipientEligible), que debe
 // reflejar la MISMA regla que isUserEligibleForNotification()
