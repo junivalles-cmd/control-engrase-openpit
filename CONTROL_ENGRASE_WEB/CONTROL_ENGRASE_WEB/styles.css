@@ -326,7 +326,18 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; align-items: center; gap: 12px; padding: 12px 20px;
   border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5;
 }
-.topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; }
+/* HALLAZGO (lote "fix: prevent topbar overlap at tablet width"): sin
+   min-width:0, un item flex con texto NUNCA se encoge por debajo del ancho
+   de su palabra más larga (el gotcha clásico de flexbox) — a ~1000-1350px
+   .topbar-right ya no cabe en una sola línea y empieza a envolver
+   internamente (su propio flex-wrap:wrap), pero .topbar-title no cedía nada
+   de espacio y terminaba superpuesto con el buscador/usuario envuelto. Con
+   min-width:0 + nowrap/ellipsis, el título ahora SÍ puede encogerse (y
+   recortarse con "…" si hiciera falta) en vez de invadir a su hermano —
+   nunca vacío, nunca superpuesto. Inerte en >=1440px (hay espacio de sobra,
+   nunca se activa el recorte) y redundante-pero-inofensivo bajo 900px (ya
+   tiene su propia regla idéntica en el media query de abajo). */
+.topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-right {
   margin-left: auto; display: flex; align-items: center; justify-content: flex-end;
   flex-wrap: wrap; row-gap: 8px; gap: 14px; font-size: 12px; color: var(--text-dim);
