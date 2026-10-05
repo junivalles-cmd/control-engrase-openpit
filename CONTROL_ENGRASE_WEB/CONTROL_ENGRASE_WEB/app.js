@@ -2040,56 +2040,66 @@ function showInAppToast(text) {
 function updateConnBadge() {
   const b = $('#conn-badge');
   if (!b) return;
+  // HALLAZGO topbar móvil: en 390/412px el texto completo ("SIN INTERNET ·
+  // GUARDANDO LOCAL", etc.) se recortaba a algo ilegible ("SIN INTERN…") sin
+  // ninguna forma de recuperar la info real — el badge se vuelve un punto
+  // compacto por CSS en esos anchos (ver ".conn-badge" en el media query
+  // angosto, styles.css), así que SIEMPRE se fija aria-label (nombre
+  // accesible real, sin importar qué tan recortado se vea el texto) y title
+  // (tooltip/mantener presionado) con el mismo mensaje completo — nunca solo
+  // en los 3 casos que ya lo tenían antes.
+  let text, detail;
   if (!navigator.onLine) {
-    b.textContent = 'SIN INTERNET · GUARDANDO LOCAL';
+    text = 'SIN INTERNET · GUARDANDO LOCAL';
     b.className = 'conn-badge conn-off';
-    return;
-  }
-  if (lastSyncState.status === 'unconfigured') {
-    b.textContent = 'SOLO LOCAL · SIN SERVIDOR CONFIGURADO';
+  } else if (lastSyncState.status === 'unconfigured') {
+    text = 'SOLO LOCAL · SIN SERVIDOR CONFIGURADO';
     b.className = 'conn-badge conn-warn';
   } else if (lastSyncState.status === 'syncing') {
-    b.textContent = 'SINCRONIZANDO…';
+    text = 'SINCRONIZANDO…';
     b.className = 'conn-badge conn-warn';
   } else if (lastSyncState.status === 'offline') {
     // navigator.onLine ya dio false ANTES de llegar aquí (mismo caso que el
     // chequeo de arriba) — se cubre igual por si algo más adelante llega a
     // notificar este status directamente.
-    b.textContent = 'SIN INTERNET · GUARDANDO LOCAL';
+    text = 'SIN INTERNET · GUARDANDO LOCAL';
     b.className = 'conn-badge conn-off';
   } else if (lastSyncState.status === 'backend_unreachable') {
     // Distinto de "SIN INTERNET": el dispositivo SÍ cree tener conexión
     // (navigator.onLine=true) pero el servidor no respondió a tiempo — ver
     // Bloque B (conectividad real), hallazgo real del piloto Android.
     // Nunca se confunde con "SINCRONIZADO"; el trabajo local sigue intacto.
-    b.textContent = 'SIN CONEXIÓN CON EL SERVIDOR';
+    text = 'SIN CONEXIÓN CON EL SERVIDOR';
     b.className = 'conn-badge conn-off';
-    b.title = 'No se pudo contactar al servidor a tiempo. Tus cambios siguen guardados en este dispositivo — se reintenta solo en la próxima sincronización.';
+    detail = 'No se pudo contactar al servidor a tiempo. Tus cambios siguen guardados en este dispositivo — se reintenta solo en la próxima sincronización.';
   } else if (lastSyncState.status === 'error') {
-    b.textContent = 'ERROR DE SINCRONIZACIÓN';
+    text = 'ERROR DE SINCRONIZACIÓN';
     b.className = 'conn-badge conn-off';
-    b.title = lastSyncState.message || '';
+    detail = lastSyncState.message || '';
   } else if (lastSyncState.status === 'partial') {
-    b.textContent = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;
+    text = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;
     b.className = 'conn-badge conn-warn';
-    b.title = 'Falló: ' + lastSyncState.errors.join(', ') + ' — se reintenta solo en la próxima sincronización.';
+    detail = 'Falló: ' + lastSyncState.errors.join(', ') + ' — se reintenta solo en la próxima sincronización.';
   } else if (lastSyncState.status === 'AUTH_REQUIRED' || lastSyncState.status === 'AUTH_FORBIDDEN') {
     // Solo posible en AUTH_MODE='supabase' (inerte en 'legacy', ver
     // sync.js) — nunca debe leerse como "SINCRONIZADO" solo porque
     // navigator.onLine es true.
-    b.textContent = lastSyncState.status === 'AUTH_REQUIRED' ? 'SESIÓN REQUERIDA' : 'SIN PERMISO PARA SINCRONIZAR';
+    text = lastSyncState.status === 'AUTH_REQUIRED' ? 'SESIÓN REQUERIDA' : 'SIN PERMISO PARA SINCRONIZAR';
     b.className = 'conn-badge conn-off';
   } else if (lastSyncState.status === 'ok') {
-    b.textContent = 'SINCRONIZADO';
+    text = 'SINCRONIZADO';
     b.className = 'conn-badge conn-ok';
   } else {
     // Estado inicial (nunca se ha sincronizado todavía en esta sesión) —
     // antes cualquier status desconocido caía aquí y decía "SINCRONIZADO"
     // sin haber sincronizado nunca; ahora los status reales de arriba están
     // todos cubiertos explícitamente y este es solo el arranque en frío.
-    b.textContent = 'SINCRONIZANDO…';
+    text = 'SINCRONIZANDO…';
     b.className = 'conn-badge conn-warn';
   }
+  b.textContent = text;
+  b.setAttribute('aria-label', text);
+  b.title = detail ? `${text} — ${detail}` : `${text} — toca para sincronizar ahora`;
 }
 
 /* ---------- login ---------- */

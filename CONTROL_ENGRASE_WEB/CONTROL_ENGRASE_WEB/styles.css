@@ -405,6 +405,42 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .lub-heading { font-size: 19px; }
 }
 
+/* ---------------- Topbar global — ancho muy angosto (390/412px) ----------------
+   HALLAZGO (lote "fix: refine global mobile topbar"): a 390/412px, dentro
+   del mismo .topbar-right ya compactado por el media query de arriba
+   (900px), seguían compitiendo por espacio el buscador + QR + conn-badge +
+   .topbar-shift — el conn-badge quedaba truncado a texto sin sentido ("SIN
+   INTERN…") y .topbar-shift se desbordaba a una segunda línea (el ícono de
+   turno quedaba flotando solo, separado del resto de la barra). Acotado a
+   ".topbar" a propósito — el shell del Lubricador (.lub-topbar, pantalla
+   "Mi Turno") NO tiene estos elementos (su turno vive en .lub-user-strip,
+   debajo de la topbar, sin competir por el mismo espacio) y no se toca. */
+@media (max-width: 480px) {
+  /* El turno ya no cabe de forma legible junto a buscador+QR+conexión a
+     este ancho — se oculta aquí (mismo criterio ya aplicado a .topbar-user
+     arriba, que se oculta desde 900px); el valor real sigue disponible vía
+     updateShiftBadge() en el DOM (title del elemento), por si se necesita
+     reactivar en un ancho intermedio más adelante. */
+  .topbar-shift { display: none; }
+  /* Conexión: en vez de texto truncado sin sentido, un punto de color
+     compacto (44x44 de área táctil real, igual que cualquier icon-btn) —
+     el texto completo sigue existiendo en el DOM (aria-label/title, ver
+     updateConnBadge() en app.js, que ahora SIEMPRE los fija) así que un
+     lector de pantalla sigue anunciando el estado real, nunca solo "botón". */
+  .topbar .conn-badge {
+    width: var(--tap); height: var(--tap); min-width: var(--tap); padding: 0; margin: 0;
+    max-width: none; border-radius: 50%; background: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    overflow: hidden; text-indent: -9999px; white-space: nowrap;
+  }
+  .topbar .conn-badge::before {
+    content: ''; display: block; width: 11px; height: 11px; border-radius: 50%;
+    background: currentColor; text-indent: 0; flex: none;
+  }
+  .topbar { gap: 4px; }
+  .topbar-right { gap: 4px; }
+}
+
 /* min-width (auditoría de accesibilidad): a diferencia de .btn/.menu-item/etc,
    .icon-btn puede quedar solo-ícono sin texto al lado — su ancho real quedaba
    en ~26-34px (18px de ícono + 4px/8px de padding), bajo el objetivo táctil
