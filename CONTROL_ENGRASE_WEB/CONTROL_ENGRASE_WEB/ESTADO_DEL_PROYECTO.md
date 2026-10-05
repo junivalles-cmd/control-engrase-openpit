@@ -42,7 +42,7 @@ Sin frameworks: HTML, CSS y JavaScript puro.
 | `schema.sql` | Script que crea la tabla y el bucket de fotos en Supabase |
 | `supabase/functions/` | Funciones de servidor para las notificaciones push |
 
-**Librerías externas** (desde jsDelivr): Chart.js, SheetJS (Excel), jsPDF + autotable, QRious, jsQR.
+**Librerías externas** (desde jsDelivr): Chart.js, SheetJS (Excel), jsPDF + autotable. QR (generador qrcode-generator + escáner jsQR) vive vendorizado localmente en `vendor/`, no por CDN — ver `vendor/LICENSES.md`.
 
 ## 4. Roles y permisos
 

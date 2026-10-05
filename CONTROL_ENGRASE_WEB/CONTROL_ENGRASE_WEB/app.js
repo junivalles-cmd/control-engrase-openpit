@@ -216,6 +216,39 @@ function qrValueForEquipment(equipment) {
   return `${location.origin}${location.pathname}#eq=${equipment.id}`;
 }
 
+/* Generador de QR (lote "QR license fix"): reemplaza a QRious (GPL-3.0,
+   eliminada del proyecto) por qrcode-generator (MIT, vendor/qrcode.js,
+   window.qrcode) — mismo formato QR, mismos deep links, mismo resultado
+   visual (tamaño/colores configurables). Adaptador de RENDERIZADO puro
+   (ningún cálculo de negocio): qrcode-generator da la matriz de módulos
+   (getModuleCount()/isDark()), esta función solo la dibuja — sobre un
+   <canvas> con foreground/background a elección (openEquipmentQR) o como
+   data URL lista para un <img src> (printAllQRCodes), igual que antes
+   con `new QRious({...}).toDataURL()`. Firma de entrada idéntica a la que
+   ya usaban los 2 call sites reales, para no tocarlos más de lo necesario. */
+function renderQrCode({ value, size, element, background, foreground }) {
+  const qr = qrcode(0, 'M'); // tipo 0 = esta librería elige el tamaño mínimo donde entra el valor, auto-ajustado según el largo del texto (mismo comportamiento de siempre)
+  qr.addData(value);
+  qr.make();
+  const moduleCount = qr.getModuleCount();
+  const cellSize = Math.max(1, Math.round((size || 200) / moduleCount));
+  const pixelSize = cellSize * moduleCount;
+  if (element) {
+    element.width = pixelSize;
+    element.height = pixelSize;
+    const ctx = element.getContext('2d');
+    ctx.fillStyle = background || '#ffffff';
+    ctx.fillRect(0, 0, pixelSize, pixelSize);
+    ctx.fillStyle = foreground || '#000000';
+    for (let row = 0; row < moduleCount; row++) {
+      for (let col = 0; col < moduleCount; col++) {
+        if (qr.isDark(row, col)) ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+      }
+    }
+  }
+  return { toDataURL: () => qr.createDataURL(cellSize, 0) };
+}
+
 function parseEquipmentIdFromScan(text) {
   const raw = text.trim();
   try {
@@ -231,11 +264,11 @@ function parseEquipmentIdFromScan(text) {
 
 async function printAllQRCodes(equipos) {
   if (!equipos.length) { alert('No hay equipos para imprimir.'); return; }
-  if (!window.QRious) { alert('No se pudo cargar el generador de QR (revisa tu conexión la primera vez que uses esta función).'); return; }
+  if (typeof qrcode === 'undefined') { alert('No se pudo cargar el generador de QR (revisa tu conexión la primera vez que uses esta función).'); return; }
   if (isNative() && !confirm('Estás generando estas etiquetas desde la app instalada — el link que llevan solo va a funcionar bien si las generas desde la versión web. ¿Quieres continuar de todas formas?')) return;
 
   const items = equipos.map(e => {
-    const qr = new QRious({ value: qrValueForEquipment(e), size: 200 });
+    const qr = renderQrCode({ value: qrValueForEquipment(e), size: 200 });
     return { e, dataUrl: qr.toDataURL() };
   });
 
@@ -272,8 +305,7 @@ function openEquipmentQR(equipment) {
     </div>
   `);
   try {
-    // eslint-disable-next-line no-new
-    new QRious({ element: $('#qr-canvas'), value: qrValueForEquipment(equipment), size: 220, background: '#ffffff', foreground: '#14171A' });
+    renderQrCode({ element: $('#qr-canvas'), value: qrValueForEquipment(equipment), size: 220, background: '#ffffff', foreground: '#14171A' });
   } catch (e) { $('#qr-canvas').replaceWith('No se pudo generar el código QR (sin conexión la primera vez que se usa esta función).'); }
   // Comprueba en vivo si el sitio publica el archivo que Android necesita para
   // abrir la app en vez del navegador. Es el fallo más común y difícil de diagnosticar.
