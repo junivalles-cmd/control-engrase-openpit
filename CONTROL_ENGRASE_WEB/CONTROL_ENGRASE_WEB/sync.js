@@ -146,6 +146,36 @@ function syncAuthHeaders(cfg) {
   return { apikey: cfg.anonKey, Authorization: `Bearer ${bearer}` };
 }
 
+// Diagnóstico SANITIZADO de un rechazo 403 (AUTH_FORBIDDEN) — lote "Sync 403
+// diagnostic". Objetivo: poder saber DESPUÉS, sin reproducir el problema a
+// ciegas, qué store/operación concreta rechazó RLS. Lee SOLO el cuerpo de
+// error que el propio PostgREST ya devuelve (nunca el request que mandamos:
+// jamás incluye el JWT, el apikey, ni el payload completo de la fila — esos
+// nunca viajan en la RESPUESTA, no hace falta excluirlos a mano). Recortado
+// a 200 caracteres por las dudas; si el cuerpo no es JSON o no trae esos
+// campos, devuelve cadena vacía — nunca lanza, nunca bloquea el flujo normal
+// de pushAll() por un problema al leer el diagnóstico.
+async function readAuthErrorMessage(resp) {
+  try {
+    const data = await resp.json();
+    const raw = (data && (data.message || data.hint || data.code)) || '';
+    return String(raw).slice(0, 200);
+  } catch (e) {
+    return '';
+  }
+}
+
+// Mismo criterio en los 3 campos que ya identifican una fila en
+// `errors`/`conflicts` (store/id) — agrega SOLO lo necesario para diagnosticar
+// un 403 sin reproducirlo a ciegas: operación, el mensaje ya sanitizado
+// (ver readAuthErrorMessage), el rol vigente en EL MOMENTO del rechazo
+// (nunca el JWT en sí) y la hora. `role` puede quedar null si Auth no está
+// cargado (AUTH_MODE='legacy') — coherente con que este código es inerte ahí.
+function buildAuthErrorDetail({ store, id, operation, message }) {
+  const role = (typeof Auth !== 'undefined' && Auth.getProfile && Auth.getProfile()) ? Auth.getProfile().role : null;
+  return { store, id, status: 403, operation, message, role, at: nowISO() };
+}
+
 // P0-1 (endurecimiento): la primera versión de este archivo comprobaba la
 // versión remota con un GET separado ANTES del upsert (checkPushAllowed(),
 // ya eliminada) — eso deja una ventana real entre "leer" y "escribir": dos
@@ -460,7 +490,11 @@ const Sync = {
           if (authIssueCreate === 'AUTH_FORBIDDEN') {
             // Rechazo de autorización (RLS), NUNCA un conflicto de versión
             // CAS — la fila sigue dirty tal cual, no se marca en `conflicts`.
-            newRows.forEach(r => authErrors.push({ store, id: r.id, status: 403 }));
+            // Diagnóstico sanitizado (lote "Sync 403 diagnostic") — mismo
+            // mensaje para las N filas de este POST en lote, nunca el
+            // payload que se envió.
+            const message = await readAuthErrorMessage(resp);
+            newRows.forEach(r => authErrors.push(buildAuthErrorDetail({ store, id: r.id, operation: 'INSERT', message })));
             continue;
           }
           if (!resp.ok) throw new Error(`${resp.status}`);
@@ -503,7 +537,8 @@ const Sync = {
             // Igual que arriba: rechazo de autorización, NUNCA conflicto
             // CAS — la fila sigue dirty, se reintenta sola cuando cambie
             // la sesión/perfil, nunca en un loop de reintentos inmediato.
-            authErrors.push({ store, id: r.id, status: 403 });
+            const message = await readAuthErrorMessage(resp);
+            authErrors.push(buildAuthErrorDetail({ store, id: r.id, operation: 'UPDATE', message }));
             continue;
           }
           if (!resp.ok) throw new Error(`${resp.status}`);
@@ -532,8 +567,12 @@ const Sync = {
       }
     }
     if (conflicts.length) await DB.recordConflicts(conflicts);
-    if (authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length };
-    return { ok: errors.length === 0 && authErrors.length === 0, pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length };
+    // authErrors: la CANTIDAD (igual que siempre, nunca cambia de tipo —
+    // fullSync()/los tests existentes lo usan como número). authErrorDetails:
+    // el detalle sanitizado de CADA rechazo (lote "Sync 403 diagnostic"),
+    // nuevo, aparte — nunca reemplaza al conteo.
+    if (authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length, authErrorDetails: authErrors };
+    return { ok: errors.length === 0 && authErrors.length === 0, pushed, errors, conflicts: conflicts.length, authErrors: authErrors.length, authErrorDetails: authErrors };
   },
 
   async pullAll() {
@@ -567,7 +606,15 @@ const Sync = {
       // 401/403 en la lectura NUNCA es el CAS de P0-1 (que solo vive en
       // pushAll, siempre 200) — se corta el pull entero, sin tocar nada
       // local, en vez de seguir el camino genérico de `throw` de abajo.
-      if (authIssuePull) return { ok: false, reason: authIssuePull, pulled: 0, newAnomalies: [] };
+      // Diagnóstico sanitizado (lote "Sync 403 diagnostic"): un pull es UNA
+      // sola consulta cruzando todos los stores, nunca uno en particular —
+      // `store: null` a propósito, nunca un valor inventado.
+      if (authIssuePull) {
+        const authErrorDetails = authIssuePull === 'AUTH_FORBIDDEN'
+          ? [buildAuthErrorDetail({ store: null, id: null, operation: 'SELECT', message: await readAuthErrorMessage(resp) })]
+          : [];
+        return { ok: false, reason: authIssuePull, pulled: 0, newAnomalies: [], authErrorDetails };
+      }
       if (!resp.ok) throw new Error(`Error al descargar cambios: ${resp.status}`);
       const page = await resp.json();
       rows = rows.concat(page);
@@ -722,7 +769,7 @@ const Sync = {
         // (solo posible con AUTH_MODE='supabase'), no tiene sentido
         // intentar el push detrás — se corta acá, nada local se toca.
         if (pullRes.reason === 'AUTH_REQUIRED' || pullRes.reason === 'AUTH_FORBIDDEN') {
-          this.notify({ status: pullRes.reason, at: nowISO() });
+          this.notify({ status: pullRes.reason, at: nowISO(), authErrorDetails: pullRes.authErrorDetails || [] });
           return;
         }
         pushRes = await this.pushAll();
@@ -745,7 +792,11 @@ const Sync = {
         pushed: pushRes.pushed || 0, pulled: pullRes.pulled || 0,
         errors: pushRes.errors || [], newAnomalies: pullRes.newAnomalies || [],
         conflicts: (pushRes.conflicts || 0) + (pullRes.conflicts || 0),
-        authErrors: pushRes.authErrors || 0, at: nowISO()
+        authErrors: pushRes.authErrors || 0, at: nowISO(),
+        // Diagnóstico sanitizado (lote "Sync 403 diagnostic") — concatena el
+        // detalle de push (por store/fila) y de pull (si lo hubo), nunca
+        // reemplaza `authErrors` (el conteo, usado por el resto del código).
+        authErrorDetails: [...(pushRes.authErrorDetails || []), ...(pullRes.authErrorDetails || [])]
       });
     } catch (err) {
       // navigator.onLine=true no garantiza que el backend responda (ver

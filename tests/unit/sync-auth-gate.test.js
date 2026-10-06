@@ -39,12 +39,13 @@ function makeFakeDB() {
   };
 }
 
-function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FAKE-USER-JWT' } = {}) {
+function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FAKE-USER-JWT', role = 'LUBRICADOR' } = {}) {
   return {
     getMode() { return mode; },
     isSupabaseMode() { return mode === 'supabase'; },
     isAuthenticated() { return authenticated; },
     getSession() { return { accessToken }; },
+    getProfile() { return { role }; },
   };
 }
 
@@ -400,5 +401,105 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
 
     await Sync.fullSync();
     expect(seenAuth).toBe('Bearer NEW-JWT'); // NUNCA 'Bearer OLD-EXPIRED'
+  });
+});
+
+describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUTH_FORBIDDEN', () => {
+  it('INSERT rechazado: authErrorDetails tiene store/operación/HTTP/mensaje/rol/hora, nunca el payload ni la sesión', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 }); // sin _pushedVersion -> POST
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ', role: 'LUBRICADOR' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 403,
+      json: async () => ({ code: '42501', message: 'new row violates row-level security policy for table "engrase_sync"' }),
+    })));
+
+    const res = await Sync.pushAll();
+    expect(res.authErrors).toBe(1);
+    expect(res.authErrorDetails).toHaveLength(1);
+    const d = res.authErrorDetails[0];
+    expect(d.store).toBe('equipment');
+    expect(d.id).toBe('eqNew');
+    expect(d.operation).toBe('INSERT');
+    expect(d.status).toBe(403);
+    expect(d.role).toBe('LUBRICADOR');
+    expect(d.message).toContain('row-level security policy');
+    expect(d.at).toBeTruthy();
+
+    // NUNCA el JWT, el apikey ni la sesión en el detalle.
+    const dump = JSON.stringify(d);
+    expect(dump).not.toContain('REAL-USER-JWT-XYZ');
+    expect(dump.toLowerCase()).not.toContain('apikey');
+  });
+
+  it('UPDATE rechazado: mismo detalle, operación "UPDATE"', async () => {
+    await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0, _pushedVersion: T0 });
+    const localA = await db.get('equipment', 'eq1');
+    localA.code = 'EDITADO'; localA.updatedAt = T1;
+    await db.put('equipment', localA);
+    const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, role: 'SUPERVISOR' });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ message: 'permission denied' }) })));
+
+    const res = await Sync.pushAll();
+    expect(res.authErrorDetails).toHaveLength(1);
+    expect(res.authErrorDetails[0].operation).toBe('UPDATE');
+    expect(res.authErrorDetails[0].role).toBe('SUPERVISOR');
+    expect(res.authErrorDetails[0].message).toBe('permission denied');
+  });
+
+  it('cuerpo de error no-JSON o vacío: nunca lanza, message queda vacío', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, makeFakeAuth({ mode: 'supabase', authenticated: true }));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => { throw new Error('not json'); } })));
+
+    const res = await Sync.pushAll();
+    expect(res.authErrors).toBe(1);
+    expect(res.authErrorDetails[0].message).toBe('');
+  });
+
+  it('mensaje larguísimo del servidor se recorta a 200 caracteres (nunca un volcado sin límite)', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
+    const { Sync } = loadSyncLogic(db, STORES_TEST, makeFakeAuth({ mode: 'supabase', authenticated: true }));
+    const largo = 'x'.repeat(500);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ message: largo }) })));
+
+    const res = await Sync.pushAll();
+    expect(res.authErrorDetails[0].message.length).toBe(200);
+  });
+
+  it('AUTH_MODE legacy (sin Auth real): nunca puede producir un authErrorDetail (el gate ni intenta la red con 403 simulado -> no aplica aquí, pero role queda null si Auth no define getProfile)', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
+    const bareAuth = { getMode() { return 'supabase'; }, isSupabaseMode() { return true; }, isAuthenticated() { return true; }, getSession() { return { accessToken: 'T' }; } }; // sin getProfile()
+    const { Sync } = loadSyncLogic(db, STORES_TEST, bareAuth);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) })));
+
+    const res = await Sync.pushAll();
+    expect(res.authErrorDetails[0].role).toBeNull();
+  });
+
+  it('fullSync() propaga authErrorDetails hasta notify() cuando el push falla con 403', async () => {
+    await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // no es primera vez
+    await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'LUBRICADOR', active: true });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      if (method === 'POST') return { ok: false, status: 403, json: async () => ({ message: 'rechazado' }) };
+      if (method === 'GET') return { ok: true, status: 200, json: async () => [] }; // pullAll sin novedades
+      throw new Error('unexpected ' + method);
+    }));
+
+    let notified = null;
+    Sync.onChange(state => { notified = state; });
+    await Sync.fullSync();
+
+    expect(notified.status).toBe('AUTH_FORBIDDEN');
+    expect(notified.authErrorDetails).toHaveLength(1);
+    expect(notified.authErrorDetails[0]).toMatchObject({ store: 'equipment', operation: 'INSERT', status: 403, role: 'LUBRICADOR' });
   });
 });

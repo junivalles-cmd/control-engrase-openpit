@@ -1817,6 +1817,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!navigator.onLine) { showInAppToast('Sin conexión a internet en este momento.'); return; }
       Sync.fullSync();
     }
+    // Lote "Sync 403 diagnostic" — botón separado, nunca dispara otra
+    // sincronización (solo muestra el diagnóstico ya recibido).
+    if (e.target.closest('#conn-badge-detail')) {
+      showSyncAuthErrorDetail();
+    }
   });
   wirePushListeners();
   wireLocalNotificationTaps();
@@ -2132,6 +2137,35 @@ function updateConnBadge() {
   b.textContent = text;
   b.setAttribute('aria-label', text);
   b.title = detail ? `${text} — ${detail}` : `${text} — toca para sincronizar ahora`;
+
+  // Lote "Sync 403 diagnostic" — botón de detalle SEPARADO del badge (que
+  // sigue disparando una sincronización al tocarlo, comportamiento intacto):
+  // visible SOLO cuando hay un rechazo 403 (AUTH_FORBIDDEN) con diagnóstico
+  // sanitizado disponible. Funciona igual en móvil (toque) que en desktop
+  // (clic) — nunca depende de hover/title, que en touch no es alcanzable.
+  const detailBtn = $('#conn-badge-detail');
+  if (detailBtn) {
+    const hasDetail = lastSyncState.status === 'AUTH_FORBIDDEN' && (lastSyncState.authErrorDetails || []).length > 0;
+    detailBtn.classList.toggle('hidden', !hasDetail);
+  }
+}
+
+function showSyncAuthErrorDetail() {
+  const details = (lastSyncState.authErrorDetails || []).slice(0, 10);
+  if (!details.length) return;
+  openModal('Sin permiso para sincronizar — detalle', `
+    <p class="dim">Diagnóstico técnico — nunca incluye tu sesión, tu contraseña ni el contenido completo del registro.</p>
+    ${details.map(d => `
+      <div class="detail-grid" style="margin-bottom:10px">
+        <div><b>Store</b><div class="mono">${esc(d.store || '—')}</div></div>
+        <div><b>Operación</b><div class="mono">${esc(d.operation || '—')}</div></div>
+        <div><b>HTTP</b><div class="mono">${esc(String(d.status || '—'))}</div></div>
+        ${d.role ? `<div><b>Rol</b><div>${esc(d.role)}</div></div>` : ''}
+        ${d.message ? `<div><b>Mensaje del servidor</b><div>${esc(d.message)}</div></div>` : ''}
+        <div><b>Hora</b><div class="mono">${esc(d.at || '—')}</div></div>
+      </div>
+    `).join('')}
+  `);
 }
 
 /* ---------- login ---------- */
@@ -2855,6 +2889,7 @@ function boot() {
             </div>
             <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
             <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
+            <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización" title="Ver detalle del error de sincronización">ⓘ</button>
             <span class="topbar-shift" id="topbar-shift"></span>
             <span class="topbar-user">${esc(App.currentUser.name)} · ${App.currentUser.role}</span>
           </div>
@@ -2974,6 +3009,7 @@ function bootLubricador() {
           </div>
           <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
+          <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización" title="Ver detalle del error de sincronización">ⓘ</button>
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-mi-perfil" title="Mi Perfil"><span class="lub-logout-text">Mi Perfil</span></button>` : ''}
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
