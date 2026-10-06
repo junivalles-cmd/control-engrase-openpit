@@ -6,8 +6,11 @@
 // .topbar-shift se desbordaba a una segunda línea. Prueba por patrón de
 // fuente (mismo método que el resto de dashboard-*.test.js): confirma que
 // updateConnBadge() SIEMPRE fija aria-label/title (sin importar qué tan
-// compacto se vea por CSS) y que el nuevo CSS está acotado a ".topbar"
-// (nunca ".lub-topbar" — Mi Turno no se toca).
+// compacto se vea por CSS). El CSS de ".topbar-shift"/".topbar-right"
+// sigue acotado a ".topbar" (escritorio) — el punto compacto de conexión
+// (".conn-badge") pasó a compartirse con ".lub-topbar" en el lote "mobile
+// UX real Android" (el shell del Lubricador tenía el mismo problema real,
+// medido en Android: badge de texto completo sin comprimir).
 
 import { describe, it, expect } from 'vitest';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
@@ -41,30 +44,32 @@ describe('updateConnBadge() — SIEMPRE fija aria-label/title con el texto compl
   });
 });
 
-describe('CSS del fix — acotado a ".topbar", NUNCA toca ".lub-topbar" (Mi Turno no se modifica)', () => {
-  it('el bloque nuevo (@media max-width:480px) existe y usa selectores ".topbar"/".topbar-shift"/".topbar-right", nunca ".lub-topbar"', () => {
+describe('CSS del fix — acotado a ".topbar"/".topbar-shift"/".topbar-right" (".lub-topbar" solo comparte el punto compacto de conexión, ver lote "mobile UX real Android")', () => {
+  it('el bloque nuevo (@media max-width:480px) existe y usa selectores ".topbar"/".topbar-shift"/".topbar-right"; ".lub-topbar" solo aparece junto al selector compartido de .conn-badge, nunca para .topbar-shift/.topbar-right', () => {
     const idx = cssSource.indexOf('@media (max-width: 480px) {');
     expect(idx).toBeGreaterThan(-1);
     const block = cssSource.slice(idx, idx + 1300);
     expect(block).toContain('.topbar-shift { display: none; }');
-    expect(block).toContain('.topbar .conn-badge {');
-    // El bloque de comentario explicativo (justo ANTES de este índice) sí
-    // menciona ".lub-topbar" a propósito, como ejemplo negativo ("esto no se
-    // toca") — se revisa solo el CÓDIGO real (desde la llave de apertura),
-    // nunca ese comentario.
-    expect(block).not.toContain('.lub-topbar');
+    expect(block).toContain('.topbar .conn-badge, .lub-topbar .conn-badge {');
+    // Lote "mobile UX real Android": el shell del Lubricador ahora comparte
+    // el MISMO punto compacto de conexión (nunca una regla duplicada) —
+    // pero sigue sin tocar .topbar-shift/.topbar-right/.lub-user-strip
+    // (esos siguen siendo exclusivos de cada shell).
+    expect(block).not.toContain('.lub-topbar-shift');
     expect(block).not.toContain('.lub-user-strip');
   });
 
-  it('el conn-badge compacto mantiene 44px de área táctil real (var(--tap)), nunca un objetivo táctil reducido', () => {
-    const idx = cssSource.indexOf('.topbar .conn-badge {');
+  it('el conn-badge compacto mantiene 44px de área táctil real (var(--tap)), nunca un objetivo táctil reducido, para AMBOS shells', () => {
+    const idx = cssSource.indexOf('.topbar .conn-badge, .lub-topbar .conn-badge {');
+    expect(idx).toBeGreaterThan(-1);
     const block = cssSource.slice(idx, idx + 300);
     expect(block).toContain('width: var(--tap)');
     expect(block).toContain('height: var(--tap)');
   });
 
-  it('el punto de color del conn-badge compacto usa currentColor (hereda el color semántico real de .conn-ok/.conn-off/.conn-warn, sin inventar una paleta nueva)', () => {
-    const idx = cssSource.indexOf('.topbar .conn-badge::before');
+  it('el punto de color del conn-badge compacto usa currentColor (hereda el color semántico real de .conn-ok/.conn-off/.conn-warn, sin inventar una paleta nueva), para AMBOS shells', () => {
+    const idx = cssSource.indexOf('.topbar .conn-badge::before, .lub-topbar .conn-badge::before');
+    expect(idx).toBeGreaterThan(-1);
     const block = cssSource.slice(idx, idx + 200);
     expect(block).toContain('background: currentColor;');
   });

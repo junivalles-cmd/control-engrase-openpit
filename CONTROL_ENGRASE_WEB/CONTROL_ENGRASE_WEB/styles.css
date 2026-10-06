@@ -438,13 +438,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
      el texto completo sigue existiendo en el DOM (aria-label/title, ver
      updateConnBadge() en app.js, que ahora SIEMPRE los fija) así que un
      lector de pantalla sigue anunciando el estado real, nunca solo "botón". */
-  .topbar .conn-badge {
+  /* Lote "mobile UX real Android": el mismo punto compacto que ya tenía
+     ".topbar .conn-badge" (escritorio) faltaba en ".lub-topbar" — ahí el
+     badge seguía mostrando texto completo ("SINCRONIZADO"/"SIN PERMISO
+     PARA SINCRONIZAR") sin comprimir, compitiendo por espacio con QR/
+     detalle/cuenta/salir y empujando el alto real de la franja. Mismo
+     selector combinado en vez de duplicar la regla. */
+  .topbar .conn-badge, .lub-topbar .conn-badge {
     width: var(--tap); height: var(--tap); min-width: var(--tap); padding: 0; margin: 0;
     max-width: none; border-radius: 50%; background: none;
     display: inline-flex; align-items: center; justify-content: center;
     overflow: hidden; text-indent: -9999px; white-space: nowrap;
   }
-  .topbar .conn-badge::before {
+  .topbar .conn-badge::before, .lub-topbar .conn-badge::before {
     content: ''; display: block; width: 11px; height: 11px; border-radius: 50%;
     background: currentColor; text-indent: 0; flex: none;
   }
@@ -1597,12 +1603,13 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;
-  background: var(--surface); border-top: 1px solid var(--border); padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--border); padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   z-index: 30;
 }
 .lub-nav-item {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 8px 2px; cursor: pointer;
+  background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 6px 2px; cursor: pointer;
+  min-height: var(--tap);
 }
 .lub-nav-item.active { color: var(--accent); }
 /* UI-VIS-302: la barra se mantiene completa (fondo full-width, position:fixed
@@ -1612,6 +1619,106 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   .lub-bottom-nav { justify-content: center; }
   .lub-nav-item { flex: 0 1 170px; }
 }
+
+/* ============================================================
+   MOBILE UX REAL ANDROID (lote del mismo nombre) — prueba en teléfono
+   Android real detectó que ".lub-topbar" nunca recibió el mismo
+   tratamiento de compactado que ".topbar" (escritorio): a lo largo de
+   varios lotes se le fueron agregando controles (QR, conn-badge, botón
+   de detalle de sync, Mi Perfil, Bloquear, Cambiar usuario, Cerrar
+   sesión) sin reducir nunca padding/gap — en 360-412px CSS px eso medía
+   overflow horizontal REAL (document.documentElement.scrollWidth >
+   clientWidth, confirmado con Playwright, no solo "se ve apretado").
+   Playwright a 390/412 pasaba porque sus specs miden fragmentos
+   estáticos más simples que el shell real, no porque el shell real
+   quepa — ver Playwright móvil de este mismo lote, que sí mide el shell
+   completo. Solo se reduce "aire" (padding/gap/texto), NUNCA el área
+   táctil real (sigue >=44px en todo). */
+@media (max-width: 600px) {
+  .lub-topbar { padding: 8px var(--sp-3); gap: 6px; }
+  .lub-topbar-right { gap: 4px; }
+  /* "OPEN PIT" bajo "ENGRASE" no aporta nada que el usuario no sepa ya
+     (está en la app que está usando) — en una franja de 360-412px de
+     ancho compitiendo con 7+ controles, cuesta más de lo que vale. */
+  .lub-topbar .brand-sub.small { display: none; }
+  .lub-topbar .brand-mark.small { width: 24px; height: 24px; }
+  .lub-topbar .brand-title.small { font-size: 13px; }
+}
+@media (max-width: 480px) {
+  /* Mismo criterio que ".topbar-shift"/".topbar .conn-badge" (lote
+     anterior): comprimir visualmente, nunca perder la función — el
+     estado real sigue en aria-label/title (updateConnBadge() los fija
+     siempre), y el botón de detalle (ⓘ) sigue aparte, intacto. */
+  .lub-topbar-right { gap: 2px; }
+}
+
+/* Títulos de pantalla del Lubricador (Mi Turno/Mis Engrases/Elige tu
+   cuadrilla/Sin cuadrilla) — mismo problema de fondo que el resto de este
+   lote: 22px + mayúsculas + letter-spacing en un ancho de 336-366px de
+   contenido puede ocupar 2-3 líneas y "comerse" media pantalla antes de
+   mostrar nada útil. Clase propia del shell Lubricador — nunca toca
+   ningún encabezado del shell de escritorio. */
+@media (max-width: 480px) {
+  .lub-heading { font-size: 17px; line-height: 1.25; }
+}
+/* Defensivo (mismo patrón ya probado en ".topbar-title" para el overflow
+   de la topbar de escritorio, lote "fix: prevent topbar overlap at
+   tablet width"): un <div> hijo de flex sin min-width:0 no se encoge por
+   debajo del ancho intrínseco de su contenido — con un título largo esto
+   puede desbordar el lado del contenedor. Nunca se oculta con
+   overflow:hidden a secas: el texto sigue envolviéndose completo, solo
+   deja de poder forzar el contenedor a crecer más allá de su ancho real. */
+.lub-header-row > div { min-width: 0; }
+.lub-heading { overflow-wrap: break-word; }
+
+/* Menú "Mi cuenta" del Lubricador (Mi Perfil/Bloquear/Cambiar usuario) —
+   mismo openModal() real de siempre, solo el contenido de ESTE modal:
+   lista vertical de botones de ancho completo, cada uno >=44px. */
+.lub-account-menu { display: flex; flex-direction: column; gap: 8px; }
+.lub-account-menu .btn { width: 100%; justify-content: flex-start; min-height: var(--tap); }
+
+/* Estado "sin cuadrilla autorizada" — compacto (icono + título corto +
+   un párrafo breve + UN botón), nunca una pantalla casi completa de texto
+   largo repetido entre el título y el párrafo. */
+.lub-empty-crew {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 10px; padding: 32px var(--sp-3) 16px; max-width: 320px; margin: 0 auto;
+}
+.lub-empty-crew > .btn-icon { width: 34px; height: 34px; opacity: 0.6; margin-right: 0; }
+.lub-empty-crew h2 { margin: 0; font-size: 17px; }
+.lub-empty-crew p { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.lub-empty-crew .lub-anomaly-fab { margin-top: 6px; }
+
+/* Mis Engrases — tarjetas más compactas (lote "mobile UX real Android"):
+   menos padding/separación vertical para ver más de un registro completo
+   sin desplazarse, sin quitar ningún dato (equipo/modelo/fecha/horómetro/
+   turno/cantidad/estado de validación/Ver validación/Editar siguen
+   todos). Acotado a ".lub-record-card" — no es una clase compartida con
+   ninguna tabla/pantalla de escritorio. */
+@media (max-width: 600px) {
+  .lub-record-card { padding: 10px 12px; }
+  .lub-record-meta { margin-top: 4px; gap: 3px 8px; }
+  .lub-record-validacion { margin-top: 6px; gap: 6px; }
+  .lub-record-validacion .btn { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+  .lub-record-card .lub-edit-record { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+}
+
+/* Ayuda del Lubricador — paneles compactos (lote "mobile UX real
+   Android"): ".panel-head h3" a 23px en móvil (regla global, pensada
+   para pantallas de escritorio con 1 solo panel grande en foco) hacía que
+   "Ayuda y soporte"/"Guía de puntos de engrase..."/"Preguntas frecuentes"
+   dominaran la pantalla antes de mostrar contenido real. Acotado con
+   ":has(.ayuda-page)" (mismo patrón ya usado para el ancho de esta
+   pantalla, ver ".lub-content:has(.ayuda-page)" más abajo) — nunca toca
+   ".panel-head"/"h3" del resto del sistema (Ayuda vista desde el shell de
+   escritorio queda intacta). */
+.lub-content:has(.ayuda-page) .panel-head { padding: 8px 12px; margin-bottom: 2px; }
+.lub-content:has(.ayuda-page) .panel-head h3 { font-size: 15px; }
+.lub-content:has(.ayuda-page) .panel { margin-bottom: 10px; }
+.lub-content:has(.ayuda-page) .ayuda-guia-sub,
+.lub-content:has(.ayuda-page) .ayuda-guia-toolbar,
+.lub-content:has(.ayuda-page) .ayuda-family-chips,
+.lub-content:has(.ayuda-page) .ayuda-faq-list { padding-left: 12px; padding-right: 12px; }
 
 /* En pantallas grandes centramos la vista del lubricador para que no se estire de forma extraña */
 @media (min-width: 640px) {

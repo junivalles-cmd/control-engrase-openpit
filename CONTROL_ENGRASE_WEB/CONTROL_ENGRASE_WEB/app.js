@@ -2990,6 +2990,27 @@ function makeTablesResponsive(container) {
 /* ============================================================
    INTERFAZ SIMPLIFICADA PARA LUBRICADOR (móvil, un toque)
    ============================================================ */
+// Lote "mobile UX real Android" — Mi Perfil/Bloquear/Cambiar usuario
+// colapsan en UN solo botón de topbar (antes 3 botones de 44px cada uno,
+// la causa real del overflow horizontal medido en 360-412px junto con QR/
+// conexión/Cerrar sesión). Ninguna función se pierde: las 3 siguen siendo
+// exactamente las mismas (navigate('miperfil')/lockApp()/
+// confirmChangeUser()), solo detrás de un único punto de entrada — mismo
+// patrón que ya usa el resto de la app (openModal() real, nunca un menú
+// nuevo reimplementado).
+function openLubAccountMenu() {
+  const supa = typeof Auth !== 'undefined' && Auth.isSupabaseMode();
+  openModal('Mi cuenta', `
+    <div class="lub-account-menu">
+      <button type="button" class="btn" id="lub-menu-mi-perfil">${ic('users')}Mi Perfil</button>
+      ${supa ? `<button type="button" class="btn" id="lub-menu-lock">${ic('lock')}Bloquear</button>` : ''}
+      ${supa ? `<button type="button" class="btn" id="lub-menu-change-user">${ic('repeat')}Cambiar usuario</button>` : ''}
+    </div>`);
+  $('#lub-menu-mi-perfil').addEventListener('click', () => { closeModal(); navigate('miperfil'); });
+  $('#lub-menu-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
+  $('#lub-menu-change-user')?.addEventListener('click', () => { closeModal(); confirmChangeUser(); });
+}
+
 function bootLubricador() {
   document.body.innerHTML = `
     <div class="lub-shell">
@@ -3010,9 +3031,7 @@ function bootLubricador() {
           <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización" title="Ver detalle del error de sincronización">ⓘ</button>
-          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-mi-perfil" title="Mi Perfil"><span class="lub-logout-text">Mi Perfil</span></button>` : ''}
-          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-lock-app" title="Bloquear"><span class="lub-logout-text">Bloquear</span></button>` : ''}
-          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="icon-btn lub-logout-btn" id="btn-change-user" title="Cambiar usuario"><span class="lub-logout-text">Cambiar usuario</span></button>` : ''}
+          ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button type="button" class="icon-btn" id="btn-lub-account-menu" aria-label="Mi cuenta" title="Mi cuenta">${ic('gear')}</button>` : ''}
           <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
@@ -3032,9 +3051,7 @@ function bootLubricador() {
   setInterval(shiftLabel, 60000);
 
   $('#btn-logout').addEventListener('click', confirmLogout);
-  $('#btn-mi-perfil')?.addEventListener('click', () => navigate('miperfil'));
-  $('#btn-lock-app')?.addEventListener('click', lockApp);
-  $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
+  $('#btn-lub-account-menu')?.addEventListener('click', openLubAccountMenu);
   // Consulta universal (§2 del lote): mismas dos acciones que el shell de
   // escritorio (buscar/escanear QR), visibles en las 4 pestañas del
   // Lubricador — nunca solo en Mi Turno. wireQuickFind()/openQrScanner() son
@@ -3082,13 +3099,18 @@ async function renderLubricadorHome() {
   // a un Planificador/Administrador para autorizarlo en Configuración →
   // Cuadrillas (reemplaza el viejo "Dispositivo operativo").
   if (scope.kind === 'NO_CREW_ASSIGNED') {
+    // Compacto (lote "mobile UX real Android" §4): icono + título corto +
+    // UN párrafo breve + un solo botón — antes ocupaba casi toda la
+    // pantalla con título largo + párrafo largo repitiendo la misma idea.
+    // Mismo contenido real (nunca se oculta la causa ni el camino para
+    // resolverla), solo más compacto.
     c.innerHTML = `
-      <div class="lub-header-row"><div><h2 class="lub-heading">No tienes ninguna cuadrilla autorizada</h2></div></div>
-      <div class="empty-state">
-        Todavía no estás autorizado en ninguna cuadrilla, así que no se te puede mostrar ningún equipo.
-        Pide a un Administrador o Planificador que te autorice en <b>Configuración → Cuadrillas</b>.
-      </div>
-      <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>`;
+      <div class="lub-empty-crew">
+        ${ic('users')}
+        <h2>Sin cuadrilla autorizada</h2>
+        <p>No tienes una cuadrilla asignada. Solicita autorización a un Administrador o Planificador.</p>
+        <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
+      </div>`;
     $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
     return;
   }
