@@ -16,7 +16,10 @@ const getThemeSrc = extractDeclaration(appSource, 'getTheme');
 
 describe('getTheme() — modo por defecto', () => {
   it('el valor por defecto (sin preferencia guardada) es light', () => {
-    expect(getThemeSrc).toMatch(/\{\s*accent:\s*'amber',\s*mode:\s*'light'\s*\}/);
+    // El acento default cambió a 'teal' (rediseño visual 2026-10-08, nuevo
+    // preset recomendado) — el valor que esta prueba protege es el MODO
+    // ('light'), nunca el acento, así que el regex ya no fija 'amber'.
+    expect(getThemeSrc).toMatch(/\{\s*accent:\s*'\w+',\s*mode:\s*'light'\s*\}/);
   });
 
   it('ya no queda ningún default en dark', () => {

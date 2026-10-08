@@ -1745,21 +1745,26 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
   return REPORT_COLORS.rojo;
 }
 
-/* ---------- tema visual (color de acento + modo claro/oscuro) ---------- */
+/* ---------- tema visual (color de acento + modo claro/oscuro) ----------
+   Rediseño visual 2026-10-08: "preferir presets controlados" (pedido) en
+   vez de una paleta libre de 5 colores — se deja solo el nuevo preset
+   recomendado (azul/teal moderno) y el preset anterior (Ámbar industrial),
+   nunca los otros 3 colores arbitrarios (verde/rojo/grafito). Quien ya
+   tenía uno de esos 3 guardado en este dispositivo sigue viéndolo igual
+   (CSS intacto en styles.css, ver [data-theme="..."]) — solo deja de
+   ofrecerse para elegirlo de nuevo. */
 const THEMES = [
-  { id: 'amber', label: 'Ámbar CAT', color: '#F2A900' },
-  { id: 'blue', label: 'Azul Acero', color: '#3B82F6' },
-  { id: 'green', label: 'Verde Mina', color: '#22C55E' },
-  { id: 'red', label: 'Rojo Alerta', color: '#EF4444' },
-  { id: 'graphite', label: 'Grafito', color: '#9CA3AF' }
+  { id: 'teal', label: 'Azul/Teal moderno', sub: 'Recomendado', color: '#0E7490' },
+  { id: 'amber', label: 'Ámbar industrial', color: '#F2A900' },
 ];
 
-// Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO.
-// Si el usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa
-// gana siempre — Object.assign la sobrescribe sobre este valor por defecto.
+// Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO
+// y acento "teal" (rediseño visual 2026-10-08 — antes "amber"). Si el
+// usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa gana
+// siempre — Object.assign la sobrescribe sobre este valor por defecto.
 function getTheme() {
-  try { return Object.assign({ accent: 'amber', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
-  catch { return { accent: 'amber', mode: 'light' }; }
+  try { return Object.assign({ accent: 'teal', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
+  catch { return { accent: 'teal', mode: 'light' }; }
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme.accent);
@@ -1786,7 +1791,7 @@ function openThemePicker() {
     <div class="theme-swatches">
       ${THEMES.map(th => `
         <button type="button" class="theme-swatch ${th.id === t.accent ? 'selected' : ''}" data-accent="${th.id}" style="--sw:${th.color}">
-          <span class="theme-swatch-dot"></span>${th.label}
+          <span class="theme-swatch-dot"></span>${th.label}${th.sub ? ` <span class="dim">(${th.sub})</span>` : ''}
         </button>`).join('')}
     </div>
     <div class="theme-mode-toggle">
@@ -3572,7 +3577,11 @@ async function renderLubricadorHome() {
   };
 
   c.innerHTML = `
-    <div class="lub-context-row">${contextChips}</div>
+    <div class="lub-welcome-card">
+      <div class="lub-welcome-name">${esc(App.currentUser.name)}</div>
+      <div class="lub-welcome-role">${esc(App.currentUser.role)}</div>
+      <div class="lub-context-row">${contextChips}</div>
+    </div>
 
     <div class="lub-kpi-row">
       ${kpiTile('Vencidos', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
@@ -3603,15 +3612,21 @@ async function renderLubricadorHome() {
     <div class="lub-eq-list">${alertasTiempoSinEngrase.map(alertaRowHTML).join('')}</div>
     ` : ''}
 
-    <div class="lub-section-head"><span class="dim">Acciones rápidas</span></div>
+    <button type="button" class="lub-hero-action" id="lub-quick-registrar">
+      <span class="lub-hero-action-text">
+        <span class="lub-hero-action-title">${ic("plus")}Registrar engrase</span>
+        <span class="lub-hero-action-sub">Iniciar trabajo de lubricación</span>
+      </span>
+      <span class="lub-hero-action-arrow" aria-hidden="true">→</span>
+    </button>
+
+    <div class="lub-section-head"><span class="dim">Accesos rápidos</span></div>
     <div class="lub-quick-actions">
-      <button type="button" class="btn btn-accent lub-quick-action" id="lub-quick-registrar">${ic("plus")}Registrar engrase</button>
       <button type="button" class="btn lub-quick-action" id="lub-quick-qr">${ic("qr")}Escanear QR</button>
       <button type="button" class="btn lub-quick-action" id="lub-quick-buscar">${ic("search")}Buscar equipo</button>
       <button type="button" class="btn lub-quick-action" id="lub-quick-matriz">${ic("matrix")}Matriz semanal</button>
+      <button type="button" class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     </div>
-
-    <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
   `;
   $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));

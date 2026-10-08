@@ -22,11 +22,15 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
   return `
   <div class="lub-shell">
     <main class="lub-content">
-      <div class="lub-context-row">
-        <span class="lub-context-chip">☀ Turno Día</span>
-        <span class="lub-context-chip">📍 Rajo Principal</span>
-        <span class="lub-context-chip">👥 Cuadrilla A</span>
-        <span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>
+      <div class="lub-welcome-card">
+        <div class="lub-welcome-name">Jose Guerrero</div>
+        <div class="lub-welcome-role">LUBRICADOR</div>
+        <div class="lub-context-row">
+          <span class="lub-context-chip">☀ Turno Día</span>
+          <span class="lub-context-chip">📍 Rajo Principal</span>
+          <span class="lub-context-chip">👥 Cuadrilla A</span>
+          <span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>
+        </div>
       </div>
 
       <div class="lub-kpi-row">
@@ -86,15 +90,21 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
         </div>
       </div>` : ''}
 
-      <div class="lub-section-head"><span class="dim">Acciones rápidas</span></div>
+      <button class="lub-hero-action" id="qa-registrar">
+        <span class="lub-hero-action-text">
+          <span class="lub-hero-action-title">Registrar engrase</span>
+          <span class="lub-hero-action-sub">Iniciar trabajo de lubricación</span>
+        </span>
+        <span class="lub-hero-action-arrow">→</span>
+      </button>
+
+      <div class="lub-section-head"><span class="dim">Accesos rápidos</span></div>
       <div class="lub-quick-actions">
-        <button class="btn btn-accent lub-quick-action" id="qa-registrar">Registrar engrase</button>
         <button class="btn lub-quick-action" id="qa-qr">Escanear QR</button>
         <button class="btn lub-quick-action" id="qa-buscar">Buscar equipo</button>
         <button class="btn lub-quick-action" id="qa-matriz">Matriz semanal</button>
+        <button class="btn lub-quick-action" id="qa-anomalia">Reportar anomalía</button>
       </div>
-
-      <button class="lub-anomaly-fab">Reportar anomalía</button>
     </main>
   </div>`;
 }
@@ -131,6 +141,8 @@ for (const width of [390, 412]) {
       const box = await quickActions.nth(i).boundingBox();
       expect(box.height).toBeGreaterThanOrEqual(44);
     }
+    const hero = await page.locator('.lub-hero-action').boundingBox();
+    expect(hero.height).toBeGreaterThanOrEqual(44);
     // .lub-arrastrado-actions se reusa tal cual en Atrasados, Mi Turno y
     // Realizados (hardening UI 2026-10-08) — este selector ya cubre los 3.
     const arrBtns = page.locator('.lub-arrastrado-actions .btn');
@@ -273,11 +285,23 @@ test('contexto compacto muestra turno + ubicación + cuadrilla + sincronización
   expect(chips.some(t => t.includes('Sincronizado'))).toBe(true);
 });
 
-test('Acciones rápidas tiene exactamente 4 botones: Registrar engrase, Escanear QR, Buscar equipo, Matriz semanal', async ({ page }) => {
+test('"Registrar engrase" es la acción principal dominante (tarjeta grande separada), y Accesos rápidos tiene exactamente 4 botones: Escanear QR, Buscar equipo, Matriz semanal, Reportar anomalía', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
+  await expect(page.locator('.lub-hero-action')).toContainText('Registrar engrase');
   const labels = await page.locator('.lub-quick-action').allTextContents();
-  expect(labels).toEqual(['Registrar engrase', 'Escanear QR', 'Buscar equipo', 'Matriz semanal']);
+  expect(labels).toEqual(['Escanear QR', 'Buscar equipo', 'Matriz semanal', 'Reportar anomalía']);
+});
+
+test('tarjeta de bienvenida muestra nombre + rol del usuario junto al contexto', async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 1200 });
+  await page.setContent(fixture());
+  await page.addStyleTag({ path: STYLES_PATH });
+
+  const card = page.locator('.lub-welcome-card');
+  await expect(card.locator('.lub-welcome-name')).toHaveText('Jose Guerrero');
+  await expect(card.locator('.lub-welcome-role')).toHaveText('LUBRICADOR');
+  await expect(card.locator('.lub-context-row')).toContainText('Turno Día');
 });

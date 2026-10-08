@@ -9,6 +9,12 @@
   --text-dim: #9BA3AA;
   --accent: #F2A900;
   --accent-dark: #C98A00;
+  /* Color de texto/ícono SOBRE var(--accent) (botones .btn-accent, tabs
+     activos, chips activos) — depende de si el acento es claro u oscuro.
+     Default = el mismo café-oscuro ya usado para el ámbar (contraste
+     9:1+); el preset "teal" (rediseño visual 2026-10-08) lo sobreescribe a
+     blanco, porque su acento es oscuro y el café fallaría WCAG AA. */
+  --on-accent: #1a1400;
   --green: #3FB950;
   --amber: #E8A33D;
   --red: #E5484D;
@@ -46,8 +52,18 @@
   --tap: 44px;
 }
 
-/* ---------------- Paletas de color de acento (elegibles por el usuario) ---------------- */
-[data-theme="amber"]    { --accent: #F2A900; --accent-dark: #C98A00; }
+/* ---------------- Paletas de color de acento (elegibles por el usuario) ----------------
+   Rediseño visual 2026-10-08: "teal" es el preset NUEVO recomendado (azul/
+   teal profesional, inspirado en apps móviles modernas, sin copiar marca ni
+   diseño de terceros) y pasa a ser el default de instalaciones nuevas (ver
+   getTheme() en app.js / script anti-flash en index.html). "amber" se
+   mantiene intacto como "Ámbar industrial" (preset anterior, seleccionable).
+   blue/green/red/graphite se MANTIENEN sin tocar (compatibilidad con
+   preferencias ya guardadas en localStorage de instalaciones existentes)
+   pero ya no se ofrecen como swatch nuevo en el selector — "preferir
+   presets controlados" (pedido), nunca una paleta libre de 5+ colores. */
+[data-theme="teal"]     { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; }
+[data-theme="amber"]    { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; }
 [data-theme="blue"]     { --accent: #3B82F6; --accent-dark: #1D4ED8; }
 [data-theme="green"]    { --accent: #22C55E; --accent-dark: #15803D; }
 [data-theme="red"]      { --accent: #EF4444; --accent-dark: #B91C1C; }
@@ -110,7 +126,7 @@
 }
 [data-mode="contrast"] .status-chip { outline: 2px solid #000000; }
 [data-mode="contrast"] .btn-accent { background: #000000; color: #FFFFFF; border-color: #000000; }
-[data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, rgba(242,169,0,0.10), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
+[data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
 
 /* Solo para lectores de pantalla — nunca visible (auditoría UI/UX
    2026-10-08, hallazgo #5: alternativa textual del gráfico de Tendencia). */
@@ -217,7 +233,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .login-screen {
   min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(circle at 20% 20%, rgba(242,169,0,0.07), transparent 45%),
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
     repeating-linear-gradient(135deg, #16191c 0 26px, #14171A 26px 52px);
   padding: 20px;
 }
@@ -307,7 +323,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   font-size: 15px; font-weight: 500;
 }
 .menu-item:hover { background: var(--surface-2); color: var(--text); }
-.menu-item.active { background: rgba(242,169,0,0.12); color: var(--accent); }
+.menu-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .menu-item.logout { margin-top: 8px; border-top: 1px solid var(--border); border-radius: 0; padding-top: 10px; }
 .menu-icon {
   width: 18px; height: 18px; flex: none; background: currentColor; opacity: 0.85;
@@ -887,7 +903,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer;
   min-height: var(--tap, 44px);
 }
-.ayuda-family-chip.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.ayuda-family-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .ayuda-family-card { margin: 0 14px 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .ayuda-family-card .family-card { border: none; margin: 0; }
 
@@ -977,7 +993,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 }
 .btn:hover { border-color: var(--accent); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
-.btn-accent { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.btn-accent { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-accent:hover { background: var(--accent-dark); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
@@ -1435,7 +1451,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   padding: 7px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 600; cursor: pointer;
   min-height: var(--tap, 44px);
 }
-.rep-tab.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.rep-tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (max-width: 560px) { .rep-tabs { flex-wrap: nowrap; } .rep-tab { flex: 1; text-align: center; padding: 7px 8px; } }
 .rep-chart-consumo-box { aspect-ratio: auto; min-height: 120px; }
 
@@ -1460,7 +1476,14 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    12px. Se mantienen como bloques separados a pedido del usuario (no fusionar
    usuario+turno dentro del topbar: en 360-412px ya lleva marca + estado de
    sincronización + salir). */
-.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border); }
+/* "A. HEADER compacto" (rediseño visual 2026-10-08, §3A): el fondo se
+   mantiene claro/`var(--surface)` a propósito — invertirlo a un fondo
+   oscuro obligaría a re-derivar el contraste de cada ícono/badge/chip que
+   vive adentro (conn-badge semántico, buscador, menú de cuenta…), un
+   riesgo de accesibilidad real para un cambio puramente cosmético. El
+   "primario" se expresa con un borde inferior más grueso del nuevo acento
+   en vez de invertir el fondo. */
+.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 3px solid var(--accent); }
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
 .lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
 /* UI-VIS-302 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): el botón de salir era solo
@@ -1539,7 +1562,23 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    fijos y tarjetas de "Pendientes arrastrados" — mismo lenguaje visual
    .lub-* ya establecido (nunca se importan clases .dash-* del Dashboard
    administrativo, son pantallas distintas con necesidades distintas). */
-.lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 12px; }
+/* "B. TARJETA DE CONTEXTO" (rediseño visual 2026-10-08): tarjeta de
+   bienvenida — nombre + rol del usuario actual, con la fila de chips de
+   contexto (turno/ubicación/cuadrilla/sincronización) ya existente debajo.
+   Ningún dato nuevo: App.currentUser.name/.role ya se mostraban en
+   .lub-user-strip (shell persistente) — esto solo los repite dentro del
+   contenido de "Mi Turno" con más jerarquía visual, nunca un cálculo. */
+.lub-welcome-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--sp-3) var(--sp-3) 10px; margin-bottom: var(--sp-3);
+  border-top: 3px solid var(--accent);
+}
+.lub-welcome-name { font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: 0.01em; }
+.lub-welcome-role {
+  display: inline-block; margin: 2px 0 10px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent);
+}
+.lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 0; }
 .lub-context-chip {
   display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px 4px 8px;
@@ -1571,7 +1610,13 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    .lub-arrastrado-card con tone-green — mismo token --green ya usado en
    toda la app, nunca una paleta nueva (tone-amber ya funcionaba gratis:
    es el valor por defecto de la clase base, arriba). */
-.lub-arrastrado-card.tone-green { border-left-color: var(--green); }
+/* "REALIZADOS debe tener menor peso visual que pendientes" (rediseño visual
+   2026-10-08, §4) — mismo .lub-arrastrado-card, SIN ninguna clase/dato
+   nuevo: solo reduce peso tipográfico y opacidad para que, a simple vista,
+   se note que ya no requiere acción (a diferencia de tone-amber/tone-red,
+   que SIGUEN con el mismo peso de siempre — nunca tocados). */
+.lub-arrastrado-card.tone-green { border-left-color: var(--green); opacity: 0.82; }
+.lub-arrastrado-card.tone-green .lub-eq-code { font-weight: 600; }
 .lub-arrastrado-origen {
   display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.03em; color: var(--amber); background: rgba(232,163,61,0.12);
@@ -1582,9 +1627,41 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .lub-arrastrado-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .lub-arrastrado-actions .btn { min-height: var(--tap, 44px); flex: 1 1 140px; }
 
+/* "C. ACCIÓN PRINCIPAL" (rediseño visual 2026-10-08, §3C): tarjeta/botón
+   grande para "Registrar engrase" — la acción visualmente dominante de la
+   pantalla, antes una celda más dentro de la grilla 2x2 de abajo. MISMO id
+   (#lub-quick-registrar) y MISMO handler ya wireado (abre
+   openOutOfPlanEquipmentPicker(), cero lógica nueva) — solo cambia el
+   contenedor/estilo. */
+.lub-hero-action {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius-lg);
+  padding: 16px var(--sp-4); margin-bottom: var(--sp-3); cursor: pointer; text-align: left;
+  min-height: var(--tap, 44px);
+}
+.lub-hero-action:active { background: var(--accent-dark); }
+.lub-hero-action-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lub-hero-action-title {
+  display: flex; align-items: center; gap: 8px; font-family: var(--font-display);
+  font-weight: 800; font-size: 18px; letter-spacing: 0.02em; text-transform: uppercase;
+}
+.lub-hero-action-title .btn-icon { width: 18px; height: 18px; margin-right: 0; }
+.lub-hero-action-sub { font-size: 12.5px; opacity: 0.9; }
+.lub-hero-action-arrow { font-size: 22px; font-weight: 700; flex: none; }
+
+/* "D. ACCESOS RÁPIDOS 2x2" (§3D): cards táctiles ícono-arriba/texto-abajo
+   (antes una fila de botones angostos con texto truncado) — misma grilla
+   .lub-quick-actions, mismos 4 botones/ids/handlers reales, solo cambia la
+   presentación visual. "Reportar anomalía" se integra aquí como 4ta
+   tarjeta (antes un botón flotante aparte con el mismo id/handler). */
 .lub-quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 4px; }
 @media (min-width: 480px) { .lub-quick-actions { grid-template-columns: repeat(4, 1fr); } }
-.lub-quick-action { min-height: var(--tap, 44px); font-size: 12.5px; padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lub-quick-action {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 72px; font-size: 12px; font-weight: 600; padding: 10px 6px; text-align: center;
+  white-space: normal; overflow: visible; text-overflow: clip; border-radius: var(--radius);
+}
+.lub-quick-action .btn-icon { width: 20px; height: 20px; margin-right: 0; opacity: 1; }
 .lub-back { margin-bottom: 12px; }
 .lub-record-list { display: flex; flex-direction: column; gap: 10px; }
 .lub-record-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
@@ -2265,13 +2342,13 @@ table.matriz thead tr:nth-child(2) th {
    el color de estado de la celda — se ve igual "REALIZADO"/"NO REALIZADO"/
    etc. que en cualquier otro día, solo la columna queda trazada. */
 table.matriz thead tr:nth-child(2) th.is-today {
-  background: rgba(242,169,0,0.14); color: var(--text); border-top: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); border-top: 2px solid var(--accent);
 }
 .matriz-hoy-tag {
   font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent);
   margin-top: 1px;
 }
-table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 rgba(242,169,0,0.5), inset -2px 0 0 rgba(242,169,0,0.5); }
+table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent), inset -2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
 
 /* Columna "Equipo/No.": sticky a la izquierda (siempre visible al deslizar
    horizontalmente en móvil) Y, en el encabezado, sticky también hacia
@@ -2655,7 +2732,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .copy-plan-opcion {
   display: flex; flex-direction: row; align-items: flex-start; gap: 9px;
   padding: 11px 13px; margin-bottom: 12px; cursor: pointer;
-  background: rgba(242,169,0,0.07); border: 1px solid var(--accent); border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); border: 1px solid var(--accent); border-radius: 9px;
   font-size: 13px; line-height: 1.5;
 }
 .copy-plan-opcion input { width: 20px; height: 20px; flex: none; margin-top: 2px; }
