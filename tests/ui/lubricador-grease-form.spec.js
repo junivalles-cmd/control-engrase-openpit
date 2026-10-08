@@ -12,8 +12,11 @@
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
+import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
+import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
+const KB_WATCHER_SRC = extractDeclaration(readSource(APP_JS_PATH), 'wireKeyboardOpenWatcher');
 
 const FIXTURE = `
 <div class="lub-shell">
@@ -195,13 +198,12 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
   }
 });
 
-// Teclado virtual abierto (auditoría UI mobile 2026-10-08): el footer sticky
-// de "Finalizar engrase" + la barra inferior fija competían por el poco alto
-// visible que deja el teclado, tapando el campo activo. wireKeyboardOpenWatcher()
-// (app.js) agrega/quita ".keyboard-open" en .lub-shell según visualViewport —
-// este test no simula el teclado real (Playwright no lo expone), solo
-// confirma el efecto CSS esperado de esa clase, que es lo que realmente
-// resuelve el problema reportado.
+// Teclado virtual abierto (fix real Android 2026-10-08): el footer sticky de
+// "Finalizar engrase" + la barra inferior fija competían por el poco alto
+// visible que deja el teclado, tapando el campo activo. Este test cubre SOLO
+// el efecto CSS de ".keyboard-open" (clase puesta a mano, sin pasar por
+// wireKeyboardOpenWatcher()) — el test de abajo ("focusin real en campos
+// reales…") cubre la detección real end-to-end.
 test('Registrar engrase — con .keyboard-open: el footer deja de ser sticky y la barra inferior se oculta (solo móvil)', async ({ page }, testInfo) => {
   const width = testInfo.project.use?.viewport?.width;
   await page.setContent(FIXTURE);
@@ -224,4 +226,77 @@ test('Registrar engrase — con .keyboard-open: el footer deja de ser sticky y l
     // .keyboard-open no debe cambiar nada ahí (no romper desktop/tablet).
     expect(after.navDisplay, `${testInfo.project.name} no debe ocultar la barra inferior`).not.toBe('none');
   }
+});
+
+// focusin/focusout REAL (fix Android 2026-10-08, item 9 del pedido): carga
+// wireKeyboardOpenWatcher() REAL (extraída de app.js, mismo mecanismo que
+// tests/ui/modal-accessibility.spec.js) y lo ejercita con foco/blur reales
+// sobre los campos reales del fixture — nunca una clase puesta a mano.
+async function bootKeyboardWatcher(page) {
+  await page.setContent(FIXTURE);
+  await page.addStyleTag({ path: STYLES_PATH });
+  await page.addScriptTag({ content: `${KB_WATCHER_SRC}\nwireKeyboardOpenWatcher();` });
+}
+
+const kbState = (page) => page.evaluate(() => ({
+  open: document.querySelector('.lub-shell').classList.contains('keyboard-open'),
+  navDisplay: getComputedStyle(document.querySelector('.lub-bottom-nav')).display,
+  footerPosition: getComputedStyle(document.querySelector('.grease-flow-final')).position,
+}));
+
+for (const [label, selector] of [
+  ['horómetro', '.grease-flow-hm-field input'],
+  ['cantidad utilizada (lb)', '.grease-flow-lube-grid input[type="number"]'],
+  ['observaciones', 'textarea'],
+]) {
+  test(`Registrar engrase (móvil) — focus real en "${label}" abre el teclado-open; blur lo cierra`, async ({ page }, testInfo) => {
+    const width = testInfo.project.use?.viewport?.width;
+    test.skip(!width || width > 640, 'Solo aplica en anchos móviles (≤640px) — el footer nunca es sticky en tablet/desktop.');
+
+    await bootKeyboardWatcher(page);
+    expect((await kbState(page)).open, 'antes de enfocar nada').toBe(false);
+
+    await page.locator(selector).focus();
+    const focused = await kbState(page);
+    expect(focused.open, `focus en "${label}" debe activar .keyboard-open`).toBe(true);
+    expect(focused.navDisplay, 'bottom-nav oculto con el teclado abierto').toBe('none');
+    expect(focused.footerPosition, 'el footer de acciones deja de flotar').toBe('static');
+
+    await page.locator(selector).blur();
+    // Antes de que pase el debounce (200ms) debe seguir abierto — si no,
+    // cualquier salto rápido entre campos parpadearía.
+    await page.waitForTimeout(80);
+    expect((await kbState(page)).open, 'justo después del blur, todavía dentro del debounce').toBe(true);
+
+    await page.waitForTimeout(250);
+    const afterBlur = await kbState(page);
+    expect(afterBlur.open, 'tras el debounce, sin nada enfocado, se cierra').toBe(false);
+    expect(afterBlur.navDisplay, 'bottom-nav vuelve a aparecer').not.toBe('none');
+    expect(afterBlur.footerPosition, 'el footer vuelve a ser sticky').toBe('sticky');
+  });
+}
+
+test('Registrar engrase (móvil) — saltar de un campo a otro NO cierra/reabre el teclado-open de forma incorrecta', async ({ page }, testInfo) => {
+  const width = testInfo.project.use?.viewport?.width;
+  test.skip(!width || width > 640, 'Solo aplica en anchos móviles (≤640px).');
+
+  await bootKeyboardWatcher(page);
+  const hm = page.locator('.grease-flow-hm-field input');
+  const notes = page.locator('textarea');
+
+  await hm.focus();
+  expect((await kbState(page)).open).toBe(true);
+
+  // Blur de "horómetro" + focus casi inmediato de "observaciones" (como el
+  // botón "Siguiente" del teclado) — nunca debe pasar por "cerrado" en el medio.
+  await hm.blur();
+  await notes.focus();
+  await page.waitForTimeout(250); // más que el debounce de cierre (200ms)
+  const after = await kbState(page);
+  expect(after.open, 'sigue abierto: el 2do campo tomó el foco antes de que el 1er blur cerrara nada').toBe(true);
+  expect(after.navDisplay).toBe('none');
+
+  await notes.blur();
+  await page.waitForTimeout(250);
+  expect((await kbState(page)).open, 'al blur final (sin otro foco), sí se cierra').toBe(false);
 });

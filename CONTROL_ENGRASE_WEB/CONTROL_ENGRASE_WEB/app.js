@@ -3088,24 +3088,60 @@ function bootLubricador() {
   wireKeyboardOpenWatcher();
 }
 
-// Detecta el teclado virtual abierto (auditoría UI mobile 2026-10-08:
-// Registrar Engrase — el footer sticky + la barra inferior fija tapaban el
-// campo activo). visualViewport.height se reduce mucho cuando el teclado
-// ocupa pantalla; window.innerHeight NO cambia en Android/WebView con
-// windowSoftInputMode=adjustResize — comparar ambos es la señal estándar,
-// sin depender de un input/blur puntual (funciona igual al rotar o con
-// teclados de distinto alto). Solo agrega/quita una clase CSS — ver
-// ".lub-shell.keyboard-open" en styles.css; nunca toca el flujo/validación
-// del engrase. Guardado en window para no registrar el listener 2 veces si
-// se inicia sesión más de una vez como Lubricador en la misma pestaña.
+// Detecta el teclado virtual abierto en Registrar Engrase (fix real Android
+// 2026-10-08 — probado en teléfono real: la 1ra versión, basada SOLO en
+// window.visualViewport, nunca llegó a activar .keyboard-open en ese
+// WebView — bottom-nav y el footer de acciones se quedaban flotando encima
+// del formulario con el teclado abierto). Señal PRIMARIA ahora: focusin/
+// focusout sobre los campos reales (input/textarea/select/[contenteditable]
+// dentro de #grease-form) — no depende de ninguna métrica de tamaño de
+// viewport, así que funciona sin importar cómo ese WebView en particular
+// reporte (o no) visualViewport. visualViewport queda como señal SOLO
+// complementaria: nunca decide por sí sola — si se reduce, refuerza el
+// estado "abierto" PERO únicamente cuando ya hay un campo real enfocado, y
+// nunca cierra nada por su cuenta (cerrar es SIEMPRE cosa de focusout). El
+// cierre espera un poco (200ms) antes de confirmar que no quedó nada
+// enfocado, para no parpadear al saltar de un campo a otro con "Siguiente"
+// del teclado. Solo agrega/quita ".keyboard-open" en .lub-shell (ver
+// styles.css) — nunca toca flujo/validación del engrase. Guardado en window
+// para no registrar los listeners 2 veces si se inicia sesión más de una
+// vez como Lubricador en la misma pestaña.
 function wireKeyboardOpenWatcher() {
-  if (!window.visualViewport || window.__kbWatcherWired) return;
+  if (window.__kbWatcherWired) return;
   window.__kbWatcherWired = true;
-  const update = () => {
-    const open = window.visualViewport.height < window.innerHeight * 0.75;
-    document.querySelector('.lub-shell')?.classList.toggle('keyboard-open', open);
+  const EDITABLE = 'input, textarea, select, [contenteditable]';
+  let closeTimer = null;
+
+  const setOpen = (open) => { document.querySelector('.lub-shell')?.classList.toggle('keyboard-open', open); };
+  const activeIsEditableInForm = () => {
+    const el = document.activeElement;
+    return !!(el && el.closest?.('#grease-form') && el.matches?.(EDITABLE));
   };
-  window.visualViewport.addEventListener('resize', update);
+  const scrollFieldIntoViewIfNeeded = (el) => {
+    const r = el.getBoundingClientRect();
+    const vh = window.visualViewport?.height || window.innerHeight;
+    if (r.top < 0 || r.bottom > vh) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  document.addEventListener('focusin', (e) => {
+    if (!e.target.closest?.('#grease-form') || !e.target.matches?.(EDITABLE)) return;
+    clearTimeout(closeTimer);
+    setOpen(true);
+    // El reflow (footer/bottom-nav ya no ocupan espacio) tarda un frame —
+    // medir la posición del campo antes de eso lo encontraría más arriba
+    // de lo que va a quedar, y el scroll se quedaría corto.
+    requestAnimationFrame(() => scrollFieldIntoViewIfNeeded(e.target));
+  });
+
+  document.addEventListener('focusout', (e) => {
+    if (!e.target.closest?.('#grease-form') || !e.target.matches?.(EDITABLE)) return;
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => { if (!activeIsEditableInForm()) setOpen(false); }, 200);
+  });
+
+  window.visualViewport?.addEventListener('resize', () => {
+    if (window.visualViewport.height < window.innerHeight * 0.75 && activeIsEditableInForm()) setOpen(true);
+  });
 }
 
 async function renderLubricadorHome() {

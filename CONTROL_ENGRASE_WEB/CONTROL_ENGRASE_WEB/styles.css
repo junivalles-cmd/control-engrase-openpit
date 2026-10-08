@@ -1061,21 +1061,31 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
     background: var(--bg); padding: 10px 0 4px;
     box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.3);
   }
-  /* Teclado virtual abierto (auditoría UI mobile 2026-10-08): con el alto
-     visible ya reducido por el teclado, este footer sticky + la barra
+  /* Teclado virtual abierto (fix real Android 2026-10-08 — la 1ra versión,
+     basada solo en window.visualViewport, no detectaba el teclado en el
+     WebView real del teléfono de prueba: ver wireKeyboardOpenWatcher() en
+     app.js, ahora con focusin/focusout como señal primaria). Con el alto
+     visible ya reducido por el teclado, el footer sticky + la barra
      inferior fija (.lub-bottom-nav) juntos se comían casi toda esa poca
-     altura, tapando el campo activo y el final del checklist. La señal de
-     "teclado abierto" la pone wireKeyboardOpenWatcher() (app.js, vía
-     window.visualViewport) agregando/quitando .keyboard-open en .lub-shell
-     — mientras esté activa: el footer vuelve a flujo normal (ya no sticky,
-     se ve scrolleando como cualquier otro bloque) y la barra inferior se
-     oculta del todo (reaparece sola al cerrarse el teclado). Nunca cambia
-     nada fuera de ≤640px ni fuera de este estado puntual. */
+     altura, tapando el campo activo y el final del checklist. Mientras
+     .keyboard-open esté en .lub-shell: el footer vuelve a flujo normal (ya
+     no sticky — !important porque esto debe ganarle siempre a la regla de
+     arriba, sin depender del orden en cascada) y la barra inferior se
+     oculta del todo (reaparece sola al cerrarse el teclado, vía blur+
+     timeout — nunca se la oculta a propósito, solo deja de haber nada
+     enfocado). Nunca cambia nada fuera de ≤640px ni fuera de este estado
+     puntual, y los botones Finalizar/Reportar NUNCA se ocultan — solo
+     dejan de flotar. */
   .lub-shell.keyboard-open .lub-bottom-nav { display: none; }
   .lub-shell.keyboard-open .grease-flow-final {
-    position: static; box-shadow: none;
+    position: static !important; bottom: auto !important; inset: auto !important;
+    transform: none !important; box-shadow: none;
     padding: var(--sp-3) 0 calc(var(--sp-3) + env(safe-area-inset-bottom));
   }
+  /* Con la barra inferior oculta, ya no hace falta reservarle 100px de
+     margen debajo del formulario — se recupera esa altura para que el
+     scroll llegue más cómodo hasta el final real del contenido. */
+  .lub-shell.keyboard-open .lub-content { padding-bottom: var(--sp-3); }
 }
 
 /* ---- Iteración 3: ancho de página y layout tablet/desktop ----
