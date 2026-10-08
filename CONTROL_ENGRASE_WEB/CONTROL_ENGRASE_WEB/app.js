@@ -1749,6 +1749,11 @@ function getTheme() {
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme.accent);
   document.documentElement.setAttribute('data-mode', theme.mode);
+  // Mismo mapeo que el script anti-flash de index.html (auditoría UI/UX
+  // 2026-10-08, hallazgo #2) — mantiene <meta name="theme-color"> en sync
+  // cada vez que se aplica/cambia el tema, no solo en el arranque.
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) metaTheme.setAttribute('content', theme.mode === 'light' ? '#F2F3F1' : theme.mode === 'contrast' ? '#FFFFFF' : '#14171A');
 }
 function saveTheme(theme) { localStorage.setItem('engrase_theme', JSON.stringify(theme)); applyTheme(theme); }
 
@@ -3389,6 +3394,8 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
   const html = `
     <p class="dim">${myCrew ? esc(myCrew.name) + ' — ' : ''}solo lectura, solo los equipos de tu cuadrilla.</p>
     <div class="matriz-wrap">
+      <div class="matriz-scroll-hint matriz-scroll-hint-left" aria-hidden="true"></div>
+      <div class="matriz-scroll-hint matriz-scroll-hint-right" aria-hidden="true"></div>
       <table class="matriz">
         <thead><tr>
           <th class="matriz-eq">Equipo</th>
@@ -3416,6 +3423,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
     </div>
   `;
   openModal('Matriz semanal', html);
+  $$('.matriz-wrap').forEach(wireMatrizScrollHint);
 }
 
 async function startLubricadorGreaseFlow(equipmentId, options) {
@@ -6293,6 +6301,26 @@ function openPointForm(planId, pointId, lubricants) {
   });
 }
 
+// Pista visual de scroll horizontal en la Matriz (auditoría UI/UX 2026-10-08,
+// hallazgo #3): agrega/quita .has-scroll-left/.has-scroll-right en el propio
+// .matriz-wrap según la posición real de scroll — la sombra (CSS, ver
+// styles.css) desaparece sola al llegar al borde o si no hay overflow.
+// Nunca toca el layout de la tabla ni intercepta touch (ver pointer-events
+// en la regla .matriz-scroll-hint). Usada tanto por la Matriz Semanal de
+// escritorio como por el modal de solo-lectura del Lubricador.
+function wireMatrizScrollHint(wrap) {
+  if (!wrap || wrap.dataset.scrollHintWired) return;
+  wrap.dataset.scrollHintWired = '1';
+  const update = () => {
+    const max = wrap.scrollWidth - wrap.clientWidth;
+    wrap.classList.toggle('has-scroll-left', wrap.scrollLeft > 1);
+    wrap.classList.toggle('has-scroll-right', wrap.scrollLeft < max - 1);
+  };
+  wrap.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  update();
+}
+
 /* ============================================================
    MATRIZ SEMANAL — vista tipo tabla: equipos en filas, días en columnas.
    Replica el formato que se usa en papel: verde = REALIZADO, naranja =
@@ -6379,6 +6407,8 @@ async function renderMatrizSemanal() {
     const r = resumenTurno(lista);
     return `
       <div class="matriz-wrap">
+        <div class="matriz-scroll-hint matriz-scroll-hint-left" aria-hidden="true"></div>
+        <div class="matriz-scroll-hint matriz-scroll-hint-right" aria-hidden="true"></div>
         <table class="matriz">
           <thead>
             <tr><th colspan="${dias.length + 1}" class="matriz-titulo">${esc(titulo)}<div class="matriz-titulo-resumen">${r.equipos} equipo${r.equipos === 1 ? '' : 's'} · ${r.pct}%</div></th></tr>
@@ -6526,6 +6556,7 @@ async function renderMatrizSemanal() {
   // deslizar a ciegas para encontrarla. Nunca toca el layout de la tabla
   // (sigue siendo tabla, sigue siendo scroll horizontal).
   $$('.matriz-wrap').forEach((wrap) => {
+    wireMatrizScrollHint(wrap);
     const hoyTh = wrap.querySelector('th.is-today');
     if (hoyTh) hoyTh.scrollIntoView({ block: 'nearest', inline: 'center' });
   });
@@ -9194,13 +9225,25 @@ async function renderReportes() {
     const box = $('#chart-tendencia-box');
     if (!dias) { box.innerHTML = '<div class="empty-state">Selecciona una fecha "Desde" para ver la tendencia.</div>'; return; }
     if (!window.Chart) { box.innerHTML = '<div class="empty-state">No se pudo cargar el motor de gráficas (revisa tu conexión la primera vez que uses esta pantalla, luego funciona sin internet).</div>'; return; }
-    box.innerHTML = '<canvas id="chart-tendencia"></canvas>';
+    // "aria-describedby" apunta al <p class="sr-only"> de abajo — alternativa
+    // textual para lectores de pantalla (auditoría UI/UX 2026-10-08, hallazgo
+    // #5). Nunca visible, nunca duplica el gráfico en pantalla: usa los
+    // mismos `buckets`/`data` ya calculados para dibujarlo, solo los formatea
+    // como texto.
+    box.innerHTML = '<canvas id="chart-tendencia" role="img" aria-label="Gráfico de tendencia de cumplimiento" aria-describedby="chart-tendencia-summary"></canvas><p id="chart-tendencia-summary" class="sr-only"></p>';
     const buckets = construirBucketsTendencia(dias);
     const labels = buckets.map(b => b.label);
     const data = buckets.map(b => {
       const r = computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, b.dias, turnoSel);
       return r.general.programados ? Math.round((r.general.realizados / r.general.programados) * 100) : null;
     });
+    const summaryEl = $('#chart-tendencia-summary');
+    if (summaryEl) {
+      const conDato = buckets.map((b, i) => ({ label: b.label, pct: data[i] })).filter(p => p.pct !== null);
+      summaryEl.textContent = conDato.length
+        ? `Cumplimiento por período: ${conDato.map(p => `${p.label} ${p.pct}%`).join(', ')}.`
+        : 'Sin datos de cumplimiento en el período seleccionado.';
+    }
     charts.tendencia = new Chart($('#chart-tendencia'), {
       type: 'line',
       data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.10)', fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },

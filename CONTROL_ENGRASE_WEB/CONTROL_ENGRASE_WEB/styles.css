@@ -70,6 +70,14 @@
   --green: #1E7A34;
   --amber: #8A5A00;
   --red: #C0262B;
+  /* --gray-status (estado GRIS/"Pausado") quedó fuera del ajuste de arriba
+     (auditoría UI/UX 2026-10-08, hallazgo #1): texto blanco sobre el gris
+     oscuro del modo oscuro daba 3.90:1 en fondo claro, bajo el mínimo
+     4.5:1 — oscurecido con la misma fórmula de luminancia relativa WCAG
+     hasta ~6.2:1. Sigue siendo el mismo token que usa el resto del sistema
+     para GRIS (borde de eq-card/lub-eq-btn, status-chip, celda-pausado) —
+     nunca una paleta nueva. */
+  --gray-status: #5C6268;
 }
 [data-mode="light"] .lub-eq-btn,
 [data-mode="light"] .eq-card,
@@ -103,6 +111,13 @@
 [data-mode="contrast"] .status-chip { outline: 2px solid #000000; }
 [data-mode="contrast"] .btn-accent { background: #000000; color: #FFFFFF; border-color: #000000; }
 [data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, rgba(242,169,0,0.10), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
+
+/* Solo para lectores de pantalla — nunca visible (auditoría UI/UX
+   2026-10-08, hallazgo #5: alternativa textual del gráfico de Tendencia). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 * { box-sizing: border-box; min-width: 0; }
 html, body { height: 100%; }
@@ -2172,6 +2187,11 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .matriz-wrap {
   overflow: auto; max-height: 68vh; margin-bottom: 20px; border-radius: 12px;
   border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  /* display:grid con un solo "grid-area" compartido (abajo) deja la tabla y
+     las 2 pistas de scroll superpuestas sin tocar el layout de la tabla en
+     sí ni su propio scroll — sigue siendo tabla, sigue siendo el mismo
+     elemento el que hace overflow:auto. */
+  display: grid;
 }
 table.matriz { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 680px; }
 table.matriz th, table.matriz td {
@@ -2180,6 +2200,23 @@ table.matriz th, table.matriz td {
 }
 table.matriz tr td:last-child, table.matriz tr th:last-child { border-right: none; }
 table.matriz tbody tr:last-child td { border-bottom: none; }
+/* Grid-area compartido (abajo), DESPUÉS del "table.matriz" de arriba para no
+   invertir el orden de especificidad ascendente que ya sigue este archivo
+   (".matriz-wrap > table.matriz" es más específico que "table.matriz"). */
+.matriz-wrap > table.matriz { grid-area: 1 / 1; }
+/* Pista de scroll horizontal (auditoría UI/UX 2026-10-08, hallazgo #3): sombra
+   discreta en el borde que SÍ tiene contenido oculto, nunca tapa celdas (18px,
+   semitransparente) ni intercepta touch (pointer-events:none) — se calcula con
+   JS (wireMatrizScrollHint() en app.js) y desaparece sola cuando ya no hay más
+   contenido hacia ese lado, incluyendo cuando la tabla no tiene overflow. */
+.matriz-scroll-hint {
+  grid-area: 1 / 1; position: sticky; align-self: stretch; width: 18px;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s ease; z-index: 5;
+}
+.matriz-scroll-hint-left { left: 0; justify-self: start; background: linear-gradient(to right, rgba(0,0,0,0.25), transparent); }
+.matriz-scroll-hint-right { right: 0; justify-self: end; background: linear-gradient(to left, rgba(0,0,0,0.25), transparent); }
+.matriz-wrap.has-scroll-left .matriz-scroll-hint-left { opacity: 1; }
+.matriz-wrap.has-scroll-right .matriz-scroll-hint-right { opacity: 1; }
 
 .matriz-titulo {
   background: linear-gradient(180deg, #26457A 0%, #1F3864 100%);
@@ -2276,10 +2313,23 @@ table.matriz tbody tr:hover .celda-hecho-atrasado { background: #754C00; }
 table.matriz tbody tr:hover .celda-hecho-adelantado { background: #4A6BA8; }
 table.matriz tbody tr:hover .celda-pausado { background: #5F666D; }
 table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
+/* El hover de arriba (#5F666D) está pensado para el --gray-status oscuro
+   (#7A828A) — en modo claro, con --gray-status ya oscurecido a #5C6268
+   (hallazgo #1), ese mismo valor casi no se distinguiría del color base.
+   Override propio para modo claro: oscurece un paso más (~8.3:1 con texto
+   blanco, sigue sobre 4.5:1) para que el hover siga siendo visible. */
+[data-mode="light"] table.matriz tbody tr:hover .celda-pausado { background: #4A4F54; }
 
 @media (max-width: 640px) {
   table.matriz th, table.matriz td { padding: 6px 7px; font-size: 11px; }
-  .celda-hecho { font-size: 9px; }
+  /* Piso de legibilidad en campo (auditoría UI/UX 2026-10-08, hallazgo #4):
+     antes .celda-hecho/.celda-no-realizado/.celda-pendiente bajaban hasta
+     ~7.5-9px en este breakpoint (y se quedaban así hasta 360px, ningún
+     override a 420px los subía de nuevo) — ahora usan var(--fs-xs), el
+     mismo token de 11px ya definido para "etiquetas, pies de tabla" en
+     lugar de un valor nuevo. La densidad no cambia: mismo padding/ancho de
+     columna, el wrap de texto de abajo sigue absorbiendo el espacio extra. */
+  .celda-hecho, .celda-no-realizado, .celda-pendiente { font-size: var(--fs-xs); }
   .matriz-eq { font-size: 11px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
   /* Las celdas de estado ("NO REALIZADO", "PENDIENTE HOY"…) ya no fuerzan el
      ancho de columna al de su palabra más larga en una sola línea — al
@@ -2493,10 +2543,11 @@ input[type="checkbox"], input[type="radio"] {
   font-size: 9px; font-weight: 700; color: #7A3B0A; letter-spacing: 0.02em;
 }
 table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
-@media (max-width: 640px) {
-  .celda-no-realizado { font-size: 8px; }
-  .celda-pendiente { font-size: 7.5px; }
-}
+/* El piso de 11px (var(--fs-xs)) para estas 2 clases en móvil ya se define
+   una sola vez más arriba, junto a .celda-hecho (hallazgo #4 de la
+   auditoría UI/UX 2026-10-08) — este archivo ya tenía un @media(640px)
+   propio aquí que las volvía a bajar a 8px/7.5px (ganaba por venir después
+   en el archivo, misma especificidad); se quita para no pisar el fix. */
 
 /* ---- Opciones extra de notificación: recordatorio y escalamiento ----
    Antes el número y los cuatro roles iban en un solo renglón, y el campo quedaba

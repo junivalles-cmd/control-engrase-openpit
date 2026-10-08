@@ -5,6 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>Control de Engrase · Open Pit</title>
 <meta name="theme-color" content="#14171A"/>
+<!-- Aplica el tema guardado ANTES de que el navegador pinte, para evitar el
+     parpadeo oscuro→claro (auditoría UI/UX 2026-10-08, hallazgo #2): mismo
+     default (accent amber/mode light) y misma clave de localStorage que
+     getTheme()/applyTheme() en app.js — app.js sigue siendo la única fuente
+     de la lógica de preferencias (lee/guarda), esto solo repite la LECTURA
+     para el primer pintado, porque app.js es el último script en cargar. -->
+<script>
+(function () {
+  try {
+    var t = Object.assign({ accent: 'amber', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {});
+    document.documentElement.setAttribute('data-theme', t.accent);
+    document.documentElement.setAttribute('data-mode', t.mode);
+    var bg = t.mode === 'light' ? '#F2F3F1' : t.mode === 'contrast' ? '#FFFFFF' : '#14171A';
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', bg);
+  } catch (e) {}
+})();
+</script>
 <link rel="manifest" href="manifest.json"/>
 <link rel="icon" href="favicon.png" type="image/png"/>
 <link rel="apple-touch-icon" href="apple-touch-icon.png"/>

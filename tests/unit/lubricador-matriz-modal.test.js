@@ -26,15 +26,22 @@ let capturedHTML = '';
 const fakeGlobals = {
   openModal: (title, html) => { capturedTitle = title; capturedHTML = html; },
   esc: (s) => String(s ?? ''),
+  // openLubricadorMatrizModal() wirea la pista de scroll de la Matriz tras
+  // abrir el modal (auditoría UI/UX 2026-10-08, hallazgo #3) con
+  // $$('.matriz-wrap').forEach(wireMatrizScrollHint) — stub sin DOM real,
+  // mismo criterio que openModal/esc: no reimplementa el comportamiento,
+  // solo evita el ReferenceError (este test no verifica el wiring del hint).
+  $$: () => [],
+  wireMatrizScrollHint: () => {},
 };
 
 // estadoCelda()/WEEKDAY_NAMES/computeOccurrenceKey (sus dependencias reales,
 // sin DOM/IndexedDB) se cargan junto con la función bajo prueba, como un solo
 // script — igual que loadLubricationLogic.js hace para el resto del proyecto.
 const fn = new Function(
-  'openModal', 'esc',
+  'openModal', 'esc', '$$', 'wireMatrizScrollHint',
   `${lubStatusSrc}\n${operationalScopeSrc}\n${weeklyMatrixSrc}\n${modalSrc}\nreturn openLubricadorMatrizModal;`
-)(fakeGlobals.openModal, fakeGlobals.esc);
+)(fakeGlobals.openModal, fakeGlobals.esc, fakeGlobals.$$, fakeGlobals.wireMatrizScrollHint);
 
 function isoDaysAgo(n) {
   const d = new Date();
