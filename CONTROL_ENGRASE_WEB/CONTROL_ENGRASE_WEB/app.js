@@ -3391,10 +3391,39 @@ async function renderLubricadorHome() {
     syncChip,
   ].join('');
 
+  // "3. REALIZADOS": engrases COMPLETE (nunca PARTIAL, ver
+  // resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que
+  // la Ficha de equipo, ninguna fórmula nueva) de HOY, dentro del scope
+  // activo de la cuadrilla (normal + asignados, lo mismo que ya se muestra
+  // abajo en Atrasados/Mi Turno — nunca equipos de otra cuadrilla).
+  // Calculado ANTES de Atrasados/Mi Turno a propósito (fix 2026-10-08,
+  // "alinear estado y trabajo realizado"): `realizadosHoyIds` es el filtro
+  // de dedup AUTORITATIVO que se usa más abajo — un equipo con un COMPLETE
+  // de hoy nunca debe seguir viéndose como pendiente, sin esperar cambio de
+  // turno ni refresh adicional (se recalcula en cada render).
+  const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);
+  const ahoraValidacion = new Date();
+  const validationsHoy = await DB.allActive('grease_validations');
+  const realizadosHoyList = records
+    .filter(r => scopeEquipoIds.has(r.equipmentId) && new Date(r.date).toDateString() === today
+      && resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const realizadosHoyIds = new Set(realizadosHoyList.map(r => r.equipmentId));
+
   // "4. TRABAJO DEL TURNO ACTUAL": el resto de `normal`, SIN repetir lo que
   // ya se muestra en Arrastrados (cada equipo aparece una sola vez en toda
-  // la pantalla).
-  const statusesNormalRestantes = statusesNormal.filter(({ e }) => !arrastradosIds.has(e.id));
+  // la pantalla). Fix 2026-10-08: ya NO incluye equipos VERDE ("AL DÍA" —
+  // s.code resuelto por statusFor()/weekdayStatusFor(), sin cambiar esa
+  // lógica) — un equipo "al día" no tiene ninguna ocurrencia pendiente que
+  // ejecutar, así que no pertenece a una bandeja de trabajo. `arrastrados`
+  // (arriba) nunca incluyó VERDE por construcción (solo revisa s.code==='ROJO'
+  // para Día/turno, o !yaEngrasadoHoy para turno anterior), así que no hace
+  // falta tocarlo. `realizadosHoyIds` es una 2da barrera explícita (nunca
+  // debe haber overlap con Realizados, aunque el status code tuviera algún
+  // caso borde — p. ej. un fuera-de-plan que satisface una ocurrencia
+  // distinta a la que su propio status recalcula).
+  const statusesNormalRestantes = statusesNormal.filter(({ e, s }) =>
+    !arrastradosIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id));
 
   // ============================================================
   // "Mi Turno" simplificado (hardening UI 2026-10-08) — pedido explícito:
@@ -3403,39 +3432,60 @@ async function renderLubricadorHome() {
   // — ningún cálculo nuevo) pasa a vivir DENTRO de Atrasados o Mi Turno,
   // "según la ocurrencia real": el MISMO status.code (ROJO=vencido) ya
   // resuelto por computeAllStatuses() decide dónde, con un badge ASIGNADO.
-  // Dedup real: un equipo que por algún motivo ya viniera en el camino
-  // "normal" (p. ej. autoasignado a su propia cuadrilla) solo se marca con
-  // el badge, nunca se duplica la tarjeta.
+  // VERDE asignado tampoco entra (mismo criterio que arriba: ya no hay
+  // ocurrencia pendiente). Dedup real: un equipo que por algún motivo ya
+  // viniera en el camino "normal" (p. ej. autoasignado a su propia
+  // cuadrilla) solo se marca con el badge, nunca se duplica la tarjeta.
   // ============================================================
   const asignadosPorId = new Map(statusesAssigned.map(x => [x.e.id, x]));
   const arrastradosTotal = arrastrados.map(x => ({ ...x, asignado: asignadosPorId.has(x.e.id) }));
   const miTurnoTotal = statusesNormalRestantes.map(({ e, s }) => ({ e, s, asignado: asignadosPorId.has(e.id) }));
   const miTurnoTotalIds = new Set(miTurnoTotal.map(x => x.e.id));
   statusesAssigned.forEach(({ e, s }) => {
-    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return; // ya contado arriba, solo le faltaba el badge (ya puesto)
+    // ya contado arriba (solo le faltaba el badge, ya puesto), o ya
+    // realizado hoy (ver realizadosHoyIds arriba) — nunca se duplica.
+    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id) || realizadosHoyIds.has(e.id)) return;
     if (s.code === 'ROJO') {
       arrastradosTotal.push({
         e, asignado: true, tone: 'red',
         origen: s.scheduleDate ? `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}` : 'Asignado — vencido',
       });
-    } else {
+    } else if (s.code !== 'VERDE') {
       miTurnoTotal.push({ e, s, asignado: true });
       miTurnoTotalIds.add(e.id);
     }
   });
 
-  // "3. REALIZADOS": engrases COMPLETE (nunca PARTIAL, ver
-  // resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que
-  // la Ficha de equipo, ninguna fórmula nueva) de HOY, dentro del scope
-  // activo de la cuadrilla (normal + asignados, lo mismo que ya se muestra
-  // arriba en Atrasados/Mi Turno — nunca equipos de otra cuadrilla).
-  const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);
-  const ahoraValidacion = new Date();
-  const validationsHoy = await DB.allActive('grease_validations');
-  const realizadosHoyList = records
-    .filter(r => scopeEquipoIds.has(r.equipmentId) && new Date(r.date).toDateString() === today
-      && resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  // "C" del pedido (fix 2026-10-08, "alinear estado y trabajo realizado"):
+  // un registro PARTIAL SIGUE contando como "hecho" para
+  // weekdayStatusFor()/estadoCelda() (sin tocar esa función — VERDE "AL
+  // DÍA" ahí sigue siendo correcto para Matriz/Cumplimiento, nunca una
+  // segunda regla de satisfacción). Pero en ESTA bandeja un PARTIAL nunca
+  // debe desaparecer como si estuviera completo: se reclasifica SOLO para
+  // la presentación de Mi Turno/Atrasados — Mi Turno si el día programado
+  // es hoy, Atrasados si ya venció — reusando resolveRecordCompleteness(),
+  // ya usado arriba en Realizados.
+  statusesNormal.forEach(({ e, s }) => {
+    if (s.code !== 'VERDE' || !s.scheduleDate) return;
+    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return;
+    const plan = plansByEquipoId[e.id];
+    if (!plan || plan.controlType !== 'Día y turno de la semana') return;
+    const ahora = Date.now() + 5 * 60 * 1000;
+    const satisfactorios = records.filter(r => r.equipmentId === e.id &&
+      new Date(r.date) >= s.scheduleDate && new Date(r.date).getTime() <= ahora);
+    if (!satisfactorios.length || satisfactorios.some(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)) return;
+    const schedDate0 = new Date(s.scheduleDate); schedDate0.setHours(0, 0, 0, 0);
+    if (schedDate0 < hoy0) {
+      const diasAtras = Math.round((hoy0.getTime() - schedDate0.getTime()) / 86400000);
+      arrastradosTotal.push({
+        e, asignado: asignadosPorId.has(e.id), tone: 'red',
+        origen: diasAtras === 1 ? 'Día anterior' : `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}`,
+      });
+    } else {
+      miTurnoTotal.push({ e, s: { ...s, code: 'AMARILLO', label: 'PROGRAMADO HOY' }, asignado: asignadosPorId.has(e.id) });
+      miTurnoTotalIds.add(e.id);
+    }
+  });
 
   const realizadoRowHTML = (r) => {
     const eq = equipos.find(x => x.id === r.equipmentId);

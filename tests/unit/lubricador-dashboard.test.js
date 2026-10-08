@@ -66,8 +66,8 @@ describe('§3 — "Arrastrados" nunca cuenta dos veces el mismo equipo (turno an
     expect(iAntiguo).toBeGreaterThan(iDia);
   });
 
-  it('"Trabajo del turno actual" excluye los equipos ya mostrados en Arrastrados (cada equipo aparece una sola vez en toda la pantalla)', () => {
-    expect(src).toContain('const statusesNormalRestantes = statusesNormal.filter(({ e }) => !arrastradosIds.has(e.id));');
+  it('"Trabajo del turno actual" excluye los equipos ya mostrados en Arrastrados (cada equipo aparece una sola vez en toda la pantalla; fix 2026-10-08 agregó también excluir VERDE/realizadosHoyIds, ver describe aparte)', () => {
+    expect(src).toContain('!arrastradosIds.has(e.id) && s.code !== \'VERDE\' && !realizadosHoyIds.has(e.id)');
   });
 });
 
@@ -129,16 +129,16 @@ describe('"Asignaciones activas" (hardening UI 2026-10-08) — ya NO es una secc
     expect(src).not.toContain('ASIGNACIONES ACTIVAS');
   });
 
-  it('la clasificación reusa el MISMO status.code ya calculado por computeAllStatuses() (statusesAssigned) — ROJO va a Atrasados, el resto a Mi Turno, cero cálculo nuevo', () => {
+  it('la clasificación reusa el MISMO status.code ya calculado por computeAllStatuses() (statusesAssigned) — ROJO va a Atrasados, el resto (salvo VERDE, fix 2026-10-08) a Mi Turno, cero cálculo nuevo', () => {
     const idx = src.indexOf('const asignadosPorId');
-    const block = src.slice(idx, idx + 900);
+    const block = src.slice(idx, idx + 1300);
     expect(block).toContain("if (s.code === 'ROJO') {");
     expect(block).toContain('arrastradosTotal.push(');
     expect(block).toContain('miTurnoTotal.push(');
   });
 
-  it('dedup real: un equipo ya presente (arrastradosIds/miTurnoTotalIds) nunca se vuelve a agregar — solo se marca con el badge', () => {
-    expect(src).toContain('if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return;');
+  it('dedup real: un equipo ya presente (arrastradosIds/miTurnoTotalIds) o ya realizado hoy (realizadosHoyIds) nunca se vuelve a agregar — solo se marca con el badge', () => {
+    expect(src).toContain('if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id) || realizadosHoyIds.has(e.id)) return;');
   });
 
   it('el badge ASIGNADO reusa el MISMO componente/color ya usado en la Ficha de equipo (status-chip + var(--amber)), nunca una clase/paleta nueva', () => {
@@ -244,5 +244,43 @@ describe('openLubricadorMatrizModal() — matriz de solo lectura, scoped, reusa 
   it('usa los MISMOS colores/clases que la Matriz Semanal real (celda-hecho-atrasado, etc. — el fix de Hallazgo 2 aplica también aquí)', () => {
     expect(matrizSrc).toContain('celda-hecho-atrasado');
     expect(matrizSrc).toContain('#8A5A00');
+  });
+});
+
+describe('Fix 2026-10-08 ("alinear estado y trabajo realizado") — VERDE/"AL DÍA" nunca en la bandeja de trabajo, sin tocar statusFor()/weekdayStatusFor()', () => {
+  it('"Mi Turno" excluye explícitamente s.code === \'VERDE\' (un equipo al día no tiene ocurrencia pendiente)', () => {
+    expect(src).toContain("!arrastradosIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id)");
+  });
+
+  it('el camino de asignados también excluye VERDE antes de agregar a Mi Turno (mismo criterio, sin duplicar código de cálculo)', () => {
+    const idx = src.indexOf("if (s.code === 'ROJO') {");
+    const block = src.slice(idx, idx + 300);
+    expect(block).toContain("} else if (s.code !== 'VERDE') {");
+  });
+
+  it('realizadosHoyIds se calcula ANTES que Mi Turno/Atrasados y se usa como barrera de dedup explícita (nunca solo implícita vía status.code)', () => {
+    const iReal = src.indexOf('const realizadosHoyIds');
+    const iMiTurno = src.indexOf('const statusesNormalRestantes');
+    expect(iReal).toBeGreaterThan(-1);
+    expect(iMiTurno).toBeGreaterThan(iReal);
+    expect(src).toContain('|| realizadosHoyIds.has(e.id)) return;');
+  });
+});
+
+describe('Fix 2026-10-08 — un PARTIAL nunca desaparece de la bandeja (reclasificación SOLO de presentación, nunca una 2da regla de satisfacción)', () => {
+  it('reusa resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que Realizados, nunca una fórmula nueva', () => {
+    const idx = src.indexOf('statusesNormal.forEach(({ e, s }) => {\n    if (s.code !== \'VERDE\'');
+    const block = src.slice(idx, idx + 1200);
+    expect(block).toContain('resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL');
+  });
+
+  it('NUNCA reescribe weekdayStatusFor()/statusFor() — solo arma un objeto `s` local para esta tarjeta (código/label ya conocidos: PROGRAMADO HOY)', () => {
+    expect(src).toContain("s: { ...s, code: 'AMARILLO', label: 'PROGRAMADO HOY' }");
+  });
+
+  it('un día programado ya pasado (schedDate0 < hoy0) va a Atrasados con el mismo criterio día-anterior/mayor-antigüedad ya usado arriba', () => {
+    const idx = src.indexOf('if (schedDate0 < hoy0) {');
+    const block = src.slice(idx, idx + 400);
+    expect(block).toContain("diasAtras === 1 ? 'Día anterior' : `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}`");
   });
 });
