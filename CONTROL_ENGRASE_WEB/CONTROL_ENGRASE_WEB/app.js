@@ -15,8 +15,23 @@ const App = {
   // rerender automático — más confiable que inferirlo de selectores DOM
   // (#grease-form/.grease-validate-choice), que igual se conservan como
   // defensa secundaria.
-  lubricadorGreaseFlowActive: false
+  lubricadorGreaseFlowActive: false,
+  // ID del setInterval(60000) que refresca el indicador de turno (topbar
+  // de escritorio o .lub-user-strip del Lubricador) — ver wireShiftTimer().
+  _shiftTimerId: null
 };
+
+// boot()/bootLubricador() son re-entrantes (logout→login o cambio de
+// usuario sin recargar la pestaña — 3 sitios reales de boot()) y cada uno
+// arrancaba su propio setInterval(60000) sin limpiar el anterior, dejando
+// timers huérfanos acumulados para siempre (hardening pre-release
+// 2026-10-08). Mismo turno/horario de siempre (60s, currentShiftId() en
+// vivo) — esto solo evita duplicar el timer.
+function wireShiftTimer(fn) {
+  if (App._shiftTimerId) clearInterval(App._shiftTimerId);
+  fn();
+  App._shiftTimerId = setInterval(fn, 60000);
+}
 
 /* ============================================================
    INTEGRACIÓN NATIVA (solo activa dentro de la app Android/Capacitor;
@@ -2912,8 +2927,7 @@ function boot() {
     </div>`;
 
   updateConnBadge();
-  updateShiftBadge();
-  setInterval(updateShiftBadge, 60000);
+  wireShiftTimer(updateShiftBadge);
 
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
     b.addEventListener('click', () => navigate(b.dataset.route));
@@ -3051,9 +3065,14 @@ function bootLubricador() {
     </div>`;
 
   updateConnBadge();
-  const shiftLabel = () => { $('#lub-shift').textContent = currentShiftId() === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'; };
-  shiftLabel();
-  setInterval(shiftLabel, 60000);
+  // Null-guard (hardening pre-release 2026-10-08): si el DOM ya cambió de
+  // rol (otro boot() reemplazó #lub-shell por el shell de escritorio) antes
+  // de que corra este tick, NO debe reventar con TypeError — igual criterio
+  // que updateShiftBadge() (wireShiftTimer() arriba).
+  wireShiftTimer(() => {
+    const el = $('#lub-shift');
+    if (el) el.textContent = currentShiftId() === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche';
+  });
 
   $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-lub-account-menu')?.addEventListener('click', openLubAccountMenu);
@@ -3787,8 +3806,8 @@ async function renderDashboard() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   c.innerHTML = `<div class="loading">Calculando indicadores…</div>`;
-  const records = await DB.allActive('lubrication_records');
-  const anomalies = await DB.allActive('anomalies');
+  let records = await DB.allActive('lubrication_records');
+  let anomalies = await DB.allActive('anomalies');
   const plans = await DB.allActive('lubrication_plans');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
@@ -3803,8 +3822,8 @@ async function renderDashboard() {
   const typesAll = await DB.all('equipment_types');
   const locationsAll = await DB.all('locations');
   const validations = await DB.allActive('grease_validations');
-  const assignments = await DB.allActive('lubrication_assignments');
-  const skips = await DB.allActive('lubrication_skips');
+  let assignments = await DB.allActive('lubrication_assignments');
+  let skips = await DB.allActive('lubrication_skips');
 
   // Filtros generales Ubicación/Familia (AND, se combinan entre sí): mismo
   // patrón ya usado en Matriz Semanal (App.matrizUbic/Tipo) — se guardan en
@@ -3816,6 +3835,37 @@ async function renderDashboard() {
   let equipos = await DB.allActive('equipment');
   if (App.dashUbic) equipos = equipos.filter(e => e.locationId === App.dashUbic);
   if (App.dashFamilia) equipos = equipos.filter(e => e.typeId === App.dashFamilia);
+
+  // Hardening pre-release 2026-10-08: SUPERVISOR (scope CREW_SCOPED, ver
+  // operational-scope.js) nunca debe ver KPIs/listas de equipos fuera de
+  // su(s) cuadrilla(s)/ubicación(es) autorizadas — ADMINISTRADOR/
+  // PLANIFICADOR/VISOR (scope GLOBAL) no cambian, mismo alcance de siempre
+  // (ADMIN/PLANIFICADOR ya hoy ven "Realizados hoy"/"Anomalías abiertas"
+  // como conteo GLOBAL aunque filtren Ubicación/Familia — ver comentario de
+  // `equipoIdsFiltrados` más abajo — eso sigue intacto, esto NO lo toca).
+  // Reutiliza classifyEquipmentWork() (operational-scope.js), la MISMA
+  // función ya usada en renderLubricadorHome() — nunca una reimplementación
+  // del criterio de scope. Solo acota el UNIVERSO de datos
+  // (equipos/records/anomalies/assignments/skips); ninguna fórmula cambia.
+  const dashScope = await getCurrentOperationalScope();
+  if (dashScope.kind === 'CREW_SCOPED') {
+    const cuadrillasScope = await DB.allActive('cuadrillas');
+    const plansByEquipoIdScope = {};
+    plans.forEach(p => { plansByEquipoIdScope[p.equipmentId] = p; });
+    const { normal: equiposNormalesScope, assigned: asignacionesScope } = classifyEquipmentWork({
+      scope: dashScope, equipos, cuadrillas: cuadrillasScope, assignments,
+      equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoIdScope)
+    });
+    const idsAutorizadosDash = new Set([
+      ...equiposNormalesScope.map(e => e.id),
+      ...asignacionesScope.map(a => a.equipmentId),
+    ]);
+    equipos = equipos.filter(e => idsAutorizadosDash.has(e.id));
+    records = records.filter(r => idsAutorizadosDash.has(r.equipmentId));
+    anomalies = anomalies.filter(a => idsAutorizadosDash.has(a.equipmentId));
+    assignments = assignments.filter(a => idsAutorizadosDash.has(a.equipmentId));
+    skips = skips.filter(s => idsAutorizadosDash.has(s.equipmentId));
+  }
 
   const statuses = await computeAllStatuses(equipos);
   const counts = { VERDE: 0, AMARILLO: 0, ROJO: 0, GRIS: 0 };
@@ -6374,7 +6424,16 @@ function wireMatrizScrollHint(wrap) {
     wrap.classList.toggle('has-scroll-right', wrap.scrollLeft < max - 1);
   };
   wrap.addEventListener('scroll', update, { passive: true });
-  window.addEventListener('resize', update);
+  // ResizeObserver en vez de window.addEventListener('resize', ...): queda
+  // atado al propio `wrap`, nunca a `window` (hardening pre-release
+  // 2026-10-08 — el listener global anterior se acumulaba sin límite en
+  // cada navegación de semana/filtro de la Matriz, porque renderMatrizSemanal()
+  // reconstruye `.matriz-wrap` con innerHTML en cada render y el guard de
+  // arriba es por-elemento, no evita registrar uno nuevo en `window` por
+  // cada wrap viejo ya desconectado del DOM). Al reemplazarse el wrap, este
+  // observer deja de tener referencias vivas y es recolectable — cleanup
+  // real, sin depender de un disconnect() explícito en ningún otro punto.
+  new ResizeObserver(update).observe(wrap);
   update();
 }
 
@@ -9399,7 +9458,15 @@ async function renderReportes() {
     // Altura proporcional a la cantidad real de categorías — nunca reserva
     // espacio para filas que no existen (tope 220px, mínimo legible 120px).
     box.style.height = `${Math.max(120, Math.min(220, entries.length * 32 + 40))}px`;
-    box.innerHTML = '<canvas id="chart-consumo"></canvas>';
+    // Mismo patrón accesible ya usado en el gráfico de Tendencia (hardening
+    // pre-release 2026-10-08): alternativa textual para lectores de
+    // pantalla, generada de los mismos `entries` que alimentan el chart —
+    // nunca duplica visualmente nada, nunca toca Chart.js ni el cálculo.
+    box.innerHTML = '<canvas id="chart-consumo" role="img" aria-label="Gráfico de consumo de grasa" aria-describedby="chart-consumo-summary"></canvas><p id="chart-consumo-summary" class="sr-only"></p>';
+    const summaryEl = $('#chart-consumo-summary');
+    if (summaryEl) {
+      summaryEl.textContent = `Consumo de grasa: ${entries.map(([k, v]) => `${k} ${Math.round(v * 10) / 10}`).join(', ')}.`;
+    }
     charts.consumo = new Chart($('#chart-consumo'), {
       type: 'bar',
       data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: '#E8A33D' }] },

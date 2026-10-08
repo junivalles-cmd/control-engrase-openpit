@@ -379,8 +379,8 @@ const Auth = {
   // (ver supabase/migrations/0002_auth_profiles_rls_PREPARED.sql, policy
   // "app_profiles: admin edita otros": `auth.uid() <> auth_user_id` —
   // evita auto-ascenso/auto-sabotaje) — por eso esto llama a una Edge
-  // Function server-side NUEVA Y ACOTADA (update-own-profile, PREPARADA,
-  // NO DESPLEGADA todavía — ver supabase/functions/update-own-profile/),
+  // Function server-side NUEVA Y ACOTADA (update-own-profile, DESPLEGADA y
+  // ACTIVE en producción — ver supabase/functions/update-own-profile/),
   // nunca a manage-users (ese exige ADMINISTRADOR para TODAS sus
   // acciones, ver decideCallerAuthorization() — nunca se debilita ese
   // gate para colar autoservicio ahí). Mismo patrón que manageUsers():

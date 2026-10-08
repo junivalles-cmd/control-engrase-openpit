@@ -4,12 +4,10 @@
 // y activo puede actualizar SU PROPIO display_name. NUNCA su rol, su
 // estado activo, su app_user_id, ni la fila de otra persona.
 //
-// PREPARADA, NO DESPLEGADA — a diferencia de manage-users (ACTIVE en
-// producción), este archivo todavía no se publicó con `supabase functions
-// deploy`. Ver la respuesta final del lote "Mi Perfil" para el motivo: se
-// escribió porque display_name no se puede autoeditar con la arquitectura
-// YA DESPLEGADA (ver abajo), pero desplegarla es una acción de producción
-// que requiere autorización explícita por separado.
+// DESPLEGADA y ACTIVE en producción (confirmado `supabase functions list`,
+// auditoría pre-release 2026-10-08) — igual que manage-users. Se escribió
+// porque display_name no se puede autoeditar con la arquitectura normal
+// (ver abajo).
 //
 // Por qué existe (en vez de reusar lo que ya hay):
 //   - app_profiles bloquea CUALQUIER auto-UPDATE directo vía PostgREST,

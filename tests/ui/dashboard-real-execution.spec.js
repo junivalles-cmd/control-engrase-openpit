@@ -33,7 +33,13 @@ const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 const shiftsSrc = extractDeclaration(shiftsSource, 'currentShiftId');
 const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
-const scopeNames = ['EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'resolveRecordExecutionType', 'findCarriedOverSkipForToday'];
+const scopeNames = [
+  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'resolveRecordExecutionType', 'findCarriedOverSkipForToday',
+  // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release
+  // 2026-10-08) — MISMAS funciones reales ya usadas por renderLubricadorHome().
+  'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveDefaultCrewForLocation',
+  'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey',
+];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [
   'VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS',
@@ -49,6 +55,8 @@ const appNames = [
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
+  // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release 2026-10-08).
+  'getSelectedCrewId', 'getCurrentOperationalScope', 'equipoOccurrenceKey',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -60,15 +68,16 @@ const EQUIPOS = [
 ];
 
 async function bootPage(page, {
-  skips = [], records = [], assignments = [], plans = [], anomalies = [], validations = [],
-  types = TYPES, locations = LOCATIONS, typesAll = types, locationsAll = locations,
+  skips = [], records = [], assignments = [], plans = [], anomalies = [], validations = [], cuadrillas = [],
+  types = TYPES, locations = LOCATIONS, typesAll = types, locationsAll = locations, equipos = EQUIPOS,
+  currentUser = { id: 'admin1', name: 'Junior', role: 'ADMINISTRADOR' },
 } = {}) {
   await page.setContent('<div id="app-content"></div>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
       window.App = {
-        route: 'dashboard', currentUser: { id: 'admin1', name: 'Junior', role: 'ADMINISTRADOR' },
+        route: 'dashboard', currentUser: ${JSON.stringify(currentUser)},
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
       };
       window.navigate = () => {};
@@ -82,7 +91,7 @@ async function bootPage(page, {
         // que renderDashboard ahora explota a propósito para equipment_types/
         // locations (ver docs/BUG_REGISTER.md).
         allActive: async (store) => ({
-          equipment: ${JSON.stringify(EQUIPOS)},
+          equipment: ${JSON.stringify(equipos)},
           equipment_types: ${JSON.stringify(types)},
           locations: ${JSON.stringify(locations)},
           lubrication_plans: ${JSON.stringify(plans)},
@@ -91,6 +100,7 @@ async function bootPage(page, {
           grease_validations: ${JSON.stringify(validations)},
           lubrication_assignments: ${JSON.stringify(assignments)},
           lubrication_skips: ${JSON.stringify(skips)},
+          cuadrillas: ${JSON.stringify(cuadrillas)},
         }[store] || []),
         all: async (store) => ({
           equipment_types: ${JSON.stringify(typesAll)},
@@ -175,6 +185,56 @@ test('FIX real (DATA-PENDING-A02, ver docs/BUG_REGISTER.md) — un equipo con la
   const lineas = await page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-line2').allTextContents();
   expect(lineas.length).toBeGreaterThan(0);
   for (const linea of lineas) expect(linea).toContain('· Botadero Norte');
+});
+
+// Hardening pre-release 2026-10-08: Dashboard del SUPERVISOR debe respetar
+// su(s) cuadrilla(s)/ubicación(es) autorizadas (scope CREW_SCOPED, igual
+// criterio que renderLubricadorHome()) — ADMINISTRADOR mantiene el alcance
+// GLOBAL de siempre, ver bootPage() (currentUser por defecto). e3 vive en
+// l2 ("Botadero Sur"), FUERA de la cuadrilla/ubicación autorizada del
+// SUPERVISOR de prueba (crew1, locationId l1) — su anomalía nunca debe
+// contarse para ese rol.
+const EQUIPOS_2_UBICACIONES = [
+  ...EQUIPOS,
+  { id: 'e3', code: 'EXC-03', brand: 'Hitachi', model: 'EX200', status: 'Operativo', typeId: 't1', locationId: 'l2' },
+];
+const LOCATIONS_2 = [...LOCATIONS, { id: 'l2', name: 'Botadero Sur' }];
+const CUADRILLA_SUPERVISOR = [{ id: 'crew1', name: 'Cuadrilla Norte', active: true, locationId: 'l1', isDefault: true, memberUserIds: ['sup1'] }];
+const ANOMALIAS_2_UBICACIONES = [
+  { id: 'an1', equipmentId: 'e1', status: 'Abierta', criticality: 'Media' }, // l1 — dentro del scope
+  { id: 'an2', equipmentId: 'e3', status: 'Abierta', criticality: 'Media' }, // l2 — fuera del scope del Supervisor
+];
+
+test('SUPERVISOR: "Anomalías abiertas" solo cuenta equipos de su(s) cuadrilla(s)/ubicación(es) autorizadas', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, {
+    equipos: EQUIPOS_2_UBICACIONES, locations: LOCATIONS_2, locationsAll: LOCATIONS_2,
+    anomalies: ANOMALIAS_2_UBICACIONES, cuadrillas: CUADRILLA_SUPERVISOR,
+    currentUser: { id: 'sup1', name: 'Supervisor de prueba', role: 'SUPERVISOR' },
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  expect(errors).toEqual([]);
+  const card = page.locator('.dash-activity-card', { has: page.locator('.dash-activity-label', { hasText: 'Anomalías abiertas' }) });
+  await expect(card.locator('.dash-activity-value')).toHaveText('1'); // solo e1 (l1) — e3 (l2) queda fuera de scope
+});
+
+test('ADMINISTRADOR: "Anomalías abiertas" sigue siendo GLOBAL (mismo alcance de siempre, scope GLOBAL no cambia)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, {
+    equipos: EQUIPOS_2_UBICACIONES, locations: LOCATIONS_2, locationsAll: LOCATIONS_2,
+    anomalies: ANOMALIAS_2_UBICACIONES, cuadrillas: CUADRILLA_SUPERVISOR,
+    // currentUser por defecto: ADMINISTRADOR (scope GLOBAL) — MISMA cuadrilla/datos de arriba.
+  });
+  await page.evaluate(() => window.renderDashboard());
+
+  expect(errors).toEqual([]);
+  const card = page.locator('.dash-activity-card', { has: page.locator('.dash-activity-label', { hasText: 'Anomalías abiertas' }) });
+  await expect(card.locator('.dash-activity-value')).toHaveText('2'); // e1 Y e3 — sin scope para GLOBAL
 });
 
 test('tarjeta "Pendientes hoy" (categoría "Qué requiere acción") es clicable y manda a la acción real (Registrar), no solo informa', async ({ page }) => {

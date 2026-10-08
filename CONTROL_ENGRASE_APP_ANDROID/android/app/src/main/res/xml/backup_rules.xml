@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hardening pre-release 2026-10-08 (Android 6-11 / API 23-30 — el backup
+  "Auto Backup" clásico; ver data_extraction_rules.xml para API 31+, que lo
+  reemplaza en versiones nuevas pero este archivo sigue haciendo falta para
+  cubrir el rango 23-30). Misma exclusión y mismo motivo: app_webview/
+  contiene el JWT/refresh token de sesión y el hash de Quick Unlock, en el
+  mismo origen de IndexedDB que el resto de datos offline — no separable
+  sin refactor (funciones congeladas). Perder ese caché al restaurar un
+  backup es seguro: fullSync() vuelve a traer todo de Supabase (PULL antes
+  que PUSH) en el primer arranque con red.
+-->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/" />
+</full-backup-content>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hardening pre-release 2026-10-08 (Android 12+/API 31+ — ver backup_rules.xml
+  para API 23-30). Excluye del backup en la nube y de la transferencia
+  directa entre dispositivos TODO el almacenamiento del WebView
+  (app_webview/) — ahí viven, en el MISMO origen/base de IndexedDB que el
+  resto de datos offline (sync.js/db.js, ver Auth._session/DB.setAuthTokens()
+  y Quick Unlock/DB.setQuickUnlock()):
+    - el JWT de sesión real y el refresh token de Supabase
+    - el hash PBKDF2 + salt de Quick Unlock (PIN local)
+
+  No es posible excluir SOLO esas claves sin tocar el resto de datos offline
+  (equipos/planes/registros) — comparten el mismo origen de IndexedDB a
+  nivel de archivo, y este lote está con funciones congeladas (sin
+  refactor). La app ya tolera perder su caché local: fullSync() hace PULL
+  antes que PUSH en un cliente nuevo (ver sync.js), así que tras restaurar
+  un backup la app simplemente vuelve a sincronizar desde Supabase en el
+  primer arranque con red — nunca pierde datos reales, solo el caché.
+  allowBackup sigue en true (no se deshabilita backup de datos no
+  sensibles): el resto de archivos de la app (preferencias de plugins,
+  etc.) se siguen respaldando con normalidad.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="app_webview/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="app_webview/" />
+    </device-transfer>
+</data-extraction-rules>
