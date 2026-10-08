@@ -87,6 +87,11 @@ describe('§3 — cada tarjeta de Arrastrados trae código/modelo/ubicación/ori
     const block = src.slice(iArr, iEnd);
     expect(block).not.toMatch(/DB\.(put|add)\(/);
   });
+
+  it('"Mi Turno" (hardening UI 2026-10-08) también trae Registrar engrase/Ver ficha explícitos — ya no es una tarjeta clicable completa', () => {
+    expect(src).toContain("$$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));");
+    expect(src).toContain("$$('.lub-mt-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
+  });
 });
 
 describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
@@ -101,13 +106,77 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
   });
 });
 
-describe('§7 — bloques vacíos ocultos (Arrastrados/Asignaciones activas), nunca una tarjeta en 0', () => {
-  it('"Pendientes arrastrados" solo se renderiza si arrastrados.length > 0', () => {
-    expect(src).toContain('${arrastrados.length ? `');
+describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas), nunca una tarjeta en 0 (hardening UI 2026-10-08, "simplificar Mi Turno")', () => {
+  it('"Atrasados" solo se renderiza si arrastradosTotal.length > 0', () => {
+    expect(src).toContain('${arrastradosTotal.length ? `');
   });
 
-  it('"Asignaciones activas" solo se renderiza si statusesAssigned.length > 0 (comportamiento preexistente, no se tocó)', () => {
-    expect(src).toContain('${statusesAssigned.length ? `');
+  it('"Mi Turno" solo se renderiza si miTurnoTotal.length > 0', () => {
+    expect(src).toContain('${miTurnoTotal.length ? `');
+  });
+
+  it('"Realizados" solo se renderiza si realizadosHoyList.length > 0', () => {
+    expect(src).toContain('${realizadosHoyList.length ? `');
+  });
+
+  it('"Alertas" solo se renderiza si alertasTiempoSinEngrase.length > 0', () => {
+    expect(src).toContain('${alertasTiempoSinEngrase.length ? `');
+  });
+});
+
+describe('"Asignaciones activas" (hardening UI 2026-10-08) — ya NO es una sección aparte: cada equipo asignado vive dentro de Atrasados o Mi Turno, con badge ASIGNADO', () => {
+  it('no queda ningún encabezado "ASIGNACIONES ACTIVAS" independiente', () => {
+    expect(src).not.toContain('ASIGNACIONES ACTIVAS');
+  });
+
+  it('la clasificación reusa el MISMO status.code ya calculado por computeAllStatuses() (statusesAssigned) — ROJO va a Atrasados, el resto a Mi Turno, cero cálculo nuevo', () => {
+    const idx = src.indexOf('const asignadosPorId');
+    const block = src.slice(idx, idx + 900);
+    expect(block).toContain("if (s.code === 'ROJO') {");
+    expect(block).toContain('arrastradosTotal.push(');
+    expect(block).toContain('miTurnoTotal.push(');
+  });
+
+  it('dedup real: un equipo ya presente (arrastradosIds/miTurnoTotalIds) nunca se vuelve a agregar — solo se marca con el badge', () => {
+    expect(src).toContain('if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return;');
+  });
+
+  it('el badge ASIGNADO reusa el MISMO componente/color ya usado en la Ficha de equipo (status-chip + var(--amber)), nunca una clase/paleta nueva', () => {
+    expect(src).toContain("const asignadoBadgeHTML = '<span class=\"status-chip\" style=\"--c:var(--amber)\">ASIGNADO</span>';");
+  });
+});
+
+describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro del scope, nunca PARTIAL', () => {
+  it('filtra por resolveRecordCompleteness() !== PARTIAL (la MISMA función ya usada en la Ficha de equipo, cero fórmula nueva)', () => {
+    expect(src).toContain("resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL");
+  });
+
+  it('está acotado al scope activo (normal + asignados) — nunca equipos de otra cuadrilla', () => {
+    expect(src).toContain('const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);');
+    expect(src).toContain('scopeEquipoIds.has(r.equipmentId)');
+  });
+
+  it('"Ver validación" reusa findActiveValidations()/openValidationDetailModal() reales (mismo mecanismo que Mis Engrases), nunca una reimplementación', () => {
+    expect(src).toContain('findActiveValidations(r.id, validationsHoy)');
+    expect(src).toContain('await openValidationDetailModal(validation, eq, rec ? rec.date : null);');
+  });
+});
+
+describe('"Alertas — Mayor tiempo sin engrasar" (hardening UI 2026-10-08) — MISMA fórmula que renderDashboard(), acotada al scope del Lubricador', () => {
+  it('mismo criterio de orden (Operativo primero, luego más días sin registro primero, null=Infinity)', () => {
+    const idx = src.indexOf('const alertasTiempoSinEngrase');
+    const block = src.slice(idx, idx + 400);
+    expect(block).toContain("a.status === 'Operativo' ? 0 : 1");
+    expect(block).toContain('dB === null ? Infinity : dB');
+  });
+
+  it('acotada a `normal` (nunca equipos.length sin filtrar) y máximo 5', () => {
+    expect(src).toContain('const alertasTiempoSinEngrase = [...normal].sort((a, b) => {');
+    expect(src).toContain('.slice(0, 5)');
+  });
+
+  it('el código de equipo abre la Ficha real (openEquipmentDetail), nunca una ficha nueva', () => {
+    expect(src).toContain("$$('.lub-alerta-code', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
   });
 });
 

@@ -3318,12 +3318,19 @@ async function renderLubricadorHome() {
   ];
   const arrastradosIds = new Set(arrastrados.map(x => x.e.id));
 
-  const arrastradoRowHTML = ({ e, origen, tone }) => {
+  // Badge ASIGNADO: MISMO componente/color ya usado en la Ficha de equipo
+  // (openEquipmentDetail → tipoRecordHTML, "status-chip" + var(--amber)) —
+  // nunca una clase/paleta nueva (hardening UI 2026-10-08, "simplificar Mi
+  // Turno": Asignaciones ya no es una sección aparte, ver más abajo).
+  const asignadoBadgeHTML = '<span class="status-chip" style="--c:var(--amber)">ASIGNADO</span>';
+
+  const arrastradoRowHTML = ({ e, origen, tone, asignado }) => {
     const skip = lastSkipByEquipoId[e.id];
     const loc = (locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación';
     return `
       <div class="lub-arrastrado-card tone-${tone}">
         <span class="lub-arrastrado-origen tone-${tone}">${esc(origen)}</span>
+        ${asignado ? asignadoBadgeHTML : ''}
         <div class="lub-eq-top"><span class="lub-eq-code">${esc(e.code)}</span></div>
         <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
         <div class="lub-eq-location">📍 ${esc(loc)}</div>
@@ -3335,11 +3342,18 @@ async function renderLubricadorHome() {
       </div>`;
   };
 
-  const eqButtonHTML = (e, s) => `
-    <button class="lub-eq-btn" data-status="${s.code}" data-id="${e.id}">
+  // "MI TURNO": antes era un <button> clickable completo (registraba al
+  // tocar cualquier parte de la tarjeta); ahora necesita 2 acciones
+  // explícitas (Registrar engrase / Ver ficha, igual que Atrasados) — pasa
+  // a <div> + .lub-arrastrado-actions (MISMA clase ya estilizada, nunca CSS
+  // nuevo). El color del borde por estado (data-status) y el resto del
+  // layout no cambian.
+  const eqButtonHTML = (e, s, asignado) => `
+    <div class="lub-eq-btn" data-status="${s.code}">
       <div class="lub-eq-top">
         <span class="lub-eq-code">${esc(e.code)}</span>
         <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
+        ${asignado ? asignadoBadgeHTML : ''}
       </div>
       <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
       <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
@@ -3347,7 +3361,11 @@ async function renderLubricadorHome() {
         <span class="mono">${fmt(e.hourmeter)} h</span>
         ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
       </div>
-    </button>`;
+      <div class="lub-arrastrado-actions">
+        <button type="button" class="btn btn-accent lub-mt-reg" data-id="${e.id}">${ic("check")}Registrar engrase</button>
+        <button type="button" class="btn lub-mt-ver" data-id="${e.id}">Ver ficha</button>
+      </div>
+    </div>`;
 
   const kpiTile = (label, value, tone) => `
     <div class="lub-kpi-card tone-${tone}">
@@ -3378,6 +3396,105 @@ async function renderLubricadorHome() {
   // la pantalla).
   const statusesNormalRestantes = statusesNormal.filter(({ e }) => !arrastradosIds.has(e.id));
 
+  // ============================================================
+  // "Mi Turno" simplificado (hardening UI 2026-10-08) — pedido explícito:
+  // "Asignaciones activas" deja de ser una sección aparte; cada equipo
+  // asignado (statusesAssigned, ya calculado arriba con classifyEquipmentWork()
+  // — ningún cálculo nuevo) pasa a vivir DENTRO de Atrasados o Mi Turno,
+  // "según la ocurrencia real": el MISMO status.code (ROJO=vencido) ya
+  // resuelto por computeAllStatuses() decide dónde, con un badge ASIGNADO.
+  // Dedup real: un equipo que por algún motivo ya viniera en el camino
+  // "normal" (p. ej. autoasignado a su propia cuadrilla) solo se marca con
+  // el badge, nunca se duplica la tarjeta.
+  // ============================================================
+  const asignadosPorId = new Map(statusesAssigned.map(x => [x.e.id, x]));
+  const arrastradosTotal = arrastrados.map(x => ({ ...x, asignado: asignadosPorId.has(x.e.id) }));
+  const miTurnoTotal = statusesNormalRestantes.map(({ e, s }) => ({ e, s, asignado: asignadosPorId.has(e.id) }));
+  const miTurnoTotalIds = new Set(miTurnoTotal.map(x => x.e.id));
+  statusesAssigned.forEach(({ e, s }) => {
+    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return; // ya contado arriba, solo le faltaba el badge (ya puesto)
+    if (s.code === 'ROJO') {
+      arrastradosTotal.push({
+        e, asignado: true, tone: 'red',
+        origen: s.scheduleDate ? `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}` : 'Asignado — vencido',
+      });
+    } else {
+      miTurnoTotal.push({ e, s, asignado: true });
+      miTurnoTotalIds.add(e.id);
+    }
+  });
+
+  // "3. REALIZADOS": engrases COMPLETE (nunca PARTIAL, ver
+  // resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que
+  // la Ficha de equipo, ninguna fórmula nueva) de HOY, dentro del scope
+  // activo de la cuadrilla (normal + asignados, lo mismo que ya se muestra
+  // arriba en Atrasados/Mi Turno — nunca equipos de otra cuadrilla).
+  const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);
+  const ahoraValidacion = new Date();
+  const validationsHoy = await DB.allActive('grease_validations');
+  const realizadosHoyList = records
+    .filter(r => scopeEquipoIds.has(r.equipmentId) && new Date(r.date).toDateString() === today
+      && resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const realizadoRowHTML = (r) => {
+    const eq = equipos.find(x => x.id === r.equipmentId);
+    const valStatus = validationStatusForRecord(r, validationsHoy, ahoraValidacion, App.generalSettings);
+    const activas = findActiveValidations(r.id, validationsHoy);
+    return `
+      <div class="lub-arrastrado-card tone-green">
+        <div class="lub-eq-top"><span class="lub-eq-code">${eq ? esc(eq.code) : '—'}</span>
+          <span class="dim">${new Date(r.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
+        <div class="lub-eq-model">${eq ? esc(eq.brand) + ' ' + esc(eq.model) : ''}</div>
+        <div class="lub-record-meta dim">
+          <span>${fmt(r.qty, 1)} ${GREASE_UNIT}</span>
+          <span>${esc(r.userName)}</span>
+        </div>
+        <div class="lub-record-validacion">${validationBadgeHTML(valStatus)}</div>
+        <div class="lub-arrastrado-actions">
+          <button type="button" class="btn lub-real-ver" data-id="${r.equipmentId}">Ver ficha</button>
+          ${activas.length === 1 ? `<button type="button" class="btn lub-real-val" data-rec="${r.id}" data-eq="${r.equipmentId}">Ver validación</button>` : ''}
+        </div>
+      </div>`;
+  };
+
+  // "4. ALERTAS — Mayor tiempo sin engrasar": MISMA fórmula exacta que
+  // renderDashboard() (daysSinceLastGrease + sort Operativo-primero/más
+  // días-sin-registro-primero) — nunca una reimplementación — acotada a
+  // `normal` (equipos de la cuadrilla/ubicación autorizada del Lubricador,
+  // nunca flota global). Puede repetir un equipo que también esté en
+  // Atrasados/Mi Turno a propósito (es información de riesgo, no otra
+  // tarea — pedido explícito).
+  const lastRecordByEquipoLub = {};
+  records.forEach(r => {
+    if (!lastRecordByEquipoLub[r.equipmentId] || new Date(r.date) > new Date(lastRecordByEquipoLub[r.equipmentId])) {
+      lastRecordByEquipoLub[r.equipmentId] = r.date;
+    }
+  });
+  function daysSinceLastGreaseLub(equipmentId) {
+    const last = lastRecordByEquipoLub[equipmentId];
+    if (!last) return null;
+    return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
+  }
+  const alertasTiempoSinEngrase = [...normal].sort((a, b) => {
+    const opA = a.status === 'Operativo' ? 0 : 1, opB = b.status === 'Operativo' ? 0 : 1;
+    if (opA !== opB) return opA - opB;
+    const dA = daysSinceLastGreaseLub(a.id), dB = daysSinceLastGreaseLub(b.id);
+    return (dB === null ? Infinity : dB) - (dA === null ? Infinity : dA);
+  }).slice(0, 5);
+  const alertaRowHTML = (e) => {
+    const dias = daysSinceLastGreaseLub(e.id);
+    return `
+      <div class="lub-arrastrado-card tone-amber">
+        <div class="lub-eq-top">
+          <button type="button" class="lub-eq-code dash-code-link lub-alerta-code" data-id="${e.id}">${esc(e.code)}</button>
+          <span class="dim">${dias === null ? 'Sin registro' : dias + ' días sin engrasar'}</span>
+        </div>
+        <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+      </div>`;
+  };
+
   c.innerHTML = `
     <div class="lub-context-row">${contextChips}</div>
 
@@ -3388,21 +3505,27 @@ async function renderLubricadorHome() {
       ${kpiTile('Realizados hoy', realizadosHoy, 'green')}
     </div>
 
-    ${arrastrados.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">PENDIENTES ARRASTRADOS</span></div>
-    <div class="lub-eq-list">${arrastrados.map(arrastradoRowHTML).join('')}</div>
-    ` : ''}
-
     ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
 
-    ${statusesAssigned.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ASIGNACIONES ACTIVAS</span></div>
-    <div class="lub-eq-list">${statusesAssigned.map(({ e, s }) => eqButtonHTML(e, s)).join('')}</div>` : ''}
+    ${arrastradosTotal.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosTotal.length})</span></div>
+    <div class="lub-eq-list">${arrastradosTotal.map(arrastradoRowHTML).join('')}</div>
+    ` : ''}
 
-    <div class="lub-section-head"><span class="dim">Trabajo del turno actual</span></div>
-    <div class="lub-eq-list">
-      ${statusesNormalRestantes.map(({ e, s }) => eqButtonHTML(e, s)).join('') || `<div class="empty-state">No hay más equipos pendientes en este turno${myCrew ? ' para ' + esc(myCrew.name) : ''}.</div>`}
-    </div>
+    ${miTurnoTotal.length ? `
+    <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoTotal.length})</span></div>
+    <div class="lub-eq-list">${miTurnoTotal.map(({ e, s, asignado }) => eqButtonHTML(e, s, asignado)).join('')}</div>
+    ` : ''}
+
+    ${realizadosHoyList.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyList.length})</span></div>
+    <div class="lub-eq-list">${realizadosHoyList.map(realizadoRowHTML).join('')}</div>
+    ` : ''}
+
+    ${alertasTiempoSinEngrase.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasTiempoSinEngrase.length})</span></div>
+    <div class="lub-eq-list">${alertasTiempoSinEngrase.map(alertaRowHTML).join('')}</div>
+    ` : ''}
 
     <div class="lub-section-head"><span class="dim">Acciones rápidas</span></div>
     <div class="lub-quick-actions">
@@ -3415,9 +3538,18 @@ async function renderLubricadorHome() {
     <button class="lub-anomaly-fab" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
     ${colorLegendHTML()}
   `;
-  $$('.lub-eq-btn', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
   $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
   $$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
+  $$('.lub-mt-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-real-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-real-val', c).forEach(b => b.addEventListener('click', async () => {
+    const validation = findActiveValidation(b.dataset.rec, validationsHoy);
+    const rec = realizadosHoyList.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(x => x.id === b.dataset.eq);
+    if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
+  }));
+  $$('.lub-alerta-code', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-quick-qr').addEventListener('click', () => openQrScanner());
   // "Registrar engrase" (acción rápida, sin equipo preelegido): mismo
