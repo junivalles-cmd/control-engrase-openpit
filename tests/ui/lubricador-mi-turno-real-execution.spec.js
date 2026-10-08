@@ -105,6 +105,12 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       ${appSrc}
       window.currentShiftId = currentShiftId;
       window.renderLubricadorHome = renderLubricadorHome;
+      // Expuesto para los tests del INVARIANTE "local-first" (625355f):
+      // permite simular, desde fuera, que la sincronización remota falla
+      // DESPUÉS de un guardado local (lastSyncState es la misma variable
+      // global que lee la fila de contexto — nunca filtra los cálculos de
+      // Realizados/Mi Turno/Alertas, solo el texto del chip).
+      window.lastSyncState = lastSyncState;
     `,
   });
 }
@@ -336,5 +342,143 @@ test('E — un equipo con COMPLETE de hoy nunca aparece a la vez en Realizados y
   if (enAlertas) {
     const alertCodes = await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents();
     expect(alertCodes).not.toContain('T-44');
+  }
+});
+
+// ============================================================
+// INVARIANTE "local-first" (congelada sobre 625355f, 2026-10-08) — un
+// COMPLETE guardado SOLO localmente debe reflejarse de inmediato (mismo
+// rerender, sin Supabase/sync/conexión/logout/reload), y si la
+// sincronización remota falla DESPUÉS, el resultado local visible NO debe
+// revertirse. Confirmado leyendo el código real: ni `realizadosHoyList` ni
+// `alertasTiempoSinEngrase` ni Atrasados/Mi Turno leen `lastSyncState` —
+// esa variable solo alimenta el texto del chip de contexto (syncChip). La
+// regla ya estaba cumplida por 625355f; estos tests la congelan para que
+// una futura regresión (p.ej. alguien gateando estos cálculos con
+// `lastSyncState`/`navigator.onLine`) rompa el build.
+// ============================================================
+
+test('A/B/C — COMPLETE local (sin red) sale de Alertas, sale de Mi Turno y entra a Realizados, todo en el mismo rerender', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'T-50', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  // Antes del engrase: pendiente en Mi Turno y, sin registro, también en Alertas.
+  await expect(seccion(page, 'MI TURNO')).toContainText('T-50');
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-50');
+
+  // Guarda SOLO local (igual que DB.put() real del flujo de registrar) —
+  // sin tocar lastSyncState/red — y vuelve a renderizar, igual que el
+  // usuario real volviendo a "Mi Turno" después de guardar.
+  await page.evaluate(() => {
+    window.__mockData.lubrication_records.push({
+      id: 'r-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 2.0, shiftId: 'shift_dia',
+    });
+    return window.renderLubricadorHome();
+  });
+
+  expect(await enCuantasSeccionesDeTrabajo(page, 'T-50')).toBe(1);
+  await expect(seccion(page, 'REALIZADOS')).toContainText('T-50'); // C: entra a Realizados
+  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  if (enAlertas) {
+    expect(await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents()).not.toContain('T-50'); // A: sale de Alertas
+  }
+  // B: sale de Mi Turno — ya cubierto por enCuantasSeccionesDeTrabajo === 1 (solo Realizados).
+});
+
+test('D — si la sincronización remota falla DESPUÉS de guardar localmente, el resultado visual local (Realizados, fuera de Alertas) NO revierte', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-51', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+
+  await bootPage(page, { equipos });
+  await page.evaluate(() => {
+    window.__mockData.lubrication_records.push({
+      id: 'r-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 2.0, shiftId: 'shift_dia',
+    });
+    return window.renderLubricadorHome();
+  });
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'REALIZADOS')).toContainText('T-51');
+
+  // La sincronización remota falla DESPUÉS del guardado local — sin tocar
+  // ningún record/skip, solo el estado global de sync — y se vuelve a
+  // renderizar (p.ej. el usuario revisa "Mi Turno" otra vez mientras no hay
+  // conexión).
+  await page.evaluate(() => {
+    window.lastSyncState.status = 'error';
+    window.lastSyncState.message = 'Falló: fetch failed';
+    return window.renderLubricadorHome();
+  });
+
+  // El resultado local no revierte: sigue solo en Realizados, nunca de
+  // vuelta en Mi Turno/Atrasados/Alertas.
+  expect(await enCuantasSeccionesDeTrabajo(page, 'T-51')).toBe(1);
+  await expect(seccion(page, 'REALIZADOS')).toContainText('T-51');
+  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  if (enAlertas) {
+    expect(await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents()).not.toContain('T-51');
+  }
+});
+
+test('E — un PARTIAL guardado localmente (sin red) permanece en Alertas y nunca entra a Realizados tras el rerender', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-52', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+
+  await bootPage(page, { equipos });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-52');
+
+  await page.evaluate(() => {
+    window.__mockData.lubrication_records.push({
+      id: 'r-partial', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 1.0, shiftId: 'shift_dia',
+      operationalSnapshot: { executionCompleteness: 'PARTIAL' },
+    });
+    return window.renderLubricadorHome();
+  });
+
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-52'); // un PARTIAL nunca limpia la alerta
+  const enRealizados = await page.locator('.lub-section-head:has-text("REALIZADOS")').count();
+  if (enRealizados) {
+    expect(await seccion(page, 'REALIZADOS').locator('.lub-eq-code').allTextContents()).not.toContain('T-52');
+  }
+});
+
+test('F — un skip ("no se pudo ejecutar") guardado localmente (sin red) permanece en Alertas y nunca entra a Realizados tras el rerender', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-53', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+
+  await bootPage(page, { equipos });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-53');
+
+  await page.evaluate(() => {
+    window.__mockData.lubrication_skips.push({
+      id: 's-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      reason: 'SIN_TIEMPO', active: true, userName: 'Lubricador de prueba',
+    });
+    return window.renderLubricadorHome();
+  });
+
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-53'); // un skip nunca crea un record ni limpia la alerta
+  const enRealizados = await page.locator('.lub-section-head:has-text("REALIZADOS")').count();
+  if (enRealizados) {
+    expect(await seccion(page, 'REALIZADOS').locator('.lub-eq-code').allTextContents()).not.toContain('T-53');
   }
 });

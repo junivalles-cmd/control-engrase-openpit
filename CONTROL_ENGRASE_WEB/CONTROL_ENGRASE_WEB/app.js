@@ -3401,6 +3401,13 @@ async function renderLubricadorHome() {
   // de dedup AUTORITATIVO que se usa más abajo — un equipo con un COMPLETE
   // de hoy nunca debe seguir viéndose como pendiente, sin esperar cambio de
   // turno ni refresh adicional (se recalcula en cada render).
+  //
+  // INVARIANTE "local-first" (625355f, congelada 2026-10-08): todo este
+  // bloque lee `records` de IndexedDB (local), NUNCA `lastSyncState` —
+  // un COMPLETE guardado localmente se refleja aquí aunque Supabase/sync
+  // esté caído, y si la sincronización falla DESPUÉS, el resultado local
+  // no debe revertirse. No agregar ningún gate de `lastSyncState`/online
+  // a este cálculo.
   const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);
   const ahoraValidacion = new Date();
   const validationsHoy = await DB.allActive('grease_validations');
