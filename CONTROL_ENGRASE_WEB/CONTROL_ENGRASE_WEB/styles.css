@@ -12,9 +12,22 @@
   /* Color de texto/ícono SOBRE var(--accent) (botones .btn-accent, tabs
      activos, chips activos) — depende de si el acento es claro u oscuro.
      Default = el mismo café-oscuro ya usado para el ámbar (contraste
-     9:1+); el preset "teal" (rediseño visual 2026-10-08) lo sobreescribe a
-     blanco, porque su acento es oscuro y el café fallaría WCAG AA. */
+     9:1+); cada preset de acento (ver más abajo) lo sobreescribe cuando
+     su color es oscuro, porque el café fallaría WCAG AA sobre un fondo
+     oscuro. */
   --on-accent: #1a1400;
+  /* Biblioteca de temas (rediseño visual 2026-10-08, "ampliar opciones de
+     color"): --focus/--muted/--background/--surface-alt son ALIAS vivos de
+     tokens ya existentes (--accent/--text-dim/--bg/--surface-2) — se
+     agregan con el nombre pedido para la biblioteca de presets SIN
+     renombrar ninguno de los ~100 usos ya existentes de los nombres
+     originales en este archivo (cero riesgo de regresión). Al ser
+     `var(...)`, se recalculan solos con cada preset — nunca hace falta
+     redeclararlos en cada [data-theme]/[data-mode] de abajo. */
+  --focus: var(--accent);
+  --muted: var(--text-dim);
+  --background: var(--bg);
+  --surface-alt: var(--surface-2);
   --green: #3FB950;
   --amber: #E8A33D;
   --red: #E5484D;
@@ -53,23 +66,31 @@
 }
 
 /* ---------------- Paletas de color de acento (elegibles por el usuario) ----------------
-   Rediseño visual 2026-10-08: "teal" es el preset NUEVO recomendado (azul/
-   teal profesional, inspirado en apps móviles modernas, sin copiar marca ni
-   diseño de terceros) y pasa a ser el default de instalaciones nuevas (ver
-   getTheme() en app.js / script anti-flash en index.html). "amber" se
-   mantiene intacto como "Ámbar industrial" (preset anterior, seleccionable).
-   blue/green/red/graphite se MANTIENEN sin tocar (compatibilidad con
-   preferencias ya guardadas en localStorage de instalaciones existentes)
-   pero ya no se ofrecen como swatch nuevo en el selector — "preferir
-   presets controlados" (pedido), nunca una paleta libre de 5+ colores. */
-[data-theme="teal"]     { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; }
-[data-theme="amber"]    { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; }
-[data-theme="blue"]     { --accent: #3B82F6; --accent-dark: #1D4ED8; }
-[data-theme="green"]    { --accent: #22C55E; --accent-dark: #15803D; }
-[data-theme="red"]      { --accent: #EF4444; --accent-dark: #B91C1C; }
-[data-theme="graphite"] { --accent: #9CA3AF; --accent-dark: #6B7280; }
+   Rediseño visual 2026-10-08 ("ampliar opciones de color"): biblioteca de 9
+   acentos controlados (nunca un selector RGB libre) — cada uno con
+   --accent/--accent-dark/--on-accent elegidos para pasar WCAG AA (4.5:1)
+   en texto normal sobre su propio --accent, verificado con la fórmula de
+   luminancia relativa de WCAG antes de fijar cada hex. "teal" sigue siendo
+   el recomendado/default de instalaciones nuevas (ver getTheme() en app.js
+   / script anti-flash en index.html). blue/green/red se MANTIENEN sin
+   tocar, solo por compatibilidad con preferencias ya guardadas en
+   localStorage de instalaciones previas a este rediseño — ya no se
+   ofrecen en el selector (reemplazados por presets con nombre/intención
+   propia: verde petróleo, rojo ladrillo). */
+[data-theme="teal"]        { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; } /* Azul/Teal moderno */
+[data-theme="amber"]       { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; } /* Ámbar industrial */
+[data-theme="petroleo"]    { --accent: #0F6A4C; --accent-dark: #0A4A35; --on-accent: #FFFFFF; } /* Verde petróleo */
+[data-theme="purpura"]     { --accent: #5B4FBF; --accent-dark: #433790; --on-accent: #FFFFFF; } /* Morado técnico */
+[data-theme="ladrillo"]    { --accent: #A3342A; --accent-dark: #7A2620; --on-accent: #FFFFFF; } /* Rojo ladrillo */
+[data-theme="cobre"]       { --accent: #9C5417; --accent-dark: #7A4012; --on-accent: #FFFFFF; } /* Naranja cobre */
+[data-theme="graphite"]    { --accent: #9CA3AF; --accent-dark: #6B7280; --on-accent: #1a1400; } /* Grafito */
+[data-theme="acero"]       { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; } /* Gris acero */
+[data-theme="cian"]        { --accent: #06B6D4; --accent-dark: #075E76; --on-accent: #1a1400; } /* Cian */
+[data-theme="blue"]        { --accent: #3B82F6; --accent-dark: #1D4ED8; } /* legado, ya no listado */
+[data-theme="green"]       { --accent: #22C55E; --accent-dark: #15803D; } /* legado, ya no listado */
+[data-theme="red"]         { --accent: #EF4444; --accent-dark: #B91C1C; } /* legado, ya no listado */
 
-/* ---------------- Modo claro (elegible por el usuario) ---------------- */
+/* ---------------- Claro neutro (elegible por el usuario) ---------------- */
 [data-mode="light"] {
   --bg: #F2F3F1;
   --surface: #FFFFFF;
@@ -119,14 +140,49 @@
   --red: #B30000;
   --gray-status: #333333;
 }
+[data-mode="contrast"] { --focus: #000000; }
 [data-mode="contrast"] * { border-width: 2px !important; }
 [data-mode="contrast"] .panel, [data-mode="contrast"] .eq-card, [data-mode="contrast"] .kpi-card,
-[data-mode="contrast"] .lub-eq-btn, [data-mode="contrast"] .modal, [data-mode="contrast"] .login-card {
+[data-mode="contrast"] .lub-eq-btn, [data-mode="contrast"] .modal, [data-mode="contrast"] .login-card,
+[data-mode="contrast"] .lub-welcome-card, [data-mode="contrast"] .lub-topbar {
   border-color: #000000 !important; box-shadow: none !important;
 }
 [data-mode="contrast"] .status-chip { outline: 2px solid #000000; }
 [data-mode="contrast"] .btn-accent { background: #000000; color: #FFFFFF; border-color: #000000; }
+/* .lub-hero-action (Mi Turno, "Registrar engrase") pinta su propio
+   background: var(--accent) en vez de usar la clase .btn-accent — bajo
+   Alto contraste (blanco y negro puro, CERO color) necesita el mismo
+   forzado a negro, si no se cuela el color de acento activo. */
+[data-mode="contrast"] .lub-hero-action { background: #000000; color: #FFFFFF; }
 [data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
+
+/* ---------------- Modo Sol / Alta luz (legibilidad extrema bajo luz
+   exterior directa — distinto de "Alto contraste": aquí SÍ se permite
+   color, pero siempre sólido/saturado, nunca fondos translúcidos tipo
+   rgba(...,0.1) que pierden legibilidad bajo sol). Fondo blanco puro, texto
+   casi negro (más oscuro que Claro neutro), bordes gruesos (misma técnica
+   ya usada en Alto contraste), sin sombras (no se agrega la regla de
+   box-shadow sutil que sí tiene Claro neutro arriba) y los 3 colores
+   semánticos SE REUSAN literales del modo Claro neutro ya auditado AA —
+   nunca un valor nuevo, "no modificar significado semántico". ---------------- */
+[data-mode="sun"] {
+  --bg: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-2: #F5F5F4;
+  --border: #15181C;
+  --text: #0B0D0F;
+  --text-dim: #30353B;
+  --focus: #000000;
+  --green: #1E7A34;
+  --amber: #8A5A00;
+  --red: #C0262B;
+  --gray-status: #5C6268;
+}
+[data-mode="sun"] * { border-width: 2px !important; }
+[data-mode="sun"] .panel, [data-mode="sun"] .eq-card, [data-mode="sun"] .kpi-card,
+[data-mode="sun"] .lub-eq-btn, [data-mode="sun"] .modal, [data-mode="sun"] .login-card {
+  box-shadow: none !important;
+}
 
 /* Solo para lectores de pantalla — nunca visible (auditoría UI/UX
    2026-10-08, hallazgo #5: alternativa textual del gráfico de Tendencia). */
@@ -164,7 +220,7 @@ input, select, textarea {
    (label is display:flex;flex-direction:column below) — no extra width rule needed,
    and this avoids forcing width:100% on inputs living in flex toolbars elsewhere. */
 textarea { resize: vertical; min-height: 60px; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 input:disabled { opacity: 0.6; }
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.85); cursor: pointer; }
 input[type="checkbox"], input[type="radio"] {
@@ -287,18 +343,33 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .login-error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .login-footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 18px; line-height: 1.4; }
 
-/* ---------------- Selector de tema ---------------- */
+/* ---------------- Selector de tema — biblioteca de presets (rediseño
+   visual 2026-10-08, "ampliar opciones de color"): cada preset es una
+   tarjeta con muestra de color real (nunca un selector RGB libre) +
+   nombre claro — reemplaza los botones de solo-texto/punto anteriores. */
 .theme-btn { font-size: 17px; line-height: 1; }
-.theme-swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 18px; }
-.theme-swatch {
-  display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  cursor: pointer; font-size: 13px; font-weight: 600;
+.theme-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+.theme-preview-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px;
+  border-radius: 10px; border: 2px solid var(--border); background: var(--surface-2); color: var(--text);
+  cursor: pointer; font-size: 12px; font-weight: 600; text-align: left; min-height: var(--tap, 44px); width: 100%;
 }
-.theme-swatch.selected { border-color: var(--sw); box-shadow: 0 0 0 2px var(--sw) inset; }
-.theme-swatch-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--sw); flex: none; }
-.theme-mode-toggle { display: flex; gap: 10px; }
-.theme-mode-toggle .btn { flex: 1; }
+.theme-preview-card.selected { border-color: var(--pv-ring, var(--accent)); box-shadow: 0 0 0 2px var(--pv-ring, var(--accent)) inset; }
+.theme-preview-swatches { display: flex; align-items: center; gap: 6px; }
+.theme-preview-dot { width: 18px; height: 18px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,0.15); }
+.theme-preview-chip {
+  display: flex; align-items: center; justify-content: center; width: 28px; height: 20px;
+  border-radius: 6px; font-size: 11px; font-weight: 800; flex: none;
+}
+.theme-preview-mode-swatch {
+  width: 100%; height: 32px; border-radius: 8px; border: 2px solid; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 6px; box-sizing: border-box;
+}
+.theme-preview-mode-surface { width: 16px; height: 16px; border-radius: 4px; border: 1px solid; flex: none; }
+.theme-preview-mode-text { font-size: 11px; font-weight: 800; }
+.theme-preview-name { line-height: 1.25; }
+.theme-preview-group-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 14px 0 2px; }
+.theme-preview-group-label:first-child { margin-top: 0; }
 
 /* ---------------- Shell ---------------- */
 .app-shell { display: flex; min-height: 100vh; }
@@ -543,7 +614,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   content: '▸'; font-size: 10px; color: var(--text-dim); transition: transform 0.15s ease; display: inline-block;
 }
 details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg); }
-.dash-tier-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dash-tier-summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .dash-hero-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 @media (min-width: 768px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -653,7 +724,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   font: inherit; color: inherit;
 }
 .dash-code-link:hover, .dash-code-link:focus-visible { color: var(--accent); text-decoration: underline; }
-.dash-code-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.dash-code-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 
 .dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
 .dash-exc-summary { color: var(--text-dim); white-space: nowrap; }
@@ -800,7 +871,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 /* Estado activo: 3 señales a la vez (fondo + borde + color/peso de texto),
    nunca solo color — ver §5 del lote (no depender únicamente del color). */
 .config-tab.active { color: var(--accent); font-weight: 700; background: var(--surface-2); border-left-color: var(--accent); }
-.config-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.config-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 .config-mobile-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .config-mobile-item {
@@ -976,7 +1047,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   padding: 10px 12px; border-radius: 8px; font-size: 15px;
 }
-.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .big-input { font-size: 20px !important; font-family: var(--font-mono); font-weight: 700; padding: 12px !important; }
 
 /* Jerarquía de botones (lote UI/UX, auditoría pre-release) — ya existía en la
@@ -1890,8 +1961,8 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
   .kpi-value { font-size: 19px; }
   .lub-eq-code { font-size: 16px; }
-  .theme-swatches { gap: 8px; }
-  .theme-swatch { padding: 8px 10px; font-size: 12px; }
+  .theme-preview-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+  .theme-preview-card { padding: 8px; font-size: 11.5px; }
 }
 /* Tablets y celulares grandes en horizontal */
 @media (min-width: 601px) and (max-width: 900px) {
@@ -2525,7 +2596,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   height: 34px;
   cursor: pointer;
 }
-.notif-num:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.notif-num:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* ═══════════════════════════════════════════════════════════════
    MEJORAS DE DISEÑO Y ACCESIBILIDAD

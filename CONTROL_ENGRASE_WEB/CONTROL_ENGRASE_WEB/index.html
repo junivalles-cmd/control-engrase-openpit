@@ -18,7 +18,7 @@
     var t = Object.assign({ accent: 'teal', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {});
     document.documentElement.setAttribute('data-theme', t.accent);
     document.documentElement.setAttribute('data-mode', t.mode);
-    var bg = t.mode === 'light' ? '#F2F3F1' : t.mode === 'contrast' ? '#FFFFFF' : '#14171A';
+    var bg = t.mode === 'light' ? '#F2F3F1' : (t.mode === 'contrast' || t.mode === 'sun') ? '#FFFFFF' : '#14171A';
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', bg);
   } catch (e) {}

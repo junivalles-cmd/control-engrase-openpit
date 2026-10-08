@@ -1745,23 +1745,50 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
   return REPORT_COLORS.rojo;
 }
 
-/* ---------- tema visual (color de acento + modo claro/oscuro) ----------
-   Rediseño visual 2026-10-08: "preferir presets controlados" (pedido) en
-   vez de una paleta libre de 5 colores — se deja solo el nuevo preset
-   recomendado (azul/teal moderno) y el preset anterior (Ámbar industrial),
-   nunca los otros 3 colores arbitrarios (verde/rojo/grafito). Quien ya
-   tenía uno de esos 3 guardado en este dispositivo sigue viéndolo igual
-   (CSS intacto en styles.css, ver [data-theme="..."]) — solo deja de
-   ofrecerse para elegirlo de nuevo. */
+/* ---------- tema visual: biblioteca de presets (rediseño visual
+   2026-10-08, "ampliar opciones de color") ----------
+   2 grupos independientes, cada uno con su propia lista CONTROLADA (nunca
+   un selector RGB libre) — "mantener modo claro/oscuro si ya existe esa
+   separación" (pedido explícito):
+     - THEMES (9): color de ACENTO (--accent/--accent-dark/--on-accent,
+       ver [data-theme="..."] en styles.css). Los hex de cada uno se
+       eligieron para pasar WCAG AA (4.5:1) en texto normal sobre su
+       --accent — verificado antes de fijarlos, nunca a ojo.
+     - MODES (4): familia de fondo/superficie/texto (--bg/--surface/
+       --surface-2/--border/--text/--text-dim, ver [data-mode="..."]).
+       "Modo Sol" es nuevo: legibilidad extrema bajo luz exterior (fondo
+       blanco puro, texto casi negro, bordes gruesos, sin sombras) pero a
+       diferencia de "Alto contraste" SÍ permite color (reusa los mismos 3
+       semánticos ya auditados de Claro neutro, nunca un valor nuevo).
+   Ninguno de los 13 presets toca el SIGNIFICADO de --green/--amber/--red/
+   --gray-status (VENCIDO/PENDIENTE/REALIZADO/PAUSADO) — solo re-calibran
+   su valor exacto por familia de fondo (clara/oscura), exactamente como ya
+   hacía el sistema antes de esta ampliación. */
 const THEMES = [
-  { id: 'teal', label: 'Azul/Teal moderno', sub: 'Recomendado', color: '#0E7490' },
-  { id: 'amber', label: 'Ámbar industrial', color: '#F2A900' },
+  { id: 'teal', label: 'Azul/Teal moderno', sub: 'Recomendado', color: '#0E7490', colorDark: '#0B4A57', onColor: '#FFFFFF' },
+  { id: 'amber', label: 'Ámbar industrial', color: '#F2A900', colorDark: '#C98A00', onColor: '#1a1400' },
+  { id: 'petroleo', label: 'Verde petróleo', color: '#0F6A4C', colorDark: '#0A4A35', onColor: '#FFFFFF' },
+  { id: 'purpura', label: 'Morado técnico', color: '#5B4FBF', colorDark: '#433790', onColor: '#FFFFFF' },
+  { id: 'ladrillo', label: 'Rojo ladrillo', color: '#A3342A', colorDark: '#7A2620', onColor: '#FFFFFF' },
+  { id: 'cobre', label: 'Naranja cobre', color: '#9C5417', colorDark: '#7A4012', onColor: '#FFFFFF' },
+  { id: 'graphite', label: 'Grafito', color: '#9CA3AF', colorDark: '#6B7280', onColor: '#1a1400' },
+  { id: 'acero', label: 'Gris acero', color: '#475569', colorDark: '#334155', onColor: '#FFFFFF' },
+  { id: 'cian', label: 'Cian', color: '#06B6D4', colorDark: '#075E76', onColor: '#1a1400' },
 ];
+const MODES = [
+  { id: 'light', label: 'Claro neutro', icon: '☀', bg: '#F2F3F1', surface: '#FFFFFF', border: '#DADCD7', text: '#1B1F23' },
+  { id: 'dark', label: 'Oscuro', icon: '🌙', bg: '#14171A', surface: '#1B1F23', border: '#333A40', text: '#E9E7E1' },
+  { id: 'contrast', label: 'Alto contraste', icon: '◐', bg: '#FFFFFF', surface: '#FFFFFF', border: '#000000', text: '#000000' },
+  { id: 'sun', label: 'Modo Sol / Alta luz', icon: '🔆', bg: '#FFFFFF', surface: '#FFFFFF', border: '#15181C', text: '#0B0D0F' },
+];
+const THEME_COLOR_BY_MODE = { light: '#F2F3F1', dark: '#14171A', contrast: '#FFFFFF', sun: '#FFFFFF' };
 
 // Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO
-// y acento "teal" (rediseño visual 2026-10-08 — antes "amber"). Si el
-// usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa gana
-// siempre — Object.assign la sobrescribe sobre este valor por defecto.
+// y acento "teal". Si el usuario ya guardó una preferencia (JSON.parse(...)
+// no vacío), esa gana siempre — Object.assign la sobrescribe sobre este
+// valor por defecto. Preferencias de antes de esta ampliación (accent
+// amber/blue/green/red/graphite, mode light/dark/contrast) siguen siendo
+// ids válidos (CSS intacto) — nunca se migran ni se pierden.
 function getTheme() {
   try { return Object.assign({ accent: 'teal', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
   catch { return { accent: 'teal', mode: 'light' }; }
@@ -1771,9 +1798,10 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-mode', theme.mode);
   // Mismo mapeo que el script anti-flash de index.html (auditoría UI/UX
   // 2026-10-08, hallazgo #2) — mantiene <meta name="theme-color"> en sync
-  // cada vez que se aplica/cambia el tema, no solo en el arranque.
+  // cada vez que se aplica/cambia el tema, no solo en el arranque. Cambio
+  // inmediato, sin reload: setAttribute() ya dispara el recálculo de CSS.
   const metaTheme = document.querySelector('meta[name="theme-color"]');
-  if (metaTheme) metaTheme.setAttribute('content', theme.mode === 'light' ? '#F2F3F1' : theme.mode === 'contrast' ? '#FFFFFF' : '#14171A');
+  if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR_BY_MODE[theme.mode] || '#14171A');
 }
 function saveTheme(theme) { localStorage.setItem('engrase_theme', JSON.stringify(theme)); applyTheme(theme); }
 
@@ -1787,29 +1815,41 @@ function themeButtonHTML(extraClass = '') {
 function openThemePicker() {
   const t = getTheme();
   openModal('Personalizar colores', `
-    <p class="dim">Elige el color de acento de la app y si prefieres modo oscuro (recomendado en campo/de noche) o modo claro. El cambio se guarda en este dispositivo.</p>
-    <div class="theme-swatches">
+    <p class="dim">Elige el color de acento y la familia de fondo/contraste de la app. Cambia al instante y se guarda en este dispositivo.</p>
+    <div class="theme-preview-group-label">Color de acento</div>
+    <div class="theme-preview-grid">
       ${THEMES.map(th => `
-        <button type="button" class="theme-swatch ${th.id === t.accent ? 'selected' : ''}" data-accent="${th.id}" style="--sw:${th.color}">
-          <span class="theme-swatch-dot"></span>${th.label}${th.sub ? ` <span class="dim">(${th.sub})</span>` : ''}
+        <button type="button" class="theme-preview-card ${th.id === t.accent ? 'selected' : ''}" data-accent="${th.id}" style="--pv-ring:${th.color}">
+          <span class="theme-preview-swatches">
+            <span class="theme-preview-dot" style="background:${th.color}"></span>
+            <span class="theme-preview-dot" style="background:${th.colorDark}"></span>
+            <span class="theme-preview-chip" style="background:${th.color};color:${th.onColor}">Aa</span>
+          </span>
+          <span class="theme-preview-name">${esc(th.label)}${th.sub ? `<br><span class="dim">${esc(th.sub)}</span>` : ''}</span>
         </button>`).join('')}
     </div>
-    <div class="theme-mode-toggle">
-      <button type="button" class="btn theme-mode-btn ${t.mode === 'dark' ? 'btn-accent' : ''}" data-mode="dark">🌙 Modo oscuro</button>
-      <button type="button" class="btn theme-mode-btn ${t.mode === 'light' ? 'btn-accent' : ''}" data-mode="light">☀ Modo claro</button>
-      <button type="button" class="btn theme-mode-btn ${t.mode === 'contrast' ? 'btn-accent' : ''}" data-mode="contrast">◐ Alto contraste (sol)</button>
+    <div class="theme-preview-group-label">Fondo y contraste</div>
+    <div class="theme-preview-grid">
+      ${MODES.map(m => `
+        <button type="button" class="theme-preview-card ${m.id === t.mode ? 'selected' : ''}" data-mode="${m.id}">
+          <span class="theme-preview-mode-swatch" style="background:${m.bg};border-color:${m.border}">
+            <span class="theme-preview-mode-surface" style="background:${m.surface};border-color:${m.border}"></span>
+            <span class="theme-preview-mode-text" style="color:${m.text}">Aa</span>
+          </span>
+          <span class="theme-preview-name">${m.icon} ${esc(m.label)}</span>
+        </button>`).join('')}
     </div>
-    <p class="dim" style="margin-top:10px">"Alto contraste" usa blanco y negro puro con bordes gruesos — pensado para leer la pantalla bajo sol directo en campo.</p>
+    <p class="dim" style="margin-top:10px">"Alto contraste" usa blanco y negro puro. "Modo Sol" permite color sólido pero con bordes gruesos y sin sombras — ambos pensados para leer bajo sol directo en campo.</p>
   `);
-  $$('.theme-swatch').forEach(b => b.addEventListener('click', () => {
+  $$('.theme-preview-card[data-accent]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.accent = b.dataset.accent; saveTheme(cur);
-    $$('.theme-swatch').forEach(x => x.classList.remove('selected'));
+    $$('.theme-preview-card[data-accent]').forEach(x => x.classList.remove('selected'));
     b.classList.add('selected');
   }));
-  $$('.theme-mode-btn').forEach(b => b.addEventListener('click', () => {
+  $$('.theme-preview-card[data-mode]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.mode = b.dataset.mode; saveTheme(cur);
-    $$('.theme-mode-btn').forEach(x => x.classList.remove('btn-accent'));
-    b.classList.add('btn-accent');
+    $$('.theme-preview-card[data-mode]').forEach(x => x.classList.remove('selected'));
+    b.classList.add('selected');
   }));
 }
 
