@@ -194,3 +194,34 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     expect(submitBox.width).toBeLessThan(panelBox.width * 0.6);
   }
 });
+
+// Teclado virtual abierto (auditoría UI mobile 2026-10-08): el footer sticky
+// de "Finalizar engrase" + la barra inferior fija competían por el poco alto
+// visible que deja el teclado, tapando el campo activo. wireKeyboardOpenWatcher()
+// (app.js) agrega/quita ".keyboard-open" en .lub-shell según visualViewport —
+// este test no simula el teclado real (Playwright no lo expone), solo
+// confirma el efecto CSS esperado de esa clase, que es lo que realmente
+// resuelve el problema reportado.
+test('Registrar engrase — con .keyboard-open: el footer deja de ser sticky y la barra inferior se oculta (solo móvil)', async ({ page }, testInfo) => {
+  const width = testInfo.project.use?.viewport?.width;
+  await page.setContent(FIXTURE);
+  await page.addStyleTag({ path: STYLES_PATH });
+
+  const before = await page.locator('.grease-flow-final').evaluate(el => getComputedStyle(el).position);
+
+  await page.locator('.lub-shell').evaluate(el => el.classList.add('keyboard-open'));
+  const after = await page.evaluate(() => ({
+    footerPosition: getComputedStyle(document.querySelector('.grease-flow-final')).position,
+    navDisplay: getComputedStyle(document.querySelector('.lub-bottom-nav')).display,
+  }));
+
+  if (width && width <= 640) {
+    expect(before, `antes de abrir teclado en ${testInfo.project.name}`).toBe('sticky');
+    expect(after.footerPosition, `con teclado abierto en ${testInfo.project.name}, el footer ya no debe competir por espacio`).toBe('static');
+    expect(after.navDisplay, `con teclado abierto en ${testInfo.project.name}, la barra inferior se oculta`).toBe('none');
+  } else {
+    // Tablet/desktop: el formulario nunca usó este footer sticky — la clase
+    // .keyboard-open no debe cambiar nada ahí (no romper desktop/tablet).
+    expect(after.navDisplay, `${testInfo.project.name} no debe ocultar la barra inferior`).not.toBe('none');
+  }
+});

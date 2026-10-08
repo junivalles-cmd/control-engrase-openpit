@@ -1061,6 +1061,21 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
     background: var(--bg); padding: 10px 0 4px;
     box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.3);
   }
+  /* Teclado virtual abierto (auditoría UI mobile 2026-10-08): con el alto
+     visible ya reducido por el teclado, este footer sticky + la barra
+     inferior fija (.lub-bottom-nav) juntos se comían casi toda esa poca
+     altura, tapando el campo activo y el final del checklist. La señal de
+     "teclado abierto" la pone wireKeyboardOpenWatcher() (app.js, vía
+     window.visualViewport) agregando/quitando .keyboard-open en .lub-shell
+     — mientras esté activa: el footer vuelve a flujo normal (ya no sticky,
+     se ve scrolleando como cualquier otro bloque) y la barra inferior se
+     oculta del todo (reaparece sola al cerrarse el teclado). Nunca cambia
+     nada fuera de ≤640px ni fuera de este estado puntual. */
+  .lub-shell.keyboard-open .lub-bottom-nav { display: none; }
+  .lub-shell.keyboard-open .grease-flow-final {
+    position: static; box-shadow: none;
+    padding: var(--sp-3) 0 calc(var(--sp-3) + env(safe-area-inset-bottom));
+  }
 }
 
 /* ---- Iteración 3: ancho de página y layout tablet/desktop ----
@@ -1131,7 +1146,16 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 @media (max-width: 480px) {
   .point-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .row-actions { width: 100%; }
-  .row-actions .btn { flex: 1; }
+  /* Causa raíz real (auditoría UI mobile 2026-10-08, Usuarios): esta regla
+     era ".row-actions .btn" sin acotar — "Editar"/"Eliminar" en .point-row
+     (2 botones de largo similar) quedaban bien forzados a ancho igual, pero
+     el MISMO selector también alcanzaba cualquier otro ".row-actions" de la
+     app, incluida la celda de acciones de la tabla Usuarios (Rol/Desactivar/
+     Reset password — 3 largos de texto distintos). Forzado a ancho igual,
+     "Reset password" no entraba en una línea y se partía en 2, quedando más
+     alto que sus 2 hermanos — el "desbalanceado" reportado. Acotado a su
+     contexto real: .point-row. */
+  .point-row .row-actions .btn { flex: 1; }
 }
 
 /* ---------------- Modal ---------------- */
@@ -1866,7 +1890,13 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
     text-align: left; flex: none; margin-right: 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em;
   }
   .data-table td:empty { display: none; }
-  .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; gap: 8px 6px; }
+  /* El "label" fantasma de arriba (content:attr(data-label)) no tiene nada
+     que mostrar aquí (la celda de acciones nunca lleva data-label) pero
+     seguía generándose vacío igual, con su propio margin-right:10px — un
+     hueco a la izquierda que descompensaba el margen visual de los 3
+     botones (auditoría UI mobile 2026-10-08, Usuarios). */
+  .data-table td.row-actions::before { content: none; }
 
   /* Columnas marcadas como secundarias (ver UI-ANDROID-005 / docs/UI_RESPONSIVE.md):
      se ocultan solo en esta tarjeta apilada móvil, nunca en escritorio, para reducir

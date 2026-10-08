@@ -3085,6 +3085,27 @@ function bootLubricador() {
   App.route = 'turno';
   renderLubricadorHome();
   handleQrDeepLink();
+  wireKeyboardOpenWatcher();
+}
+
+// Detecta el teclado virtual abierto (auditoría UI mobile 2026-10-08:
+// Registrar Engrase — el footer sticky + la barra inferior fija tapaban el
+// campo activo). visualViewport.height se reduce mucho cuando el teclado
+// ocupa pantalla; window.innerHeight NO cambia en Android/WebView con
+// windowSoftInputMode=adjustResize — comparar ambos es la señal estándar,
+// sin depender de un input/blur puntual (funciona igual al rotar o con
+// teclados de distinto alto). Solo agrega/quita una clase CSS — ver
+// ".lub-shell.keyboard-open" en styles.css; nunca toca el flujo/validación
+// del engrase. Guardado en window para no registrar el listener 2 veces si
+// se inicia sesión más de una vez como Lubricador en la misma pestaña.
+function wireKeyboardOpenWatcher() {
+  if (!window.visualViewport || window.__kbWatcherWired) return;
+  window.__kbWatcherWired = true;
+  const update = () => {
+    const open = window.visualViewport.height < window.innerHeight * 0.75;
+    document.querySelector('.lub-shell')?.classList.toggle('keyboard-open', open);
+  };
+  window.visualViewport.addEventListener('resize', update);
 }
 
 async function renderLubricadorHome() {
