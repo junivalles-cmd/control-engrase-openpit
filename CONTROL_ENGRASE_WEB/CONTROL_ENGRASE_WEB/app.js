@@ -3516,8 +3516,27 @@ async function renderLubricadorHome() {
   // nunca flota global). Puede repetir un equipo que también esté en
   // Atrasados/Mi Turno a propósito (es información de riesgo, no otra
   // tarea — pedido explícito).
+  //
+  // Fix 2026-10-08 ("refrescar alertas tras engrasar") — causa raíz real
+  // encontrada trazando el flujo (nunca asumida): esta fórmula SIEMPRE leyó
+  // `records` fresco de IndexedDB en cada render (sin caché, confirmado en
+  // db.js) y SIEMPRE se vuelve a ejecutar al volver a "Mi Turno" — no era un
+  // problema de rerender ni de dato viejo. Los 2 problemas reales:
+  //   1. `lastRecordByEquipoLub` contaba CUALQUIER registro (incluido
+  //      PARTIAL) como "último engrase" — un PARTIAL de hoy ponía
+  //      "0 días" y ocultaba la urgencia real (viola el punto 2 del pedido:
+  //      "PARTIAL no debe limpiar la alerta"). Fix: igual que Realizados
+  //      arriba, se excluyen con resolveRecordCompleteness() — mismo
+  //      helper ya en uso, ninguna fórmula nueva.
+  //   2. `.slice(0, 5)` nunca excluía a un equipo YA realizado hoy — con 5
+  //      o menos equipos en `normal` (cuadrillas chicas, el caso real
+  //      reportado), un equipo recién COMPLETE seguía ocupando uno de los 5
+  //      lugares aunque ya no tuviera ninguna urgencia real. Fix: se excluye
+  //      explícitamente con `realizadosHoyIds` (el MISMO Set ya calculado
+  //      arriba para Realizados/Mi Turno/Atrasados) antes de rankear.
+  const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);
   const lastRecordByEquipoLub = {};
-  records.forEach(r => {
+  recordsNoParciales.forEach(r => {
     if (!lastRecordByEquipoLub[r.equipmentId] || new Date(r.date) > new Date(lastRecordByEquipoLub[r.equipmentId])) {
       lastRecordByEquipoLub[r.equipmentId] = r.date;
     }
@@ -3527,7 +3546,7 @@ async function renderLubricadorHome() {
     if (!last) return null;
     return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
   }
-  const alertasTiempoSinEngrase = [...normal].sort((a, b) => {
+  const alertasTiempoSinEngrase = normal.filter(e => !realizadosHoyIds.has(e.id)).sort((a, b) => {
     const opA = a.status === 'Operativo' ? 0 : 1, opB = b.status === 'Operativo' ? 0 : 1;
     if (opA !== opB) return opA - opB;
     const dA = daysSinceLastGreaseLub(a.id), dB = daysSinceLastGreaseLub(b.id);

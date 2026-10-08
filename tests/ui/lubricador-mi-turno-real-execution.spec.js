@@ -80,17 +80,23 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       window.openOutOfPlanEquipmentPicker = () => {}; window.openLubricadorMatrizModal = () => {};
       window.openEquipmentDetail = () => {}; window.startLubricadorGreaseFlow = () => {};
       window.openValidationDetailModal = () => {}; window.refreshPushTokenCrewScope = async () => {};
+      // window.__mockData es MUTABLE a propósito (fix 2026-10-08, "refrescar
+      // alertas tras engrasar"): algunos tests empujan un record NUEVO
+      // (simulando el DB.put() real que hace el flujo de registrar) y
+      // vuelven a llamar renderLubricadorHome() — igual que el usuario real
+      // volviendo a "Mi Turno" después de guardar, sin reload/logout.
+      window.__mockData = {
+        equipment: ${JSON.stringify(equipos)},
+        locations: ${JSON.stringify(LOCATIONS)},
+        cuadrillas: ${JSON.stringify(CREW)},
+        lubrication_plans: ${JSON.stringify(plans)},
+        lubrication_records: ${JSON.stringify(records)},
+        lubrication_skips: ${JSON.stringify(skips)},
+        lubrication_assignments: ${JSON.stringify(assignments)},
+        grease_validations: ${JSON.stringify(validations)},
+      };
       window.DB = {
-        allActive: async (store) => ({
-          equipment: ${JSON.stringify(equipos)},
-          locations: ${JSON.stringify(LOCATIONS)},
-          cuadrillas: ${JSON.stringify(CREW)},
-          lubrication_plans: ${JSON.stringify(plans)},
-          lubrication_records: ${JSON.stringify(records)},
-          lubrication_skips: ${JSON.stringify(skips)},
-          lubrication_assignments: ${JSON.stringify(assignments)},
-          grease_validations: ${JSON.stringify(validations)},
-        }[store] || []),
+        allActive: async (store) => window.__mockData[store] || [],
       };
       ${shiftsSrc}
       ${statusSrc}
@@ -219,4 +225,116 @@ test('un equipo asignado (ASIGNADO) con un registro COMPLETE de hoy también sal
   expect(errors).toEqual([]);
   expect(await enCuantasSeccionesDeTrabajo(page, 'T-31')).toBe(1);
   await expect(seccion(page, 'REALIZADOS')).toContainText('T-31');
+});
+
+// ============================================================
+// Fix 2026-10-08 ("refrescar alertas tras engrasar") — bug real: un equipo
+// en ALERTAS/REQUIERE ATENCIÓN seguía ahí después de un COMPLETE. Causa
+// raíz encontrada trazando el flujo real (nunca asumida):
+//   1. lastRecordByEquipoLub contaba CUALQUIER record (incluido PARTIAL)
+//      como "último engrase" — violaba el punto 2 del pedido.
+//   2. .slice(0, 5) nunca excluía a un equipo YA realizado hoy — con pocos
+//      equipos en `normal` (el caso real), seguía ocupando un lugar aunque
+//      ya no tuviera urgencia real.
+// A/F/G (equipo en alerta + COMPLETE sale; funciona offline con el record
+// local; desaparece en el siguiente render sin reload) se prueban juntos
+// abajo: el mock de DB es 100% local (nunca red) y el 2do render se dispara
+// a mano, igual que al volver a "Mi Turno" después de guardar.
+// ============================================================
+
+test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localmente) sale de la alerta en el siguiente render, sin reload/logout/sync', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // Sin plan de Día/turno a propósito: foco exclusivo en Alertas, sin que
+  // Mi Turno/Atrasados interfieran. Sin ningún registro -> "Sin registro",
+  // el caso más urgente, siempre en el top 5.
+  const equipos = [{ id: 'e1', code: 'T-40', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+
+  await bootPage(page, { equipos });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-40'); // antes del engrase: en la alerta
+
+  // Simula el DB.put() real de un engrase COMPLETE — SOLO local, sin tocar
+  // red/sync (punto F) — y vuelve a renderizar (punto G: "al rerender
+  // desaparece inmediatamente", sin esperar nada más).
+  await page.evaluate(() => {
+    window.__mockData.lubrication_records.push({
+      id: 'r-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 2.0, shiftId: 'shift_dia',
+    });
+    return window.renderLubricadorHome();
+  });
+
+  // Con 1 solo equipo en `normal`, ya sin urgencia real: la sección entera
+  // se oculta (mismo criterio "ocultar secciones vacías" ya existente).
+  expect(await page.locator('.lub-section-head:has-text("ALERTAS")').count()).toBe(0);
+});
+
+test('B — un registro COMPLETE se usa como el "último engrase" real (ignora un PARTIAL más viejo), nunca una fecha vieja', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-41', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const records = [
+    { id: 'r-viejo', equipmentId: 'e1', date: isoDaysAgo(20), createdAt: isoDaysAgo(20), userName: 'Pedro L.', qty: 1.0, shiftId: 'shift_dia', operationalSnapshot: { executionCompleteness: 'PARTIAL' } },
+    { id: 'r-nuevo', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Ana G.', qty: 2.0, shiftId: 'shift_dia' }, // COMPLETE (sin snapshot = no PARTIAL)
+  ];
+
+  await bootPage(page, { equipos, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-41');
+  await expect(seccion(page, 'ALERTAS')).toContainText('1 días sin engrasar'); // refleja el COMPLETE de ayer, no el PARTIAL de hace 20 días
+});
+
+test('C — un equipo con SOLO un registro PARTIAL permanece en Alertas (un PARTIAL nunca limpia la alerta)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-42', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const records = [{ id: 'r1', equipmentId: 'e1', date: isoDaysAgo(20), createdAt: isoDaysAgo(20), userName: 'Pedro L.', qty: 1.0, shiftId: 'shift_dia', operationalSnapshot: { executionCompleteness: 'PARTIAL' } }];
+
+  await bootPage(page, { equipos, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-42');
+});
+
+test('D — un equipo con un skip ("no se pudo ejecutar") y ningún record permanece en Alertas (un skip nunca crea un record ni limpia la alerta)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-43', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const skips = [{ id: 's1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), reason: 'SIN_TIEMPO', active: true, userName: 'Pedro L.' }];
+
+  await bootPage(page, { equipos, skips });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ALERTAS')).toContainText('T-43');
+});
+
+test('E — un equipo con COMPLETE de hoy nunca aparece a la vez en Realizados y en Alertas (sin duplicados)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'T-44', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{ id: 'r1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), userName: 'Ana G.', qty: 2.0, shiftId: 'shift_dia' }];
+
+  await bootPage(page, { equipos, plans, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'REALIZADOS')).toContainText('T-44');
+  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  if (enAlertas) {
+    const alertCodes = await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents();
+    expect(alertCodes).not.toContain('T-44');
+  }
 });

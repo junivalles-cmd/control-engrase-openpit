@@ -171,8 +171,19 @@ describe('"Alertas — Mayor tiempo sin engrasar" (hardening UI 2026-10-08) — 
   });
 
   it('acotada a `normal` (nunca equipos.length sin filtrar) y máximo 5', () => {
-    expect(src).toContain('const alertasTiempoSinEngrase = [...normal].sort((a, b) => {');
+    expect(src).toContain('const alertasTiempoSinEngrase = normal.filter(e => !realizadosHoyIds.has(e.id)).sort((a, b) => {');
     expect(src).toContain('.slice(0, 5)');
+  });
+
+  it('fix 2026-10-08 ("refrescar alertas tras engrasar"): último engrase ignora PARTIAL (reutiliza resolveRecordCompleteness(), cero fórmula nueva)', () => {
+    expect(src).toContain("const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);");
+    const idx = src.indexOf('const lastRecordByEquipoLub');
+    const block = src.slice(idx, idx + 300);
+    expect(block).toContain('recordsNoParciales.forEach(r => {');
+  });
+
+  it('fix 2026-10-08: excluye explícitamente los equipos ya en `realizadosHoyIds` (mismo Set ya usado en Realizados) antes de rankear — un COMPLETE de hoy nunca puede seguir ocupando un cupo de Alertas', () => {
+    expect(src).toContain('normal.filter(e => !realizadosHoyIds.has(e.id))');
   });
 
   it('el código de equipo abre la Ficha real (openEquipmentDetail), nunca una ficha nueva', () => {
