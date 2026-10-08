@@ -188,42 +188,50 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     const cancelBox = await page.locator('#grease-form .grease-flow-final .btn:not(.btn-accent)').first().boundingBox();
     expect(submitBox.width).toBeGreaterThanOrEqual(cancelBox.width);
 
-    // Guardar fácil en móvil (cierre operativo §19): sticky real, nunca
-    // tapa la barra inferior fija del Lubricador.
-    const navBox = await page.locator('.lub-bottom-nav').boundingBox();
-    expect(submitBox.y + submitBox.height, 'el botón Finalizar no debe quedar por debajo de donde empieza la barra inferior').toBeLessThanOrEqual(navBox.y + 1);
+    // Pedido 2026-10-08 "botones al final del formulario": ya NUNCA sticky/
+    // fixed/flotante, en ningún ancho ni estado — flujo normal, se llega a
+    // él con scroll como a cualquier otro bloque.
+    const finalPosition = await page.locator('.grease-flow-final').evaluate(el => getComputedStyle(el).position);
+    expect(finalPosition, 'el footer de acciones nunca debe ser sticky/fixed').toBe('static');
+    const lastCardBox = await page.locator('.grease-flow-card').last().boundingBox();
+    expect(submitBox.y, 'Finalizar engrase debe venir DESPUÉS de la última card, en flujo normal').toBeGreaterThanOrEqual(lastCardBox.y + lastCardBox.height - 2);
   } else if (width && width >= 1024) {
     // En escritorio no debe convertirse en un botón gigante de ancho completo.
     expect(submitBox.width).toBeLessThan(panelBox.width * 0.6);
   }
 });
 
-// Teclado virtual abierto (fix real Android 2026-10-08): el footer sticky de
-// "Finalizar engrase" + la barra inferior fija competían por el poco alto
-// visible que deja el teclado, tapando el campo activo. Este test cubre SOLO
-// el efecto CSS de ".keyboard-open" (clase puesta a mano, sin pasar por
+// Pedido 2026-10-08 "botones al final del formulario": el footer es SIEMPRE
+// static (con o sin teclado, en cualquier ancho) — lo único que sigue
+// cambiando con .keyboard-open es ocultar la barra inferior fija, que sí
+// compite por espacio con el teclado. Este test cubre SOLO el efecto CSS de
+// ".keyboard-open" (clase puesta a mano, sin pasar por
 // wireKeyboardOpenWatcher()) — el test de abajo ("focusin real en campos
 // reales…") cubre la detección real end-to-end.
-test('Registrar engrase — con .keyboard-open: el footer deja de ser sticky y la barra inferior se oculta (solo móvil)', async ({ page }, testInfo) => {
+test('Registrar engrase — el footer nunca es sticky (con o sin .keyboard-open); la barra inferior sí se oculta con teclado (solo móvil)', async ({ page }, testInfo) => {
   const width = testInfo.project.use?.viewport?.width;
   await page.setContent(FIXTURE);
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const before = await page.locator('.grease-flow-final').evaluate(el => getComputedStyle(el).position);
+  const before = await page.evaluate(() => ({
+    footerPosition: getComputedStyle(document.querySelector('.grease-flow-final')).position,
+    navDisplay: getComputedStyle(document.querySelector('.lub-bottom-nav')).display,
+  }));
+  expect(before.footerPosition, `antes de abrir teclado en ${testInfo.project.name}`).toBe('static');
 
   await page.locator('.lub-shell').evaluate(el => el.classList.add('keyboard-open'));
   const after = await page.evaluate(() => ({
     footerPosition: getComputedStyle(document.querySelector('.grease-flow-final')).position,
     navDisplay: getComputedStyle(document.querySelector('.lub-bottom-nav')).display,
   }));
+  expect(after.footerPosition, `con teclado abierto en ${testInfo.project.name}, el footer sigue static`).toBe('static');
 
   if (width && width <= 640) {
-    expect(before, `antes de abrir teclado en ${testInfo.project.name}`).toBe('sticky');
-    expect(after.footerPosition, `con teclado abierto en ${testInfo.project.name}, el footer ya no debe competir por espacio`).toBe('static');
+    expect(before.navDisplay, `antes de abrir teclado en ${testInfo.project.name}`).not.toBe('none');
     expect(after.navDisplay, `con teclado abierto en ${testInfo.project.name}, la barra inferior se oculta`).toBe('none');
   } else {
-    // Tablet/desktop: el formulario nunca usó este footer sticky — la clase
-    // .keyboard-open no debe cambiar nada ahí (no romper desktop/tablet).
+    // Tablet/desktop: .keyboard-open está scopeada a ≤640px — no debe
+    // cambiar nada ahí (no romper desktop/tablet).
     expect(after.navDisplay, `${testInfo.project.name} no debe ocultar la barra inferior`).not.toBe('none');
   }
 });
@@ -272,7 +280,9 @@ for (const [label, selector] of [
     const afterBlur = await kbState(page);
     expect(afterBlur.open, 'tras el debounce, sin nada enfocado, se cierra').toBe(false);
     expect(afterBlur.navDisplay, 'bottom-nav vuelve a aparecer').not.toBe('none');
-    expect(afterBlur.footerPosition, 'el footer vuelve a ser sticky').toBe('sticky');
+    // Pedido 2026-10-08: el footer nunca vuelve a ser sticky al cerrar el
+    // teclado — sigue static, igual que antes de abrirlo.
+    expect(afterBlur.footerPosition, 'el footer sigue static al cerrar el teclado').toBe('static');
   });
 }
 
