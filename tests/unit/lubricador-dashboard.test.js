@@ -354,3 +354,55 @@ describe('Fix 2026-10-08 — un PARTIAL nunca desaparece de la bandeja (reclasif
     expect(block).toContain("diasAtras === 1 ? 'Día anterior' : `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}`");
   });
 });
+
+// Fix 2026-10-09 ("FIX FRESH INSTALL / FALSE NO_CREW_ASSIGNED"): bug real —
+// en una instalación nueva, boot() dispara Sync.runAutoCycle() SIN
+// esperarlo (ver boot()) y sigue directo a bootLubricador() →
+// renderLubricadorHome(); ese primer render corre con IndexedDB todavía
+// vacío, así que scope.kind === 'NO_CREW_ASSIGNED' en ese instante es
+// indistinguible de un usuario REALMENTE sin cuadrilla. Prueba por patrón
+// de fuente (mismo método del resto de este archivo) que la distinción de
+// los 3 estados reusa SOLO señales ya existentes — cfg.lastPull
+// (sync.js, pullAll()) y lastSyncState.status (ya mantenido por
+// onSyncStateChange()) — nunca un segundo sistema de estado, nunca un
+// cambio a sync.js/Auth.
+describe('Fix fresh install — NO_CREW_ASSIGNED distingue 3 estados antes de afirmar "sin cuadrilla"', () => {
+  const idx = src.indexOf("if (scope.kind === 'NO_CREW_ASSIGNED') {");
+  const block = src.slice(idx, src.indexOf("if (scope.kind === 'NEEDS_CREW_SELECTION')"));
+
+  it('la señal de "nunca hubo pull exitoso" es cfg.lastPull (DB.getConfig()) — nunca una variable nueva', () => {
+    expect(block).toContain('const cfg = await DB.getConfig();');
+    expect(block).toContain('const sinPullExitosoAun = !(cfg && cfg.lastPull);');
+  });
+
+  it('distingue "sync en curso/sin empezar" de "ya falló" leyendo lastSyncState.status — nunca Sync.syncing reimplementado ni un segundo estado', () => {
+    expect(block).toContain("const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured']);");
+    expect(block).toContain('ESTADOS_FALLO_SYNC.has(lastSyncState.status)');
+  });
+
+  it('Estado A ("Sincronizando") y Estado B ("No se pudo cargar" + Reintentar) solo se muestran mientras sinPullExitosoAun — nunca compiten con el caso real (Estado C)', () => {
+    expect(block).toContain('Sincronizando datos…');
+    expect(block).toContain('No se pudo cargar tu asignación de trabajo.');
+    expect(block).toContain('id="lub-retry-bootstrap"');
+    // Estado C ("Sin cuadrilla autorizada" real) vive DESPUÉS del `return`
+    // del bloque sinPullExitosoAun — nunca dentro de él.
+    const iReturn = block.indexOf('Sin cuadrilla autorizada');
+    const iSincronizando = block.indexOf('Sincronizando datos…');
+    expect(iReturn).toBeGreaterThan(iSincronizando);
+  });
+
+  it('el botón "Reintentar" llama Sync.fullSync() — EXACTAMENTE el mismo mecanismo real de sync (nunca runAutoCycle() ni uno alternativo), fuerza el re-render inmediato a "Sincronizando" (App._lubBootstrapRetrying) y vuelve a renderizar cuando fullSync() termina, sin reload manual', () => {
+    const iBtn = block.indexOf("$('#lub-retry-bootstrap')");
+    const btnBlock = block.slice(iBtn, iBtn + 400);
+    expect(btnBlock).toContain('App._lubBootstrapRetrying = true;');
+    expect(btnBlock).toContain('renderLubricadorHome();');
+    expect(btnBlock).toContain('Sync.fullSync().finally(() => {');
+    expect(btnBlock).not.toContain('runAutoCycle');
+    expect(btnBlock).toContain('App._lubBootstrapRetrying = false;');
+  });
+
+  it('nunca escribe/borra nada (DB.put/DB.delete/pushAll) — es presentación pura sobre señales ya existentes', () => {
+    expect(block).not.toMatch(/DB\.(put|delete)\(/);
+    expect(block).not.toContain('pushAll');
+  });
+});

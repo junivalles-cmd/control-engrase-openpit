@@ -18,7 +18,13 @@ const App = {
   lubricadorGreaseFlowActive: false,
   // ID del setInterval(60000) que refresca el indicador de turno (topbar
   // de escritorio o .lub-user-strip del Lubricador) — ver wireShiftTimer().
-  _shiftTimerId: null
+  _shiftTimerId: null,
+  // Fix 2026-10-09 ("FIX FRESH INSTALL / FALSE NO_CREW_ASSIGNED"): true
+  // solo entre el clic en "Reintentar" (pantalla NO_CREW_ASSIGNED de
+  // renderLubricadorHome()) y que Sync.fullSync() termine — le dice al
+  // render inmediato "mostrar Sincronizando" sin esperar a que notify()
+  // haga su primer round-trip async. Presentación pura, Sync nunca lo lee.
+  _lubBootstrapRetrying: false
 };
 
 // boot()/bootLubricador() son re-entrantes (logout→login o cambio de
@@ -3427,6 +3433,66 @@ async function renderLubricadorHome() {
   // a un Planificador/Administrador para autorizarlo en Configuración →
   // Cuadrillas (reemplaza el viejo "Dispositivo operativo").
   if (scope.kind === 'NO_CREW_ASSIGNED') {
+    // Fix 2026-10-09 ("FIX FRESH INSTALL / FALSE NO_CREW_ASSIGNED"): en una
+    // instalación nueva, boot() dispara Sync.runAutoCycle() SIN esperarlo
+    // (ver boot()) y este primer render corre con IndexedDB todavía vacío
+    // — en ese instante, scope.kind === 'NO_CREW_ASSIGNED' es indistinguible
+    // de un usuario REALMENTE sin cuadrilla. Antes de afirmar eso, se
+    // distingue el estado real del bootstrap reusando SOLO señales ya
+    // existentes — cero sistema de estado nuevo, cero cambio a sync.js:
+    //   - cfg.lastPull: solo se pone (pullAll(), sync.js) tras un pull
+    //     EXITOSO — mientras esté vacío, la respuesta vacía de `cuadrillas`
+    //     todavía no es confiable.
+    //   - lastSyncState.status (ya mantenido por onSyncStateChange(), ver
+    //     arriba) distingue "primer intento todavía en curso/sin empezar"
+    //     de "el primer intento ya terminó con error".
+    const cfg = await DB.getConfig();
+    const sinPullExitosoAun = !(cfg && cfg.lastPull);
+    if (sinPullExitosoAun) {
+      const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured']);
+      // App._lubBootstrapRetrying fuerza "Sincronizando" de inmediato al
+      // reintentar (§2: "mientras reintenta, volver a Sincronizando"), sin
+      // esperar el primer notify({status:'syncing'}) async de fullSync().
+      const falloBootstrap = !App._lubBootstrapRetrying && ESTADOS_FALLO_SYNC.has(lastSyncState.status);
+      if (falloBootstrap) {
+        // Estado B (§2 del pedido): el primer sync de este dispositivo ya
+        // terminó con error — el botón reusa Sync.fullSync() tal cual
+        // (MISMO mecanismo que "Tocar para sincronizar ahora" de
+        // #conn-badge), nunca un sync alternativo.
+        c.innerHTML = `
+          <div class="lub-empty-crew">
+            ${ic('alert')}
+            <h2>No se pudo cargar tu asignación de trabajo.</h2>
+            <p>Verifica la conexión e inténtalo nuevamente.</p>
+            <button type="button" class="btn btn-accent" id="lub-retry-bootstrap">${ic('check')}Reintentar</button>
+          </div>`;
+        $('#lub-retry-bootstrap').addEventListener('click', () => {
+          App._lubBootstrapRetrying = true;
+          renderLubricadorHome();
+          Sync.fullSync().finally(() => {
+            App._lubBootstrapRetrying = false;
+            if (App.route === 'turno') renderLubricadorHome();
+          });
+        });
+      } else {
+        // Estado A (§1 del pedido): todavía no hay evidencia de que el
+        // bootstrap haya terminado (ni éxito ni fallo) — nunca se afirma
+        // "sin cuadrilla" sin haber intentado descargarla primero.
+        c.innerHTML = `
+          <div class="lub-empty-crew">
+            ${ic('clock')}
+            <h2>Sincronizando datos…</h2>
+            <p>Cargando tu asignación de trabajo.</p>
+          </div>`;
+      }
+      return;
+    }
+
+    // Estado C (§3 del pedido): ya hubo al menos un pull exitoso en este
+    // dispositivo (cfg.lastPull existe) y el scope SIGUE sin cuadrilla —
+    // este sí es el caso real de usuario sin membership, nunca una
+    // instalación nueva con cache todavía vacía.
+    //
     // Compacto (lote "mobile UX real Android" §4): icono + título corto +
     // UN párrafo breve + un solo botón — antes ocupaba casi toda la
     // pantalla con título largo + párrafo largo repitiendo la misma idea.
