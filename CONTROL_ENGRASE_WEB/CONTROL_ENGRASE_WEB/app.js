@@ -1874,6 +1874,24 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('offline', updateConnBadge);
   Sync.onChange(onSyncStateChange);
 
+  // Atrás de Android en Quick Unlock (§5 del pedido "LOGIN / QUICK UNLOCK /
+  // CAMBIO DE USUARIO") — SIN el plugin @capacitor/app (no instalado, ver
+  // comentario de renderQuickUnlockScreen()): Capacitor, por defecto, deja
+  // que el WebView maneje Atrás con su propio canGoBack()/goBack() cuando
+  // no hay un listener nativo de 'backButton' registrado — y goBack()
+  // SIEMPRE dispara 'popstate' en la página, con o sin ese plugin. Se
+  // registra UNA sola vez para toda la sesión de la pestaña/app (nunca se
+  // reconecta por pantalla, igual criterio que el listener de clic de
+  // #conn-badge de abajo). Solo actúa si la pantalla de Quick Unlock está
+  // de verdad visible en este momento (#quick-unlock-area) — en cualquier
+  // otro caso (login normal, dentro de la app ya autenticada) no hace
+  // nada, dejando el comportamiento existente intacto (§5: "dentro de la
+  // app autenticada, NO modificar navegación existente salvo necesidad
+  // real").
+  window.addEventListener('popstate', () => {
+    if ($('#quick-unlock-area')) renderSupabaseLoginForm();
+  });
+
   // Delegado en document (no en el botón directamente) porque el topbar se
   // vuelve a dibujar entero cada vez que cambia de pantalla — así funciona
   // siempre, sin tener que re-conectar el clic cada vez.
@@ -2499,10 +2517,32 @@ function renderSupabaseLoginForm() {
   });
 }
 
+// Quick Unlock — botón "←" (vuelve al login normal, sin cerrar sesión ni
+// borrar nada) + "Entrar con otra cuenta" (acción explícita de cambio de
+// cuenta, reusa confirmChangeUser()/logout() — §8 del pedido "LOGIN / QUICK
+// UNLOCK / CAMBIO DE USUARIO": una sola ruta/helper para cambiar cuenta,
+// cero sistema de autenticación nuevo).
+//
+// Atrás Android (§5 del pedido): se empuja UNA entrada de historial propia
+// (`history.pushState`) SOLO mientras esta pantalla está visible — el gesto/
+// botón Atrás nativo de Android ya mueve el WebView con
+// canGoBack()/goBack() sobre ese mismo historial (sin necesitar el plugin
+// @capacitor/app, que NO está instalado — agregarlo sería una dependencia
+// nueva que requiere confirmación explícita + recompilar/sincronizar el
+// APK, fuera de alcance de este lote). goBack() dispara 'popstate' (wireado
+// una sola vez al arrancar, ver DOMContentLoaded), que es la MISMA función
+// que usa el botón "←" — un solo código, dos formas de dispararlo, nunca
+// dos implementaciones. Al salir por "Entrar con otra cuenta" se usa
+// replaceState() (nunca pushState/back) para no dejar la entrada marcada
+// "quickunlock" viva — así un Atrás posterior en el login normal no vuelve
+// a esta pantalla (nunca el loop Quick Unlock → Login → Atrás → Quick
+// Unlock... que pide evitar el pedido).
 function renderQuickUnlockScreen(snapshot) {
+  try { history.pushState({ screen: 'quickunlock' }, '', ''); } catch (e) {}
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
+        <button type="button" class="icon-btn login-back-btn" id="quick-unlock-back" aria-label="Atrás" title="Atrás">←</button>
         ${themeButtonHTML('login-theme-btn')}
         <div class="brand brand-login">
           <div class="brand-mark"></div>
@@ -2511,24 +2551,45 @@ function renderQuickUnlockScreen(snapshot) {
             <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
           </div>
         </div>
-        <p class="login-hint">${esc(snapshot.displayName)}</p>
+        <p class="login-hint">${esc(snapshot.displayName)}<br><span class="dim">${esc(snapshot.role || '')}</span></p>
         <div id="quick-unlock-area" class="form-grid">
           <input id="quick-unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="PIN" maxlength="6"/>
-          <button type="button" id="quick-unlock-submit" class="btn btn-accent">Entrar</button>
+          <button type="button" id="quick-unlock-submit" class="btn btn-accent">Desbloquear</button>
         </div>
         <div id="quick-unlock-error" class="login-error"></div>
-        <button type="button" id="quick-unlock-use-password" class="btn">Usar contraseña</button>
+        <button type="button" id="quick-unlock-change-user" class="link-btn">Entrar con otra cuenta</button>
         <div class="login-footer">Funciona sin conexión · desbloqueo local de este dispositivo</div>
       </div>
     </div>`;
 
+  // Desactiva la entrada de historial "quickunlock" SIN navegar (nunca
+  // dispara 'popstate') — se usa cuando esta pantalla se abandona por
+  // cualquier camino que NO sea el botón "←"/Atrás de Android, para que
+  // un Atrás posterior (ya en el login normal o dentro de la app) no la
+  // vuelva a encontrar y reabra Quick Unlock por error (el loop que pide
+  // evitar el pedido).
+  const clearQuickUnlockHistoryMarker = () => {
+    if (history.state && history.state.screen === 'quickunlock') history.replaceState(null, '', '');
+  };
+
   $('#btn-theme').addEventListener('click', openThemePicker);
-  $('#quick-unlock-use-password').addEventListener('click', () => renderSupabaseLoginForm());
+  // "←": si la entrada de historial de esta pantalla sigue viva, back() la
+  // consume y el handler global de 'popstate' pinta el login — si por lo
+  // que sea pushState falló arriba (try/catch), cae directo al login
+  // normal, el botón nunca queda muerto.
+  $('#quick-unlock-back').addEventListener('click', () => {
+    if (history.state && history.state.screen === 'quickunlock') history.back();
+    else renderSupabaseLoginForm();
+  });
+  $('#quick-unlock-change-user').addEventListener('click', () => {
+    clearQuickUnlockHistoryMarker();
+    confirmChangeUser();
+  });
 
   const doUnlock = async () => {
     const pin = $('#quick-unlock-pin').value.trim();
     const res = await QuickUnlock.attemptUnlock(snapshot.appUserId, pin);
-    if (res.ok) { enterAppAsProfile(snapshot); return; }
+    if (res.ok) { clearQuickUnlockHistoryMarker(); enterAppAsProfile(snapshot); return; }
     if (res.reason === 'LOCKED') {
       const mins = Math.ceil(res.remainingMs / 60000);
       $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;

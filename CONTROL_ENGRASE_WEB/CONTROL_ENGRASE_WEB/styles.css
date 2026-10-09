@@ -300,8 +300,21 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   position: relative;
 }
 .login-theme-btn { position: absolute; top: 14px; right: 14px; font-size: 18px; }
+/* "←" de Quick Unlock (lote "LOGIN / QUICK UNLOCK / CAMBIO DE USUARIO")
+   — mismo patrón de posición que .login-theme-btn, espejado a la
+   izquierda. .icon-btn ya cumple el objetivo táctil >=44px (min-width +
+   min-height, ver regla compartida de .btn/.icon-btn más abajo en este
+   archivo) — no se repite acá. */
+.login-back-btn { position: absolute; top: 14px; left: 14px; font-size: 20px; }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .brand-login { margin-bottom: 4px; padding-right: 30px; }
+/* Con el botón "←" presente, la marca necesita aire a AMBOS lados (antes
+   solo a la derecha, por .login-theme-btn) — acotado a esta variante con
+   :has() para no afectar el login normal (raíz, sin flecha atrás, §4 del
+   pedido: "no mostrar flecha atrás que no tenga destino"). DESPUÉS de
+   ".brand-login" a propósito (orden de especificidad ascendente que ya
+   sigue este archivo — ver no-descending-specificity). */
+.login-card:has(.login-back-btn) .brand-login { padding-left: 30px; }
 /* Logo de la app: usa el ícono real (engrane con gota), el mismo que se ve en el
    celular. Antes era un "+" dibujado con CSS que no coincidía con el ícono de la app. */
 .brand-mark {
