@@ -3689,11 +3689,19 @@ async function renderLubricadorHome() {
   // sirve igual para "quiero registrar un engrase ahora mismo" genérico.
   $('#lub-quick-registrar').addEventListener('click', () => openOutOfPlanEquipmentPicker());
   $('#lub-quick-buscar').addEventListener('click', () => $('#quick-find')?.focus());
-  $('#lub-quick-matriz').addEventListener('click', () => openLubricadorMatrizModal({
-    equipos: normal, plans: Object.values(plansByEquipoId), records, myCrew,
-    locationName: (locations.find(l => l.id === scope.crewLocationId) || {}).name,
-    turnoLabel: turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche',
-  }));
+  // Matriz semanal: CONSULTA GLOBAL de la ubicación activa del Lubricador
+  // (pedido explícito "MATRIZ LUBRICADOR POR UBICACIÓN COMPLETA") — a
+  // propósito NO reusa `normal` (ese es el scope RESTRICTIVO de "Mi Turno",
+  // ver classifyEquipmentWork()). equiposForLubricadorMatriz() (misma
+  // autoridad, operational-scope.js) es la función pura que decide el
+  // alcance: toda la ubicación autorizada, cualquier cuadrilla, ambos
+  // turnos — nunca otra ubicación.
+  $('#lub-quick-matriz').addEventListener('click', () => {
+    openLubricadorMatrizModal({
+      equipos: equiposForLubricadorMatriz(equipos, scope), plans: Object.values(plansByEquipoId), records,
+      locationName: (locations.find(l => l.id === scope.crewLocationId) || {}).name,
+    });
+  });
   // "Cambiar cuadrilla" (punto 2 del pedido — permitir cambiarla cuando
   // tenga autorización): borra la selección de ESTA sesión y vuelve a
   // pedir elegir entre las autorizadas — nunca pierde la autorización en
@@ -3704,14 +3712,20 @@ async function renderLubricadorHome() {
   });
 }
 
-// "Matriz semanal" de solo lectura para el Lubricador (Acciones rápidas,
-// §6/§9 del pedido): MISMA estadoCelda() pura (weekly-matrix.js) que usa la
-// Matriz Semanal real — nunca una reimplementación del cálculo — pero
-// SIEMPRE acotada a `equipos` (ya viene filtrado a la cuadrilla/ubicación
-// autorizada de quien la abre, ver renderLubricadorHome()). A propósito SIN
-// selector de Ubicación/Familia: el Lubricador no debe poder consultar otra
-// ubicación desde aquí (§8/§9 — nunca indicadores de otras ubicaciones ni
-// estado global de flota).
+// "Matriz semanal" de solo lectura para el Lubricador (Acciones rápidas):
+// MISMA estadoCelda() pura (weekly-matrix.js) que usa la Matriz Semanal
+// real — nunca una reimplementación del cálculo.
+//
+// Alcance (pedido "MATRIZ LUBRICADOR POR UBICACIÓN COMPLETA", 2026-10-09):
+// CONSULTA GLOBAL de la ubicación activa/autorizada del Lubricador — TODOS
+// los equipos cuya ubicación MAESTRA (equipo.locationId) sea esa, sin
+// importar cuadrilla ni turno (Día/Noche incluidos). El límite de
+// seguridad sigue siendo la ubicación: el caller (renderLubricadorHome())
+// ya filtra `equipos` por `scope.crewLocationId` ANTES de llamar aquí —
+// esta función nunca decide el scope, solo arma la tabla con lo que
+// recibe. A propósito SIN selector de Ubicación/Familia: el Lubricador no
+// debe poder consultar OTRA ubicación desde aquí, nunca estado global de
+// toda la flota.
 //
 // Rediseño de ventana (auditoría UI UX Pro Max 2026-10-09 — modal demasiado
 // angosto/comprimido): mismo cálculo y mismos datos, SOLO cambia la
@@ -3720,14 +3734,15 @@ async function renderLubricadorHome() {
 // mismo patrón offset+lunes ya usado en renderMatrizSemanal (nunca una
 // lógica de planificación nueva: `hoy` para comparar estados siempre es la
 // fecha real, solo `lunes` se desplaza para decidir qué semana se muestra).
-function openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationName, turnoLabel }, offset = 0) {
+function openLubricadorMatrizModal({ equipos, plans, records, locationName }, offset = 0) {
   const visibles = equipos.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
     return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
   }).sort((a, b) => a.code.localeCompare(b.code));
 
   if (!visibles.length) {
-    openModal('Matriz semanal', `<div class="empty-state">Ningún equipo de tu cuadrilla tiene un plan por día y turno configurado.</div>`);
+    const lugar = locationName ? `de ${esc(locationName)} ` : '';
+    openModal('Matriz semanal', `<div class="empty-state">Ningún equipo ${lugar}tiene un plan por día y turno configurado.</div>`);
     return;
   }
 
@@ -3748,11 +3763,14 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationNa
   const CELDA_TEXTO = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE', pausado: 'PAUSADO' };
   const CELDA_CLASE = { hecho: 'celda-hecho', hecho_atrasado: 'celda-hecho-atrasado', hecho_adelantado: 'celda-hecho-adelantado', no_realizado: 'celda-no-realizado', pendiente: 'celda-pendiente', pausado: 'celda-pausado', futuro: 'celda-futuro' };
 
-  const contextoLinea = [locationName, myCrew?.name, turnoLabel].filter(Boolean).join(' · ');
+  // Texto dinámico (§5 del pedido, nunca hardcodear "Volcán"): "{Ubicación} ·
+  // Todos los equipos · Día y Noche · Solo lectura" — refleja el nuevo
+  // alcance (todas las cuadrillas/turnos de la ubicación), no el de "Mi
+  // Turno" (cuadrilla + turno activos) que ya NO describe esta vista.
+  const contextoLinea = [locationName, 'Todos los equipos', 'Día y Noche', 'Solo lectura'].filter(Boolean).join(' · ');
 
   const html = `
-    ${contextoLinea ? `<p class="lub-mtz-context dim">${esc(contextoLinea)}</p>` : ''}
-    <p class="lub-mtz-scope-note dim">Solo lectura — equipos de tu cuadrilla.</p>
+    <p class="lub-mtz-context dim">${esc(contextoLinea)}</p>
     <div class="lub-mtz-nav-row">
       <button type="button" class="icon-btn" id="lubmtz-prev" aria-label="Semana anterior" title="Semana anterior">‹</button>
       <span class="matriz-rango">${rangoCompacto}${offset === 0 ? ' · Semana actual' : ''}</span>
@@ -3790,7 +3808,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationNa
   `;
   openModal('Matriz semanal', html, 'modal-lub-matriz');
   $$('.matriz-wrap').forEach(wireMatrizScrollHint);
-  const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationName, turnoLabel }, newOffset);
+  const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, locationName }, newOffset);
   $('#lubmtz-prev').addEventListener('click', () => reopen(offset - 1));
   $('#lubmtz-next').addEventListener('click', () => reopen(offset + 1));
   $('#lubmtz-hoy')?.addEventListener('click', () => reopen(0));

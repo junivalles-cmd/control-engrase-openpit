@@ -248,7 +248,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canManageCrewMembership',
     'canRegisterOutOfPlan', 'getAuthorizedCrews',
     'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveOperationalScope',
-    'classifyEquipmentWork', 'findActivePendingAssignment', 'createAssignment',
+    'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
     'canLubricadorExecuteEquipment',
     'buildExecutionSnapshot', 'resolveRecordEquipmentLocationId',

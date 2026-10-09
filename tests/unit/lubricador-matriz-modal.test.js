@@ -5,6 +5,13 @@
 // openModal/esc se reemplazan por stubs mínimos, pero estadoCelda()
 // (weekly-matrix.js) y WEEKDAY_NAMES (lubrication-status.js) son las
 // funciones REALES — nunca una reimplementación del estado de celda.
+//
+// Alcance (pedido "MATRIZ LUBRICADOR POR UBICACIÓN COMPLETA", 2026-10-09):
+// esta función YA NO decide el scope — solo arma la tabla con los `equipos`
+// que recibe. La decisión de QUÉ equipos le corresponden a la ubicación
+// activa del Lubricador vive en equiposForLubricadorMatriz()
+// (operational-scope.js) y se prueba aparte, en
+// tests/unit/lubricador-matriz-scope.test.js (casos A-I del pedido).
 
 import { describe, it, expect } from 'vitest';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
@@ -59,7 +66,7 @@ function isoDaysAgo(n) {
   return d.toISOString();
 }
 
-describe('openLubricadorMatrizModal() — matriz semanal de solo lectura, scoped a la cuadrilla', () => {
+describe('openLubricadorMatrizModal() — matriz semanal de solo lectura (arma la tabla con los equipos que recibe)', () => {
   const hoy = new Date();
   const hoyWeekday = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][hoy.getDay()];
 
@@ -78,62 +85,67 @@ describe('openLubricadorMatrizModal() — matriz semanal de solo lectura, scoped
   ];
 
   it('solo incluye equipos con plan "Día y turno de la semana" — e3 (horómetro) queda fuera', () => {
-    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
+    fn({ equipos, plans, records });
     expect(capturedHTML).toContain('T-06');
     expect(capturedHTML).toContain('T-07');
     expect(capturedHTML).not.toContain('T-99');
   });
 
-  it('usa el título "Matriz semanal" y menciona el nombre de la cuadrilla', () => {
-    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
+  it('usa el título "Matriz semanal"', () => {
+    fn({ equipos, plans, records });
     expect(capturedTitle).toBe('Matriz semanal');
-    expect(capturedHTML).toContain('Cuadrilla A');
   });
 
   it('T-06 (con registro real hoy) muestra REALIZADO vía estadoCelda() real, nunca un texto inventado', () => {
-    fn({ equipos, plans, records, myCrew: null });
+    fn({ equipos, plans, records });
     expect(capturedHTML).toMatch(/class="celda-hecho[" ]/);
     expect(capturedHTML).toContain('>REALIZADO<');
   });
 
   it('nunca incluye un <select> de Ubicación/Familia (scope-lock — solo los equipos recibidos)', () => {
-    fn({ equipos, plans, records, myCrew: null });
+    fn({ equipos, plans, records });
     expect(capturedHTML).not.toContain('<select');
   });
 
+  it('nunca incluye controles de edición (planner/admin) — solo lectura', () => {
+    fn({ equipos, plans, records });
+    expect(capturedHTML).not.toMatch(/<(button|a)[^>]*(editar|reasignar|mover|guardar)/i);
+  });
+
   it('incluye la leyenda con los mismos colores reales de la Matriz Semanal (incluye el fix de "Realizado atrasado" #8A5A00)', () => {
-    fn({ equipos, plans, records, myCrew: null });
+    fn({ equipos, plans, records });
     expect(capturedHTML).toContain('#8A5A00');
     expect(capturedHTML).toContain('Realizado atrasado');
   });
 
-  it('sin equipos con plan día/turno: muestra un estado vacío explicativo, nunca una tabla rota', () => {
-    fn({ equipos: [equipos[2]], plans, records, myCrew: null });
-    expect(capturedHTML).toContain('Ningún equipo de tu cuadrilla tiene un plan por día y turno configurado.');
+  it('sin equipos con plan día/turno: muestra un estado vacío explicativo con la ubicación, nunca una tabla rota', () => {
+    fn({ equipos: [equipos[2]], plans, records, locationName: 'Volcán' });
+    expect(capturedHTML).toContain('Ningún equipo de Volcán tiene un plan por día y turno configurado.');
   });
 
-  // Rediseño de ventana (auditoría UI UX Pro Max 2026-10-09): modal más
-  // ancho/casi pantalla completa, línea de contexto Ubicación · Cuadrilla ·
-  // Turno, y navegación de semana (‹/Hoy/›) — mismo cálculo (estadoCelda(),
-  // hoy fijo, solo `lunes` se desplaza), nunca lógica de planificación nueva.
   it('abre con el modificador .modal-lub-matriz (modal casi pantalla completa, nunca el genérico de 620px)', () => {
-    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
+    fn({ equipos, plans, records });
     expect(capturedExtraClass).toBe('modal-lub-matriz');
   });
 
-  it('línea de contexto: Ubicación · Cuadrilla · Turno, en ese orden, solo con los valores recibidos', () => {
-    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' }, locationName: 'Volcán', turnoLabel: 'Turno Día' });
-    expect(capturedHTML).toContain('Volcán · Cuadrilla A · Turno Día');
+  // §5 del pedido "MATRIZ LUBRICADOR POR UBICACIÓN COMPLETA": el encabezado
+  // ya NO dice "equipos de tu cuadrilla" (eso describía el scope viejo,
+  // restrictivo) — ahora refleja el alcance real: toda la ubicación, los 2
+  // turnos, nunca hardcodea el nombre de la ubicación.
+  it('línea de contexto dinámica: "{Ubicación} · Todos los equipos · Día y Noche · Solo lectura"', () => {
+    fn({ equipos, plans, records, locationName: 'Volcán' });
+    expect(capturedHTML).toContain('Volcán · Todos los equipos · Día y Noche · Solo lectura');
+    expect(capturedHTML).not.toContain('tu cuadrilla');
   });
 
-  it('sin locationName/turnoLabel (no provistos), la línea de contexto se arma solo con lo disponible', () => {
-    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
-    expect(capturedHTML).toContain('Cuadrilla A');
+  it('sin locationName (no provisto), la línea de contexto se arma solo con lo disponible, sin "undefined"', () => {
+    fn({ equipos, plans, records });
+    expect(capturedHTML).toContain('Todos los equipos · Día y Noche · Solo lectura');
     expect(capturedHTML).not.toContain('undefined');
   });
 
   it('incluye navegación de semana (‹ rango › ) con "Semana actual" en offset 0, sin botón "Hoy"', () => {
-    fn({ equipos, plans, records, myCrew: null });
+    fn({ equipos, plans, records });
     expect(capturedHTML).toContain('id="lubmtz-prev"');
     expect(capturedHTML).toContain('id="lubmtz-next"');
     expect(capturedHTML).toContain('Semana actual');
@@ -141,13 +153,13 @@ describe('openLubricadorMatrizModal() — matriz semanal de solo lectura, scoped
   });
 
   it('con un offset distinto de 0, muestra el botón "Hoy" y ya no dice "Semana actual"', () => {
-    fn({ equipos, plans, records, myCrew: null }, 1);
+    fn({ equipos, plans, records }, 1);
     expect(capturedHTML).toContain('id="lubmtz-hoy"');
     expect(capturedHTML).not.toContain('Semana actual');
   });
 
   it('el botón "‹ Semana anterior" vuelve a abrir el modal con offset-1 (mismo patrón offset+lunes de renderMatrizSemanal)', () => {
-    fn({ equipos, plans, records, myCrew: null }, 0);
+    fn({ equipos, plans, records }, 0);
     capturedHTML = '';
     registeredHandlers['#lubmtz-prev']();
     expect(capturedExtraClass).toBe('modal-lub-matriz');
@@ -155,7 +167,7 @@ describe('openLubricadorMatrizModal() — matriz semanal de solo lectura, scoped
   });
 
   it('el botón "Hoy" vuelve a offset 0 ("Semana actual" reaparece)', () => {
-    fn({ equipos, plans, records, myCrew: null }, 2);
+    fn({ equipos, plans, records }, 2);
     registeredHandlers['#lubmtz-hoy']();
     expect(capturedHTML).toContain('Semana actual');
   });

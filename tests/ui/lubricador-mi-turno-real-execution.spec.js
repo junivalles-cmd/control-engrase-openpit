@@ -36,7 +36,7 @@ const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join
 const scopeNames = [
   'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
-  'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey',
+  'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [
@@ -481,4 +481,56 @@ test('F — un skip ("no se pudo ejecutar") guardado localmente (sin red) perman
   if (enRealizados) {
     expect(await seccion(page, 'REALIZADOS').locator('.lub-eq-code').allTextContents()).not.toContain('T-53');
   }
+});
+
+// Pedido "MATRIZ LUBRICADOR POR UBICACIÓN COMPLETA" (2026-10-09): integración
+// real del botón "Matriz semanal" dentro de renderLubricadorHome() — confirma
+// que el wiring REAL (no un test aislado de la función pura) pasa
+// equiposForLubricadorMatriz(equipos, scope) — TODA la ubicación, turno Día Y
+// Noche — en vez de `normal` (el scope restrictivo de "Mi Turno").
+test('botón "Matriz semanal": abre con TODOS los equipos de la ubicación activa (turno Día y Noche), nunca otra ubicación — Mi Turno sigue igual de restringido', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [
+    { id: 'e1', code: 'VOL-DIA', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' },
+    { id: 'e2', code: 'VOL-NOCHE', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1' },
+    { id: 'e3', code: 'OTRA-UBIC', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l2' },
+  ];
+  // e1: turno Día (shiftId en el plan). e2: turno Noche. Ninguno de los 2
+  // tiene registro hoy — ambos quedan "pendientes" para Mi Turno, lo que
+  // además confirma que SÍ pertenecen al scope restrictivo normal de la
+  // cuadrilla default (sirve para distinguir "Mi Turno" de "Matriz" abajo).
+  const hoyWeekday = weekdayName(new Date());
+  const plans = [
+    { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday], shiftId: 'shift_dia' },
+    { id: 'p2', equipmentId: 'e2', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday], shiftId: 'shift_noche' },
+    { id: 'p3', equipmentId: 'e3', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+  ];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => {
+    window.__capturedMatriz = null;
+    // Reemplaza el stub no-op de bootPage() SOLO para capturar los
+    // argumentos reales con los que el botón real lo invoca — nunca
+    // reimplementa la función en sí (eso ya se prueba en
+    // tests/unit/lubricador-matriz-modal.test.js).
+    window.openLubricadorMatrizModal = (args) => { window.__capturedMatriz = args; };
+  });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+
+  await page.click('#lub-quick-matriz');
+  expect(errors).toEqual([]); // el click no debe lanzar (p. ej. ReferenceError por una dependencia sin cargar)
+  const captured = await page.evaluate(() => window.__capturedMatriz);
+
+  const idsMatriz = captured.equipos.map((e) => e.id).sort();
+  expect(idsMatriz).toEqual(['e1', 'e2']); // turno Día Y Noche de l1, nunca e3 (l2)
+  expect(captured.locationName).toBe('Rajo Principal'); // LOCATIONS[0] = l1
+  expect(new Set(idsMatriz).size).toBe(idsMatriz.length); // sin duplicados
+
+  // "Mi Turno" (secciones reales ya pintadas) sigue viendo e1/e2 como
+  // trabajo normal de la cuadrilla default — sin cambios de scope ahí.
+  expect(await enCuantasSeccionesDeTrabajo(page, 'VOL-DIA')).toBe(1);
+  expect(await enCuantasSeccionesDeTrabajo(page, 'VOL-NOCHE')).toBe(1);
 });

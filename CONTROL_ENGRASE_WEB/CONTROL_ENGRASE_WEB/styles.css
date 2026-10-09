@@ -2547,11 +2547,10 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 .modal-lub-matriz .modal-body {
   flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto;
 }
-.lub-mtz-context { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--text); }
-.lub-mtz-scope-note { margin: 0 0 10px; font-size: 11.5px; }
+.lub-mtz-context { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text); }
 .lub-mtz-nav-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .lub-mtz-nav-row .matriz-rango { flex: 1 1 auto; text-align: center; }
-.modal-lub-matriz .lub-mtz-context, .modal-lub-matriz .lub-mtz-scope-note,
+.modal-lub-matriz .lub-mtz-context,
 .modal-lub-matriz .lub-mtz-nav-row, .modal-lub-matriz .color-legend { flex: none; }
 /* La tabla se queda con el espacio vertical que sobra (nunca un % fijo
    adivinado) — resuelve directamente "demasiada altura de leyenda/contexto

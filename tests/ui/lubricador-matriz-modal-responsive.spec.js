@@ -61,8 +61,7 @@ async function bootPage(page) {
   await page.evaluate(
     ({ equipos, plans, records }) => {
       window.openLubricadorMatrizModal({
-        equipos, plans, records, myCrew: { name: '76-08' },
-        locationName: 'Volcán', turnoLabel: 'Turno Día',
+        equipos, plans, records, locationName: 'Volcán',
       });
     },
     { equipos, plans, records }
@@ -101,7 +100,7 @@ test('header: título "MATRIZ SEMANAL" (uppercase por CSS), línea de contexto y
   await bootPage(page);
   await expect(page.locator('#modal-title-text')).toHaveText('Matriz semanal');
   await expect(page.locator('#modal-title-text')).toHaveCSS('text-transform', 'uppercase');
-  await expect(page.locator('.lub-mtz-context')).toContainText('Volcán · 76-08 · Turno Día');
+  await expect(page.locator('.lub-mtz-context')).toContainText('Volcán · Todos los equipos · Día y Noche · Solo lectura');
   await expect(page.locator('#modal-close')).toBeVisible();
 });
 

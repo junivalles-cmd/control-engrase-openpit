@@ -336,6 +336,34 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
 }
 
 /* ============================================================
+   MATRIZ SEMANAL DEL LUBRICADOR — alcance de CONSULTA (pedido "MATRIZ
+   LUBRICADOR POR UBICACIÓN COMPLETA", 2026-10-09)
+   ============================================================
+   A diferencia de classifyEquipmentWork() (arriba) — que decide el
+   trabajo EJECUTABLE de "Mi Turno": cuadrilla DEFAULT de la ubicación +
+   excepciones por assignment — la Matriz es una vista de SOLO LECTURA de
+   TODA la ubicación activa/autorizada del usuario. Nunca filtra por:
+     - cuadrilla (incluye equipos de CUALQUIER cuadrilla de esa ubicación,
+       no solo la default);
+     - turno (incluye equipos programados Día Y Noche — el turno es dato
+       contextual, nunca un filtro de exclusión aquí).
+   El único límite de seguridad sigue siendo la ubicación: solo
+   `scope.crewLocationId` (la ubicación autorizada de la cuadrilla
+   resuelta de ESTE usuario, ver resolveOperationalScope() — nunca se
+   amplía a otra ubicación ni se vuelve GLOBAL para LUBRICADOR).
+   Usa `equipo.locationId` — la ubicación MAESTRA/actual del equipo (la
+   misma que ya usa canLubricadorExecuteEquipment()). Una
+   `lubrication_assignments` temporal no tiene campo de ubicación y nunca
+   cambia `equipo.locationId`, así que no puede mover ni duplicar un
+   equipo entre ubicaciones aquí — cada equipo de `equipos` (ya sin
+   duplicados, viene de DB.allActive('equipment')) aparece como mucho una
+   vez en el resultado. */
+function equiposForLubricadorMatriz(equipos, scope) {
+  if (!scope || scope.kind !== 'CREW_SCOPED' || !scope.crewLocationId) return [];
+  return (equipos || []).filter(e => e.locationId === scope.crewLocationId);
+}
+
+/* ============================================================
    MOTOR DE ASIGNACIONES (§L, §O, §P, §Q, §R) — funciones puras de
    DECISIÓN: reciben el estado actual y devuelven qué escribir, o lanzan un
    Error con mensaje de negocio si la operación no es válida. Quien llama

@@ -231,8 +231,12 @@ describe('§6 — Acciones rápidas reusan funciones reales, nunca reimplementan
     expect(src).toContain("$('#lub-quick-registrar').addEventListener('click', () => openOutOfPlanEquipmentPicker());");
   });
 
-  it('Matriz semanal abre openLubricadorMatrizModal() pasando `normal` (equipos YA scoped) — nunca equipos sin filtrar', () => {
-    expect(src).toMatch(/openLubricadorMatrizModal\(\{\s*equipos: normal,/);
+  it('Matriz semanal abre openLubricadorMatrizModal() pasando equiposForLubricadorMatriz(equipos, scope) — CONSULTA GLOBAL de la ubicación (2026-10-09), ya NO `normal` (eso es el scope restrictivo de "Mi Turno")', () => {
+    expect(src).toMatch(/openLubricadorMatrizModal\(\{\s*equipos: equiposForLubricadorMatriz\(equipos, scope\),/);
+    // equipos: normal ya no debe aparecer como argumento de esta llamada
+    // específica (puede seguir existiendo `normal` en el resto de la
+    // función, para Mi Turno — solo se descarta el patrón exacto de abajo).
+    expect(src).not.toMatch(/openLubricadorMatrizModal\(\{\s*equipos: normal,/);
   });
 });
 
