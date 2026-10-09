@@ -138,21 +138,21 @@ test.describe('B) nunca ve opciones administrativas', () => {
   });
 });
 
-test.describe('C) Apariencia — 9 acentos + 4 modos, cambio inmediato, persistencia local', () => {
-  test('el botón "Personalizar colores" abre el picker REAL con los 9 acentos y 4 modos', async ({ page }) => {
+test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmediato, persistencia local', () => {
+  test('el botón "Personalizar colores" abre el picker REAL con los 8 acentos y 4 modos', async ({ page }) => {
     await bootConfig(page);
     await page.locator('#lub-config-theme').click();
-    await expect(page.locator('.theme-preview-card[data-accent]')).toHaveCount(9);
+    await expect(page.locator('.theme-preview-card[data-accent]')).toHaveCount(8);
     await expect(page.locator('.theme-preview-card[data-mode]')).toHaveCount(4);
   });
 
   test('cambiar acento aplica data-theme de inmediato (sin reload) y persiste en localStorage', async ({ page }) => {
     await bootConfig(page);
     await page.locator('#lub-config-theme').click();
-    await page.locator('.theme-preview-card[data-accent="purpura"]').click(); // "Morado técnico"
-    await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('purpura');
+    await page.locator('.theme-preview-card[data-accent="violeta-ejec"]').click(); // "Violeta Ejecutivo"
+    await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('violeta-ejec');
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('engrase_theme')));
-    expect(stored.accent).toBe('purpura');
+    expect(stored.accent).toBe('violeta-ejec');
   });
 
   test('cambiar modo a "Modo Sol" aplica data-mode de inmediato y persiste', async ({ page }) => {
@@ -164,14 +164,25 @@ test.describe('C) Apariencia — 9 acentos + 4 modos, cambio inmediato, persiste
     expect(stored.mode).toBe('sun');
   });
 
-  test('los 9 acentos y 4 modos son exactamente los pedidos (azul/teal, ámbar, verde petróleo, morado, rojo ladrillo, naranja cobre, grafito, gris acero, cian · claro, oscuro, alto contraste, modo sol)', async ({ page }) => {
+  test('los 8 acentos corporativos y 4 modos son EXACTAMENTE los pedidos (azul corporativo, amarillo maquinaria, azul acero, petróleo, grafito, verde bosque, cobre ejecutivo, violeta ejecutivo · claro, oscuro, alto contraste, modo sol)', async ({ page }) => {
     await bootConfig(page);
     const { accentIds, modeIds } = await page.evaluate(() => ({
       accentIds: window.THEMES.map((t) => t.id),
       modeIds: window.MODES.map((m) => m.id),
     }));
-    expect(accentIds.sort()).toEqual(['acero', 'amber', 'cian', 'cobre', 'graphite', 'ladrillo', 'petroleo', 'purpura', 'teal'].sort());
+    expect(accentIds.length).toBe(8);
+    expect(accentIds.sort()).toEqual([
+      'azul-corp', 'amarillo-cat', 'azul-acero', 'petroleo-ejec', 'grafito', 'verde-bosque', 'cobre-ejec', 'violeta-ejec',
+    ].sort());
     expect(modeIds.sort()).toEqual(['contrast', 'dark', 'light', 'sun'].sort());
+  });
+
+  test('"azul-corp" (Azul Corporativo) es el default y el on-accent de "amarillo-cat" es oscuro (nunca blanco)', async ({ page }) => {
+    await bootConfig(page);
+    const theme = await page.evaluate(() => window.THEMES);
+    expect(theme[0].id).toBe('azul-corp');
+    const amarillo = theme.find((t) => t.id === 'amarillo-cat');
+    expect(amarillo.onColor.toLowerCase()).not.toBe('#ffffff');
   });
 });
 

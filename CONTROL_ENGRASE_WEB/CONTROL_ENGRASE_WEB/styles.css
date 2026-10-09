@@ -66,38 +66,57 @@
 }
 
 /* ---------------- Paletas de color de acento (elegibles por el usuario) ----------------
-   Rediseño visual 2026-10-08 ("ampliar opciones de color"): biblioteca de 9
-   acentos controlados (nunca un selector RGB libre) — cada uno con
-   --accent/--accent-dark/--on-accent elegidos para pasar WCAG AA (4.5:1)
-   en texto normal sobre su propio --accent, verificado con la fórmula de
-   luminancia relativa de WCAG antes de fijar cada hex. "teal" sigue siendo
-   el recomendado/default de instalaciones nuevas (ver getTheme() en app.js
-   / script anti-flash en index.html). blue/green/red se MANTIENEN sin
-   tocar, solo por compatibilidad con preferencias ya guardadas en
-   localStorage de instalaciones previas a este rediseño — ya no se
-   ofrecen en el selector (reemplazados por presets con nombre/intención
-   propia: verde petróleo, rojo ladrillo). */
-[data-theme="teal"]        { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; } /* Azul/Teal moderno */
-[data-theme="amber"]       { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; } /* Ámbar industrial */
-[data-theme="petroleo"]    { --accent: #0F6A4C; --accent-dark: #0A4A35; --on-accent: #FFFFFF; } /* Verde petróleo */
-[data-theme="purpura"]     { --accent: #5B4FBF; --accent-dark: #433790; --on-accent: #FFFFFF; } /* Morado técnico */
-[data-theme="ladrillo"]    { --accent: #A3342A; --accent-dark: #7A2620; --on-accent: #FFFFFF; } /* Rojo ladrillo */
-[data-theme="cobre"]       { --accent: #9C5417; --accent-dark: #7A4012; --on-accent: #FFFFFF; } /* Naranja cobre */
-[data-theme="graphite"]    { --accent: #9CA3AF; --accent-dark: #6B7280; --on-accent: #1a1400; } /* Grafito */
-[data-theme="acero"]       { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; } /* Gris acero */
-[data-theme="cian"]        { --accent: #06B6D4; --accent-dark: #075E76; --on-accent: #1a1400; } /* Cian */
-[data-theme="blue"]        { --accent: #3B82F6; --accent-dark: #1D4ED8; } /* legado, ya no listado */
-[data-theme="green"]       { --accent: #22C55E; --accent-dark: #15803D; } /* legado, ya no listado */
-[data-theme="red"]         { --accent: #EF4444; --accent-dark: #B91C1C; } /* legado, ya no listado */
+   PALETA CORPORATIVA FINAL (2026-10-09, reemplaza la biblioteca de 9
+   acentos del rediseño 2026-10-08): 8 acentos corporativos fijos, nunca
+   un selector RGB libre. Cada --on-accent se recalculó con la fórmula de
+   luminancia relativa de WCAG contra su propio --accent — "Amarillo
+   Maquinaria" es la ÚNICA de las 8 que necesita texto oscuro (13.99:1 con
+   negro puro vs 1.50:1 con blanco — nunca se asume blanco por default);
+   las otras 7 dan 6.4-8.7:1 con blanco, todas AA (varias AAA). Los 8
+   --accent-dark son los valores EXACTOS pedidos (variante "Oscuro" de
+   cada color), no recalculados. "azul-corp" es el nuevo default (ver
+   getTheme() en app.js / script anti-flash en index.html).
+   Los 9 acentos del rediseño anterior (teal/amber/petroleo/purpura/
+   ladrillo/cobre/graphite/acero/cian) y los 3 legado de antes de eso
+   (blue/green/red) se MANTIENEN sin tocar, solo por compatibilidad con
+   preferencias ya guardadas en localStorage — ninguno de los 12 se
+   ofrece ya en el selector. */
+[data-theme="azul-corp"]    { --accent: #1F4E79; --accent-dark: #163A5C; --on-accent: #FFFFFF; } /* Azul Corporativo (default) */
+[data-theme="amarillo-cat"] { --accent: #FFCD11; --accent-dark: #B88A00; --on-accent: #1a1400; } /* Amarillo Maquinaria / Caterpillar */
+[data-theme="azul-acero"]   { --accent: #365E7D; --accent-dark: #29485F; --on-accent: #FFFFFF; } /* Azul Acero */
+[data-theme="petroleo-ejec"] { --accent: #0F5B5D; --accent-dark: #0A4142; --on-accent: #FFFFFF; } /* Petróleo */
+[data-theme="grafito"]      { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; } /* Grafito */
+[data-theme="verde-bosque"] { --accent: #365E4A; --accent-dark: #274638; --on-accent: #FFFFFF; } /* Verde Bosque */
+[data-theme="cobre-ejec"]   { --accent: #8A4F2D; --accent-dark: #663A21; --on-accent: #FFFFFF; } /* Cobre Ejecutivo */
+[data-theme="violeta-ejec"] { --accent: #5B4A7A; --accent-dark: #43365B; --on-accent: #FFFFFF; } /* Violeta Ejecutivo */
 
-/* ---------------- Claro neutro (elegible por el usuario) ---------------- */
+/* ---- Legado (ya NO listados en el selector) — solo compatibilidad con localStorage ya guardado ---- */
+[data-theme="teal"]        { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; }
+[data-theme="amber"]       { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; }
+[data-theme="petroleo"]    { --accent: #0F6A4C; --accent-dark: #0A4A35; --on-accent: #FFFFFF; }
+[data-theme="purpura"]     { --accent: #5B4FBF; --accent-dark: #433790; --on-accent: #FFFFFF; }
+[data-theme="ladrillo"]    { --accent: #A3342A; --accent-dark: #7A2620; --on-accent: #FFFFFF; }
+[data-theme="cobre"]       { --accent: #9C5417; --accent-dark: #7A4012; --on-accent: #FFFFFF; }
+[data-theme="graphite"]    { --accent: #9CA3AF; --accent-dark: #6B7280; --on-accent: #1a1400; }
+[data-theme="acero"]       { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; }
+[data-theme="cian"]        { --accent: #06B6D4; --accent-dark: #075E76; --on-accent: #1a1400; }
+[data-theme="blue"]        { --accent: #3B82F6; --accent-dark: #1D4ED8; }
+[data-theme="green"]       { --accent: #22C55E; --accent-dark: #15803D; }
+[data-theme="red"]         { --accent: #EF4444; --accent-dark: #B91C1C; }
+
+/* ---------------- Claro (oficina / condiciones normales) ----------------
+   PALETA CORPORATIVA FINAL (2026-10-09): valores base EXACTOS pedidos —
+   antes era #F2F3F1/#F1F2EF/#DADCD7/#1B1F23/#656C73 (rediseño 2026-10-08).
+   La luminancia de fondo es casi idéntica (#F2F3F1 → #F4F6F8, apenas más
+   clara), así que los semánticos ajustados abajo (verificados contra
+   fondo blanco, el peor caso) siguen pasando AA sin recalcular. */
 [data-mode="light"] {
-  --bg: #F2F3F1;
+  --bg: #F4F6F8;
   --surface: #FFFFFF;
-  --surface-2: #F1F2EF;
-  --border: #DADCD7;
-  --text: #1B1F23;
-  --text-dim: #656C73;
+  --surface-2: #EEF2F5;
+  --border: #CBD5E1;
+  --text: #111827;
+  --text-dim: #5B6573;
   /* --green/--amber/--red del modo oscuro (auditoría de accesibilidad) daban
      ~2.2-3.9:1 de contraste sobre fondo blanco (fallan el mínimo 3:1 de WCAG
      para texto/íconos) — se ajustaron oscureciéndolos hasta pasar 4.5:1,
@@ -127,7 +146,14 @@
 [data-mode="light"] .lub-topbar,
 [data-mode="light"] .lub-record-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 
-/* ---------------- Modo de alto contraste (para uso bajo sol directo en campo) ---------------- */
+/* ---------------- Alto Contraste (accesibilidad máxima) ----------------
+   Objetivo explícito: MUCHO más extremo que Modo Sol, nunca una variante
+   del mismo modo (ver comparación en el comentario de [data-mode="sun"]
+   más abajo). Blanco/negro puro dominante, --text-dim IGUAL a --text
+   (sin jerarquía de grises intermedios — a propósito, Modo Sol SÍ
+   mantiene esa jerarquía), semánticos en su variante más oscura/extrema,
+   y el color corporativo pierde protagonismo en los controles primarios
+   (.btn-accent/.lub-hero-action forzados a negro, ver abajo). */
 [data-mode="contrast"] {
   --bg: #FFFFFF;
   --surface: #FFFFFF;
@@ -156,15 +182,22 @@
 [data-mode="contrast"] .lub-hero-action { background: #000000; color: #FFFFFF; }
 [data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
 
-/* ---------------- Modo Sol / Alta luz (legibilidad extrema bajo luz
-   exterior directa — distinto de "Alto contraste": aquí SÍ se permite
-   color, pero siempre sólido/saturado, nunca fondos translúcidos tipo
-   rgba(...,0.1) que pierden legibilidad bajo sol). Fondo blanco puro, texto
-   casi negro (más oscuro que Claro neutro), bordes gruesos (misma técnica
-   ya usada en Alto contraste), sin sombras (no se agrega la regla de
-   box-shadow sutil que sí tiene Claro neutro arriba) y los 3 colores
-   semánticos SE REUSAN literales del modo Claro neutro ya auditado AA —
-   nunca un valor nuevo, "no modificar significado semántico". ---------------- */
+/* ---------------- Modo Sol / Alta luz ("claro reforzado para exterior")
+   — tajo/taller exterior, mucha luz solar. Distinto de Alto Contraste a
+   propósito, en 3 ejes concretos:
+     1. SÍ se permite color: el acento corporativo se ve COMPLETO aquí
+        (botones .btn-accent pintan var(--accent) normal, nunca forzados
+        a negro como en Contraste) — sigue pareciendo una app empresarial
+        normal, nunca blanco/negro puro.
+     2. --text-dim queda DISTINTO de --text (jerarquía de grises real,
+        aunque oscura) — Contraste los colapsa a los dos en el mismo
+        negro puro.
+     3. Los 3 semánticos reusan LITERAL los del modo Claro (ya auditados
+        AA) — Contraste usa su propia variante más oscura/extrema.
+   Fondo blanco puro, texto casi negro (más oscuro que Claro), bordes
+   gruesos (misma técnica que Contraste), sin sombras (no se agrega la
+   regla de box-shadow sutil que sí tiene Claro) — nunca un valor
+   semántico nuevo, "no modificar significado semántico". ---------------- */
 [data-mode="sun"] {
   --bg: #FFFFFF;
   --surface: #FFFFFF;
@@ -366,8 +399,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px;
   border-radius: 10px; border: 2px solid var(--border); background: var(--surface-2); color: var(--text);
   cursor: pointer; font-size: 12px; font-weight: 600; text-align: left; min-height: var(--tap, 44px); width: 100%;
+  position: relative;
 }
 .theme-preview-card.selected { border-color: var(--pv-ring, var(--accent)); box-shadow: 0 0 0 2px var(--pv-ring, var(--accent)) inset; }
+/* "✓" de seleccionado (§11 del pedido: "[ ● ● ] Nombre tema ✓") — visto
+   SOLO en la tarjeta activa, nunca un elemento nuevo que insertar/quitar
+   del DOM en cada clic (ya existe siempre, solo cambia de visibilidad). */
+.theme-preview-check {
+  position: absolute; top: 8px; right: 10px; font-size: 14px; font-weight: 800;
+  color: var(--pv-ring, var(--accent)); opacity: 0;
+}
+.theme-preview-card.selected .theme-preview-check { opacity: 1; }
 .theme-preview-swatches { display: flex; align-items: center; gap: 6px; }
 .theme-preview-dot { width: 18px; height: 18px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,0.15); }
 .theme-preview-chip {
@@ -3093,3 +3135,13 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 }
 .mtz-sin-plan-note:hover { border-color: var(--accent); color: var(--text); }
 .mtz-sin-plan-note .btn-icon { width: 14px; height: 14px; flex: none; }
+
+/* ---------------- Alto Contraste — focus ring propio (paleta corporativa
+   final, 2026-10-09) ----------------
+   Al final del archivo a propósito (orden de especificidad ascendente que
+   ya sigue este archivo, ver no-descending-specificity): más fuerte (3px)
+   que el genérico de 2px (var(--focus)) que usa cualquier otro modo —
+   parte de ser "mucho más extremo" que Modo Sol (§15 del pedido). */
+[data-mode="contrast"] input:focus, [data-mode="contrast"] select:focus,
+[data-mode="contrast"] textarea:focus, [data-mode="contrast"] button:focus-visible,
+[data-mode="contrast"] a:focus-visible { outline-width: 3px !important; outline-offset: 2px !important; }

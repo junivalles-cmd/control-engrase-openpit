@@ -1781,53 +1781,59 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
   return REPORT_COLORS.rojo;
 }
 
-/* ---------- tema visual: biblioteca de presets (rediseño visual
-   2026-10-08, "ampliar opciones de color") ----------
+/* ---------- tema visual: PALETA CORPORATIVA FINAL (2026-10-09) ----------
+   Reemplaza la biblioteca de 9 acentos del rediseño 2026-10-08 (ver
+   styles.css, los 9 + blue/green/red quedan como [data-theme] "legado",
+   solo por compatibilidad con localStorage ya guardado — nunca se migran
+   ni se pierden, nunca se vuelven a ofrecer en el selector).
    2 grupos independientes, cada uno con su propia lista CONTROLADA (nunca
-   un selector RGB libre) — "mantener modo claro/oscuro si ya existe esa
-   separación" (pedido explícito):
-     - THEMES (9): color de ACENTO (--accent/--accent-dark/--on-accent,
-       ver [data-theme="..."] en styles.css). Los hex de cada uno se
-       eligieron para pasar WCAG AA (4.5:1) en texto normal sobre su
-       --accent — verificado antes de fijarlos, nunca a ojo.
+   un selector RGB libre):
+     - THEMES (8, EXACTOS — "eliminar/reemplazar las opciones actuales que
+       no pertenecen a la selección final"): color de ACENTO (--accent/
+       --accent-dark/--on-accent, ver [data-theme="..."] en styles.css).
+       --accent/--accent-dark son los hex EXACTOS pedidos; --on-accent se
+       recalculó con la fórmula de luminancia relativa de WCAG contra el
+       --accent real de cada uno — "Amarillo Maquinaria" (#FFCD11) es el
+       ÚNICO que necesita texto oscuro (13.99:1 con negro vs 1.50:1 con
+       blanco), nunca se asumió blanco por default. "azul-corp" es el
+       nuevo default.
      - MODES (4): familia de fondo/superficie/texto (--bg/--surface/
        --surface-2/--border/--text/--text-dim, ver [data-mode="..."]).
-       "Modo Sol" es nuevo: legibilidad extrema bajo luz exterior (fondo
-       blanco puro, texto casi negro, bordes gruesos, sin sombras) pero a
-       diferencia de "Alto contraste" SÍ permite color (reusa los mismos 3
-       semánticos ya auditados de Claro neutro, nunca un valor nuevo).
-   Ninguno de los 13 presets toca el SIGNIFICADO de --green/--amber/--red/
+       "Modo Sol" (claro reforzado para exterior, SÍ permite color) y
+       "Alto contraste" (blanco/negro extremo, el color corporativo pierde
+       protagonismo) son estructuralmente distintos a propósito — ver el
+       comentario comparativo en styles.css, [data-mode="sun"].
+   Ninguno de los 8+4 presets toca el SIGNIFICADO de --green/--amber/--red/
    --gray-status (VENCIDO/PENDIENTE/REALIZADO/PAUSADO) — solo re-calibran
-   su valor exacto por familia de fondo (clara/oscura), exactamente como ya
-   hacía el sistema antes de esta ampliación. */
+   su valor exacto por familia de fondo (clara/oscura), igual que antes. */
 const THEMES = [
-  { id: 'teal', label: 'Azul/Teal moderno', sub: 'Recomendado', color: '#0E7490', colorDark: '#0B4A57', onColor: '#FFFFFF' },
-  { id: 'amber', label: 'Ámbar industrial', color: '#F2A900', colorDark: '#C98A00', onColor: '#1a1400' },
-  { id: 'petroleo', label: 'Verde petróleo', color: '#0F6A4C', colorDark: '#0A4A35', onColor: '#FFFFFF' },
-  { id: 'purpura', label: 'Morado técnico', color: '#5B4FBF', colorDark: '#433790', onColor: '#FFFFFF' },
-  { id: 'ladrillo', label: 'Rojo ladrillo', color: '#A3342A', colorDark: '#7A2620', onColor: '#FFFFFF' },
-  { id: 'cobre', label: 'Naranja cobre', color: '#9C5417', colorDark: '#7A4012', onColor: '#FFFFFF' },
-  { id: 'graphite', label: 'Grafito', color: '#9CA3AF', colorDark: '#6B7280', onColor: '#1a1400' },
-  { id: 'acero', label: 'Gris acero', color: '#475569', colorDark: '#334155', onColor: '#FFFFFF' },
-  { id: 'cian', label: 'Cian', color: '#06B6D4', colorDark: '#075E76', onColor: '#1a1400' },
+  { id: 'azul-corp', label: 'Azul Corporativo', sub: 'Recomendado', color: '#1F4E79', colorDark: '#163A5C', onColor: '#FFFFFF' },
+  { id: 'amarillo-cat', label: 'Amarillo Maquinaria', color: '#FFCD11', colorDark: '#B88A00', onColor: '#1a1400' },
+  { id: 'azul-acero', label: 'Azul Acero', color: '#365E7D', colorDark: '#29485F', onColor: '#FFFFFF' },
+  { id: 'petroleo-ejec', label: 'Petróleo', color: '#0F5B5D', colorDark: '#0A4142', onColor: '#FFFFFF' },
+  { id: 'grafito', label: 'Grafito', color: '#475569', colorDark: '#334155', onColor: '#FFFFFF' },
+  { id: 'verde-bosque', label: 'Verde Bosque', color: '#365E4A', colorDark: '#274638', onColor: '#FFFFFF' },
+  { id: 'cobre-ejec', label: 'Cobre Ejecutivo', color: '#8A4F2D', colorDark: '#663A21', onColor: '#FFFFFF' },
+  { id: 'violeta-ejec', label: 'Violeta Ejecutivo', color: '#5B4A7A', colorDark: '#43365B', onColor: '#FFFFFF' },
 ];
 const MODES = [
-  { id: 'light', label: 'Claro neutro', icon: '☀', bg: '#F2F3F1', surface: '#FFFFFF', border: '#DADCD7', text: '#1B1F23' },
+  { id: 'light', label: 'Claro', icon: '☀', bg: '#F4F6F8', surface: '#FFFFFF', border: '#CBD5E1', text: '#111827' },
   { id: 'dark', label: 'Oscuro', icon: '🌙', bg: '#14171A', surface: '#1B1F23', border: '#333A40', text: '#E9E7E1' },
-  { id: 'contrast', label: 'Alto contraste', icon: '◐', bg: '#FFFFFF', surface: '#FFFFFF', border: '#000000', text: '#000000' },
+  { id: 'contrast', label: 'Alto Contraste', icon: '◐', bg: '#FFFFFF', surface: '#FFFFFF', border: '#000000', text: '#000000' },
   { id: 'sun', label: 'Modo Sol / Alta luz', icon: '🔆', bg: '#FFFFFF', surface: '#FFFFFF', border: '#15181C', text: '#0B0D0F' },
 ];
-const THEME_COLOR_BY_MODE = { light: '#F2F3F1', dark: '#14171A', contrast: '#FFFFFF', sun: '#FFFFFF' };
+const THEME_COLOR_BY_MODE = { light: '#F4F6F8', dark: '#14171A', contrast: '#FFFFFF', sun: '#FFFFFF' };
 
-// Instalación nueva (sin preferencia guardada todavía) arranca en modo CLARO
-// y acento "teal". Si el usuario ya guardó una preferencia (JSON.parse(...)
-// no vacío), esa gana siempre — Object.assign la sobrescribe sobre este
-// valor por defecto. Preferencias de antes de esta ampliación (accent
-// amber/blue/green/red/graphite, mode light/dark/contrast) siguen siendo
-// ids válidos (CSS intacto) — nunca se migran ni se pierden.
+// Instalación nueva (sin preferencia guardada todavía) arranca en modo
+// CLARO y acento "azul-corp" (Azul Corporativo, DEFAULT pedido). Si el
+// usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa gana
+// siempre — Object.assign la sobrescribe sobre este valor por defecto.
+// Preferencias de antes de esta paleta (cualquiera de los 9+3 acentos
+// "legado") siguen siendo ids válidos (CSS intacto) — nunca se migran ni
+// se pierden.
 function getTheme() {
-  try { return Object.assign({ accent: 'teal', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
-  catch { return { accent: 'teal', mode: 'light' }; }
+  try { return Object.assign({ accent: 'azul-corp', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
+  catch { return { accent: 'azul-corp', mode: 'light' }; }
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme.accent);
@@ -1862,6 +1868,7 @@ function openThemePicker() {
             <span class="theme-preview-chip" style="background:${th.color};color:${th.onColor}">Aa</span>
           </span>
           <span class="theme-preview-name">${esc(th.label)}${th.sub ? `<br><span class="dim">${esc(th.sub)}</span>` : ''}</span>
+          <span class="theme-preview-check" aria-hidden="true">✓</span>
         </button>`).join('')}
     </div>
     <div class="theme-preview-group-label">Fondo y contraste</div>
@@ -1873,6 +1880,7 @@ function openThemePicker() {
             <span class="theme-preview-mode-text" style="color:${m.text}">Aa</span>
           </span>
           <span class="theme-preview-name">${m.icon} ${esc(m.label)}</span>
+          <span class="theme-preview-check" aria-hidden="true">✓</span>
         </button>`).join('')}
     </div>
     <p class="dim" style="margin-top:10px">"Alto contraste" usa blanco y negro puro. "Modo Sol" permite color sólido pero con bordes gruesos y sin sombras — ambos pensados para leer bajo sol directo en campo.</p>
