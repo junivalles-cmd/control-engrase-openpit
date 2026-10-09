@@ -240,6 +240,19 @@ function photosOf(record) {
   return [];
 }
 
+// Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS") — indicador compacto "📷 N
+// foto(s)" para Ficha del equipo/Mis Engrases (§9/§10 del pedido: NUNCA un
+// thumbnail grande ahí, solo este indicador). Vacío (sin marcado) si el
+// registro no tiene foto — nunca un elemento vacío/engañoso. El llamador
+// conecta el clic a openGreaseRecordDetailModal(record, equipo) con el
+// `record` real (no se guarda nada aparte, solo el id, para no inflar el
+// HTML con datos duplicados).
+function photoIndicatorHTML(record) {
+  const n = photosOf(record).length;
+  if (!n) return '';
+  return `<button type="button" class="lub-photo-indicator" data-record-id="${esc(record.id)}">📷 ${n === 1 ? '1 foto' : n + ' fotos'}</button>`;
+}
+
 /* ---------- Equipos visitados recientemente (acceso rápido, por dispositivo) ---------- */
 function trackRecentEquipment(id) {
   try {
@@ -4398,6 +4411,7 @@ async function renderLubricadorHistorial() {
             ${validationBadgeHTML(valStatus)}
             ${valAction}
           </div>
+          ${photoIndicatorHTML(r)}
           ${editable ? `<button class="btn btn-sm lub-edit-record" data-id="${r.id}" style="margin-top:8px; width:100%">✏ Editar este engrase</button>` : `<div class="dim" style="margin-top:6px; font-size:11px">Solo se puede editar el mismo día que se registró.</div>`}
         </div>`;
       }).join('') || `<div class="empty-state">Aún no has registrado engrases.</div>`}
@@ -4405,6 +4419,13 @@ async function renderLubricadorHistorial() {
   $$('.lub-edit-record', c).forEach(btn => {
     btn.addEventListener('click', async () => openEditGreaseRecordForm(await DB.get('lubrication_records', btn.dataset.id)));
   });
+  // Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS", §10 del pedido): el indicador
+  // "📷 N foto(s)" abre el detalle real del registro — nunca un thumbnail
+  // grande directamente en la tarjeta.
+  $$('.lub-photo-indicator', c).forEach(b => b.addEventListener('click', () => {
+    const rec = records.find(r => r.id === b.dataset.recordId);
+    openGreaseRecordDetailModal(rec, equipos.find(e => e.id === rec.equipmentId));
+  }));
   $$('.lub-validar-btn', c).forEach(b => b.addEventListener('click', async () => {
     const rec = await DB.get('lubrication_records', b.dataset.rec);
     const eq = equipos.find(e => e.id === b.dataset.eq);
@@ -5932,6 +5953,7 @@ async function openEquipmentDetail(id) {
           <span class="mono dim">${fmt(r.hourmeter)} h</span>
           <span class="dim">${lub ? esc(lub.name) : '—'}</span>
           ${pend ? `<span class="motivo-tag">${pend} punto(s) sin engrasar</span>` : ''}
+          ${photoIndicatorHTML(r)}
         </div>`;
       }).join('') : '<div class="dim" style="padding:6px 0">Este equipo todavía no tiene engrases registrados.</div>'}
     </div>
@@ -5970,6 +5992,13 @@ async function openEquipmentDetail(id) {
     navigate('equipos');
   });
   $('#btn-view-qr')?.addEventListener('click', () => openEquipmentQR(e));
+  // Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS", §9 del pedido): el indicador
+  // "📷 N foto(s)" de "Últimos engrases" abre el detalle real del registro
+  // — nunca un thumbnail grande aquí mismo.
+  $$('.lub-photo-indicator', $('#modal-overlay')).forEach(b => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    openGreaseRecordDetailModal(ultimos.find(r => r.id === b.dataset.recordId), e);
+  }));
 
   // Reprogramar: mueve el engrase de ESTA semana a otro día, sin alterar el plan
   // permanente. Evita que un equipo que no se pudo atender el lunes quede marcado
@@ -11110,6 +11139,72 @@ function wirePhotoThumbs(container) {
   $$('.photo-thumb', container).forEach(img => {
     img.addEventListener('click', () => openPhotoLightbox(img.dataset.full, img.dataset.caption));
   });
+}
+
+// Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS", §11 del pedido) — "Detalle del
+// engrase": reusa TODO lo que ya existe, cero cálculo/componente nuevo:
+//   - Tipo/Estado: resolveRecordExecutionType()/resolveRecordCompleteness()
+//     (operational-scope.js) con las MISMAS etiquetas en español que ya usa
+//     tipoRecordHTML() en el Historial de escritorio (Planificado/Asignado/
+//     Fuera de plan, Completo/Parcial) — nunca un texto nuevo.
+//   - Validación: findActiveValidations()/validationStatusForRecord()/
+//     validationBadgeHTML(), los mismos de Mi Turno.
+//   - Fotos: photoThumbsHTML()/resolvePhotoThumbSrcs()/wirePhotoThumbs()/
+//     openPhotoLightbox(), los mismos ya probados en el Historial de
+//     escritorio — "ampliada al tocar" sale gratis de ahí. Si el registro
+//     solo tiene 1 foto (la mayoría), igual funciona: photoThumbsHTML() ya
+//     soporta 1 o varias sin rama especial.
+// Llamada desde Ficha del equipo y Mis Engrases (§9/§10) al tocar el
+// indicador "📷 N foto(s)" — nunca una vista nueva de cero.
+async function openGreaseRecordDetailModal(record, equipo) {
+  if (!record) return;
+  const lubricantes = await DB.allActive('lubricants');
+  const lub = lubricantes.find(l => l.id === record.greaseType);
+  const validations = (await DB.allActive('grease_validations')).filter(v => v.lubricationRecordId === record.id);
+  const valStatus = validationStatusForRecord(record, validations, new Date(), App.generalSettings);
+  const { value: tipo } = resolveRecordExecutionType(record);
+  const completeness = resolveRecordCompleteness(record);
+  // Mismas etiquetas EXACTAS que tipoRecordHTML()/completeness de
+  // renderHistorial() (escritorio) — nunca un texto nuevo para lo mismo.
+  const OOP_REASON_LABELS_DET = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const tipoLabel = tipo === 'OUT_OF_PLAN'
+    ? `Fuera de plan${resolveRecordOutOfPlanReason(record) ? ' — ' + (OOP_REASON_LABELS_DET[resolveRecordOutOfPlanReason(record)] || resolveRecordOutOfPlanReason(record)) : ''}`
+    : tipo === 'ASSIGNED' ? 'Asignado' : 'Planificado';
+  const estadoLabel = completeness === 'PARTIAL' ? 'Parcial' : completeness === 'COMPLETE' ? 'Completo' : '—';
+  const details = record.details || [];
+  const resolvedSrcs = await resolvePhotoThumbSrcs(record);
+  // §13 del pedido ("Pendiente de sincronizar" discreto, SIN cola de retry
+  // nueva): el valor crudo sigue en base64 hasta que uploadPhotoIfNeeded()
+  // (sync.js) lo sube con éxito — mismo criterio que ya usa
+  // resolveEvidenceSrc() (`value.startsWith('data:image')`), nunca un flag
+  // nuevo. La cola de reintento YA existe (sync.js la reintenta cada
+  // sincronización mientras siga en base64) — esto solo lo muestra.
+  const hayFotoPendiente = photosOf(record).some(p => typeof p === 'string' && p.startsWith('data:image'));
+
+  openModal(`Detalle del engrase${equipo ? ' · ' + esc(equipo.code) : ''}`, `
+    <div class="detail-grid">
+      ${equipo ? `<div><b>Equipo</b><div>${esc(equipo.code)} — ${esc(equipo.brand)} ${esc(equipo.model)}</div></div>` : ''}
+      <div><b>Fecha</b><div>${fmtDate(record.date)}</div></div>
+      <div><b>Hora</b><div>${new Date(record.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</div></div>
+      <div><b>Lubricador</b><div>${esc(record.userName)}</div></div>
+      <div><b>Tipo</b><div>${esc(tipoLabel)}</div></div>
+      <div><b>Estado</b><div>${esc(estadoLabel)}</div></div>
+      <div><b>Cantidad</b><div class="mono">${fmt(record.qty, 1)} ${GREASE_UNIT}</div></div>
+      ${lub ? `<div><b>Lubricante</b><div>${esc(lub.name)}</div></div>` : ''}
+      ${valStatus ? `<div><b>Validación</b><div>${validationBadgeHTML(valStatus)}</div></div>` : ''}
+    </div>
+    ${details.length ? `
+      <div class="dim" style="margin-top:10px"><b>Puntos realizados</b></div>
+      <div class="detail-grid" style="margin-top:4px">
+        ${details.map(d => `<div><div>${d.done ? '✓' : '✗'} ${esc(d.pointName)}</div>${!d.done ? `<div class="dim">${esc(d.reason || 'sin motivo')}</div>` : ''}</div>`).join('')}
+      </div>
+    ` : ''}
+    <div style="margin-top:10px">
+      <b>Fotos</b>${hayFotoPendiente ? ' <span class="dim" style="font-weight:400">· Pendiente de sincronizar</span>' : ''}
+      <div style="margin-top:6px">${photoThumbsHTML(record, equipo ? equipo.code : '', resolvedSrcs)}</div>
+    </div>
+  `);
+  wirePhotoThumbs($('.modal-body'));
 }
 
 // Protecci\u00F3n CSV/Excel formula injection (lote "No ejecutados", \u00A75 \u2014

@@ -2340,6 +2340,18 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 }
 .pendiente-nota { font-size: 11px; color: var(--amber); margin-top: 4px; line-height: 1.4; }
 
+/* Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS", §9/§10 del pedido): indicador
+   compacto "📷 N foto(s)" en Ficha del equipo/Mis Engrases — NUNCA un
+   thumbnail grande ahí (eso vive en el detalle, al tocar este indicador).
+   Mismo criterio de tamaño que .dash-code-link/.motivo-tag (acción
+   secundaria de baja frecuencia, no un botón primario de 44px). */
+.lub-photo-indicator {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px;
+  padding: 5px 10px; font-size: 11.5px; font-weight: 600; color: var(--text); cursor: pointer;
+}
+.lub-photo-indicator:active { background: var(--border); }
+
 /* ---------------- Anomalías automáticas ---------------- */
 .auto-tag {
   display: inline-block; font-size: 9.5px; font-weight: 700; text-transform: uppercase;
