@@ -2428,6 +2428,63 @@ function confirmLogout() {
   $('#confirm-logout-confirm').addEventListener('click', () => { closeModal(); logout(); });
 }
 
+// Fix 2026-10-09 ("SESIÓN OFFLINE", Parte C/D del pedido, §10-13) —
+// confirmación de cierre de sesión ESPECÍFICA del Lubricador, nunca
+// confirmLogout() (esa es del shell de escritorio, pensado para una PC de
+// oficina casi siempre en línea). Traza real de logout() confirmada ANTES
+// de este cambio (nunca asumida): Auth.signOut() es 100% local (sin fetch,
+// ver src/core/auth.js) — nunca falla por estar offline; el riesgo real es
+// DESPUÉS: Auth.signIn() para volver a entrar SÍ necesita red. Por eso el
+// aviso offline es sobre "después", no sobre que logout() vaya a fallar
+// ahora. Reusa Sync.pendingCount() (YA existente, nunca un contador nuevo)
+// y lockApp() (YA existente, nunca un bloqueo nuevo) — este modal solo
+// decide qué texto/botones mostrar según conexión/pendientes; nunca cambia
+// qué hace logout() en sí (sigue sin tocar IndexedDB/fotos/cola de sync,
+// confirmado).
+async function confirmLubricadorLogout() {
+  const nombre = App.currentUser ? App.currentUser.name : '';
+  const offline = !navigator.onLine;
+  const pendientes = (typeof Sync !== 'undefined' && Sync.pendingCount) ? await Sync.pendingCount() : 0;
+
+  if (offline && pendientes > 0) {
+    // §13 del pedido: la versión MÁS fuerte — sin conexión Y con datos sin sincronizar.
+    openModal('Hay información pendiente de sincronizar', `
+      <p>Los datos locales no se borrarán, pero recomendamos mantener la sesión hasta recuperar conexión.</p>
+      <p class="dim">${pendientes} registro(s) todavía sin sincronizar, y actualmente no hay conexión.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="lub-logout-cancel">Cancelar</button>
+        <button type="button" class="btn btn-accent" id="lub-logout-lock">Bloquear en su lugar</button>
+        <button type="button" class="btn btn-danger" id="lub-logout-confirm">Cerrar sesión de todos modos</button>
+      </div>
+    `);
+  } else if (offline) {
+    // §12 del pedido.
+    openModal('Estás sin conexión', `
+      <p>Si cierras sesión ahora, podrías necesitar conexión a internet para volver a iniciar sesión.</p>
+      <p class="dim">Si solo deseas dejar de usar temporalmente el dispositivo, usa Bloquear.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="lub-logout-cancel">Cancelar</button>
+        <button type="button" class="btn btn-accent" id="lub-logout-lock">Bloquear en su lugar</button>
+        <button type="button" class="btn btn-danger" id="lub-logout-confirm">Cerrar sesión de todos modos</button>
+      </div>
+    `);
+  } else {
+    // §11 del pedido: en línea — confirmación simple; si hay pendientes,
+    // solo una advertencia (nunca bloquea el cierre ni cambia los botones).
+    openModal('Cerrar sesión', `
+      <p>Se cerrará la sesión de ${esc(nombre)} en este dispositivo.</p>
+      ${pendientes > 0 ? `<p class="dim">${pendientes} registro(s) todavía no se han sincronizado — se sincronizarán solos la próxima vez que haya conexión.</p>` : ''}
+      <div class="modal-actions">
+        <button type="button" class="btn" id="lub-logout-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="lub-logout-confirm">Cerrar sesión</button>
+      </div>
+    `);
+  }
+  $('#lub-logout-cancel').addEventListener('click', closeModal);
+  $('#lub-logout-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
+  $('#lub-logout-confirm').addEventListener('click', () => { closeModal(); logout(); });
+}
+
 // "Cambiar usuario" — distinto de Bloquear (mantiene todo intacto) y de
 // Cerrar sesión (mismo texto que esa acción para quien lo lee, pero pensado
 // para el flujo "otra persona va a usar este teléfono ahora", no para dejar
@@ -3105,8 +3162,8 @@ function programarCierrePorFinDeTurno() {
   if (faltan > 0 && faltan < 24 * 3600 * 1000) {
     finTurnoTimer = setTimeout(() => {
       if (!App.currentUser) return;
-      alert('Terminó tu turno. La sesión se cierra para que la siguiente cuadrilla entre con su propio usuario.');
-      logout();
+      alert('Terminó tu turno. El dispositivo se bloquea para que la siguiente cuadrilla entre con su propio PIN.');
+      lockApp();
     }, faltan);
   }
 }
@@ -3116,8 +3173,8 @@ function resetInactivityTimer() {
   clearTimeout(inactivityTimer);
   inactivityTimer = setTimeout(() => {
     if (!App.currentUser) return;
-    alert(`Se cerró la sesión por ${INACTIVITY_MINUTES} minutos de inactividad. Vuelve a ingresar tu PIN.`);
-    logout();
+    alert(`Dispositivo bloqueado por ${INACTIVITY_MINUTES} minutos de inactividad. Ingresa tu PIN para continuar.`);
+    lockApp();
   }, INACTIVITY_MINUTES * 60 * 1000);
 }
 
