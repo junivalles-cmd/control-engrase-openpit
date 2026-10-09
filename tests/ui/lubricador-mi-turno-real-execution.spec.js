@@ -690,7 +690,7 @@ test('C — un equipo ASIGNADO con un PARTIAL de hoy sigue PENDIENTE (nunca desa
   await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
 });
 
-test('D — un equipo vencido por HORÓMETRO (KPI "Vencidos") no infla también "Pendientes hoy" ni aparece en Mi Turno (2 KPI incompatibles, nunca el mismo equipo en los 2)', async ({ page }) => {
+test('A/C — un equipo NORMAL vencido por HORÓMETRO cuenta en "Vencidos por horas" (+1), nunca infla "Pendientes hoy" ni aparece en Mi Turno', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -703,9 +703,92 @@ test('D — un equipo vencido por HORÓMETRO (KPI "Vencidos") no infla también 
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(kpiValue(page, 'Vencidos')).toHaveText('1');
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1');
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0'); // no también contado aquí
   expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0); // nunca se cuela en Mi Turno
+});
+
+test('C — un equipo ROJO por plan "Día y turno de la semana" (vencido de calendario, no de horas) NO cuenta en "Vencidos por horas"', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const diaVencido = weekdayNDaysAgo(2);
+  const equipos = [{ id: 'e1', code: 'T-65', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'ATRASADOS')).toContainText('T-65'); // sí es trabajo atrasado real
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('0'); // pero no es un vencimiento por horas
+});
+
+test('B — un equipo ASIGNADO (no normal) vencido por HORÓMETRO también cuenta en "Vencidos por horas" (el ESTADO decide, no el origen) — antes del fix quedaba fuera por completo', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // locationId 'l2' (no la ubicación default de crew1) + assignment a
+  // crew1 → clasifica como `assigned`, nunca `normal`.
+  const equipos = [{ id: 'e1', code: 'T-66', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l2', hourmeter: 600 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
+  const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
+
+  await bootPage(page, { equipos, plans, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1');
+  // §4 del pedido: aceptable que además aparezca en Atrasados (overlap a
+  // propósito — estado técnico vs. bandeja de trabajo, significados
+  // distintos) — el merge de asignados ya mete cualquier ROJO asignado ahí.
+  await expect(seccion(page, 'ATRASADOS')).toContainText('T-66');
+});
+
+test('D — un equipo que clasifica como asignado a SU PROPIA cuadrilla (redundante) cuenta una sola vez en "Vencidos por horas", nunca 2 veces', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // En la ubicación/cuadrilla default (l1/crew1) — candidato natural a
+  // "normal" — PERO con una asignación activa a esa MISMA cuadrilla:
+  // classifyEquipmentWork() lo deja SOLO en `assigned` (nunca duplicado en
+  // `normal`, ver operational-scope.js) — igual, confirma end-to-end que
+  // el KPI nunca lo cuenta 2 veces aunque pudiera llegar por los 2 caminos.
+  const equipos = [{ id: 'e1', code: 'T-67', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1', hourmeter: 600 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
+  const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
+
+  await bootPage(page, { equipos, plans, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1'); // nunca "2"
+});
+
+test('E — tras registrar el engrase (lastGreaseHour avanza, status deja de ser ROJO), el equipo deja de contar en "Vencidos por horas" en el siguiente render', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const equipos = [{ id: 'e1', code: 'T-68', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 600 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1');
+
+  // Simula lo que el flujo real de registrar hace para un plan por horas
+  // (app.js: `plan.lastGreaseHour = newHourmeter`, ver confirmHourmeterChange()
+  // / finalizeGreaseRecord()) — statusFor() para "Horas de operación" NUNCA
+  // mira lubrication_records, solo plan.lastGreaseHour vs equipment.hourmeter
+  // (lubrication-status.js) — así que el COMPLETE real se refleja así, no
+  // empujando un record.
+  await page.evaluate(() => {
+    window.__mockData.lubrication_plans[0].lastGreaseHour = 600;
+    return window.renderLubricadorHome();
+  });
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('0');
 });
 
 test('E — sin duplicados: cada equipo cuenta en el KPI de UNA sola categoría de trabajo pendiente/realizado', async ({ page }) => {

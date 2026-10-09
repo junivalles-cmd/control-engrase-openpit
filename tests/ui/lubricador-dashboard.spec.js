@@ -34,7 +34,7 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
       </div>
 
       <div class="lub-kpi-row">
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Vencidos</div></div>
+        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Vencidos por horas</div></div>
         <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Pendientes hoy</div></div>
         <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Arrastrados</div></div>
         <div class="lub-kpi-card tone-green"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Realizados hoy</div></div>

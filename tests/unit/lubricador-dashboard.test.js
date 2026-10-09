@@ -38,7 +38,7 @@ describe('§9 — TODO el cálculo sale del scope ya resuelto (usuario→cuadril
   });
 });
 
-describe('§2 — "Vencidos" (horómetro) nunca se mezcla con "Arrastrados" (día/turno)', () => {
+describe('§2 — "Vencidos por horas" (horómetro) nunca se mezcla con "Arrastrados" (día/turno)', () => {
   it('vencidosHorometro excluye explícitamente los planes "Día y turno de la semana"', () => {
     expect(src).toContain("s.code === 'ROJO' && (plansByEquipoId[e.id] || {}).controlType !== 'Día y turno de la semana'");
   });
@@ -47,6 +47,18 @@ describe('§2 — "Vencidos" (horómetro) nunca se mezcla con "Arrastrados" (dí
     const idx = src.indexOf('statusesNormal.forEach(({ e, s }) => {');
     const block = src.slice(idx, idx + 700);
     expect(block).toContain("if (!plan || plan.controlType !== 'Día y turno de la semana') return;");
+  });
+
+  // Fix 2026-10-09 ("CERRAR KPI VENCIDOS"): el KPI cuenta el ESTADO real
+  // (ROJO + plan por horas), no el origen de la tarea — normal Y asignado,
+  // sobre la MISMA fuente ya deduplicada (statusesNormalYAsignados) que
+  // también usa la reclasificación de PARTIAL — nunca un segundo merge.
+  it('vencidosHorometro se construye sobre statusesNormalYAsignados (normal + asignado), nunca solo statusesNormal', () => {
+    expect(src).toContain('const vencidosHorometro = statusesNormalYAsignados.filter(');
+  });
+
+  it('statusesNormalYAsignados deduplica por normalIds (un equipo que viniera por los 2 caminos nunca se cuenta 2 veces)', () => {
+    expect(src).toContain('const statusesNormalYAsignados = [...statusesNormal, ...statusesAssigned.filter(({ e }) => !normalIds.has(e.id))];');
   });
 });
 
@@ -68,9 +80,9 @@ describe('§3 — "Arrastrados" nunca cuenta dos veces el mismo equipo (turno an
 
   it('"Trabajo del turno actual" excluye los equipos ya mostrados en Arrastrados (cada equipo aparece una sola vez en toda la pantalla; fix 2026-10-08 agregó también excluir VERDE/realizadosHoyIds, ver describe aparte)', () => {
     // Fix 2026-10-09 (§6 del pedido): también excluye vencidosHorometroIds —
-    // un vencido por horómetro ya cuenta en el KPI "Vencidos", y antes se
-    // colaba también en Mi Turno porque arrastradosIds nunca lo incluye
-    // (ese Set es solo para vencidos por día/turno de la semana).
+    // un vencido por horómetro ya cuenta en el KPI "Vencidos por horas", y
+    // antes se colaba también en Mi Turno porque arrastradosIds nunca lo
+    // incluye (ese Set es solo para vencidos por día/turno de la semana).
     expect(src).toContain('!arrastradosIds.has(e.id) && !vencidosHorometroIds.has(e.id) && s.code !== \'VERDE\' && !realizadosHoyIds.has(e.id)');
   });
 });
@@ -99,11 +111,11 @@ describe('§3 — cada tarjeta de Arrastrados trae código/modelo/ubicación/ori
 });
 
 describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
-  it('los 4 kpiTile() son Vencidos/Pendientes hoy/Arrastrados/Realizados hoy, sin condicional que los oculte', () => {
+  it('los 4 kpiTile() son "Vencidos por horas"/Pendientes hoy/Arrastrados/Realizados hoy, sin condicional que los oculte', () => {
     const iRow = src.indexOf('<div class="lub-kpi-row">');
     const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
     const block = src.slice(iRow, iEnd);
-    expect(block).toContain("kpiTile('Vencidos', vencidosHorometro.length");
+    expect(block).toContain("kpiTile('Vencidos por horas', vencidosHorometro.length");
     expect(block).toContain("kpiTile('Pendientes hoy', miTurnoTotal.length");
     expect(block).toContain("kpiTile('Arrastrados', arrastradosTotal.length");
     expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyList.length");

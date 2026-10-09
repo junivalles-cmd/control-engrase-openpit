@@ -3496,6 +3496,12 @@ async function renderLubricadorHome() {
   const today = new Date().toDateString();
   const todayISODash = todayDateISO();
   const normalIds = new Set(normal.map(e => e.id));
+  // Fuente compartida "normal + asignados" (sin duplicar un equipo que por
+  // algún motivo viniera en los dos caminos) — reusada por "Vencidos" (abajo)
+  // y por la reclasificación de PARTIAL (más abajo): el ESTADO real decide,
+  // nunca el origen de la tarea (fix 2026-10-09, pedido "CERRAR KPI
+  // VENCIDOS", §2: "el KPI debe contar el estado real, no el origen").
+  const statusesNormalYAsignados = [...statusesNormal, ...statusesAssigned.filter(({ e }) => !normalIds.has(e.id))];
 
   // "Turno anterior": MISMO mecanismo exacto que pendientesTurnoAnterior del
   // Dashboard admin (renderDashboard()), solo que acotado a `normal` en vez
@@ -3510,10 +3516,17 @@ async function renderLubricadorHome() {
   });
   const turnoAnteriorIds = new Set(pendientesTurnoAnterior.map(e => e.id));
 
-  // "Vencidos" (KPI #1) = SOLO vencimiento por horómetro — nunca mezclado
-  // con lo programado por día/turno (eso es "Arrastrados", KPI #3, ver §2
-  // del pedido: "NO mezclar silenciosamente todos bajo 'Vencido'").
-  const vencidosHorometro = statusesNormal.filter(({ e, s }) =>
+  // "Vencidos por horas" (KPI #1, renombrado 2026-10-09 — antes "Vencidos" a
+  // secas, pedido "CERRAR KPI VENCIDOS" §1: confirmado que esto SIEMPRE fue
+  // específicamente vencimiento por horómetro/horas de operación, nunca
+  // cualquier trabajo atrasado — nunca mezclado con lo programado por
+  // día/turno, eso es "Arrastrados", KPI #3). §2: cuenta el ESTADO real
+  // (ROJO + plan por horas), no el origen — normal Y asignado, sobre
+  // statusesNormalYAsignados (ya deduplicado arriba, un equipo nunca cuenta
+  // 2 veces). §4: es aceptable que el mismo equipo también aparezca en
+  // Atrasados si de verdad aplica (p. ej. asignado vencido) — las bandejas
+  // no se tocan por esto.
+  const vencidosHorometro = statusesNormalYAsignados.filter(({ e, s }) =>
     s.code === 'ROJO' && (plansByEquipoId[e.id] || {}).controlType !== 'Día y turno de la semana');
 
   // "Día anterior"/"Mayor antigüedad": weekdayStatusFor() ya busca, para
@@ -3744,10 +3757,11 @@ async function renderLubricadorHome() {
   // función) y el merge de arriba lo descartaba (`s.code !== 'VERDE'`):
   // desaparecía de Mi Turno/Atrasados por completo, violando la regla de
   // que un PARTIAL nunca cuenta como completo. normalIds evita reprocesar
-  // un equipo que ya viniera por el camino normal.
+  // un equipo que ya viniera por el camino normal. Reusa
+  // statusesNormalYAsignados (misma fuente ya deduplicada que usa
+  // "Vencidos por horas" arriba) — nunca un segundo merge.
   const partialPendienteIds = new Set();
-  const statusesParaPartial = [...statusesNormal, ...statusesAssigned.filter(({ e }) => !normalIds.has(e.id))];
-  statusesParaPartial.filter(({ e, s }) => {
+  statusesNormalYAsignados.filter(({ e, s }) => {
     if (s.code !== 'VERDE' || !s.scheduleDate) return false;
     if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return false;
     const plan = plansByEquipoId[e.id];
@@ -3891,11 +3905,16 @@ async function renderLubricadorHome() {
          realizadosHoy), así que un equipo ASIGNADO con ocurrencia real del
          turno (ej. "PROGRAMADO HOY") aparecía en "MI TURNO (N)" pero el KPI
          seguía en 0 — ASIGNADO es origen/prioridad, no estado de ejecución,
-         y debe contar igual que el trabajo normal. "Vencidos" no cambia: es
-         el único KPI sin bandeja propia (vencimiento por horómetro), y un
-         equipo asignado vencido por horómetro ya se refleja en Atrasados. -->
+         y debe contar igual que el trabajo normal.
+         Fix 2026-10-09 ("CERRAR KPI VENCIDOS"): "Vencidos" → "Vencidos por
+         horas" — mismo criterio, ahora también sobre normal+asignado
+         (statusesNormalYAsignados, ver arriba), nunca solo normal. Sigue
+         siendo el único KPI sin bandeja propia; un equipo asignado vencido
+         por horas puede aparecer A LA VEZ en Atrasados (estado técnico vs.
+         bandeja de trabajo — significados distintos, overlap aceptado a
+         propósito, ver §4 del pedido). -->
     <div class="lub-kpi-row">
-      ${kpiTile('Vencidos', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
+      ${kpiTile('Vencidos por horas', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
       ${kpiTile('Pendientes hoy', miTurnoTotal.length, miTurnoTotal.length ? 'amber' : 'neutral')}
       ${kpiTile('Arrastrados', arrastradosTotal.length, arrastradosTotal.length ? 'amber' : 'neutral')}
       ${kpiTile('Realizados hoy', realizadosHoyList.length, 'green')}
