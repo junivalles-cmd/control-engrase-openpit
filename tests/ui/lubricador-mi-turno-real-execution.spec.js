@@ -63,6 +63,9 @@ function weekdayName(d) {
 function isoDaysAgo(n) {
   const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString();
 }
+function weekdayNDaysAgo(n) {
+  const d = new Date(); d.setDate(d.getDate() - n); return weekdayName(d);
+}
 
 async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [], validations = [] } = {}) {
   await page.setContent('<div id="app-content"></div>');
@@ -252,12 +255,15 @@ test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localment
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
-  // Sin plan de Día/turno a propósito: foco exclusivo en Alertas, sin que
-  // Mi Turno/Atrasados interfieran. Sin ningún registro -> "Sin registro",
-  // el caso más urgente, siempre en el top 5.
+  // Fix 2026-10-09 (bug real de Alertas, "Ficha AL DÍA pero en Alertas"):
+  // Alertas ya NO acepta un equipo "SIN PLAN" (GRIS, nunca por tiempo, ver
+  // §6 del pedido) — necesita un plan real con un día VENCIDO (ROJO) para
+  // justificar de verdad por qué aparece, igual que exigiría la Ficha.
+  const diaVencido = weekdayNDaysAgo(3);
   const equipos = [{ id: 'e1', code: 'T-40', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
 
-  await bootPage(page, { equipos });
+  await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
   await expect(seccion(page, 'ALERTAS')).toContainText('T-40'); // antes del engrase: en la alerta
@@ -273,22 +279,32 @@ test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localment
     return window.renderLubricadorHome();
   });
 
-  // Con 1 solo equipo en `normal`, ya sin urgencia real: la sección entera
-  // se oculta (mismo criterio "ocultar secciones vacías" ya existente).
-  expect(await page.locator('.lub-section-head:has-text("ALERTAS")').count()).toBe(0);
+  // El encabezado "ALERTAS" SIEMPRE se muestra (fix 2026-10-09, §7 del
+  // pedido) — ya sin urgencia real, muestra "Sin alertas de engrase" en vez
+  // de desaparecer en silencio.
+  await expect(page.locator('.lub-section-head:has-text("ALERTAS")')).toBeVisible();
+  await expect(page.locator('#app-content')).toContainText('Sin alertas de engrase.');
+  expect(await page.locator('.lub-section-head:has-text("ALERTAS") + .lub-eq-list .lub-eq-code', { hasText: 'T-40' }).count()).toBe(0);
 });
 
 test('B — un registro COMPLETE se usa como el "último engrase" real (ignora un PARTIAL más viejo), nunca una fecha vieja', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
+  // Fix 2026-10-09: necesita un plan real con status real (AMARILLO,
+  // "PROGRAMADO HOY") para que el equipo pueda aparecer en Alertas — ya no
+  // basta con "sin registro de hoy" (ver §6/§8 del pedido, "una sola fuente
+  // de verdad con la Ficha"). Programado HOY, sin registro de hoy (el
+  // COMPLETE es de ayer): weekdayStatusFor() da AMARILLO real.
+  const hoyWeekday = weekdayName(new Date());
   const equipos = [{ id: 'e1', code: 'T-41', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
   const records = [
     { id: 'r-viejo', equipmentId: 'e1', date: isoDaysAgo(20), createdAt: isoDaysAgo(20), userName: 'Pedro L.', qty: 1.0, shiftId: 'shift_dia', operationalSnapshot: { executionCompleteness: 'PARTIAL' } },
     { id: 'r-nuevo', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Ana G.', qty: 2.0, shiftId: 'shift_dia' }, // COMPLETE (sin snapshot = no PARTIAL)
   ];
 
-  await bootPage(page, { equipos, records });
+  await bootPage(page, { equipos, plans, records });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -300,10 +316,16 @@ test('C — un equipo con SOLO un registro PARTIAL permanece en Alertas (un PART
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
+  // Fix 2026-10-09: plan real con un día vencido reciente (ROJO) — el
+  // PARTIAL de hace 20 días queda fuera de la ventana de 7 días de
+  // mostRecentAssignedDate(), así que por sí solo nunca satisface la
+  // ocurrencia vigente; el equipo es ROJO real, igual que diría la Ficha.
+  const diaVencido = weekdayNDaysAgo(2);
   const equipos = [{ id: 'e1', code: 'T-42', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
   const records = [{ id: 'r1', equipmentId: 'e1', date: isoDaysAgo(20), createdAt: isoDaysAgo(20), userName: 'Pedro L.', qty: 1.0, shiftId: 'shift_dia', operationalSnapshot: { executionCompleteness: 'PARTIAL' } }];
 
-  await bootPage(page, { equipos, records });
+  await bootPage(page, { equipos, plans, records });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -314,10 +336,14 @@ test('D — un equipo con un skip ("no se pudo ejecutar") y ningún record perma
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
+  // Fix 2026-10-09: plan real con un día vencido (ROJO) — un skip nunca crea
+  // un record, así que por sí solo nunca cambia el estado real del equipo.
+  const diaVencido = weekdayNDaysAgo(2);
   const equipos = [{ id: 'e1', code: 'T-43', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
   const skips = [{ id: 's1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), reason: 'SIN_TIEMPO', active: true, userName: 'Pedro L.' }];
 
-  await bootPage(page, { equipos, skips });
+  await bootPage(page, { equipos, plans, skips });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -434,9 +460,16 @@ test('E — un PARTIAL guardado localmente (sin red) permanece en Alertas y nunc
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
+  // Fix 2026-10-09: plan real con un día vencido (ROJO) ANTES del PARTIAL.
+  // Al guardar el PARTIAL de hoy, weekdayStatusFor() pasa a VERDE (cuenta
+  // cualquier record como "hecho", sin tocar esa función) — pero
+  // partialPendienteIds (mismo criterio que reclasifica Mi Turno/Atrasados)
+  // mantiene la alerta real, nunca un VERDE a secas.
+  const diaVencido = weekdayNDaysAgo(2);
   const equipos = [{ id: 'e1', code: 'T-52', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
 
-  await bootPage(page, { equipos });
+  await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
   await expect(seccion(page, 'ALERTAS')).toContainText('T-52');
@@ -461,9 +494,13 @@ test('F — un skip ("no se pudo ejecutar") guardado localmente (sin red) perman
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
+  // Fix 2026-10-09: plan real con un día vencido (ROJO) — un skip nunca crea
+  // un record, así que el estado real se mantiene ROJO después de guardarlo.
+  const diaVencido = weekdayNDaysAgo(2);
   const equipos = [{ id: 'e1', code: 'T-53', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1', hourmeter: 1000 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] }];
 
-  await bootPage(page, { equipos });
+  await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
   await expect(seccion(page, 'ALERTAS')).toContainText('T-53');

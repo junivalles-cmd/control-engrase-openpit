@@ -2815,6 +2815,83 @@ function miPerfilErrorMessage(err) {
   return 'No se pudo completar la acción. Intenta de nuevo.';
 }
 
+/* ============================================================
+   CONFIGURACIÓN DEL LUBRICADOR (pedido "CONFIGURACIÓN LUBRICADOR + FIX DE
+   ALERTAS + AUDITORÍA HORÓMETRO", 2026-10-09)
+   ============================================================
+   Pantalla exclusiva para LUBRICADOR, accesible desde "Mi cuenta →
+   Configuración" (openLubAccountMenu()) — nunca un tab nuevo en el bottom
+   nav (§1 del pedido: "no saturar bottom navigation"). Reutiliza TODO lo
+   que ya existe, cero reimplementación:
+     - MI PERFIL: mismos datos/mismo helper que renderMiPerfil()
+       (miPerfilRoleCrewSummaryHTML(), Auth.getProfile(),
+       getCurrentOperationalScope()) + Turno (currentShiftId(), ya usado en
+       el resto de la app).
+     - SEGURIDAD: "Cambiar contraseña" navega al formulario real ya
+       existente en Mi Perfil (navigate('miperfil') — cero formulario
+       duplicado); "Configurar/cambiar PIN" abre el MISMO modal
+       (quickUnlockConfigureModal(), ya usado por Mi Perfil); "Entrar con
+       otra cuenta" llama a la MISMA confirmChangeUser() ya usada en el
+       menú "Mi cuenta" — nunca toca IndexedDB/engrases offline/anomalías
+       (ver confirmChangeUser(), no las borra).
+     - APARIENCIA: abre el MISMO openThemePicker() ya usado por el resto de
+       la app (9 acentos + 4 modos, cambio inmediato, persistencia
+       localStorage) — nunca una segunda paleta ni un picker nuevo.
+   NUNCA muestra controles de ADMINISTRADOR/PLANIFICADOR — esta función no
+   los conoce siquiera (a diferencia de renderConfig(), la pantalla de
+   Configuración de escritorio, que esta función NUNCA llama). */
+async function renderLubricadorConfig() {
+  const c = $('#app-content');
+  if (!c) return;
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) {
+    c.innerHTML = '<div class="empty-state">Configuración requiere una sesión real iniciada.</div>';
+    return;
+  }
+  const profile = Auth.getProfile();
+  const username = (profile.appUserId || '').replace(/^u_/, '');
+  const [cuadrillas, locations, scope] = await Promise.all([
+    DB.allActive('cuadrillas'), DB.allActive('locations'), getCurrentOperationalScope(),
+  ]);
+  const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
+  const turnoLabel = currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
+
+  c.innerHTML = `
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Mi perfil</h3></div>
+      <div style="padding:14px">
+        <div class="detail-grid">
+          <div><b>Nombre</b><div>${esc(profile.displayName)}</div></div>
+          <div><b>Usuario</b><div class="mono">${esc(username)}</div></div>
+          <div><b>Rol</b><div>${esc(profile.role)}</div></div>
+          ${miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations)}
+          <div><b>Turno</b><div>${esc(turnoLabel)}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Seguridad</h3></div>
+      <div style="padding:14px" class="lub-config-actions">
+        <button type="button" class="btn" id="lub-config-password">${ic('lock')}Cambiar contraseña</button>
+        <button type="button" class="btn" id="lub-config-pin">${ic('lock')}${quickUnlockConfigured ? 'Cambiar PIN rápido' : 'Configurar PIN rápido'}</button>
+        <button type="button" class="btn" id="lub-config-change-user">${ic('repeat')}Entrar con otra cuenta</button>
+      </div>
+    </div>
+
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Apariencia</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Color de acento y fondo/contraste — cambia al instante, se guarda solo en este dispositivo.</p>
+        <button type="button" class="btn btn-accent" id="lub-config-theme">🎨 Personalizar colores</button>
+      </div>
+    </div>`;
+
+  $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
+  $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
+  $('#lub-config-change-user').addEventListener('click', () => confirmChangeUser());
+  $('#lub-config-theme').addEventListener('click', () => openThemePicker());
+}
+
 /* ---------- Cierre de sesión por inactividad ----------
    Si alguien deja el celular desbloqueado con la app abierta en el pit, la sesión
    se cierra sola tras un rato sin uso, en vez de quedar abierta indefinidamente. */
@@ -3017,7 +3094,7 @@ function navigate(route) {
   // solo desde el clúster de acciones de cuenta de cada shell, nunca
   // desde el sidebar/bottom-nav/menú principal. MENU.find() de arriba no
   // las encuentra, así que el título necesita esta tabla aparte.
-  const EXTRA_ROUTE_TITLES = { miperfil: 'Mi Perfil' };
+  const EXTRA_ROUTE_TITLES = { miperfil: 'Mi Perfil', lubconfig: 'Configuración' };
   // Estos dos elementos SOLO existen en la interfaz de escritorio. La del lubricador no
   // tiene barra superior ni menú lateral, así que se accede con protección: sin esto,
   // llamar a navigate() desde su pantalla rompía la función a la mitad y la vista se
@@ -3031,7 +3108,7 @@ function navigate(route) {
     matriz: renderMatrizSemanal,
     anomalias: renderAnomalias, lubricantes: renderLubricantes, historial: renderHistorial,
     reportes: renderReportes, usuarios: renderUsuarios, config: renderConfig, ayuda: renderAyuda,
-    miperfil: renderMiPerfil
+    miperfil: renderMiPerfil, lubconfig: renderLubricadorConfig
   };
   Promise.resolve((renderers[route] || renderDashboard)()).then(() => makeTablesResponsive($('#app-content')));
 }
@@ -3067,10 +3144,12 @@ function openLubAccountMenu() {
   openModal('Mi cuenta', `
     <div class="lub-account-menu">
       <button type="button" class="btn" id="lub-menu-mi-perfil">${ic('users')}Mi Perfil</button>
+      ${supa ? `<button type="button" class="btn" id="lub-menu-config">${ic('gear')}Configuración</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-lock">${ic('lock')}Bloquear</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-change-user">${ic('repeat')}Cambiar usuario</button>` : ''}
     </div>`);
   $('#lub-menu-mi-perfil').addEventListener('click', () => { closeModal(); navigate('miperfil'); });
+  $('#lub-menu-config')?.addEventListener('click', () => { closeModal(); navigate('lubconfig'); });
   $('#lub-menu-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
   $('#lub-menu-change-user')?.addEventListener('click', () => { closeModal(); confirmChangeUser(); });
 }
@@ -3517,15 +3596,24 @@ async function renderLubricadorHome() {
   // la presentación de Mi Turno/Atrasados — Mi Turno si el día programado
   // es hoy, Atrasados si ya venció — reusando resolveRecordCompleteness(),
   // ya usado arriba en Realizados.
-  statusesNormal.forEach(({ e, s }) => {
-    if (s.code !== 'VERDE' || !s.scheduleDate) return;
-    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return;
+  //
+  // `partialPendienteIds` (fix 2026-10-09, bug real de Alertas — ver más
+  // abajo): el MISMO criterio de "VERDE por un PARTIAL, no por un
+  // COMPLETE" se separa en un Set reusable, para que Alertas pueda
+  // aplicarlo también SIN reimplementar la condición (§8 del pedido: "una
+  // sola fuente de verdad" — Ficha y Alertas no pueden contradecirse).
+  const partialPendienteIds = new Set();
+  statusesNormal.filter(({ e, s }) => {
+    if (s.code !== 'VERDE' || !s.scheduleDate) return false;
+    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return false;
     const plan = plansByEquipoId[e.id];
-    if (!plan || plan.controlType !== 'Día y turno de la semana') return;
+    if (!plan || plan.controlType !== 'Día y turno de la semana') return false;
     const ahora = Date.now() + 5 * 60 * 1000;
     const satisfactorios = records.filter(r => r.equipmentId === e.id &&
       new Date(r.date) >= s.scheduleDate && new Date(r.date).getTime() <= ahora);
-    if (!satisfactorios.length || satisfactorios.some(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)) return;
+    return satisfactorios.length && !satisfactorios.some(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);
+  }).forEach(({ e, s }) => {
+    partialPendienteIds.add(e.id);
     const schedDate0 = new Date(s.scheduleDate); schedDate0.setHours(0, 0, 0, 0);
     if (schedDate0 < hoy0) {
       const diasAtras = Math.round((hoy0.getTime() - schedDate0.getTime()) / 86400000);
@@ -3561,31 +3649,37 @@ async function renderLubricadorHome() {
       </div>`;
   };
 
-  // "4. ALERTAS — Mayor tiempo sin engrasar": MISMA fórmula exacta que
-  // renderDashboard() (daysSinceLastGrease + sort Operativo-primero/más
-  // días-sin-registro-primero) — nunca una reimplementación — acotada a
-  // `normal` (equipos de la cuadrilla/ubicación autorizada del Lubricador,
-  // nunca flota global). Puede repetir un equipo que también esté en
-  // Atrasados/Mi Turno a propósito (es información de riesgo, no otra
-  // tarea — pedido explícito).
+  // "4. ALERTAS — Mayor tiempo sin engrasar": acotada a `normal` (equipos
+  // de la cuadrilla/ubicación autorizada del Lubricador, nunca flota
+  // global). Puede repetir un equipo que también esté en Atrasados/Mi
+  // Turno a propósito (es información de riesgo, no otra tarea — pedido
+  // explícito).
   //
-  // Fix 2026-10-08 ("refrescar alertas tras engrasar") — causa raíz real
-  // encontrada trazando el flujo (nunca asumida): esta fórmula SIEMPRE leyó
-  // `records` fresco de IndexedDB en cada render (sin caché, confirmado en
-  // db.js) y SIEMPRE se vuelve a ejecutar al volver a "Mi Turno" — no era un
-  // problema de rerender ni de dato viejo. Los 2 problemas reales:
-  //   1. `lastRecordByEquipoLub` contaba CUALQUIER registro (incluido
-  //      PARTIAL) como "último engrase" — un PARTIAL de hoy ponía
-  //      "0 días" y ocultaba la urgencia real (viola el punto 2 del pedido:
-  //      "PARTIAL no debe limpiar la alerta"). Fix: igual que Realizados
-  //      arriba, se excluyen con resolveRecordCompleteness() — mismo
-  //      helper ya en uso, ninguna fórmula nueva.
-  //   2. `.slice(0, 5)` nunca excluía a un equipo YA realizado hoy — con 5
-  //      o menos equipos en `normal` (cuadrillas chicas, el caso real
-  //      reportado), un equipo recién COMPLETE seguía ocupando uno de los 5
-  //      lugares aunque ya no tuviera ninguna urgencia real. Fix: se excluye
-  //      explícitamente con `realizadosHoyIds` (el MISMO Set ya calculado
-  //      arriba para Realizados/Mi Turno/Atrasados) antes de rankear.
+  // Fix 2026-10-09 (bug real: equipo "AL DÍA" en la Ficha apareciendo en
+  // Alertas) — causa raíz real trazada ANTES de tocar nada (§5/§8 del
+  // pedido): el filtro anterior (`!realizadosHoyIds.has(e.id)`) solo
+  // excluía un COMPLETE de HOY — un equipo con un COMPLETE de AYER (o
+  // antes) que YA satisface su ocurrencia (statusFor()/weekdayStatusFor(),
+  // la MISMA función que usa openEquipmentDetail() — nunca una segunda
+  // definición de estado) seguía entrando a "Alertas" por tiempo, aunque
+  // la Ficha ya dijera "AL DÍA". El orden correcto (§7 del pedido) es
+  // CALCULAR el estado real primero, FILTRAR por los que de verdad
+  // requieren atención, y solo DESPUÉS ordenar/recortar a 5 — nunca
+  // "todos → ordenar → slice(0,5) → llamarlos Alertas".
+  //
+  // Regla (§6 del pedido), un allowlist por el código real de estado —
+  // nunca una redefinición paralela:
+  //   - ROJO (vencido) / AMARILLO (próximo, programado hoy) → sí.
+  //   - VERDE (AL DÍA real, por un COMPLETE) → no (igual que la Ficha).
+  //   - VERDE-por-PARTIAL (`partialPendienteIds`, calculado arriba, MISMO
+  //     criterio que reclasifica Mi Turno/Atrasados) → sí, sigue
+  //     requiriendo atención.
+  //   - GRIS (DETENIDO/PAUSADO, SIN PLAN, SIN DÍAS ASIGNADOS, DATOS
+  //     INCONSISTENTES, PLAN MAL CONFIGURADO) → no: ninguno de estos es
+  //     una alerta POR TIEMPO sin engrasar.
+  //   - Un SKIP ("no se pudo ejecutar") nunca crea un record ni cambia el
+  //     estado — un equipo con skips sigue ROJO/AMARILLO por sí solo, sin
+  //     necesitar código especial aquí.
   const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);
   const lastRecordByEquipoLub = {};
   recordsNoParciales.forEach(r => {
@@ -3598,9 +3692,16 @@ async function renderLubricadorHome() {
     if (!last) return null;
     return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
   }
-  const alertasTiempoSinEngrase = normal.filter(e => !realizadosHoyIds.has(e.id)).sort((a, b) => {
-    const opA = a.status === 'Operativo' ? 0 : 1, opB = b.status === 'Operativo' ? 0 : 1;
-    if (opA !== opB) return opA - opB;
+  const statusByIdLub = new Map(statusesNormal.map(({ e, s }) => [e.id, s]));
+  const requiereAtencionPorTiempo = normal.filter(e => {
+    if (realizadosHoyIds.has(e.id)) return false; // COMPLETE de HOY: sin urgencia, sale de inmediato (§6/§E)
+    const s = statusByIdLub.get(e.id);
+    if (!s) return false; // sin estado calculable — nunca se afirma una alerta sin poder sustentarla
+    if (s.code === 'ROJO' || s.code === 'AMARILLO') return true;
+    if (s.code === 'VERDE' && partialPendienteIds.has(e.id)) return true; // PARTIAL: sigue requiriendo atención
+    return false; // VERDE real (igual que la Ficha) o GRIS (pausado/sin plan/datos inconsistentes)
+  });
+  const alertasTiempoSinEngrase = requiereAtencionPorTiempo.sort((a, b) => {
     const dA = daysSinceLastGreaseLub(a.id), dB = daysSinceLastGreaseLub(b.id);
     return (dB === null ? Infinity : dB) - (dA === null ? Infinity : dA);
   }).slice(0, 5);
@@ -3650,7 +3751,10 @@ async function renderLubricadorHome() {
     ${alertasTiempoSinEngrase.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasTiempoSinEngrase.length})</span></div>
     <div class="lub-eq-list">${alertasTiempoSinEngrase.map(alertaRowHTML).join('')}</div>
-    ` : ''}
+    ` : `
+    <div class="lub-section-head"><span class="dim">ALERTAS</span></div>
+    <p class="dim" style="padding:0 2px 10px">Sin alertas de engrase.</p>
+    `}
 
     <button type="button" class="lub-hero-action" id="lub-quick-registrar">
       <span class="lub-hero-action-text">

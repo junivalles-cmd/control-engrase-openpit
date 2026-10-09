@@ -119,8 +119,9 @@ describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas
     expect(src).toContain('${realizadosHoyList.length ? `');
   });
 
-  it('"Alertas" solo se renderiza si alertasTiempoSinEngrase.length > 0', () => {
+  it('"Alertas" (fix 2026-10-09, §7 del pedido) SIEMPRE muestra el encabezado — con lista si hay alertas, o "Sin alertas de engrase" si no hay ninguna (nunca desaparece en silencio, a diferencia de Atrasados/Mi Turno/Realizados)', () => {
     expect(src).toContain('${alertasTiempoSinEngrase.length ? `');
+    expect(src).toContain('Sin alertas de engrase.');
   });
 });
 
@@ -162,28 +163,44 @@ describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro
   });
 });
 
-describe('"Alertas — Mayor tiempo sin engrasar" (hardening UI 2026-10-08) — MISMA fórmula que renderDashboard(), acotada al scope del Lubricador', () => {
-  it('mismo criterio de orden (Operativo primero, luego más días sin registro primero, null=Infinity)', () => {
-    const idx = src.indexOf('const alertasTiempoSinEngrase');
-    const block = src.slice(idx, idx + 400);
-    expect(block).toContain("a.status === 'Operativo' ? 0 : 1");
-    expect(block).toContain('dB === null ? Infinity : dB');
+describe('"Alertas — Mayor tiempo sin engrasar" (fix 2026-10-09: bug real "equipo AL DÍA en la Ficha pero en Alertas") — una sola fuente de verdad con la Ficha (statusFor()/computeAllStatuses()), acotada al scope del Lubricador', () => {
+  it('calcula el estado real PRIMERO (statusByIdLub, de statusesNormal — el MISMO computeAllStatuses() que usa la Ficha) y filtra por él ANTES de ordenar/recortar — nunca "todos → ordenar → slice(0,5)"', () => {
+    expect(src).toContain('const statusByIdLub = new Map(statusesNormal.map(({ e, s }) => [e.id, s]));');
+    const idx = src.indexOf('const requiereAtencionPorTiempo');
+    expect(idx).toBeGreaterThan(-1);
+    const idxAlertas = src.indexOf('const alertasTiempoSinEngrase', idx);
+    expect(idxAlertas).toBeGreaterThan(idx); // el filtro por estado viene ANTES del sort/slice
   });
 
-  it('acotada a `normal` (nunca equipos.length sin filtrar) y máximo 5', () => {
-    expect(src).toContain('const alertasTiempoSinEngrase = normal.filter(e => !realizadosHoyIds.has(e.id)).sort((a, b) => {');
+  it('allowlist por s.code (§6 del pedido): ROJO/AMARILLO sí; VERDE real no (igual que la Ficha); VERDE-por-PARTIAL (partialPendienteIds) sí', () => {
+    const idx = src.indexOf('const requiereAtencionPorTiempo');
+    const block = src.slice(idx, idx + 700);
+    expect(block).toContain("if (s.code === 'ROJO' || s.code === 'AMARILLO') return true;");
+    expect(block).toContain("if (s.code === 'VERDE' && partialPendienteIds.has(e.id)) return true;");
+    expect(block).toContain('return false;');
+  });
+
+  it('`partialPendienteIds` es el MISMO Set que reclasifica Mi Turno/Atrasados por un PARTIAL (una sola fuente de verdad, §8 del pedido — nunca una condición paralela)', () => {
+    expect(src).toContain('const partialPendienteIds = new Set();');
+    expect(src).toContain('partialPendienteIds.add(e.id);');
+  });
+
+  it('acotada a `normal` (nunca equipos.length sin filtrar) y máximo 5, DESPUÉS del filtro de atención', () => {
+    expect(src).toContain('const alertasTiempoSinEngrase = requiereAtencionPorTiempo.sort((a, b) => {');
     expect(src).toContain('.slice(0, 5)');
   });
 
-  it('fix 2026-10-08 ("refrescar alertas tras engrasar"): último engrase ignora PARTIAL (reutiliza resolveRecordCompleteness(), cero fórmula nueva)', () => {
+  it('un COMPLETE de HOY sale de inmediato (realizadosHoyIds, mismo Set que Realizados) — primera condición del filtro', () => {
+    const idx = src.indexOf('const requiereAtencionPorTiempo');
+    const block = src.slice(idx, idx + 200);
+    expect(block).toContain('if (realizadosHoyIds.has(e.id)) return false;');
+  });
+
+  it('último engrase (para el texto "N días sin engrasar") ignora PARTIAL (reutiliza resolveRecordCompleteness(), cero fórmula nueva)', () => {
     expect(src).toContain("const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);");
     const idx = src.indexOf('const lastRecordByEquipoLub');
     const block = src.slice(idx, idx + 300);
     expect(block).toContain('recordsNoParciales.forEach(r => {');
-  });
-
-  it('fix 2026-10-08: excluye explícitamente los equipos ya en `realizadosHoyIds` (mismo Set ya usado en Realizados) antes de rankear — un COMPLETE de hoy nunca puede seguir ocupando un cupo de Alertas', () => {
-    expect(src).toContain('normal.filter(e => !realizadosHoyIds.has(e.id))');
   });
 
   it('el código de equipo abre la Ficha real (openEquipmentDetail), nunca una ficha nueva', () => {
@@ -284,7 +301,10 @@ describe('Fix 2026-10-08 ("alinear estado y trabajo realizado") — VERDE/"AL D�
 
 describe('Fix 2026-10-08 — un PARTIAL nunca desaparece de la bandeja (reclasificación SOLO de presentación, nunca una 2da regla de satisfacción)', () => {
   it('reusa resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que Realizados, nunca una fórmula nueva', () => {
-    const idx = src.indexOf('statusesNormal.forEach(({ e, s }) => {\n    if (s.code !== \'VERDE\'');
+    // Fix 2026-10-09 (bug de Alertas): esta condición se separó en
+    // `statusesNormal.filter(...).forEach(...)` para que `partialPendienteIds`
+    // sea reusable por Alertas — mismo criterio exacto, solo cambió la forma.
+    const idx = src.indexOf("const partialPendienteIds = new Set();");
     const block = src.slice(idx, idx + 1200);
     expect(block).toContain('resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL');
   });
