@@ -118,15 +118,28 @@ async function bootConfig(page, {
 }
 
 test.describe('A) Lubricador abre Configuración — MI PERFIL con los datos correctos', () => {
-  test('muestra Nombre, Usuario, Rol, Cuadrilla activa, Ubicación y Turno', async ({ page }) => {
+  test('muestra Nombre, Usuario, Rol, Cuadrillas autorizadas', async ({ page }) => {
     await bootConfig(page, { displayName: 'Ana Lubricadora', appUserId: 'u_ana', role: 'LUBRICADOR', shiftDia: true });
     const content = page.locator('#app-content');
     await expect(content).toContainText('Ana Lubricadora');
     await expect(content).toContainText('ana');
     await expect(content).toContainText('LUBRICADOR');
     await expect(content).toContainText('Cuadrilla 76-08');
-    await expect(content).toContainText('Volcán');
-    await expect(content).toContainText('Turno Día');
+  });
+
+  // Parte M, test A del pedido ("CONFIGURACIÓN FINAL"): "Mi perfil" es SOLO
+  // identidad — Cuadrilla activa/Ubicación/Turno viven ÚNICAMENTE en
+  // "Trabajo / Contexto operativo", nunca repetidos en los 2 paneles.
+  test('"Mi perfil" NO repite Cuadrilla activa/Ubicación/Turno — eso vive solo en "Trabajo / Contexto operativo"', async ({ page }) => {
+    await bootConfig(page, { shiftDia: true });
+    const miPerfilPanel = page.locator('.panel-head:has-text("Mi perfil")').locator('..');
+    await expect(miPerfilPanel).not.toContainText('Cuadrilla activa');
+    await expect(miPerfilPanel).not.toContainText('Ubicación');
+    await expect(miPerfilPanel).not.toContainText('Turno Día');
+    const contextoPanel = page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..');
+    await expect(contextoPanel).toContainText('Cuadrilla activa');
+    await expect(contextoPanel).toContainText('Volcán');
+    await expect(contextoPanel).toContainText('Turno Día');
   });
 
   test('Turno Noche se refleja correctamente (currentShiftId() real, sin cálculo nuevo)', async ({ page }) => {
@@ -152,7 +165,19 @@ test.describe('B) nunca ve opciones administrativas', () => {
 });
 
 test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmediato, persistencia local', () => {
-  test('el botón "Personalizar colores" abre el picker REAL con los 8 acentos y 4 modos', async ({ page }) => {
+  // Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §4 del pedido): tema/modo
+  // actuales + preview compacto, antes del botón — reusa getTheme()/
+  // THEMES/MODES tal cual, nunca una biblioteca nueva.
+  test('muestra el tema y modo ACTUALES (getTheme() real) con un preview de color, antes del botón', async ({ page }) => {
+    await bootConfig(page);
+    const panel = page.locator('.panel-head:has-text("Apariencia")').locator('..');
+    await expect(panel).toContainText('Azul Corporativo'); // default real de getTheme()
+    await expect(panel).toContainText('Claro');
+    await expect(panel.locator('.lub-theme-swatch')).toHaveCount(1);
+    await expect(panel.locator('#lub-config-theme')).toContainText('Personalizar apariencia');
+  });
+
+  test('el botón "Personalizar apariencia" abre el picker REAL con los 8 acentos y 4 modos', async ({ page }) => {
     await bootConfig(page);
     await page.locator('#lub-config-theme').click();
     await expect(page.locator('.theme-preview-card[data-accent]')).toHaveCount(8);
@@ -221,17 +246,13 @@ test.describe('D) Seguridad', () => {
   });
 });
 
-test.describe('E) "Entrar con otra cuenta" — IndexedDB preservado', () => {
-  test('abre la confirmación real (confirmChangeUser) y, al confirmar, pasa por Auth.signOut()/QuickUnlock.disable() sin ninguna escritura a IndexedDB (equipos/engrases/anomalías/configuración)', async ({ page }) => {
-    await bootConfig(page);
-    await page.locator('#lub-config-change-user').click();
-    await expect(page.locator('.modal-body')).toContainText('Vas a salir de la sesión');
-    await page.locator('#confirm-change-user-confirm').click();
-    await expect.poll(() => page.evaluate(() => window.__dbWriteCalls)).toEqual(['Auth.signOut', 'QuickUnlock.disable']);
-    // Ninguna llamada a DB.put/delete/clear — IndexedDB operativo intacto.
-    const dbCalls = await page.evaluate(() => window.__dbWriteCalls.filter((c) => Array.isArray(c)));
-    expect(dbCalls).toEqual([]);
-  });
+// Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §3 del pedido): "Entrar con otra
+// cuenta" se quitó de esta pantalla — ahora vive SOLO en Mi Cuenta
+// (openLubAccountMenu()). Esa cobertura (confirmChangeUser real, IndexedDB
+// preservado) se movió a tests/ui/lubricador-mi-cuenta.spec.js.
+test('E) "Entrar con otra cuenta" ya NO está en Configuración (se movió a Mi Cuenta)', async ({ page }) => {
+  await bootConfig(page);
+  await expect(page.locator('#lub-config-change-user')).toHaveCount(0);
 });
 
 for (const width of [360, 390, 412]) {

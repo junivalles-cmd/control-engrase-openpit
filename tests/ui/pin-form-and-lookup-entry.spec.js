@@ -94,7 +94,9 @@ const LUB_TOPBAR_FIXTURE = `
       </div>
       <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">▭</button>
       <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
-      <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">⎋<span class="lub-logout-text">Cerrar sesión</span></button>
+      <!-- Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §6): sin #btn-logout — ya
+           no vive en el header, ver lubricador-mi-cuenta.spec.js. -->
+      <button type="button" class="icon-btn" id="btn-lub-account-menu" aria-label="Mi cuenta" title="Mi cuenta">⚙</button>
     </div>
   </header>
 </div>

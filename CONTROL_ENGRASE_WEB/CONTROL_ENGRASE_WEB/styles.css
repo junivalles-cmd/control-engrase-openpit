@@ -1930,6 +1930,17 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    lista vertical de botones de ancho completo, cada uno >=44px. */
 .lub-account-menu { display: flex; flex-direction: column; gap: 8px; }
 .lub-account-menu .btn { width: 100%; justify-content: flex-start; min-height: var(--tap); }
+/* Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §5 del pedido): "Cerrar sesión"
+   separado visualmente del resto de Mi Cuenta — nunca mezclado con las
+   acciones normales. */
+.lub-account-menu-divider { border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+
+/* §4 del pedido: preview pequeño de color junto al nombre del tema actual
+   en Configuración → Apariencia. */
+.lub-theme-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle; border: 1px solid var(--border);
+}
 
 /* Estado "sin cuadrilla autorizada" — compacto (icono + título corto +
    un párrafo breve + UN botón), nunca una pantalla casi completa de texto

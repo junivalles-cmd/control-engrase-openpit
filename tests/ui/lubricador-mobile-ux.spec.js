@@ -33,8 +33,10 @@ function topbar({ connText = 'SINCRONIZADO', connClass = 'conn-ok' } = {}) {
         <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo"><span class="btn-icon icon-qr"></span></button>
         <button type="button" id="conn-badge" class="conn-badge ${connClass}" aria-label="${connText}" title="${connText}">${connText}</button>
         <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización">ⓘ</button>
+        <!-- Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §6 del pedido): sin
+             #btn-logout — "Cerrar sesión" se quitó del header, ahora vive
+             en Mi Cuenta (botón gear, abajo). -->
         <button type="button" class="icon-btn" id="btn-lub-account-menu" aria-label="Mi cuenta" title="Mi cuenta"><span class="btn-icon icon-gear"></span></button>
-        <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión"><span class="btn-icon icon-logout"></span><span class="lub-logout-text">Cerrar sesión</span></button>
       </div>
     </header>
     <div class="lub-user-strip">👤 Jose Guerrero · <span id="lub-shift">☀ Turno Día</span></div>`;
@@ -163,7 +165,8 @@ for (const width of WIDTHS) {
       expect(topbarBox.height).toBeLessThan(72);
       await expect(page.locator('#btn-scan-qr-topbar')).toBeVisible();
       await expect(page.locator('#conn-badge')).toBeVisible();
-      await expect(page.locator('#btn-logout')).toBeVisible();
+      await expect(page.locator('#btn-lub-account-menu')).toBeVisible();
+      await expect(page.locator('#btn-logout')).toHaveCount(0); // §6: ya no vive en el header
     });
 
     test('B) Sin cuadrilla autorizada — título completo dentro del viewport, nunca cortado', async ({ page }) => {

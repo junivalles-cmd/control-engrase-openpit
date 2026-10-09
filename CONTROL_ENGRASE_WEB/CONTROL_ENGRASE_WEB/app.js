@@ -3061,17 +3061,30 @@ async function renderLubricadorConfig() {
   ]);
   const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
   const turnoLabel = currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
+  // §4 del pedido ("Apariencia" compacta: tema/modo actuales + preview) —
+  // getTheme()/THEMES/MODES YA existentes, nunca una biblioteca nueva.
+  const temaActual = getTheme();
+  const themeObj = THEMES.find(t => t.id === temaActual.accent) || THEMES[0];
+  const modeObj = MODES.find(m => m.id === temaActual.mode) || MODES[0];
 
+  // Fix 2026-10-09 ("CONFIGURACIÓN FINAL", Parte A/§1 del pedido): "Mi
+  // perfil" deja de reusar miPerfilRoleCrewSummaryHTML() AQUÍ — ese helper
+  // sigue intacto para renderMiPerfil() (pantalla compartida con otros
+  // roles, fuera de alcance), pero su salida (cuadrilla ACTIVA/ubicación)
+  // duplicaba exactamente lo que ya muestra "Trabajo / Contexto operativo"
+  // más abajo. Esta tarjeta queda SOLO identidad — nombre/usuario/rol/
+  // cuadrillas AUTORIZADAS (todas, no la activa) — más compacta
+  // (padding 10px/14px en vez de 14px/14px, sin achicar texto).
+  const autorizadasHTML = (scope.authorizedCrews || []).map(cq => esc(cq.name)).join(', ') || '—';
   c.innerHTML = `
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Mi perfil</h3></div>
-      <div style="padding:14px">
+      <div style="padding:10px 14px">
         <div class="detail-grid">
           <div><b>Nombre</b><div>${esc(profile.displayName)}</div></div>
           <div><b>Usuario</b><div class="mono">${esc(username)}</div></div>
           <div><b>Rol</b><div>${esc(profile.role)}</div></div>
-          ${miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations)}
-          <div><b>Turno</b><div>${esc(turnoLabel)}</div></div>
+          <div><b>Cuadrillas autorizadas</b><div>${autorizadasHTML}</div></div>
         </div>
       </div>
     </div>
@@ -3102,26 +3115,33 @@ async function renderLubricadorConfig() {
       </div>
     </div>
 
+    <!-- Fix 2026-10-09 (§3 del pedido): "Entrar con otra cuenta" se quitó
+         de aquí — ahora vive SOLO en Mi Cuenta (openLubAccountMenu()),
+         nunca duplicada en 2 lugares. -->
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Seguridad</h3></div>
       <div style="padding:14px" class="lub-config-actions">
         <button type="button" class="btn" id="lub-config-password">${ic('lock')}Cambiar contraseña</button>
         <button type="button" class="btn" id="lub-config-pin">${ic('lock')}${quickUnlockConfigured ? 'Cambiar PIN rápido' : 'Configurar PIN rápido'}</button>
-        <button type="button" class="btn" id="lub-config-change-user">${ic('repeat')}Entrar con otra cuenta</button>
       </div>
     </div>
 
+    <!-- Fix 2026-10-09 (§4 del pedido): tema/modo actuales + preview
+         compacto antes del botón — reusa openThemePicker()/THEMES/MODES tal
+         cual, nunca una biblioteca nueva. -->
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Apariencia</h3></div>
       <div style="padding:14px">
-        <p class="dim">Color de acento y fondo/contraste — cambia al instante, se guarda solo en este dispositivo.</p>
-        <button type="button" class="btn btn-accent" id="lub-config-theme">🎨 Personalizar colores</button>
+        <div class="detail-grid">
+          <div><b>Tema actual</b><div><span class="lub-theme-swatch" style="background:${themeObj.color}"></span>${esc(themeObj.label)}</div></div>
+          <div><b>Modo</b><div>${modeObj.icon} ${esc(modeObj.label)}</div></div>
+        </div>
+        <button type="button" class="btn btn-accent" id="lub-config-theme" style="margin-top:10px">🎨 Personalizar apariencia</button>
       </div>
     </div>`;
 
   $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
   $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
-  $('#lub-config-change-user').addEventListener('click', () => confirmChangeUser());
   $('#lub-config-theme').addEventListener('click', () => openThemePicker());
   // §3 del pedido: solo limpia la selección de SESIÓN (localStorage) para
   // que resolveOperationalScope() vuelva a pedir elegir entre las YA
@@ -3134,18 +3154,28 @@ async function renderLubricadorConfig() {
   });
 }
 
-/* ---------- Cierre de sesión por inactividad ----------
-   Si alguien deja el celular desbloqueado con la app abierta en el pit, la sesión
-   se cierra sola tras un rato sin uso, en vez de quedar abierta indefinidamente. */
+/* ---------- Bloqueo local por inactividad ----------
+   Fix 2026-10-09 ("SESIÓN OFFLINE", Parte C/§4/§7 del pedido, OBLIGATORIO):
+   ANTES cerraba sesión de verdad (logout(), Auth.signOut()) — en campo/mina
+   sin conexión, eso dejaba al Lubricador fuera de la app sin poder volver a
+   entrar (Auth.signIn() necesita red; solo Quick Unlock funciona offline).
+   Ahora usa lockApp() (YA existente, conserva sesión Auth + IndexedDB +
+   cola de sync + fotos + PIN configurado) — nunca un bloqueo nuevo, nunca
+   logout automático por tiempo. Si alguien deja el dispositivo
+   desbloqueado, se bloquea solo tras un rato sin uso; se reanuda con el
+   mismo PIN, nunca con usuario/contraseña de nuevo. */
 const INACTIVITY_MINUTES = 30;
 let inactivityTimer = null;
 let finTurnoTimer = null;
 
-/* ---------- Cierre de sesión al terminar el turno ----------
-   Pensado para los teléfonos COMPARTIDOS entre cuadrillas: si la cuadrilla saliente
-   deja la sesión abierta, la entrante registraría engrases con el nombre equivocado.
-   Al terminar el turno la sesión se cierra sola, obligando a que cada quien entre
-   con su propio PIN — así el historial siempre dice quién hizo qué. */
+/* ---------- Bloqueo local al terminar el turno ----------
+   Fix 2026-10-09 (mismo motivo de arriba — era logout(), ahora lockApp()):
+   pensado para los teléfonos COMPARTIDOS entre cuadrillas: si la cuadrilla
+   saliente deja la sesión desbloqueada, la entrante podría registrar
+   engrases con el nombre equivocado. Al terminar el turno el dispositivo se
+   BLOQUEA solo (nunca cierra sesión), obligando a que cada quien desbloquee
+   con su propio PIN — así el historial sigue diciendo quién hizo qué, sin
+   arriesgar que alguien quede fuera de la app por falta de conexión. */
 function programarCierrePorFinDeTurno() {
   clearTimeout(finTurnoTimer);
   if (!App.currentUser || App.currentUser.role !== 'LUBRICADOR') return;
@@ -3385,6 +3415,14 @@ function makeTablesResponsive(container) {
 // confirmChangeUser()), solo detrás de un único punto de entrada — mismo
 // patrón que ya usa el resto de la app (openModal() real, nunca un menú
 // nuevo reimplementado).
+// Fix 2026-10-09 ("CONFIGURACIÓN FINAL + SESIÓN OFFLINE", Parte B/§5 del
+// pedido): "Cerrar sesión" se muda aquí (fuera del header/topbar, ver
+// bootLubricador() — ya no hay #btn-logout ahí) y queda separado
+// visualmente del resto (<hr>) — nunca expuesto permanentemente como una
+// acción más de la barra superior. confirmLubricadorLogout() (Parte C,
+// nueva función — NUNCA toca confirmLogout(), esa sigue siendo la del
+// shell de escritorio) decide el texto/los botones según conexión/
+// pendientes; el cierre real sigue siendo logout(), sin cambios.
 function openLubAccountMenu() {
   const supa = typeof Auth !== 'undefined' && Auth.isSupabaseMode();
   openModal('Mi cuenta', `
@@ -3393,11 +3431,14 @@ function openLubAccountMenu() {
       ${supa ? `<button type="button" class="btn" id="lub-menu-config">${ic('gear')}Configuración</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-lock">${ic('lock')}Bloquear</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-change-user">${ic('repeat')}Cambiar usuario</button>` : ''}
+      <hr class="lub-account-menu-divider"/>
+      <button type="button" class="btn btn-danger" id="lub-menu-logout">${ic('logout')}Cerrar sesión</button>
     </div>`);
   $('#lub-menu-mi-perfil').addEventListener('click', () => { closeModal(); navigate('miperfil'); });
   $('#lub-menu-config')?.addEventListener('click', () => { closeModal(); navigate('lubconfig'); });
   $('#lub-menu-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
   $('#lub-menu-change-user')?.addEventListener('click', () => { closeModal(); confirmChangeUser(); });
+  $('#lub-menu-logout').addEventListener('click', () => { closeModal(); confirmLubricadorLogout(); });
 }
 
 function bootLubricador() {
@@ -3420,8 +3461,11 @@ function bootLubricador() {
           <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización" title="Ver detalle del error de sincronización">ⓘ</button>
+          <!-- Fix 2026-10-09 ("CONFIGURACIÓN FINAL + SESIÓN OFFLINE", §6 del
+               pedido): "Cerrar sesión" se quitó del header — ya no hay
+               #btn-logout aquí. Vive en el menú "Mi cuenta" (gear, abajo),
+               separado visualmente del resto — ver openLubAccountMenu(). -->
           ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button type="button" class="icon-btn" id="btn-lub-account-menu" aria-label="Mi cuenta" title="Mi cuenta">${ic('gear')}</button>` : ''}
-          <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
       <!-- Fix 2026-10-09 (§7 del pedido): oculta SOLO en 'turno' — ahí la

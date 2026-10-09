@@ -1,9 +1,13 @@
 // tests/ui/lubricador-mi-turno-desktop.spec.js
 //
 // UI/Composición visual — Lubricador → Mi Turno (docs/UI_VISUAL_COMPOSITION_AUDIT.md,
-// UI-VIS-302). Único cambio de este lote: .lub-content:has(.lub-eq-list) (exclusivo
-// de renderLubricadorHome), el botón de salir (.lub-logout-btn) y .lub-bottom-nav en
-// desktop. No se tocó Ayuda/Anomalías/Mis Engrases/Registrar Engrase (Lubricador).
+// UI-VIS-302). Único cambio de ese lote: .lub-content:has(.lub-eq-list) (exclusivo
+// de renderLubricadorHome) y .lub-bottom-nav en desktop. No se tocó Ayuda/Anomalías/
+// Mis Engrases/Registrar Engrase (Lubricador).
+//
+// Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §6 del pedido): #btn-logout/.lub-logout-btn
+// se quitaron de los fixtures — ya no existen en el header real (bootLubricador()),
+// "Cerrar sesión" vive ahora en Mi Cuenta (ver lubricador-mi-cuenta.spec.js).
 //
 // No requiere login ni red: fragmento estático con la estructura/clases REALES de
 // bootLubricador()/renderLubricadorHome() (app.js) — datos de relleno, nunca
@@ -29,7 +33,7 @@ function miTurnoFixture(nEquipos = 4) {
         <div><div class="brand-title small">ENGRASE</div><div class="brand-sub small">OPEN PIT</div></div></div>
       <div class="lub-topbar-right">
         <button type="button" id="conn-badge" class="conn-badge">EN LÍNEA</button>
-        <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">🚪<span class="lub-logout-text">Cerrar sesión</span></button>
+        <button type="button" class="icon-btn" id="btn-lub-account-menu" title="Mi cuenta">⚙</button>
       </div>
     </header>
     <div class="lub-user-strip">Juan Pérez · ☀ Turno Día</div>
@@ -58,7 +62,7 @@ function miTurnoFixture(nEquipos = 4) {
 // tiene .lub-eq-list — debe seguir topada en 560px, sin cambios de este lote.
 const AYUDA_FIXTURE = `
 <div class="lub-shell">
-  <header class="lub-topbar"><div class="lub-topbar-right"><button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">🚪<span class="lub-logout-text">Cerrar sesión</span></button></div></header>
+  <header class="lub-topbar"><div class="lub-topbar-right"><button type="button" class="icon-btn" id="btn-lub-account-menu" title="Mi cuenta">⚙</button></div></header>
   <main class="lub-content"><div class="panel"><div class="panel-head"><h3>Preguntas frecuentes</h3></div></div></main>
   <nav class="lub-bottom-nav">
     <button class="lub-nav-item"><span>Mi Turno</span></button>
@@ -81,21 +85,13 @@ for (const width of WIDTHS) {
       expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
     });
 
-    test('botón de salir cumple el mínimo táctil de 44px', async ({ page }) => {
+    test('botón "Mi cuenta" cumple el mínimo táctil de 44px', async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.setContent(miTurnoFixture());
       await page.addStyleTag({ path: STYLES_PATH });
-      const box = await page.locator('#btn-logout').boundingBox();
+      const box = await page.locator('#btn-lub-account-menu').boundingBox();
       expect(box.width).toBeGreaterThanOrEqual(44);
       expect(box.height).toBeGreaterThanOrEqual(44);
-    });
-
-    test('texto "Cerrar sesión" visible solo desde 768px', async ({ page }) => {
-      await page.setViewportSize({ width, height: 900 });
-      await page.setContent(miTurnoFixture());
-      await page.addStyleTag({ path: STYLES_PATH });
-      const visible = await page.locator('.lub-logout-text').isVisible();
-      expect(visible).toBe(width >= 768);
     });
   });
 }

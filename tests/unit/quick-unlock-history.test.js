@@ -64,11 +64,15 @@ describe('popstate global (DOMContentLoaded) — Atrás de Android sin el plugin
 });
 
 describe('"Entrar con otra cuenta" — UNA sola ruta/helper para cambiar cuenta (§8 del pedido)', () => {
-  it('Quick Unlock y Configuración del Lubricador llaman AMBOS a confirmChangeUser() — nunca una reimplementación paralela', () => {
+  // Fix 2026-10-09 ("CONFIGURACIÓN FINAL", Parte A/§3): "Entrar con otra
+  // cuenta" se movió de Configuración a Mi Cuenta (openLubAccountMenu()) —
+  // sigue siendo confirmChangeUser(), nunca una reimplementación paralela,
+  // solo cambió DÓNDE vive el botón.
+  it('Quick Unlock y Mi Cuenta (menú del Lubricador) llaman AMBOS a confirmChangeUser() — nunca una reimplementación paralela', () => {
     const quickUnlockSrc = extractDeclaration(appSource, 'renderQuickUnlockScreen');
-    const configSrc = extractDeclaration(appSource, 'renderLubricadorConfig');
+    const menuSrc = extractDeclaration(appSource, 'openLubAccountMenu');
     expect(quickUnlockSrc).toContain('confirmChangeUser()');
-    expect(configSrc).toContain("$('#lub-config-change-user').addEventListener('click', () => confirmChangeUser());");
+    expect(menuSrc).toContain("$('#lub-menu-change-user')?.addEventListener('click', () => { closeModal(); confirmChangeUser(); });");
   });
 
   it('confirmChangeUser() sigue siendo la única función que llama a logout() desde ese flujo — nunca Auth.signOut()/QuickUnlock.disable() sueltos fuera de logout()', () => {
