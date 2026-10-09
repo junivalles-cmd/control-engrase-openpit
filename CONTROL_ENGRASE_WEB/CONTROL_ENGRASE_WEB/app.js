@@ -3690,7 +3690,9 @@ async function renderLubricadorHome() {
   $('#lub-quick-registrar').addEventListener('click', () => openOutOfPlanEquipmentPicker());
   $('#lub-quick-buscar').addEventListener('click', () => $('#quick-find')?.focus());
   $('#lub-quick-matriz').addEventListener('click', () => openLubricadorMatrizModal({
-    equipos: normal, plans: Object.values(plansByEquipoId), records, myCrew
+    equipos: normal, plans: Object.values(plansByEquipoId), records, myCrew,
+    locationName: (locations.find(l => l.id === scope.crewLocationId) || {}).name,
+    turnoLabel: turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche',
   }));
   // "Cambiar cuadrilla" (punto 2 del pedido — permitir cambiarla cuando
   // tenga autorización): borra la selección de ESTA sesión y vuelve a
@@ -3710,7 +3712,15 @@ async function renderLubricadorHome() {
 // selector de Ubicación/Familia: el Lubricador no debe poder consultar otra
 // ubicación desde aquí (§8/§9 — nunca indicadores de otras ubicaciones ni
 // estado global de flota).
-function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
+//
+// Rediseño de ventana (auditoría UI UX Pro Max 2026-10-09 — modal demasiado
+// angosto/comprimido): mismo cálculo y mismos datos, SOLO cambia la
+// presentación — modal casi pantalla completa en móvil (ver `.modal-lub-matriz`
+// en styles.css), navegación de semana (‹/Hoy/›) que REUSA exactamente el
+// mismo patrón offset+lunes ya usado en renderMatrizSemanal (nunca una
+// lógica de planificación nueva: `hoy` para comparar estados siempre es la
+// fecha real, solo `lunes` se desplaza para decidir qué semana se muestra).
+function openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationName, turnoLabel }, offset = 0) {
   const visibles = equipos.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
     return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
@@ -3723,15 +3733,32 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
 
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
   const lunes = new Date(hoy);
-  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + offset * 7);
   const dias = [];
   for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+
+  // Mismo formato compacto ("5–11 Oct" / "29 Sep – 5 Oct") que ya usa
+  // renderMatrizSemanal — duplicado a propósito (es texto puro, 3 líneas,
+  // no justifica extraer un helper compartido para una sola reutilización).
+  const MESES_ABBR_MTZ = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const rangoCompacto = dias[0].getMonth() === dias[6].getMonth()
+    ? `${dias[0].getDate()}–${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]}`
+    : `${dias[0].getDate()} ${MESES_ABBR_MTZ[dias[0].getMonth()]} – ${dias[6].getDate()} ${MESES_ABBR_MTZ[dias[6].getMonth()]}`;
 
   const CELDA_TEXTO = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE', pausado: 'PAUSADO' };
   const CELDA_CLASE = { hecho: 'celda-hecho', hecho_atrasado: 'celda-hecho-atrasado', hecho_adelantado: 'celda-hecho-adelantado', no_realizado: 'celda-no-realizado', pendiente: 'celda-pendiente', pausado: 'celda-pausado', futuro: 'celda-futuro' };
 
+  const contextoLinea = [locationName, myCrew?.name, turnoLabel].filter(Boolean).join(' · ');
+
   const html = `
-    <p class="dim">${myCrew ? esc(myCrew.name) + ' — ' : ''}solo lectura, solo los equipos de tu cuadrilla.</p>
+    ${contextoLinea ? `<p class="lub-mtz-context dim">${esc(contextoLinea)}</p>` : ''}
+    <p class="lub-mtz-scope-note dim">Solo lectura — equipos de tu cuadrilla.</p>
+    <div class="lub-mtz-nav-row">
+      <button type="button" class="icon-btn" id="lubmtz-prev" aria-label="Semana anterior" title="Semana anterior">‹</button>
+      <span class="matriz-rango">${rangoCompacto}${offset === 0 ? ' · Semana actual' : ''}</span>
+      <button type="button" class="icon-btn" id="lubmtz-next" aria-label="Semana siguiente" title="Semana siguiente">›</button>
+      ${offset !== 0 ? `<button type="button" class="btn btn-sm" id="lubmtz-hoy">Hoy</button>` : ''}
+    </div>
     <div class="matriz-wrap">
       <div class="matriz-scroll-hint matriz-scroll-hint-left" aria-hidden="true"></div>
       <div class="matriz-scroll-hint matriz-scroll-hint-right" aria-hidden="true"></div>
@@ -3761,8 +3788,12 @@ function openLubricadorMatrizModal({ equipos, plans, records, myCrew }) {
       <span class="color-legend-item"><span class="dot" style="background:var(--gray-status)"></span>Pausado</span>
     </div>
   `;
-  openModal('Matriz semanal', html);
+  openModal('Matriz semanal', html, 'modal-lub-matriz');
   $$('.matriz-wrap').forEach(wireMatrizScrollHint);
+  const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, myCrew, locationName, turnoLabel }, newOffset);
+  $('#lubmtz-prev').addEventListener('click', () => reopen(offset - 1));
+  $('#lubmtz-next').addEventListener('click', () => reopen(offset + 1));
+  $('#lubmtz-hoy')?.addEventListener('click', () => reopen(0));
 }
 
 async function startLubricadorGreaseFlow(equipmentId, options) {
@@ -12713,7 +12744,7 @@ async function renderConfig() {
 // ReferenceError. Manteniendo todo dentro de estas dos funciones, cualquier
 // arnés que ya extraiga openModal()/closeModal() sigue funcionando sin
 // tocar su lista de nombres.
-function openModal(title, bodyHTML) {
+function openModal(title, bodyHTML, extraClass) {
   let overlay = $('#modal-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -12723,7 +12754,7 @@ function openModal(title, bodyHTML) {
   }
   overlay._previousFocus = document.activeElement;
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text" tabindex="-1">
+    <div class="modal${extraClass ? ' ' + extraClass : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title-text" tabindex="-1">
       <div class="modal-head"><h3 id="modal-title-text">${title}</h3><button class="icon-btn" id="modal-close" aria-label="Cerrar">✕</button></div>
       <div class="modal-body">${bodyHTML}</div>
     </div>`;

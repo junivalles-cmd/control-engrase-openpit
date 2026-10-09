@@ -23,8 +23,17 @@ const modalSrc = extractDeclaration(appSource, 'openLubricadorMatrizModal');
 
 let capturedTitle = '';
 let capturedHTML = '';
+let capturedExtraClass = '';
+// Botones de navegación de semana (‹/Hoy/›, rediseño UI UX Pro Max
+// 2026-10-09) wireados con $('#id').addEventListener(...) tras abrir el
+// modal — stub mínimo que registra el handler sin DOM real, mismo patrón ya
+// usado en tests/unit/dashboard-sin-plan.test.js para openSinPlanModal().
+const registeredHandlers = {};
+const fakeEl = (id) => ({
+  addEventListener: (evt, handler) => { registeredHandlers[id] = handler; },
+});
 const fakeGlobals = {
-  openModal: (title, html) => { capturedTitle = title; capturedHTML = html; },
+  openModal: (title, html, extraClass) => { capturedTitle = title; capturedHTML = html; capturedExtraClass = extraClass; },
   esc: (s) => String(s ?? ''),
   // openLubricadorMatrizModal() wirea la pista de scroll de la Matriz tras
   // abrir el modal (auditoría UI/UX 2026-10-08, hallazgo #3) con
@@ -33,15 +42,16 @@ const fakeGlobals = {
   // solo evita el ReferenceError (este test no verifica el wiring del hint).
   $$: () => [],
   wireMatrizScrollHint: () => {},
+  $: (sel) => fakeEl(sel),
 };
 
 // estadoCelda()/WEEKDAY_NAMES/computeOccurrenceKey (sus dependencias reales,
 // sin DOM/IndexedDB) se cargan junto con la función bajo prueba, como un solo
 // script — igual que loadLubricationLogic.js hace para el resto del proyecto.
 const fn = new Function(
-  'openModal', 'esc', '$$', 'wireMatrizScrollHint',
+  'openModal', 'esc', '$$', 'wireMatrizScrollHint', '$',
   `${lubStatusSrc}\n${operationalScopeSrc}\n${weeklyMatrixSrc}\n${modalSrc}\nreturn openLubricadorMatrizModal;`
-)(fakeGlobals.openModal, fakeGlobals.esc, fakeGlobals.$$, fakeGlobals.wireMatrizScrollHint);
+)(fakeGlobals.openModal, fakeGlobals.esc, fakeGlobals.$$, fakeGlobals.wireMatrizScrollHint, fakeGlobals.$);
 
 function isoDaysAgo(n) {
   const d = new Date();
@@ -100,5 +110,53 @@ describe('openLubricadorMatrizModal() — matriz semanal de solo lectura, scoped
   it('sin equipos con plan día/turno: muestra un estado vacío explicativo, nunca una tabla rota', () => {
     fn({ equipos: [equipos[2]], plans, records, myCrew: null });
     expect(capturedHTML).toContain('Ningún equipo de tu cuadrilla tiene un plan por día y turno configurado.');
+  });
+
+  // Rediseño de ventana (auditoría UI UX Pro Max 2026-10-09): modal más
+  // ancho/casi pantalla completa, línea de contexto Ubicación · Cuadrilla ·
+  // Turno, y navegación de semana (‹/Hoy/›) — mismo cálculo (estadoCelda(),
+  // hoy fijo, solo `lunes` se desplaza), nunca lógica de planificación nueva.
+  it('abre con el modificador .modal-lub-matriz (modal casi pantalla completa, nunca el genérico de 620px)', () => {
+    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
+    expect(capturedExtraClass).toBe('modal-lub-matriz');
+  });
+
+  it('línea de contexto: Ubicación · Cuadrilla · Turno, en ese orden, solo con los valores recibidos', () => {
+    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' }, locationName: 'Volcán', turnoLabel: 'Turno Día' });
+    expect(capturedHTML).toContain('Volcán · Cuadrilla A · Turno Día');
+  });
+
+  it('sin locationName/turnoLabel (no provistos), la línea de contexto se arma solo con lo disponible', () => {
+    fn({ equipos, plans, records, myCrew: { name: 'Cuadrilla A' } });
+    expect(capturedHTML).toContain('Cuadrilla A');
+    expect(capturedHTML).not.toContain('undefined');
+  });
+
+  it('incluye navegación de semana (‹ rango › ) con "Semana actual" en offset 0, sin botón "Hoy"', () => {
+    fn({ equipos, plans, records, myCrew: null });
+    expect(capturedHTML).toContain('id="lubmtz-prev"');
+    expect(capturedHTML).toContain('id="lubmtz-next"');
+    expect(capturedHTML).toContain('Semana actual');
+    expect(capturedHTML).not.toContain('id="lubmtz-hoy"');
+  });
+
+  it('con un offset distinto de 0, muestra el botón "Hoy" y ya no dice "Semana actual"', () => {
+    fn({ equipos, plans, records, myCrew: null }, 1);
+    expect(capturedHTML).toContain('id="lubmtz-hoy"');
+    expect(capturedHTML).not.toContain('Semana actual');
+  });
+
+  it('el botón "‹ Semana anterior" vuelve a abrir el modal con offset-1 (mismo patrón offset+lunes de renderMatrizSemanal)', () => {
+    fn({ equipos, plans, records, myCrew: null }, 0);
+    capturedHTML = '';
+    registeredHandlers['#lubmtz-prev']();
+    expect(capturedExtraClass).toBe('modal-lub-matriz');
+    expect(capturedHTML).not.toContain('Semana actual'); // offset -1, ya no es la semana actual
+  });
+
+  it('el botón "Hoy" vuelve a offset 0 ("Semana actual" reaparece)', () => {
+    fn({ equipos, plans, records, myCrew: null }, 2);
+    registeredHandlers['#lubmtz-hoy']();
+    expect(capturedHTML).toContain('Semana actual');
   });
 });

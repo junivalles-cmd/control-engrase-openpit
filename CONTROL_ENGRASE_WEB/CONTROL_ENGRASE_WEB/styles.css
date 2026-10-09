@@ -2401,8 +2401,13 @@ table.matriz tbody tr:last-child td { border-bottom: none; }
   font-size: 11px; font-weight: 400; opacity: 0.85; margin-top: 2px;
 }
 /* Encabezado de días: sticky DENTRO de .matriz-wrap (que ahora sí tiene su
-   propio scroll vertical vía max-height) — nunca sticky contra la página. */
-table.matriz thead tr:nth-child(2) th {
+   propio scroll vertical vía max-height) — nunca sticky contra la página.
+   ":nth-child(2)" cubre la Matriz Semanal de escritorio (fila de título +
+   fila de días = 2 filas en thead); ":only-child" cubre el modal del
+   Lubricador (openLubricadorMatrizModal(), sin fila de título — thead tiene
+   una sola fila) — mismo <th>, mismo CSS, nunca una tabla distinta. */
+table.matriz thead tr:nth-child(2) th,
+table.matriz thead tr:only-child th {
   background: var(--surface-2); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
   padding-top: 8px; padding-bottom: 8px;
@@ -2412,7 +2417,8 @@ table.matriz thead tr:nth-child(2) th {
 /* Día actual: acento MUY discreto (fondo tenue + borde superior), nunca toca
    el color de estado de la celda — se ve igual "REALIZADO"/"NO REALIZADO"/
    etc. que en cualquier otro día, solo la columna queda trazada. */
-table.matriz thead tr:nth-child(2) th.is-today {
+table.matriz thead tr:nth-child(2) th.is-today,
+table.matriz thead tr:only-child th.is-today {
   background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); border-top: 2px solid var(--accent);
 }
 .matriz-hoy-tag {
@@ -2430,7 +2436,8 @@ table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 color-mix(in srgb, va
   position: sticky; left: 0; z-index: 1; font-size: 12.5px;
   box-shadow: 1px 0 0 var(--border);
 }
-table.matriz thead tr:nth-child(2) th.matriz-eq { z-index: 3; }
+table.matriz thead tr:nth-child(2) th.matriz-eq,
+table.matriz thead tr:only-child th.matriz-eq { z-index: 3; }
 /* Filas alternas para seguir la línea con la vista en tablas largas */
 table.matriz tbody tr:nth-child(even) .matriz-eq { background: var(--surface); }
 table.matriz tbody tr:hover td { background: rgba(255,255,255,0.03); }
@@ -2520,6 +2527,55 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   .mtz-nav-label { display: none; }
   .matriz-rango { font-size: 12px; text-transform: uppercase; order: -1; flex: 1 1 100%; text-align: center; padding: 2px 0 6px; }
   .mtz-nav-row { justify-content: center; }
+}
+
+/* ---------------- Matriz semanal del Lubricador (modal, Acciones rápidas) ----------------
+   Auditoría UI UX Pro Max 2026-10-09: la ventana era un modal genérico
+   (max-width 620px) — demasiado angosta para una tabla de 8 columnas
+   (Equipo + 7 días), el último día quedaba parcialmente cortado y el
+   scroll horizontal aparecía casi de inmediato. `.modal-lub-matriz` es un
+   modificador SOLO de este modal (ver 3er argumento de openModal() en
+   openLubricadorMatrizModal()) — nunca toca `.modal`/`.modal-overlay` base,
+   usados por otros ~60 modales de la app. La tabla en sí (table.matriz,
+   celdas, leyenda, sticky, scroll-hint, día actual) es EXACTAMENTE la misma
+   de arriba — ni el cálculo ni los estados se tocan, solo el contenedor. */
+.modal-lub-matriz {
+  width: 94vw; max-width: 1200px; height: 88vh; max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-lub-matriz .modal-head { flex: none; }
+.modal-lub-matriz .modal-body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto;
+}
+.lub-mtz-context { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--text); }
+.lub-mtz-scope-note { margin: 0 0 10px; font-size: 11.5px; }
+.lub-mtz-nav-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.lub-mtz-nav-row .matriz-rango { flex: 1 1 auto; text-align: center; }
+.modal-lub-matriz .lub-mtz-context, .modal-lub-matriz .lub-mtz-scope-note,
+.modal-lub-matriz .lub-mtz-nav-row, .modal-lub-matriz .color-legend { flex: none; }
+/* La tabla se queda con el espacio vertical que sobra (nunca un % fijo
+   adivinado) — resuelve directamente "demasiada altura de leyenda/contexto
+   respecto al área útil", sin importar cuánto mida el contexto en cada caso. */
+.modal-lub-matriz .matriz-wrap { flex: 1; min-height: 220px; max-height: none; margin-bottom: 12px; }
+
+@media (max-width: 640px) {
+  /* Casi pantalla completa en móvil — una pantalla de consulta, no un modal
+     flotante pequeño. Mantiene header/botón cerrar/tabla/scroll/sticky.
+     `.modal-overlay` tiene un bug preexistente (sin relación con este
+     lote): su override móvil real (`padding:0`, dentro del bloque
+     "@media (max-width: 900px)" más arriba en este archivo) queda
+     clobbereado por la regla BASE `.modal-overlay{padding:16px}", que
+     aparece DESPUÉS en el archivo y gana el empate de especificidad por
+     orden de cascada — así que TODOS los modales conservan 16px de aire
+     alrededor en móvil, nunca el bottom-sheet pegado a los bordes que esa
+     regla quería dar. Corregir esa regla general queda fuera de alcance
+     de este lote (afectaría ~60 modales sin auditar aquí); en su lugar,
+     `:has()` acota el override SOLO al overlay que contiene este modal
+     — nunca toca el comportamiento de ningún otro modal de la app. */
+  .modal-overlay:has(> .modal-lub-matriz) { padding: 0; }
+  .modal-lub-matriz {
+    width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; border-radius: 0;
+  }
 }
 
 /* ---------------- Panel de notificaciones por tipo ---------------- */
