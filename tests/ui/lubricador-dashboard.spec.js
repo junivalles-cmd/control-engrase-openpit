@@ -60,7 +60,7 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
           <div class="lub-eq-top">
             <span class="lub-eq-code">T-09</span>
             <span class="status-chip" style="--c:var(--amber)">PRÓXIMO</span>
-            ${asignadoEnMiTurno ? '<span class="status-chip" style="--c:var(--amber)">ASIGNADO</span>' : ''}
+            ${asignadoEnMiTurno ? '<span class="status-chip chip-origen" style="--c:var(--amber)">ASIGNADO</span>' : ''}
           </div>
           <div class="lub-eq-model">Komatsu WA470</div>
           <div class="lub-eq-location">📍 Rajo Principal</div>
@@ -92,8 +92,8 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
 
       <button class="lub-hero-action" id="qa-registrar">
         <span class="lub-hero-action-text">
-          <span class="lub-hero-action-title">Registrar engrase</span>
-          <span class="lub-hero-action-sub">Iniciar trabajo de lubricación</span>
+          <span class="lub-hero-action-title">Registrar fuera de plan</span>
+          <span class="lub-hero-action-sub">Engrasar otro equipo</span>
         </span>
         <span class="lub-hero-action-arrow">→</span>
       </button>
@@ -109,7 +109,12 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
   </div>`;
 }
 
-for (const width of [390, 412]) {
+// Fix 2026-10-09 (§14 del pedido): 360/384 se suman a los 390/412 que ya
+// cubría esta suite — las 4 anchuras de auditoría obligatorias, con el
+// fixture REAL completo (contexto + 4 KPI + Atrasados/Mi Turno/Realizados/
+// Alertas + acción principal + Accesos rápidos), no solo el topbar vacío
+// (eso ya lo cubre lubricador-mobile-ux.spec.js aparte).
+for (const width of [360, 384, 390, 412]) {
   test(`Mi Turno @ ${width}px — sin scroll horizontal`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
@@ -249,6 +254,22 @@ test('una tarjeta de Mi Turno sin asignación NO muestra el badge ASIGNADO', asy
   expect(chips).not.toContain('ASIGNADO');
 });
 
+test('§12: el badge ASIGNADO (origen) se ve visualmente distinto del status-chip de ESTADO (sin confundirse, aunque comparten color)', async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 1200 });
+  await page.setContent(fixture({ asignadoEnMiTurno: true }));
+  await page.addStyleTag({ path: STYLES_PATH });
+
+  const estadoChip = page.locator('#mi-turno-list .lub-eq-top .status-chip', { hasText: 'PRÓXIMO' });
+  const asignadoChip = page.locator('#mi-turno-list .lub-eq-top .status-chip', { hasText: 'ASIGNADO' });
+  const estadoBg = await estadoChip.evaluate(el => getComputedStyle(el).backgroundColor);
+  const asignadoBg = await asignadoChip.evaluate(el => getComputedStyle(el).backgroundColor);
+  // ESTADO sigue macizo (mismo --c con 18% de opacidad); ASIGNADO pasa a
+  // transparente con contorno — nunca el mismo fondo, aunque el --c sea el
+  // mismo ámbar en los dos.
+  expect(asignadoBg).not.toBe(estadoBg);
+  expect(await asignadoChip.evaluate(el => getComputedStyle(el).borderStyle)).toBe('solid');
+});
+
 test('cada tarjeta de Realizados muestra código, hora, lb, quién lo realizó, estado de validación y Ver ficha', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
@@ -285,12 +306,12 @@ test('contexto compacto muestra turno + ubicación + cuadrilla + sincronización
   expect(chips.some(t => t.includes('Sincronizado'))).toBe(true);
 });
 
-test('"Registrar engrase" es la acción principal dominante (tarjeta grande separada), y Accesos rápidos tiene exactamente 4 botones: Escanear QR, Buscar equipo, Matriz semanal, Reportar anomalía', async ({ page }) => {
+test('"Registrar fuera de plan" es la acción principal dominante (tarjeta grande separada), y Accesos rápidos tiene exactamente 4 botones: Escanear QR, Buscar equipo, Matriz semanal, Reportar anomalía', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.addStyleTag({ path: STYLES_PATH });
 
-  await expect(page.locator('.lub-hero-action')).toContainText('Registrar engrase');
+  await expect(page.locator('.lub-hero-action')).toContainText('Registrar fuera de plan');
   const labels = await page.locator('.lub-quick-action').allTextContents();
   expect(labels).toEqual(['Escanear QR', 'Buscar equipo', 'Matriz semanal', 'Reportar anomalía']);
 });

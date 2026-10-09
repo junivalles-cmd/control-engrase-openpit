@@ -3195,6 +3195,10 @@ function updateShiftBadge() {
 
 function navigate(route) {
   App.route = route;
+  // §7 (no-op en escritorio: .lub-user-strip no existe en ese shell) —
+  // mismo criterio que el handler de .lub-nav-item en bootLubricador(),
+  // para cuando se llega a 'lubconfig'/'miperfil' desde el menú de cuenta.
+  $('.lub-user-strip')?.classList.toggle('hidden', route === 'turno');
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
     const active = b.dataset.route === route;
     b.classList.toggle('active', active);
@@ -3290,7 +3294,13 @@ function bootLubricador() {
           <button class="icon-btn lub-logout-btn" id="btn-logout" title="Cerrar sesión">${ic('logout')}<span class="lub-logout-text">Cerrar sesión</span></button>
         </div>
       </header>
-      <div class="lub-user-strip">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
+      <!-- Fix 2026-10-09 (§7 del pedido): oculta SOLO en 'turno' — ahí la
+           lub-welcome-card de abajo ya repite nombre/rol/turno, y esta franja
+           quedaba duplicada. En las demás pestañas (Anomalías/Mis Engrases/
+           Ayuda/Mi Perfil/Configuración) sigue siendo el ÚNICO indicador de
+           usuario/turno visible, así que no se quita del DOM — ver toggle en
+           el handler de .lub-nav-item y en el boot inicial, abajo. -->
+      <div class="lub-user-strip hidden">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
       <main id="app-content" class="lub-content"></main>
       <nav class="lub-bottom-nav">
         <button class="lub-nav-item active" data-route="turno" aria-current="page"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
@@ -3331,6 +3341,7 @@ function bootLubricador() {
     b.classList.add('active');
     b.setAttribute('aria-current', 'page');
     App.route = b.dataset.route;
+    $('.lub-user-strip')?.classList.toggle('hidden', b.dataset.route === 'turno');
     if (b.dataset.route === 'turno') renderLubricadorHome();
     else if (b.dataset.route === 'anomalias') renderAnomalias();
     else if (b.dataset.route === 'historial') renderLubricadorHistorial();
@@ -3558,7 +3569,12 @@ async function renderLubricadorHome() {
   // (openEquipmentDetail → tipoRecordHTML, "status-chip" + var(--amber)) —
   // nunca una clase/paleta nueva (hardening UI 2026-10-08, "simplificar Mi
   // Turno": Asignaciones ya no es una sección aparte, ver más abajo).
-  const asignadoBadgeHTML = '<span class="status-chip" style="--c:var(--amber)">ASIGNADO</span>';
+  // Fix 2026-10-09 (§12 del pedido): clase .chip-origen (solo CSS, ver
+  // styles.css) para que ASIGNADO se vea como ORIGEN de la tarea (contorno)
+  // y nunca se confunda con el status-chip de ESTADO (relleno) que va al
+  // lado — mismo color --amber, mismo texto, mismo lugar: cero lógica
+  // nueva, solo diferenciación visual.
+  const asignadoBadgeHTML = '<span class="status-chip chip-origen" style="--c:var(--amber)">ASIGNADO</span>';
 
   const arrastradoRowHTML = ({ e, origen, tone, asignado }) => {
     const skip = lastSkipByEquipoId[e.id];
@@ -3665,8 +3681,15 @@ async function renderLubricadorHome() {
   // debe haber overlap con Realizados, aunque el status code tuviera algún
   // caso borde — p. ej. un fuera-de-plan que satisface una ocurrencia
   // distinta a la que su propio status recalcula).
+  // Fix 2026-10-09 (§6 del pedido, "un equipo nunca infla 2 KPI
+  // incompatibles"): faltaba excluir aquí los IDs de vencidosHorometro —
+  // arrastradosIds nunca los incluye (esa lista requiere plan de tipo "Día
+  // y turno de la semana", y un vencido por horómetro es de tipo "Horas de
+  // operación"), así que un equipo ya contado en el KPI "Vencidos" se
+  // colaba también en Mi Turno (ROJO nunca estaba excluido, solo VERDE).
+  const vencidosHorometroIds = new Set(vencidosHorometro.map(({ e }) => e.id));
   const statusesNormalRestantes = statusesNormal.filter(({ e, s }) =>
-    !arrastradosIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id));
+    !arrastradosIds.has(e.id) && !vencidosHorometroIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id));
 
   // ============================================================
   // "Mi Turno" simplificado (hardening UI 2026-10-08) — pedido explícito:
@@ -3714,8 +3737,17 @@ async function renderLubricadorHome() {
   // COMPLETE" se separa en un Set reusable, para que Alertas pueda
   // aplicarlo también SIN reimplementar la condición (§8 del pedido: "una
   // sola fuente de verdad" — Ficha y Alertas no pueden contradecirse).
+  // Fix 2026-10-09 (§4/§5/§15-C del pedido): esta reclasificación de PARTIAL
+  // ahora también recorre statusesAssigned (antes SOLO statusesNormal) —
+  // sin eso, un equipo ASIGNADO con un PARTIAL de hoy quedaba VERDE por
+  // weekdayStatusFor() (cuenta cualquier record como "hecho", sin tocar esa
+  // función) y el merge de arriba lo descartaba (`s.code !== 'VERDE'`):
+  // desaparecía de Mi Turno/Atrasados por completo, violando la regla de
+  // que un PARTIAL nunca cuenta como completo. normalIds evita reprocesar
+  // un equipo que ya viniera por el camino normal.
   const partialPendienteIds = new Set();
-  statusesNormal.filter(({ e, s }) => {
+  const statusesParaPartial = [...statusesNormal, ...statusesAssigned.filter(({ e }) => !normalIds.has(e.id))];
+  statusesParaPartial.filter(({ e, s }) => {
     if (s.code !== 'VERDE' || !s.scheduleDate) return false;
     if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id)) return false;
     const plan = plansByEquipoId[e.id];
@@ -3850,11 +3882,23 @@ async function renderLubricadorHome() {
       <div class="lub-context-row">${contextChips}</div>
     </div>
 
+    <!-- Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
+         hoy"/"Arrastrados"/"Realizados hoy" usan los MISMOS totales ya
+         fusionados (miTurnoTotal/arrastradosTotal/realizadosHoyList) que ya
+         pinta esta pantalla y que ya usa updateLubricadorWidgetSnapshot()
+         arriba — nunca un cálculo aparte. Antes el KPI leía las listas
+         previas al merge con statusesAssigned (pendientesHoyList/arrastrados/
+         realizadosHoy), así que un equipo ASIGNADO con ocurrencia real del
+         turno (ej. "PROGRAMADO HOY") aparecía en "MI TURNO (N)" pero el KPI
+         seguía en 0 — ASIGNADO es origen/prioridad, no estado de ejecución,
+         y debe contar igual que el trabajo normal. "Vencidos" no cambia: es
+         el único KPI sin bandeja propia (vencimiento por horómetro), y un
+         equipo asignado vencido por horómetro ya se refleja en Atrasados. -->
     <div class="lub-kpi-row">
       ${kpiTile('Vencidos', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
-      ${kpiTile('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral')}
-      ${kpiTile('Arrastrados', arrastrados.length, arrastrados.length ? 'amber' : 'neutral')}
-      ${kpiTile('Realizados hoy', realizadosHoy, 'green')}
+      ${kpiTile('Pendientes hoy', miTurnoTotal.length, miTurnoTotal.length ? 'amber' : 'neutral')}
+      ${kpiTile('Arrastrados', arrastradosTotal.length, arrastradosTotal.length ? 'amber' : 'neutral')}
+      ${kpiTile('Realizados hoy', realizadosHoyList.length, 'green')}
     </div>
 
     ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
@@ -3882,10 +3926,19 @@ async function renderLubricadorHome() {
     <p class="dim" style="padding:0 2px 10px">Sin alertas de engrase.</p>
     `}
 
+    <!-- Fix 2026-10-09 (§10 del pedido): renombrado, NUNCA cambiada su
+         lógica (sigue abriendo openOutOfPlanEquipmentPicker(), sin tocar).
+         Se verificó en código que esa función SIEMPRE abre el modal
+         "Engrase fuera de plan" (buscador manual de equipo) — si el equipo
+         elegido ya tiene trabajo normal/asignado pendiente, redirige ahí
+         como salvaguarda anti-duplicado (§5), pero esa no es su función
+         principal. "Registrar engrase" genérico confundía esta acción con
+         los botones "Registrar engrase" de las tarjetas de Atrasados/Mi
+         Turno (esos sí abren directo la ocurrencia programada). -->
     <button type="button" class="lub-hero-action" id="lub-quick-registrar">
       <span class="lub-hero-action-text">
-        <span class="lub-hero-action-title">${ic("plus")}Registrar engrase</span>
-        <span class="lub-hero-action-sub">Iniciar trabajo de lubricación</span>
+        <span class="lub-hero-action-title">${ic("plus")}Registrar fuera de plan</span>
+        <span class="lub-hero-action-sub">Engrasar otro equipo</span>
       </span>
       <span class="lub-hero-action-arrow" aria-hidden="true">→</span>
     </button>

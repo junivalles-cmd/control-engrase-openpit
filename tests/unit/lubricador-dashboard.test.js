@@ -67,7 +67,11 @@ describe('§3 — "Arrastrados" nunca cuenta dos veces el mismo equipo (turno an
   });
 
   it('"Trabajo del turno actual" excluye los equipos ya mostrados en Arrastrados (cada equipo aparece una sola vez en toda la pantalla; fix 2026-10-08 agregó también excluir VERDE/realizadosHoyIds, ver describe aparte)', () => {
-    expect(src).toContain('!arrastradosIds.has(e.id) && s.code !== \'VERDE\' && !realizadosHoyIds.has(e.id)');
+    // Fix 2026-10-09 (§6 del pedido): también excluye vencidosHorometroIds —
+    // un vencido por horómetro ya cuenta en el KPI "Vencidos", y antes se
+    // colaba también en Mi Turno porque arrastradosIds nunca lo incluye
+    // (ese Set es solo para vencidos por día/turno de la semana).
+    expect(src).toContain('!arrastradosIds.has(e.id) && !vencidosHorometroIds.has(e.id) && s.code !== \'VERDE\' && !realizadosHoyIds.has(e.id)');
   });
 });
 
@@ -100,9 +104,25 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
     const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
     const block = src.slice(iRow, iEnd);
     expect(block).toContain("kpiTile('Vencidos', vencidosHorometro.length");
-    expect(block).toContain("kpiTile('Pendientes hoy', pendientesHoyList.length");
-    expect(block).toContain("kpiTile('Arrastrados', arrastrados.length");
-    expect(block).toContain("kpiTile('Realizados hoy', realizadosHoy");
+    expect(block).toContain("kpiTile('Pendientes hoy', miTurnoTotal.length");
+    expect(block).toContain("kpiTile('Arrastrados', arrastradosTotal.length");
+    expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyList.length");
+  });
+
+  // Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
+  // hoy"/"Arrastrados"/"Realizados hoy" deben leer las MISMAS listas
+  // fusionadas (miTurnoTotal/arrastradosTotal/realizadosHoyList) que ya
+  // pinta la pantalla — nunca las listas previas al merge con
+  // statusesAssigned (pendientesHoyList/arrastrados/realizadosHoy), que es
+  // justo la causa raíz del bug real reportado ("MI TURNO (2)" con el KPI
+  // en 0).
+  it('ningún kpiTile() del KPI row vuelve a leer las listas previas al merge con statusesAssigned', () => {
+    const iRow = src.indexOf('<div class="lub-kpi-row">');
+    const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
+    const block = src.slice(iRow, iEnd);
+    expect(block).not.toContain('pendientesHoyList.length');
+    expect(block).not.toMatch(/kpiTile\('Arrastrados', arrastrados\.length/);
+    expect(block).not.toContain("kpiTile('Realizados hoy', realizadosHoy,");
   });
 });
 
@@ -143,7 +163,10 @@ describe('"Asignaciones activas" (hardening UI 2026-10-08) — ya NO es una secc
   });
 
   it('el badge ASIGNADO reusa el MISMO componente/color ya usado en la Ficha de equipo (status-chip + var(--amber)), nunca una clase/paleta nueva', () => {
-    expect(src).toContain("const asignadoBadgeHTML = '<span class=\"status-chip\" style=\"--c:var(--amber)\">ASIGNADO</span>';");
+    // Fix 2026-10-09 (§12 del pedido): suma la clase .chip-origen (solo
+    // CSS, contorno en vez de relleno) para diferenciar ASIGNADO (origen)
+    // del status-chip de ESTADO al lado — mismo --c/color, mismo texto.
+    expect(src).toContain("const asignadoBadgeHTML = '<span class=\"status-chip chip-origen\" style=\"--c:var(--amber)\">ASIGNADO</span>';");
   });
 });
 
@@ -281,7 +304,7 @@ describe('openLubricadorMatrizModal() — matriz de solo lectura, scoped, reusa 
 
 describe('Fix 2026-10-08 ("alinear estado y trabajo realizado") — VERDE/"AL DÍA" nunca en la bandeja de trabajo, sin tocar statusFor()/weekdayStatusFor()', () => {
   it('"Mi Turno" excluye explícitamente s.code === \'VERDE\' (un equipo al día no tiene ocurrencia pendiente)', () => {
-    expect(src).toContain("!arrastradosIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id)");
+    expect(src).toContain("!arrastradosIds.has(e.id) && !vencidosHorometroIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id)");
   });
 
   it('el camino de asignados también excluye VERDE antes de agregar a Mi Turno (mismo criterio, sin duplicar código de cálculo)', () => {

@@ -130,6 +130,12 @@ function seccion(page, textoEncabezado) {
   return page.locator(`.lub-section-head:has-text("${textoEncabezado}") + .lub-eq-list`);
 }
 
+// Lee el número de UN KPI por su etiqueta (los 4 .lub-kpi-card no tienen id
+// propio) — mismo método "ubicar por texto" que seccion() arriba.
+function kpiValue(page, label) {
+  return page.locator('.lub-kpi-card', { hasText: label }).locator('.lub-kpi-value');
+}
+
 // Dedup real (punto E del pedido): un código solo puede estar en UNA de
 // Atrasados/Mi Turno/Realizados — nunca en 2 a la vez. Alertas queda FUERA
 // a propósito: puede repetir un equipo que también esté en otra sección
@@ -575,4 +581,171 @@ test('botón "Matriz semanal": abre con TODOS los equipos de la ubicación activ
   // trabajo normal de la cuadrilla default — sin cambios de scope ahí.
   expect(await enCuantasSeccionesDeTrabajo(page, 'VOL-DIA')).toBe(1);
   expect(await enCuantasSeccionesDeTrabajo(page, 'VOL-NOCHE')).toBe(1);
+});
+
+// ============================================================
+// "PULIDA FINAL MI TURNO + AUDITORÍA KPI" (2026-10-09) — bug real reportado
+// con captura: "MI TURNO (2)" mostraba 2 equipos ASIGNADOS ("45-77"/"A-02",
+// PROGRAMADO HOY) pero el KPI "Pendientes hoy" marcaba 0. Causa raíz
+// trazada en código (nunca asumida): Pendientes hoy/Arrastrados/Realizados
+// hoy leían listas previas al merge con statusesAssigned
+// (pendientesHoyList/arrastrados/realizadosHoy) — un equipo que llegaba
+// SOLO por el camino de asignación nunca entraba ahí, aunque sí aparecía en
+// la sección ya fusionada (miTurnoTotal/arrastradosTotal/realizadosHoyList,
+// las MISMAS que ya usaba updateLubricadorWidgetSnapshot()). Casos A-G del
+// pedido, todos contra la función real.
+// ============================================================
+
+test('A/F — 2 equipos ASIGNADOS "PROGRAMADO HOY" en Mi Turno: el KPI "Pendientes hoy" es 2, igual al contador real de la sección (nunca 0)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  // locationId 'l2' (no la ubicación default de crew1, 'l1') + assignment a
+  // crew1 → clasifican como `assigned`, nunca `normal` (mismo patrón que el
+  // caso real "T-31" de arriba) — reproduce exactamente "45-77"/"A-02".
+  const equipos = [
+    { id: 'e1', code: '45-77', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l2' },
+    { id: 'e2', code: 'A-02', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l2' },
+  ];
+  const plans = [
+    { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+    { id: 'p2', equipmentId: 'e2', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+  ];
+  const assignments = [
+    { id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true },
+    { id: 'a2', equipmentId: 'e2', assignedCrewId: 'crew1', status: 'PENDING', active: true },
+  ];
+
+  await bootPage(page, { equipos, plans, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(page.locator('.lub-section-head:has-text("MI TURNO")')).toContainText('(2)');
+  await expect(seccion(page, 'MI TURNO')).toContainText('45-77');
+  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
+  // El bug real: esto marcaba "0" antes del fix.
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('2');
+});
+
+test('B — una de las 2 asignaciones pasa a COMPLETE: sale de Mi Turno (Pendientes hoy → 1) y entra a Realizados hoy (KPI → 1), nunca ambos a la vez', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [
+    { id: 'e1', code: '45-77', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l2' },
+    { id: 'e2', code: 'A-02', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l2' },
+  ];
+  const plans = [
+    { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+    { id: 'p2', equipmentId: 'e2', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+  ];
+  const assignments = [
+    { id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true },
+    { id: 'a2', equipmentId: 'e2', assignedCrewId: 'crew1', status: 'PENDING', active: true },
+  ];
+
+  await bootPage(page, { equipos, plans, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('2');
+  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
+
+  await page.evaluate(() => {
+    window.__mockData.lubrication_records.push({
+      id: 'r-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 2.0, shiftId: 'shift_dia',
+    });
+    return window.renderLubricadorHome();
+  });
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
+  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('1');
+  expect(await enCuantasSeccionesDeTrabajo(page, '45-77')).toBe(1); // solo Realizados
+  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
+});
+
+test('C — un equipo ASIGNADO con un PARTIAL de hoy sigue PENDIENTE (nunca desaparece, nunca cuenta como Realizado) — antes del fix se perdía por completo', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'T-60', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
+  const records = [{
+    id: 'r1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), userName: 'Ana G.', qty: 1.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionCompleteness: 'PARTIAL' },
+  }];
+
+  await bootPage(page, { equipos, plans, assignments, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'MI TURNO')).toContainText('T-60');
+  await expect(seccion(page, 'MI TURNO')).toContainText('PROGRAMADO HOY');
+  expect(await enCuantasSeccionesDeTrabajo(page, 'T-60')).toBe(1); // solo Mi Turno, nunca Realizados
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
+  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
+});
+
+test('D — un equipo vencido por HORÓMETRO (KPI "Vencidos") no infla también "Pendientes hoy" ni aparece en Mi Turno (2 KPI incompatibles, nunca el mismo equipo en los 2)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  // "Horas de operación": 500h desde el último engrase, frecuencia 250h →
+  // muy vencido (ROJO), sin asignación — puramente `normal`.
+  const equipos = [{ id: 'e1', code: 'T-61', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1', hourmeter: 600 }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Vencidos')).toHaveText('1');
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0'); // no también contado aquí
+  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0); // nunca se cuela en Mi Turno
+});
+
+test('E — sin duplicados: cada equipo cuenta en el KPI de UNA sola categoría de trabajo pendiente/realizado', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const diaVencido = weekdayNDaysAgo(2);
+  const equipos = [
+    { id: 'e1', code: 'T-62', brand: 'Volvo', model: 'A40', status: 'Operativo', locationId: 'l1' }, // pendiente hoy
+    { id: 'e2', code: 'T-63', brand: 'Hitachi', model: 'EX200', status: 'Operativo', locationId: 'l1' }, // arrastrado
+    { id: 'e3', code: 'T-64', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l1' }, // realizado
+  ];
+  const plans = [
+    { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+    { id: 'p2', equipmentId: 'e2', controlType: 'Día y turno de la semana', assignedDays: [diaVencido] },
+    { id: 'p3', equipmentId: 'e3', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] },
+  ];
+  const records = [{ id: 'r1', equipmentId: 'e3', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), userName: 'Ana G.', qty: 2.0, shiftId: 'shift_dia' }];
+
+  await bootPage(page, { equipos, plans, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
+  await expect(kpiValue(page, 'Arrastrados')).toHaveText('1');
+  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('1');
+  for (const code of ['T-62', 'T-63', 'T-64']) {
+    expect(await enCuantasSeccionesDeTrabajo(page, code)).toBe(1);
+  }
+});
+
+test('G — 0 pendientes del turno actual: el KPI "Pendientes hoy" es 0 y la sección "MI TURNO" no se muestra (mismo universo, nunca contradictorios)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, { equipos: [] });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
+  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
 });
