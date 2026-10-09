@@ -29,6 +29,13 @@ const APP_NAMES = [
   'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
   'getTheme', 'applyTheme', 'saveTheme', 'openThemePicker',
   'THEMES', 'MODES', 'THEME_COLOR_BY_MODE',
+  // Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN"): reales — se
+  // prueba que renderLubricadorConfig() los invoca de verdad, nunca una
+  // reimplementación. renderLubricadorHome() en sí NO se extrae (es la
+  // pantalla "Mi Turno" completa, ya probada aparte en
+  // tests/ui/lubricador-mi-turno-real-execution.spec.js) — se reemplaza
+  // por un espía después de la extracción, igual que quickUnlockConfigureModal.
+  'setSelectedCrewId', 'goToLubricadorTurno',
 ];
 const appRealSrc = APP_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -90,9 +97,15 @@ async function bootConfig(page, {
       // real de logout() tocara IndexedDB, window.DB.put/delete/clear lo
       // registrarían igual aquí.
       window.logout = async () => { await window.Auth.signOut(); await window.QuickUnlock.disable(); };
+      // Espía — renderLubricadorHome() es la pantalla "Mi Turno" completa,
+      // ya probada aparte (tests/ui/lubricador-mi-turno-real-execution.spec.js);
+      // acá solo importa confirmar que goToLubricadorTurno() la invoca de
+      // verdad después de limpiar la cuadrilla de sesión.
+      window.renderLubricadorHome = () => { window.__renderLubricadorHomeCalls = (window.__renderLubricadorHomeCalls || 0) + 1; };
       ${appRealSrc}
       quickUnlockConfigureModal = (mode) => { window.__quickUnlockConfigureModalCalls = mode; };
       window.renderLubricadorConfig = renderLubricadorConfig;
+      window.goToLubricadorTurno = goToLubricadorTurno;
       // const THEMES/const MODES son declaraciones de script clásico —
       // visibles por nombre libre dentro de este mismo script (por eso
       // openThemePicker() ya las usa sin problema), pero un const de
@@ -244,5 +257,101 @@ test.describe('G) solo modo supabase — en modo legacy no se ofrece', () => {
     });
     await page.evaluate(() => window.renderLubricadorConfig ? window.renderLubricadorConfig() : renderLubricadorConfig());
     await expect(page.locator('#lub-config-theme')).toHaveCount(0);
+  });
+});
+
+// Pedido "CAMBIAR CUADRILLA EN CONFIGURACIÓN" (2026-10-09) — nueva sección
+// "Trabajo / Contexto operativo". Reusa EXACTAMENTE el mismo flujo de
+// selección de Mi Turno (setSelectedCrewId('') → goToLubricadorTurno() →
+// scope.kind 'NEEDS_CREW_SELECTION' → el picker real de
+// renderLubricadorHome(), probado aparte en
+// tests/ui/lubricador-mi-turno-real-execution.spec.js) — nunca un segundo
+// selector. renderLubricadorHome() se reemplaza por un espía aquí (ver
+// bootConfig arriba) a propósito: "D/E/F" del §6 del pedido (Mi
+// Turno/KPI/Widget se recalculan) son una propiedad YA probada de esa
+// misma función real — confirmar que goToLubricadorTurno() la invoca de
+// verdad es, por construcción, confirmar que se heredan gratis.
+const SCOPE_CREW_MULTI = {
+  kind: 'CREW_SCOPED', userId: 'u2', role: 'LUBRICADOR', shiftId: 'shift_dia',
+  crewId: 'cq1', crewLocationId: 'loc1',
+  authorizedCrews: [{ id: 'cq1', name: 'Cuadrilla 76-08', locationId: 'loc1' }, { id: 'cq2', name: 'Cuadrilla Volcán', locationId: 'loc2' }],
+};
+const SCOPE_NEEDS_SELECTION = {
+  kind: 'NEEDS_CREW_SELECTION', userId: 'u2', role: 'LUBRICADOR', shiftId: 'shift_dia',
+  crewId: null, crewLocationId: null,
+  authorizedCrews: [{ id: 'cq1', name: 'Cuadrilla 76-08', locationId: 'loc1' }, { id: 'cq2', name: 'Cuadrilla Volcán', locationId: 'loc2' }],
+};
+const SCOPE_NO_CREW = {
+  kind: 'NO_CREW_ASSIGNED', userId: 'u2', role: 'LUBRICADOR', shiftId: 'shift_dia',
+  crewId: null, crewLocationId: null, authorizedCrews: [],
+};
+
+test.describe('H) Trabajo / Contexto operativo — Cambiar cuadrilla', () => {
+  test('A. 1 cuadrilla autorizada: se muestra como activa (cuadrilla/ubicación/turno) y el botón queda deshabilitado con su propio texto explicativo', async ({ page }) => {
+    await bootConfig(page, { scope: SCOPE_CREW, cuadrillas: [{ id: 'cq1', name: 'Cuadrilla 76-08' }], locations: [{ id: 'loc1', name: 'Volcán' }] });
+    const panel = page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..');
+    await expect(panel).toContainText('Cuadrilla 76-08');
+    await expect(panel).toContainText('Volcán');
+    const btn = page.locator('#lub-config-change-crew');
+    await expect(btn).toBeDisabled();
+    await expect(btn).toContainText('Solo tienes una cuadrilla autorizada');
+  });
+
+  test('B. 2+ cuadrillas autorizadas: el botón "Cambiar cuadrilla" está habilitado y visible', async ({ page }) => {
+    await bootConfig(page, {
+      scope: SCOPE_CREW_MULTI,
+      cuadrillas: [{ id: 'cq1', name: 'Cuadrilla 76-08' }, { id: 'cq2', name: 'Cuadrilla Volcán' }],
+      locations: [{ id: 'loc1', name: 'Volcán' }, { id: 'loc2', name: 'Rajo Sur' }],
+    });
+    const btn = page.locator('#lub-config-change-crew');
+    await expect(btn).toBeEnabled();
+    await expect(btn).toHaveText(/Cambiar cuadrilla/);
+  });
+
+  test('C/D/E/F/G. al hacer clic: limpia SOLO la selección de sesión (localStorage, nunca memberships) y reusa goToLubricadorTurno() → renderLubricadorHome() real (Mi Turno/KPI/Widget se recalculan ahí, ya probado aparte)', async ({ page }) => {
+    await bootConfig(page, {
+      scope: SCOPE_CREW_MULTI,
+      cuadrillas: [{ id: 'cq1', name: 'Cuadrilla 76-08' }, { id: 'cq2', name: 'Cuadrilla Volcán' }],
+      locations: [{ id: 'loc1', name: 'Volcán' }, { id: 'loc2', name: 'Rajo Sur' }],
+    });
+    await page.locator('#lub-config-change-crew').click();
+
+    // G: nunca escribe en IndexedDB (memberships/cuadrillas/permisos viven
+    // en Supabase, fuera del alcance de este botón).
+    const dbCalls = await page.evaluate(() => window.__dbWriteCalls);
+    expect(dbCalls).toEqual([]);
+    // La selección de SESIÓN sí se limpia (localStorage, scoped por userId)
+    // — es la señal que hace que resolveOperationalScope() vuelva a pedir
+    // elegir, exactamente igual que el botón real de Mi Turno.
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('engrase_session_crew')));
+    expect(stored).toEqual({ userId: 'u2', crewId: '' });
+    // C/D/E/F: reusa el MISMO flujo que Mi Turno — goToLubricadorTurno()
+    // real termina llamando renderLubricadorHome() (espía aquí).
+    const renders = await page.evaluate(() => window.__renderLubricadorHomeCalls);
+    expect(renders).toBe(1);
+  });
+
+  test('H. nunca ofrece seleccionar una cuadrilla no autorizada — este botón solo limpia la selección, el picker real (con el allowlist de scope.authorizedCrews) vive en Mi Turno, nunca un segundo selector aquí', async ({ page }) => {
+    await bootConfig(page, { scope: SCOPE_CREW_MULTI, cuadrillas: [], locations: [] });
+    // Esta pantalla NUNCA lista cuadrillas para elegir — ningún
+    // "crew-select-btn" ni listado de opciones, solo el botón que limpia
+    // la sesión y reenvía al picker real de Mi Turno.
+    await expect(page.locator('.crew-select-btn')).toHaveCount(0);
+    await expect(page.locator('select[name], [role="listbox"]')).toHaveCount(0);
+  });
+
+  test('I. cuadrilla local inválida (ya no autorizada) nunca se presenta como activa — si el scope real la descartó (NEEDS_CREW_SELECTION), muestra el mensaje de "ir a elegir", nunca datos de una cuadrilla no autorizada', async ({ page }) => {
+    // resolveOperationalScope() YA descarta un selectedCrewId no autorizado
+    // (operational-scope.test.js, "CASO E del pedido") — esta pantalla
+    // reusa ese mismo scope ya resuelto, nunca reimplementa la validación.
+    await bootConfig(page, { scope: SCOPE_NEEDS_SELECTION, cuadrillas: [], locations: [] });
+    await expect(page.locator('#lub-config-change-crew')).toHaveCount(0);
+    await expect(page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..')).toContainText('Entra a Mi Turno para elegir');
+  });
+
+  test('scope.kind NO_CREW_ASSIGNED: muestra el mismo mensaje real de "sin cuadrilla", nunca una pantalla de cambio de cuadrilla inexistente', async ({ page }) => {
+    await bootConfig(page, { scope: SCOPE_NO_CREW, cuadrillas: [], locations: [] });
+    await expect(page.locator('#lub-config-change-crew')).toHaveCount(0);
+    await expect(page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..')).toContainText('Sin cuadrilla autorizada todavía');
   });
 });

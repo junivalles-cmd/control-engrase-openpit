@@ -2958,6 +2958,25 @@ function miPerfilErrorMessage(err) {
    NUNCA muestra controles de ADMINISTRADOR/PLANIFICADOR — esta función no
    los conoce siquiera (a diferencia de renderConfig(), la pantalla de
    Configuración de escritorio, que esta función NUNCA llama). */
+// Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN"): vuelve a "Mi
+// Turno" programáticamente — MISMO efecto que tocar esa pestaña de la
+// barra inferior (bootLubricador(), ver $$('.lub-nav-item').forEach(...)
+// más arriba), reusado por el botón "Cambiar cuadrilla" de Configuración
+// para no duplicar el manejo de clases activas/.lub-user-strip. Nunca usa
+// navigate() — esa función es el router de ESCRITORIO (renderTurno para
+// 'turno', ver mis-engrases-baseline.test.js), llamarla desde el shell del
+// Lubricador pintaría la pantalla equivocada.
+function goToLubricadorTurno() {
+  App.lubricadorGreaseFlowActive = false;
+  $$('.lub-nav-item').forEach(x => { x.classList.remove('active'); x.removeAttribute('aria-current'); });
+  const tab = $('.lub-nav-item[data-route="turno"]');
+  tab?.classList.add('active');
+  tab?.setAttribute('aria-current', 'page');
+  App.route = 'turno';
+  $('.lub-user-strip')?.classList.toggle('hidden', true);
+  renderLubricadorHome();
+}
+
 async function renderLubricadorConfig() {
   const c = $('#app-content');
   if (!c) return;
@@ -2987,6 +3006,32 @@ async function renderLubricadorConfig() {
       </div>
     </div>
 
+    <!-- Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN", §A del
+         pedido): reusa EXACTAMENTE el mismo flujo de selección ya usado en
+         Mi Turno (setSelectedCrewId('') → scope.kind 'NEEDS_CREW_SELECTION'
+         → el picker real de renderLubricadorHome(), nunca un segundo
+         selector) — ver goToLubricadorTurno() arriba. Con 1 sola cuadrilla
+         autorizada el botón queda deshabilitado con su propio texto (§2:
+         "la solución más clara"), nunca una acción que no hace nada sin
+         explicar por qué. -->
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Trabajo / Contexto operativo</h3></div>
+      <div style="padding:14px">
+        ${scope.kind === 'CREW_SCOPED' ? `
+          <div class="detail-grid">
+            <div><b>Cuadrilla activa</b><div>${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '—')}</div></div>
+            <div><b>Ubicación</b><div>${esc((locations.find(l => l.id === scope.crewLocationId) || {}).name || 'Sin ubicación')}</div></div>
+            <div><b>Turno</b><div>${esc(turnoLabel)}</div></div>
+          </div>
+          <div class="lub-config-actions" style="margin-top:10px">
+            ${scope.authorizedCrews.length > 1
+              ? `<button type="button" class="btn" id="lub-config-change-crew">${ic('repeat')}Cambiar cuadrilla</button>`
+              : `<button type="button" class="btn" id="lub-config-change-crew" disabled>${ic('repeat')}Solo tienes una cuadrilla autorizada</button>`}
+          </div>
+        ` : `<p class="dim">${scope.kind === 'NO_CREW_ASSIGNED' ? 'Sin cuadrilla autorizada todavía — pide a Administración/Planificación que te agregue a una.' : 'Entra a Mi Turno para elegir con cuál cuadrilla vas a trabajar.'}</p>`}
+      </div>
+    </div>
+
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Seguridad</h3></div>
       <div style="padding:14px" class="lub-config-actions">
@@ -3008,6 +3053,15 @@ async function renderLubricadorConfig() {
   $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
   $('#lub-config-change-user').addEventListener('click', () => confirmChangeUser());
   $('#lub-config-theme').addEventListener('click', () => openThemePicker());
+  // §3 del pedido: solo limpia la selección de SESIÓN (localStorage) para
+  // que resolveOperationalScope() vuelva a pedir elegir entre las YA
+  // autorizadas — nunca toca memberships/cuadrillas/permisos (eso vive en
+  // Supabase, fuera del alcance de este botón).
+  $('#lub-config-change-crew')?.addEventListener('click', () => {
+    if (!scope.authorizedCrews || scope.authorizedCrews.length <= 1) return; // deshabilitado, doble seguro
+    setSelectedCrewId(App.currentUser.id, '');
+    goToLubricadorTurno();
+  });
 }
 
 /* ---------- Cierre de sesión por inactividad ----------
