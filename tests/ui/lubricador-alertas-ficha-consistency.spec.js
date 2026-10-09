@@ -79,6 +79,11 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       window.openOutOfPlanEquipmentPicker = () => {}; window.openLubricadorMatrizModal = () => {};
       window.openEquipmentDetail = () => {}; window.startLubricadorGreaseFlow = () => {};
       window.openValidationDetailModal = () => {}; window.refreshPushTokenCrewScope = async () => {};
+      // Widget de pantalla de inicio (lote "WIDGET ANDROID", 2026-10-09):
+      // renderLubricadorHome() ya lo llama siempre — espía no-op aquí, su
+      // comportamiento real se prueba aparte en
+      // tests/ui/lubricador-widget-snapshot.spec.js.
+      window.updateLubricadorWidgetSnapshot = () => {};
       window.__mockData = {
         equipment: ${JSON.stringify(equipos)},
         locations: ${JSON.stringify(LOCATIONS)},

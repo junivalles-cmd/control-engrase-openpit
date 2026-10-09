@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Botón "ABRIR" del widget sin snapshot — azul corporativo (identidad
+     final de marca, Parte B del pedido), nunca un color semántico. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#1F4E79" />
+    <corners android:radius="8dp" />
+</shape>

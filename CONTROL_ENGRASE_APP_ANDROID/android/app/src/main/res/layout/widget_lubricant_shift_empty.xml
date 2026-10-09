@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Estado "sin sesion/snapshot" (§7 del pedido) — nunca muestra datos de
+     un usuario anterior. Un solo tap en toda el area abre la app. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_empty_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="12dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="CONTROL DE ENGRASE"
+        android:textColor="@color/widget_text_dim"
+        android:textSize="9sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:ellipsize="end" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:text="Abre la aplicación\npara ver tu turno."
+        android:textColor="@color/widget_text"
+        android:textSize="12sp" />
+
+    <Button
+        android:id="@+id/widget_empty_open_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="ABRIR"
+        android:textSize="11sp"
+        android:textColor="@color/widget_bg"
+        android:background="@drawable/widget_button_background" />
+</LinearLayout>

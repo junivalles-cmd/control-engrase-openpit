@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2x2 por defecto (minWidth/minHeight ~110dp cada celda); permite
+     redimensionar hasta 4x2 horizontalmente (§2 del pedido) — el ancho
+     real en ese momento decide el layout (ver onAppWidgetOptionsChanged()
+     en LubricantShiftWidgetProvider.java). updatePeriodMillis=0: el
+     snapshot se actualiza por push real (WidgetBridgePlugin), nunca por
+     polling periódico (ahorra batería, cumple local-first real). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:maxResizeWidth="250dp"
+    android:maxResizeHeight="180dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_lubricant_shift_small"
+    android:previewLayout="@layout/widget_lubricant_shift_small"
+    android:updatePeriodMillis="0" />

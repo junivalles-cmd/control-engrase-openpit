@@ -60,6 +60,42 @@ async function pickPhotoNative(source) {
   }
 }
 
+/* ---------- Widget de pantalla de inicio (Android) — lote "WIDGET ANDROID"
+   ============================================================
+   NO duplica lógica (§4 del pedido): renderLubricadorHome() ya calculó
+   Atrasados/Mi Turno/Realizados (COMPLETE/PARTIAL/assignments/scope, su
+   única fuente real) — esto solo arma el snapshot MÍNIMO
+   (buildWidgetSnapshot(), src/core/widget-snapshot.js) y lo envía al
+   plugin nativo local WidgetBridgePlugin (sin dependencia npm nueva,
+   registrado a mano en MainActivity.java — ver ese archivo). En la
+   versión web (isNative()===false) no hace nada — local-first real: el
+   snapshot se actualiza en el MISMO render que ya refleja un
+   COMPLETE/PARTIAL/SKIP guardado solo localmente, nunca esperando
+   Supabase/sync (§6 del pedido). Errores del plugin se ignoran en
+   silencio (el widget es informativo, nunca debe poder romper Mi Turno).
+   ============================================================ */
+async function updateLubricadorWidgetSnapshot({ locationName, turnoLabel, overdueCount, pendingCount, completedCount, equipmentCodes }) {
+  if (!isNative()) return;
+  const WidgetBridge = window.Capacitor?.Plugins?.WidgetBridge;
+  if (!WidgetBridge) return;
+  try {
+    const snapshot = buildWidgetSnapshot({ locationName, turnoLabel, overdueCount, pendingCount, completedCount, equipmentCodes });
+    await WidgetBridge.updateSnapshot(snapshot);
+  } catch (e) { /* el widget es informativo — nunca interrumpe Mi Turno */ }
+}
+
+// Cambio de usuario (§7 del pedido): nunca deja a la vista datos del
+// usuario anterior — limpia SOLO el snapshot del widget (nunca
+// IndexedDB/engrases/anomalías/configuración, que esta función ni
+// siquiera toca). Se llama desde logout(), la única puerta real de
+// "salgo de esta cuenta" (ver confirmChangeUser()).
+async function clearLubricadorWidgetSnapshot() {
+  if (!isNative()) return;
+  const WidgetBridge = window.Capacitor?.Plugins?.WidgetBridge;
+  if (!WidgetBridge) return;
+  try { await WidgetBridge.clearSnapshot(); } catch (e) { /* informativo, nunca bloquea el logout real */ }
+}
+
 const MAX_PHOTOS = 5;
 
 // Unidad operativa real del consumo de grasa. La interfaz mostraba "kg" desde
@@ -2395,6 +2431,13 @@ function confirmChangeUser() {
 function logout() {
   clearAppBadge();
   disablePushForCurrentUser();
+  // Widget de pantalla de inicio (§7 del pedido): nunca debe seguir
+  // mostrando el turno de la persona que se va — limpia SOLO ese
+  // snapshot (no-op fuera de Android), nunca IndexedDB/engrases/
+  // anomalías/configuración/datos pendientes de sync (ver comentario de
+  // clearLubricadorWidgetSnapshot()). No se espera (sin await): nunca
+  // debe poder retrasar/bloquear el logout real.
+  clearLubricadorWidgetSnapshot();
   // Retira la identidad de OneSignal de ESTA persona (lote arquitectura de
   // notificaciones, §13) — solo tiene sentido en modo supabase (identidad
   // Auth real); el login PIN legacy nunca asoció una. NUNCA se llama desde
@@ -3777,6 +3820,20 @@ async function renderLubricadorHome() {
         <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
       </div>`;
   };
+
+  // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
+  // el render (no-op fuera de Android, ver isNative() en
+  // updateLubricadorWidgetSnapshot()). Mismos 3 contadores y la misma
+  // ubicación/turno que ya se pintan abajo — nunca un cálculo aparte.
+  // Equipos: Atrasados primero (más urgente), luego Mi Turno, máximo 3.
+  updateLubricadorWidgetSnapshot({
+    locationName: myCrew ? (locations.find(l => l.id === scope.crewLocationId) || {}).name : null,
+    turnoLabel: turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche',
+    overdueCount: arrastradosTotal.length,
+    pendingCount: miTurnoTotal.length,
+    completedCount: realizadosHoyList.length,
+    equipmentCodes: [...arrastradosTotal, ...miTurnoTotal].slice(0, 3).map(x => x.e.code),
+  });
 
   c.innerHTML = `
     <div class="lub-welcome-card">

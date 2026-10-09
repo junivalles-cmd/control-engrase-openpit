@@ -75,6 +75,11 @@
 <!-- Arquitectura de notificaciones (usuario+turno+disponibilidad+scope,
      lote 2026-09-30) — puro, mismo patrón que operational-scope.js. -->
 <script src="src/core/notification-routing.js"></script>
+<!-- Snapshot mínimo para el widget de Android (lote "WIDGET ANDROID",
+     2026-10-09) — puro, mismo patrón que operational-scope.js. Solo se
+     usa de verdad dentro de la app Android/Capacitor (ver isNative() en
+     app.js); en la versión web no hace nada. -->
+<script src="src/core/widget-snapshot.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

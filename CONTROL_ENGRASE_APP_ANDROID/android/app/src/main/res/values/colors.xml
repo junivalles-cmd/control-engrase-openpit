@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Paleta del widget de pantalla de inicio (Control de Engrase) —
+         mismos valores semanticos ROJO/AMBAR/VERDE del modo Claro de la
+         app web (styles.css :root, bloque [data-mode="light"], ya
+         auditados AA) para que el widget nunca contradiga lo que el
+         Lubricador ve dentro de la app. Compacto/industrial/empresarial,
+         nunca una paleta nueva (§1 del pedido). -->
+    <color name="widget_bg">#FFFFFF</color>
+    <color name="widget_surface_border">#CBD5E1</color>
+    <color name="widget_text">#1B1F23</color>
+    <color name="widget_text_dim">#656C73</color>
+    <color name="widget_red">#C0262B</color>
+    <color name="widget_amber">#8A5A00</color>
+    <color name="widget_green">#1E7A34</color>
+</resources>

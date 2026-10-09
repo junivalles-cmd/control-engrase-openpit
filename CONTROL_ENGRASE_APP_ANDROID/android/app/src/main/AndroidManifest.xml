@@ -41,6 +41,20 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Widget real de pantalla de inicio "Mi Turno" (Control de Engrase) —
+             lee un snapshot local mínimo (WidgetBridgePlugin), nunca duplica
+             lógica de negocio. -->
+        <receiver
+            android:name=".LubricantShiftWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lubricant_shift_info" />
+        </receiver>
     </application>
 
     <!-- Permissions -->
