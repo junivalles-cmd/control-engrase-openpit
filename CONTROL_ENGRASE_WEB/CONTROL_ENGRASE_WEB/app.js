@@ -5323,29 +5323,12 @@ async function renderDashboard() {
 
   const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
   // Rediseño estructural del Dashboard (cierre Parte D, pedido explícito):
-  // MISMAS fuentes de datos/fórmulas/filtros de siempre — el cambio es
-  // JERARQUÍA + DISTRIBUCIÓN (§1/§17). Orden A-I pedido:
-  //   A. Cabecera+filtros (ya existía, sin cambios)
-  //   B. KPI principales (Vencidos/Pendientes hoy/Próximos/Realizados hoy/
-  //      Pendientes de validación/Cumplimiento hoy) — antes repartidos
-  //      entre "Estado de lubricación"/"Actividad"/"Cumplimiento operativo"
-  //   C. Cumplimiento (Hoy/Semana/Turno) — ya existía, solo se mueve arriba
-  //   D. Requieren atención — ya existía (al fondo), ahora justo después
-  //      de B/C; "con el plan mal configurado" (conProblemas) queda junto
-  //      a esta sección por ser igual de urgente
-  //   E. Pendientes del turno anterior — antes mezclado dentro de "Panel
-  //      operativo", ahora su propia sección (§7: "no convertirla en KPI")
-  //   F. Estado por ubicación — idem, separado de "Panel operativo"
-  //   G. Assignments activas + Fuera de plan + No ejecutados — el resto de
-  //      lo que era "Panel operativo"
-  //   H. Mayor tiempo sin engrasar — ya existía, se mueve más abajo
-  //   I. Indicadores secundarios (Al día/Sin plan/Pausados/Anomalías
-  //      abiertas/Total equipos) — antes "Estado de lubricación"/
-  //      "Actividad", ahora al final con menor peso visual (dashActivityCard
-  //      en vez de dashHeroCard)
+  // Compact presentation: existing calculations above and action handlers below.
+  // Filters retain their original scopes; all operational information is kept.
   c.innerHTML = `
-    <div class="layout-wide">
-    <div class="toolbar dash-filters-row">
+    <div class="layout-wide dash-admin-dashboard">
+    <div class="toolbar dash-filters-row" aria-label="Filtros del Dashboard">
+      <strong class="dash-filter-title">Filtros</strong>
       <label class="filter-label">Ubicación
         <select id="dash-ubic" class="input input-sm">
           <option value="">Todas</option>
@@ -5358,68 +5341,45 @@ async function renderDashboard() {
           ${types.map(t => `<option value="${t.id}" ${App.dashFamilia === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
         </select>
       </label>
-    </div>
-
-    <div class="dash-tier dash-tier-1">
-    <section class="dash-section">
-      <h2 class="dash-section-title">Qué requiere acción</h2>
-      <div class="dash-hero-grid">
-        ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
-        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', 'pendientes-hoy')}
-        ${dashHeroCard('Próximos', proximosSinHoy.length, proximosSinHoy.length ? 'amber' : 'neutral', 'proximos')}
-        ${dashHeroCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
-        ${dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')}
-        <div class="dash-hero-card tone-${cumplHoy.pct === null ? 'neutral' : cumplHoy.pct >= App.generalSettings.complianceTarget ? 'green' : cumplHoy.pct >= 80 ? 'amber' : 'red'}">
-          <div class="dash-hero-value">${cumplHoy.pct === null ? '—' : cumplHoy.pct + '%'}</div>
-          <div class="dash-hero-label">Cumplimiento hoy</div>
-        </div>
-      </div>
-      ${recordsConflictoValidacion.length > 0 ? `<div class="dash-activity-row" style="margin-top:8px">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''}
-    </section>
-
-    <div class="panel" id="dash-attention-panel">
-      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
-      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
-      <div class="toolbar" style="padding:0 14px 10px">
         <label class="filter-label">Turno
           <select id="att-turno" class="input input-sm"><option value="">Ambos</option><option value="shift_dia">Día</option><option value="shift_noche">Noche</option></select>
         </label>
         <label class="filter-label">Día asignado
           <select id="att-dia" class="input input-sm"><option value="">Todos</option>${SCHEDULE_WEEKDAYS.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
         </label>
+      <span class="dash-filter-scope">Turno y día: solo equipos que requieren atención.</span>
+    </div>
+
+    <section class="dash-section" id="dash-summary">
+      <h2 class="dash-section-title">Resumen de hoy</h2>
+      <div class="dash-hero-grid">
+        ${dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')}
+        ${dashHeroCard('Pendientes hoy', pendientesHoyList.length, pendientesHoyList.length ? 'amber' : 'neutral', 'pendientes-hoy')}
+        ${dashHeroCard('Próximos', proximosSinHoy.length, proximosSinHoy.length ? 'amber' : 'neutral', 'proximos')}
+        ${dashHeroCard('Realizados hoy', doneToday, 'green', allowedRoutes.includes('historial') ? 'realizados-hoy' : null)}
+        <div class="dash-hero-card tone-${cumplHoy.pct === null ? 'neutral' : cumplHoy.pct >= App.generalSettings.complianceTarget ? 'green' : cumplHoy.pct >= 80 ? 'amber' : 'red'}">
+          <div class="dash-hero-value">${cumplHoy.pct === null ? '—' : cumplHoy.pct + '%'}</div>
+          <div class="dash-hero-label">Cumplimiento hoy</div>
+          <div class="progress-track" role="progressbar" aria-label="Cumplimiento hoy" aria-valuemin="0" aria-valuemax="100" ${cumplHoy.pct === null ? 'aria-valuetext="Sin engrases programados"' : `aria-valuenow="${cumplHoy.pct}"`}><div class="progress-fill" style="width:${cumplHoy.pct === null ? 0 : cumplHoy.pct}%; background:currentColor"></div></div>
+        </div>
       </div>
+    </section>
+
+    <section class="dash-section" id="dash-requires-attention">
+      <h2 class="dash-section-title">Requiere atención</h2>
+      <div class="dash-activity-row">
+        ${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, recordsConflictoValidacion.length ? 'red' : 'neutral', 'conflictos-validacion')}
+        ${dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')}
+        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
+      </div>
+    </section>
+    <div class="dash-work-grid">
+    <div class="panel" id="dash-attention-panel">
+      <div class="panel-head"><h3>Equipos que requieren atención</h3></div>
+      ${colaAtencion.length === 0 ? `<div class="empty-state">Todos los equipos están al día.</div>` : `
       <div class="dash-cola-atencion" id="dash-cola-atencion"></div>`}
     </div>
 
-    ${conProblemas.length ? `
-    <div class="panel panel-alerta">
-      <div class="panel-head"><h3>⚠ ${conProblemas.length} equipo(s) con el plan mal configurado</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Estos equipos NO se están controlando: sus datos son imposibles, así que el sistema no puede saber si les toca engrase.</div>
-      <table class="data-table">
-        <thead><tr><th>Código</th><th>Equipo</th><th>Problema</th><th></th></tr></thead>
-        <tbody>${conProblemas.map(x => `<tr>
-          <td class="mono">${esc(x.e.code)}</td>
-          <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
-          <td>${esc(x.s.alerta)}</td>
-          <td>${allowedRoutes.includes('plan') ? `<button class="btn btn-sm arreglar-plan" data-id="${x.e.id}">Corregir</button>` : ''}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-    </div>` : ''}
-
-    <div class="panel" id="dash-pendientes-anterior-panel">
-      <div class="panel-head"><h3>Pendientes del turno anterior</h3></div>
-      ${pendientesTurnoAnterior.length ? `
-      <div class="dash-pendientes-anterior-list">
-        <div class="dim" style="padding:0 14px 4px">${pendientesTurnoAnterior.length} equipo(s) — distinto de "Vencidos" (histórico): esto es de HOY, heredado del turno que ya terminó.</div>
-        <div class="dash-motivos-noexec-list" style="padding:0 14px 10px">
-          ${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join('')}
-        </div>
-      </div>` : `<div class="empty-state">Ninguno — nada heredado del turno anterior.</div>`}
-    </div>
-    </div>
-
-    <div class="dash-tier dash-tier-2">
-    <div class="dash-tier-label">Estado operacional</div>
     ${estadoPorUbicacion.length > 1 ? `
     <div class="panel" id="dash-ubic-panel">
       <div class="panel-head"><h3>Estado por ubicación</h3></div>
@@ -5437,8 +5397,24 @@ async function renderDashboard() {
       </div>
     </div>` : ''}
 
+    </div>
+    ${conProblemas.length ? `
+    <div class="panel panel-alerta">
+      <div class="panel-head"><h3>⚠ ${conProblemas.length} equipo(s) con el plan mal configurado</h3></div>
+      <div class="dim" style="padding:0 14px 10px">Estos equipos NO se están controlando: sus datos son imposibles, así que el sistema no puede saber si les toca engrase.</div>
+      <table class="data-table">
+        <thead><tr><th>Código</th><th>Equipo</th><th>Problema</th><th></th></tr></thead>
+        <tbody>${conProblemas.map(x => `<tr>
+          <td class="mono">${esc(x.e.code)}</td>
+          <td>${esc(x.e.brand)} ${esc(x.e.model)}</td>
+          <td>${esc(x.s.alerta)}</td>
+          <td>${allowedRoutes.includes('plan') ? `<button class="btn btn-sm arreglar-plan" data-id="${x.e.id}">Corregir</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : ''}
+
     <section class="dash-section dash-section-secondary" id="dash-panel-operativo">
-      <h2 class="dash-section-title">Asignaciones · Fuera de plan · No ejecutados</h2>
+      <h2 class="dash-section-title">Operación del turno</h2>
       <div class="dash-activity-row">
         ${dashActivityCard('Asignaciones activas', assignmentsActivas.length, assignmentsActivas.length ? 'amber' : 'neutral', null)}
         ${dashActivityCard('Fuera de plan hoy', recordsOutOfPlanHoy.length, 'neutral', null)}
@@ -5453,6 +5429,16 @@ async function renderDashboard() {
       </div>` : ''}
     </section>
 
+    <div class="panel ${pendientesTurnoAnterior.length ? '' : 'dash-empty-shift'}" id="dash-pendientes-anterior-panel">
+      <div class="panel-head"><h3>Pendientes del turno anterior</h3></div>
+      ${pendientesTurnoAnterior.length ? `
+      <div class="dash-pendientes-anterior-list">
+        <div class="dim" style="padding:0 14px 4px">${pendientesTurnoAnterior.length} equipo(s) — distinto de "Vencidos" (histórico): esto es de HOY, heredado del turno que ya terminó.</div>
+        <div class="dash-motivos-noexec-list" style="padding:0 14px 10px">
+          ${pendientesTurnoAnterior.map(e => `<span class="dash-motivo-chip mono">${esc(e.code)}</span>`).join('')}
+        </div>
+      </div>` : `<div class="empty-state">Ninguno — nada heredado del turno anterior.</div>`}
+    </div>
     <div class="panel" id="dash-tiempo-sin-engrase-panel">
       <div class="panel-head dash-exc-head">
         <h3>Mayor tiempo sin engrasar</h3>
@@ -5468,11 +5454,7 @@ async function renderDashboard() {
       </div>
       `}
     </div>
-    </div>
-
-    <details class="dash-tier dash-tier-3" id="dash-tier-3" open>
-    <summary class="dash-tier-label dash-tier-summary">Cumplimiento y más</summary>
-    <div class="panel">
+    <div class="panel" id="dash-compliance-panel">
       <div class="panel-head"><h3>Cumplimiento operativo</h3></div>
       <div class="dim dash-compliance-note">Basado en planes programados por Día/Turno.<br>Los planes por Horas no se incluyen.</div>
       <div class="dash-compliance-grid">
@@ -5482,30 +5464,17 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <section class="dash-section dash-section-secondary">
+    <section class="dash-section dash-section-secondary" id="dash-secondary">
       <h2 class="dash-section-title">Indicadores secundarios</h2>
       <div class="dash-activity-row">
         ${dashActivityCard('Al día', counts.VERDE, 'green', 'al-dia')}
         ${dashActivityCard('Sin plan', sinPlan.length, 'neutral', 'sin-plan')}
         ${dashActivityCard('Pausados', pausados.length, 'neutral', pausados.length ? 'pausados' : null)}
-        ${dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)}
         ${dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)}
       </div>
     </section>
-    </details>
     </div>
   `;
-
-  // Prioridad 3 (Cumplimiento operativo + Indicadores secundarios): colapsada
-  // por defecto en mobile para no competir visualmente con lo urgente;
-  // abierta en desktop, donde hay espacio de sobra. Solo fija el estado
-  // inicial del render — el toggle nativo de <details> queda intacto.
-  const dashTier3 = $('#dash-tier-3', c);
-  if (dashTier3) {
-    const isDesktopDash = typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
-    dashTier3.open = isDesktopDash;
-  }
-
   $$('.arreglar-plan', c).forEach(btn => {
     btn.addEventListener('click', async () => {
       const lubricants = await DB.allActive('lubricants');
@@ -5854,18 +5823,18 @@ function kpiCard(label, value, tone, action) {
 // "Actividad" (dashActivityCard) — mismo mecanismo data-kpi-action/
 // kpi-clickable que kpiCard(), solo cambia la presentación (styles.css).
 function dashHeroCard(label, value, tone, action) {
-  return `<div class="dash-hero-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+  return `<div class="dash-hero-card tone-${tone}">
     <div class="dash-hero-value">${fmt(value)}</div>
-    <div class="dash-hero-label">${label}</div>
+    ${action ? `<button type="button" class="dash-hero-label kpi-clickable" data-kpi-action="${action}" aria-label="Ver ${label}">${label}</button>` : `<div class="dash-hero-label">${label}</div>`}
   </div>`;
 }
 // Tarjetas SECUNDARIAS de "Actividad" — número arriba (más visible), label
 // debajo (mismo orden visual que dashHeroCard, pero más chicas: son de
 // menor jerarquía que Al día/Próximos/Vencidos/Sin plan/Pausados).
 function dashActivityCard(label, value, tone, action) {
-  return `<div class="dash-activity-card tone-${tone} ${action ? 'kpi-clickable' : ''}" ${action ? `data-kpi-action="${action}"` : ''}>
+  return `<div class="dash-activity-card tone-${tone}">
     <span class="dash-activity-value">${fmt(value)}</span>
-    <span class="dash-activity-label">${label}</span>
+    ${action ? `<button type="button" class="dash-activity-label kpi-clickable" data-kpi-action="${action}" aria-label="Ver ${label}">${label}</button>` : `<span class="dash-activity-label">${label}</span>`}
   </div>`;
 }
 

@@ -25,10 +25,11 @@ describe('Orden del Dashboard — cada bloque aparece en el orden exacto de Prio
   const marcadores = {
     A_filtros: 'dash-filters-row',
     B_kpiPrincipales: 'dash-hero-grid',
+    R_alertas: 'dash-requires-attention',
     D_atencion: 'dash-attention-panel',
-    E_turnoAnterior: 'dash-pendientes-anterior-panel',
     F_ubicacion: 'dash-ubic-panel',
     G_assignments: 'dash-panel-operativo',
+    E_turnoAnterior: 'dash-pendientes-anterior-panel',
     H_tiempoSinEngrasar: 'dash-tiempo-sin-engrase-panel',
     C_cumplimiento: 'dash-compliance-grid',
     I_indicadoresSecundarios: '<h2 class="dash-section-title">Indicadores secundarios</h2>',
@@ -40,7 +41,7 @@ describe('Orden del Dashboard — cada bloque aparece en el orden exacto de Prio
     });
   });
 
-  it('el orden real en el texto respeta A < B < D < E < F < G < H < C < I (Cumplimiento en Prioridad 3)', () => {
+  it('el orden real en el texto respeta A < B < R < D < F < G < E < H < C < I (Cumplimiento en Prioridad 3)', () => {
     const posiciones = Object.entries(marcadores).map(([nombre, marca]) => ({ nombre, pos: src.indexOf(marca) }));
     for (let i = 1; i < posiciones.length; i++) {
       expect(posiciones[i].pos, `${posiciones[i].nombre} debe ir después de ${posiciones[i - 1].nombre}`)
@@ -49,12 +50,12 @@ describe('Orden del Dashboard — cada bloque aparece en el orden exacto de Prio
   });
 });
 
-describe('B — KPI principales: 6 tarjetas en el orden pedido, reusando valores ya calculados (sin fórmulas nuevas)', () => {
+describe('B — KPI principales: 5 tarjetas en el orden pedido, reusando valores ya calculados (sin fórmulas nuevas)', () => {
   it('Vencidos, Pendientes hoy, Próximos, Realizados hoy, Pendientes de validación, Cumplimiento hoy — en ese orden', () => {
     const iHero = src.indexOf('dash-hero-grid');
     const iFinHero = src.indexOf('</section>', iHero);
     const heroSrc = src.slice(iHero, iFinHero === -1 ? iHero + 2000 : iFinHero);
-    const orden = ['Vencidos', 'Pendientes hoy', 'Próximos', 'Realizados hoy', 'Pendientes de validación', 'Cumplimiento hoy'];
+    const orden = ['Vencidos', 'Pendientes hoy', 'Próximos', 'Realizados hoy', 'Cumplimiento hoy'];
     let cursor = -1;
     orden.forEach(label => {
       const pos = heroSrc.indexOf(label, cursor + 1);
@@ -80,7 +81,7 @@ describe('I — Indicadores secundarios: menor peso visual (dashActivityCard, no
     expect(seccionSrc).toContain("dashActivityCard('Al día'");
     expect(seccionSrc).toContain("dashActivityCard('Sin plan'");
     expect(seccionSrc).toContain("dashActivityCard('Pausados'");
-    expect(seccionSrc).toContain("dashActivityCard('Anomalías abiertas'");
+    expect(src.slice(src.indexOf('dash-requires-attention'), iSec)).toContain("dashActivityCard('Anomalías abiertas'");
     expect(seccionSrc).toContain("dashActivityCard('Total equipos'");
     expect(seccionSrc).not.toContain('dashHeroCard(');
   });

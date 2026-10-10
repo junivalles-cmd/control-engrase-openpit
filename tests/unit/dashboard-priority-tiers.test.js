@@ -23,27 +23,22 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 const appSource = readSource(APP_JS_PATH);
 const src = extractDeclaration(appSource, 'renderDashboard');
 
-describe('Prioridad 3 — "Cumplimiento operativo" se reubicó, nunca se tocó su cálculo', () => {
-  it('el bloque de Prioridad 3 (<details id="dash-tier-3">) contiene Cumplimiento operativo Y Indicadores secundarios, en ese orden', () => {
-    const tier3Match = src.match(/<details class="dash-tier dash-tier-3"[\s\S]*?<\/details>/);
-    expect(tier3Match).not.toBeNull();
-    const block = tier3Match[0];
-    const cumplIdx = block.indexOf('Cumplimiento operativo');
-    const secundariosIdx = block.indexOf('Indicadores secundarios');
-    expect(cumplIdx).toBeGreaterThan(-1);
-    expect(secundariosIdx).toBeGreaterThan(-1);
-    expect(cumplIdx).toBeLessThan(secundariosIdx);
+describe('Cumplimiento operativo e indicadores permanecen visibles al final', () => {
+  it('conserva el orden y elimina el colapso automatico de informacion', () => {
+    expect(src.indexOf('dash-compliance-panel')).toBeLessThan(src.indexOf('dash-secondary'));
+    expect(src).not.toContain('dashTier3.open');
   });
-
-  it('"Cumplimiento operativo" sigue usando las mismas 3 tarjetas reales (dashComplianceCard) sin cambios de cálculo', () => {
+  it('usa las tres tarjetas calculadas existentes', () => {
     expect(src).toContain("dashComplianceCard('Hoy', cumplHoy)");
     expect(src).toContain("dashComplianceCard('Semana', cumplSemana)");
     expect(src).toContain('dashComplianceCard(turnoActualLabel, cumplTurno)');
   });
-
-  it('Prioridad 3 arranca abierta en desktop (>=1024px) y cerrada en mobile — mismo criterio de breakpoint que Configuración', () => {
-    expect(src).toContain("window.matchMedia('(min-width: 1024px)').matches");
-    expect(src).toContain('dashTier3.open = isDesktopDash');
+  it('pone la tabla de ubicacion junto a la cola sin alterar sus valores', () => {
+    expect(src).toContain('class="dash-work-grid"');
+    expect(src).toContain('${u.total}');
+    expect(src).toContain('${u.verde}');
+    expect(src).toContain('${u.amarillo}');
+    expect(src).toContain('${u.rojo}');
   });
 });
 

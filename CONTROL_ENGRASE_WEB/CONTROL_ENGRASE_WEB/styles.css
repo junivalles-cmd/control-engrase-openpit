@@ -3381,3 +3381,84 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 [data-theme="amarillo-cat"][data-mode="contrast"] .btn-accent:hover,
 [data-theme="amarillo-cat"][data-mode="contrast"] .lub-hero-action:active,
 [data-theme="amarillo-cat"][data-mode="contrast"] .crew-location-filters [aria-pressed="true"] { background: #000000; color: #FFFFFF; border-color: #000000; }
+
+/* Compact operational dashboard: layout only, established semantic tokens. */
+#app-content .dash-admin-dashboard { display: grid; gap: 12px; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-section { margin: 0; min-width: 0; }
+#app-content .dash-admin-dashboard .panel { margin: 0; min-width: 0; }
+#app-content .dash-admin-dashboard .panel-head { padding: 10px 12px; }
+#app-content .dash-admin-dashboard .dash-filters-row { display: flex; align-items: center; gap: 8px 14px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.dash-filter-title { flex-basis: 100%; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.dash-filter-scope { font-size: 12px; color: var(--text-dim); }
+#app-content .dash-admin-dashboard .filter-label { flex: 1 1 130px; min-width: 0; }
+#app-content .dash-admin-dashboard .filter-label select { width: 100%; min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#app-content .dash-admin-dashboard .dash-hero-card { padding: 8px 10px; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-hero-value { font-size: 30px; }
+#app-content .dash-admin-dashboard .dash-hero-label { display: block; font-size: 12px; letter-spacing: 0.03em; text-align: left; }
+#app-content .dash-admin-dashboard button.kpi-clickable { font-family: inherit; font-size: 12px; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; min-height: 44px; text-align: left; }
+#app-content .dash-admin-dashboard button.kpi-clickable:hover { text-decoration: underline; }
+#app-content .dash-admin-dashboard button.kpi-clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+#app-content .dash-admin-dashboard .dash-hero-card:last-child { grid-column: 1 / -1; }
+#app-content .dash-admin-dashboard .progress-track { margin-top: 6px; }
+#app-content .dash-admin-dashboard .tone-green .progress-fill { color: var(--green); }
+#app-content .dash-admin-dashboard .tone-amber .progress-fill { color: var(--amber); }
+#app-content .dash-admin-dashboard .tone-red .progress-fill { color: var(--red); }
+#app-content .dash-admin-dashboard .dash-activity-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#app-content .dash-admin-dashboard .dash-activity-card { padding: 6px 10px; flex-direction: row; align-items: center; gap: 10px; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-activity-label { font-size: 12px; overflow-wrap: anywhere; }
+.dash-work-grid { display: grid; gap: 12px; align-items: start; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-cola-atencion { gap: 4px; padding: 0 10px 10px; }
+#app-content .dash-admin-dashboard .dash-cola-row { padding: 6px 8px; gap: 4px 8px; min-width: 0; }
+#app-content .dash-admin-dashboard .panel-head h3 { font-size: 16px; line-height: 1.25; }
+#app-content .dash-admin-dashboard .dash-cola-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-cola-plan { white-space: normal; overflow: visible; }
+#app-content .dash-admin-dashboard .dash-cola-actions .btn { min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-code-link { min-height: 44px; min-width: 44px; }
+#app-content .dash-admin-dashboard .btn-sm::after { inset: 0; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown { margin: 0; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown table { display: table; width: 100%; border-collapse: collapse; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown thead { display: table-header-group; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown tbody { display: table-row-group; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown tr { display: table-row; width: auto; padding: 0; margin: 0; border: 0; background: transparent; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td { display: table-cell; width: auto; text-align: left; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td::before { display: none; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown th { white-space: normal; letter-spacing: 0; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown th,
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td { padding: 7px 4px; font-size: 12px; }
+#app-content .dash-admin-dashboard .dash-empty-shift { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 8px 12px; }
+#app-content .dash-admin-dashboard .dash-empty-shift .panel-head { padding: 0; border: 0; }
+#app-content .dash-admin-dashboard .dash-empty-shift h3 { font-size: 13px; }
+#app-content .dash-admin-dashboard .dash-empty-shift .empty-state { padding: 0; font-size: 13px; }
+#app-content .dash-admin-dashboard .dash-exc-sub { padding: 0 12px 4px; }
+#app-content .dash-admin-dashboard .dash-exc-row { padding-top: 4px; padding-bottom: 4px; }
+#app-content .dash-admin-dashboard .dash-exc-main { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 10px; align-items: center; }
+#app-content .dash-admin-dashboard .dash-exc-line1 { grid-column: 1; grid-row: 1 / 3; }
+#app-content .dash-admin-dashboard .dash-exc-line2 { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-exc-line3 { grid-column: 2; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-exc-hist-btn { min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-compliance-note { padding-bottom: 4px; }
+#app-content .dash-admin-dashboard .dash-compliance-grid { padding-bottom: 10px; }
+#app-content .dash-admin-dashboard .dash-compliance-card { padding: 7px 10px; }
+#app-content #dash-secondary .dash-activity-card { padding: 4px 8px; background: var(--surface-2); }
+#app-content #dash-secondary .dash-activity-value { font-size: 16px; }
+@media (min-width: 768px) {
+  #app-content .dash-admin-dashboard .dash-activity-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #app-content #dash-secondary .dash-activity-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #app-content .dash-admin-dashboard .dash-cola-row { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) auto; gap: 2px 10px; }
+  #app-content .dash-admin-dashboard .dash-cola-badge { grid-column: 1; grid-row: 1; }
+  #app-content .dash-admin-dashboard .dash-cola-code { grid-column: 2; grid-row: 1 / 3; }
+  #app-content .dash-admin-dashboard .dash-cola-meta { grid-column: 3; grid-row: 1; }
+  #app-content .dash-admin-dashboard .dash-cola-prog-tag { grid-column: 1; grid-row: 2; text-align: left; }
+  #app-content .dash-admin-dashboard .dash-cola-plan { grid-column: 3; grid-row: 2; }
+  #app-content .dash-admin-dashboard .dash-cola-actions { grid-column: 4; grid-row: 1 / 3; margin: 0; }
+}
+@media (min-width: 1024px) {
+  #app-content .dash-admin-dashboard .dash-filter-title { flex-basis: auto; }
+  #app-content .dash-admin-dashboard .dash-hero-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #app-content .dash-admin-dashboard .dash-hero-card:last-child { grid-column: auto; }
+  #app-content .dash-admin-dashboard .dash-filter-scope { flex-basis: 100%; }
+}
+@media (min-width: 1200px) {
+  .dash-work-grid { grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr); }
+}

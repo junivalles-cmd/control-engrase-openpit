@@ -99,24 +99,24 @@ describe('Rediseño estructural del Dashboard (cierre Parte D) — "Al día" pas
 });
 
 describe('Rediseño estructural (cierre Parte D) — KPI principales (B) y Indicadores secundarios (I)', () => {
-  it('6 tarjetas destacadas en el orden pedido: Vencidos/Pendientes hoy/Próximos/Realizados hoy/Pendientes de validación/Cumplimiento hoy', () => {
+  it('5 tarjetas destacadas + validación en Requiere atención en el orden pedido: Vencidos/Pendientes hoy/Próximos/Realizados hoy/Pendientes de validación/Cumplimiento hoy', () => {
     expect(src).toContain("dashHeroCard('Vencidos', counts.ROJO, 'red', 'vencidos')");
     expect(src).toContain("dashHeroCard('Pendientes hoy', pendientesHoyList.length");
     expect(src).toContain("dashHeroCard('Próximos', proximosSinHoy.length");
     expect(src).toContain("dashHeroCard('Realizados hoy', doneToday, 'green'");
-    expect(src).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length");
+    expect(src).toContain("dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length");
     expect(src).toContain('<div class="dash-hero-label">Cumplimiento hoy</div>');
     const iVenc = src.indexOf("dashHeroCard('Vencidos'");
     const iPendHoy = src.indexOf("dashHeroCard('Pendientes hoy'");
     const iProx = src.indexOf("dashHeroCard('Próximos'");
     const iReal = src.indexOf("dashHeroCard('Realizados hoy'");
-    const iPendVal = src.indexOf("dashHeroCard('Pendientes de validación'");
+    const iPendVal = src.indexOf("dashActivityCard('Pendientes de validación'");
     const iCumpl = src.indexOf('<div class="dash-hero-label">Cumplimiento hoy</div>');
     expect(iVenc).toBeLessThan(iPendHoy);
     expect(iPendHoy).toBeLessThan(iProx);
     expect(iProx).toBeLessThan(iReal);
-    expect(iReal).toBeLessThan(iPendVal);
-    expect(iPendVal).toBeLessThan(iCumpl);
+    expect(iReal).toBeLessThan(iCumpl);
+    expect(iCumpl).toBeLessThan(iPendVal);
   });
 
   it('no usa una fórmula nueva para los KPI principales — reusa counts/pendientesHoyList/proximosSinHoy/doneToday/recordsPendientesValidacion/cumplHoy ya calculados', () => {
@@ -162,7 +162,7 @@ describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia
   });
 
   it('"Pendientes de validación" es UNA SOLA rama — recordsPendientesValidacion.length directo, SIN chequeo propio de GREASE_VALIDATION_ENABLED_FROM en el Dashboard', () => {
-    const iSecHero = src.indexOf('dash-hero-grid');
+    const iSecHero = src.indexOf('dash-requires-attention');
     const iFinSeccion = src.indexOf('</section>', iSecHero);
     const seccionSrc = src.slice(iSecHero, iFinSeccion);
     expect(seccionSrc).not.toContain('GREASE_VALIDATION_ENABLED_FROM'); // sin excepción propia de pantalla
@@ -170,7 +170,7 @@ describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia
     // modal ya maneja su propio estado vacío ("Sin pendientes"), así que
     // condicionar la ACCIÓN por conteo solo desactivaba la tarjeta sin razón
     // (asimetría real encontrada y corregida: ver docs/SESSION_HANDOFF.md).
-    expect(seccionSrc).toContain("dashHeroCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')");
+    expect(seccionSrc).toContain("dashActivityCard('Pendientes de validación', recordsPendientesValidacion.length, recordsPendientesValidacion.length ? 'amber' : 'neutral', 'pendientes-validacion')");
   });
 
   it('"Conflictos de validación" usa isRecordInConflict() (función central) — nunca hasValidationConflict() directo, para no contar un conflicto que Historial ya muestra como Histórico', () => {
@@ -180,7 +180,7 @@ describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia
   it('el resto de indicadores secundarios (Total equipos/Anomalías) no se tocó — mismas acciones/condiciones de antes', () => {
     expect(src).toContain("dashActivityCard('Total equipos', equipos.length, 'neutral', allowedRoutes.includes('equipos') ? 'total-equipos' : null)");
     expect(src).toContain("dashActivityCard('Anomalías abiertas', openAnomalies, openAnomalies ? 'amber' : 'neutral', allowedRoutes.includes('anomalias') ? 'anomalias' : null)");
-    expect(src).toContain("recordsConflictoValidacion.length > 0 ? `<div class=\"dash-activity-row\" style=\"margin-top:8px\">${dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, 'red', 'conflictos-validacion')}</div>` : ''");
+    expect(src).toContain("dashActivityCard('Conflictos de validación', recordsConflictoValidacion.length, recordsConflictoValidacion.length ? 'red' : 'neutral', 'conflictos-validacion')");
   });
 });
 
