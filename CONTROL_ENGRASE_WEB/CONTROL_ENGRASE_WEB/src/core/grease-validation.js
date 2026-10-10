@@ -186,7 +186,17 @@ function validateValidationForm(form) {
 // conflicto; `findActiveValidation()`/`validationStatusFor()` se apoyan en
 // esta función, nunca leen `validations` directo por su cuenta.
 function findActiveValidations(lubricationRecordId, validations) {
-  return (validations || []).filter(v => v.lubricationRecordId === lubricationRecordId && v.active !== false);
+  const signatures = (validations || []).filter(v => v.lubricationRecordId === lubricationRecordId && v.active !== false);
+  // One deterministic anchor gives every administrator the SAME CAS row.
+  // A new signature or a rejected CAS invalidates the decision conservatively.
+  const anchor = [...signatures].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0];
+  const resolution = anchor?.conflictResolution;
+  if (resolution && !anchor._validationResolutionConflict &&
+      JSON.stringify(signatures.map(v => v.id).sort()) === JSON.stringify(resolution.signatureIds)) {
+    const official = signatures.find(v => v.id === resolution.officialValidationId);
+    if (official) return [{ ...official, conflictResolution: resolution }];
+  }
+  return signatures;
 }
 
 // true si hay 2 o más validaciones activas para el mismo registro (doble

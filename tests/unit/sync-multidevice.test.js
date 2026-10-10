@@ -181,6 +181,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('competing administrator resolutions PATCH the same anchor with CAS; the loser keeps its audit', async () => {
+  remote.seed([row('grease_validations', 'anchor', { lubricationRecordId: 'r', signerRole: 'OPERADOR' }, T0)]);
+  for (const [db, official, time] of [[dbA, 'first', T1], [dbB, 'second', T2]]) {
+    await db.put('grease_validations', { id: 'anchor', lubricationRecordId: 'r', signerRole: 'OPERADOR',
+      updatedAt: time, _pushedVersion: T0,
+      conflictResolution: { officialValidationId: official, signatureIds: ['anchor', 'other'], reason: 'review', resolvedById: official } });
+  }
+  const results = await Promise.all([SyncA.pushAll(), SyncB.pushAll()]);
+  expect(results.map(r => r.pushed).reduce((a, b) => a + b, 0)).toBe(1);
+  expect((await dbB.getSyncConflicts())).toHaveLength(1);
+  expect((await dbB.get('grease_validations', 'anchor')).conflictResolution.officialValidationId).toBe('second');
+  expect(remote.rows[0].payload.conflictResolution.officialValidationId).toBe('first');
+});
+
 /* ============================================================
    Funciones puras de decisión del lado PULL (secciones 2 y 3 de la tarea):
    SINCRONIZADA / CAMBIO LOCAL PENDIENTE / CAMBIO REMOTO NUEVO / CONFLICTO

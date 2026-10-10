@@ -55,6 +55,50 @@ function tx(storeName, mode = 'readonly') {
 }
 
 const DB = {
+  resolveValidationConflict(recordId, expected, officialId, reason, actor) {
+    if (!actor || actor.active === false || actor.role !== 'ADMINISTRADOR' || !actor.id) {
+      return Promise.reject(new Error('Solo ADMINISTRADOR puede resolver el conflicto.'));
+    }
+    if (!reason || !reason.trim()) return Promise.reject(new Error('El motivo es obligatorio.'));
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction('grease_validations', 'readwrite');
+      const store = transaction.objectStore('grease_validations');
+      let saved, failure;
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const rows = request.result.filter(v => v.lubricationRecordId === recordId && v.active !== false)
+          .sort((a, b) => a.id.localeCompare(b.id));
+        const versions = rows.map(v => ({ id: v.id, updatedAt: v.updatedAt }));
+        if (rows.length < 2 || !rows.some(v => v.id === officialId) ||
+            JSON.stringify(versions) !== JSON.stringify(expected)) {
+          failure = new Error('El conflicto cambió. Recarga las firmas antes de resolver.');
+          transaction.abort(); return;
+        }
+        const anchor = rows[0];
+        if (anchor._validationResolutionConflict) {
+          failure = new Error('Existe un conflicto CAS pendiente de sincronización.');
+          transaction.abort(); return;
+        }
+        const previous = anchor.conflictResolution;
+        const resolution = {
+          id: uid('resolution'), officialValidationId: officialId,
+          signatureIds: rows.map(v => v.id).sort(), resolvedById: actor.id,
+          resolvedByName: actor.name, resolvedAt: nowISO(), reason: reason.trim(),
+          history: previous ? [...(previous.history || []), { ...previous, history: undefined }] : [],
+        };
+        saved = stamp({ ...anchor, conflictResolution: resolution }, actor.name);
+        // Keep the CAS revision distinct even with a frozen/coarse device clock.
+        const previousTime = Date.parse(anchor.updatedAt);
+        if (Number.isFinite(previousTime) && Date.parse(saved.updatedAt) <= previousTime) {
+          saved.updatedAt = new Date(previousTime + 1).toISOString();
+        }
+        store.put(saved);
+      };
+      transaction.oncomplete = () => resolve(saved);
+      transaction.onabort = () => reject(failure || transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  },
   async putMany(store, rows) {
     return new Promise((resolve, reject) => {
       const transaction = _db.transaction(store, 'readwrite');
@@ -148,6 +192,10 @@ const DB = {
     const existing = await this.getSyncConflicts();
     const byKey = new Map(existing.map(c => [`${c.store}:${c.id}`, c]));
     for (const c of newConflicts) byKey.set(`${c.store}:${c.id}`, c);
+    for (const c of newConflicts.filter(c => c.store === 'grease_validations')) {
+      const row = await this.get(c.store, c.id);
+      if (row?.conflictResolution) await this.put(c.store, { ...row, _validationResolutionConflict: true });
+    }
     return new Promise((res, rej) => {
       const r = tx('app_config', 'readwrite').put({ key: 'sync_conflicts', value: Array.from(byKey.values()) });
       r.onsuccess = () => res(true);

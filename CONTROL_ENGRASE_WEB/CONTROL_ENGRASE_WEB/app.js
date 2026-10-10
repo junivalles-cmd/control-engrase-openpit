@@ -9827,6 +9827,10 @@ async function openValidationModal(record, equipment, onDone) {
 // (nunca se abre openValidationModal de nuevo sobre un registro ya
 // validado: esta primera versión no soporta revalidación).
 async function openValidationDetailModal(validation, equipment, recordDate) {
+  if (validation.conflictResolution) {
+    const signatures = (await DB.allActive('grease_validations')).filter(v => v.lubricationRecordId === validation.lubricationRecordId);
+    return openValidationConflictModal(signatures, equipment, recordDate);
+  }
   const status = statusForSignerRole(validation.signerRole);
   // La firma es contenido sensible (§8 docs/STORAGE_PRIVACY_DESIGN.md) — si
   // este dispositivo no tiene la copia local (base64), se pide un signed
@@ -9853,21 +9857,27 @@ async function openValidationDetailModal(validation, equipment, recordDate) {
 // "Ver conflicto" — 2+ validaciones activas para el MISMO registro (doble
 // firma offline/multidispositivo, ver docs/GREASE_VALIDATION_AUDIT.md §10).
 // Muestra TODAS completas (nombre/rol/fecha/motivo/firma), sin elegir
-// ninguna ni borrar nada — la resolución (marcar cuál es la válida) NO está
-// implementada todavía (ver docs/GREASE_VALIDATION_AUDIT.md §13).
+// ninguna ni borrar nada. Solo ADMINISTRADOR puede registrar una decisión
+// auditada; todas las firmas originales siguen disponibles.
 async function openValidationConflictModal(validationsActivas, equipment, recordDate) {
+  const sorted = [...validationsActivas].sort((a, b) => a.id.localeCompare(b.id));
+  const resolution = sorted[0]?.conflictResolution;
+  const official = findActiveValidation(sorted[0]?.lubricationRecordId, sorted);
+  const canResolve = App.currentUser?.role === 'ADMINISTRADOR' && App.currentUser.active !== false;
+  const expected = sorted.map(v => ({ id: v.id, updatedAt: v.updatedAt }));
   // Misma resolución que openValidationDetailModal(), para cada firma —
   // todas se piden en paralelo antes de armar el modal (nunca una a la vez).
   const signatureRaws = validationsActivas.map(v => v.signatureLocal || v.signatureUrl);
   const signatureSrcs = await Promise.all(signatureRaws.map(v => resolveEvidenceSrc(v)));
   openModal(`Conflicto de validación (${validationsActivas.length})`, `
+    ${resolution ? `<p><b>${official ? 'Conflicto resuelto' : 'Resolución pendiente de revisión'}</b> · ${esc(resolution.resolvedByName)} · ${fmtDate(resolution.resolvedAt)}<br/>Motivo: ${esc(resolution.reason)}</p>` : ''}
     <p class="dim">${validationsActivas.length} personas validaron este mismo engrase por separado (probablemente offline, en dispositivos distintos). Ninguna firma se eliminó — revisa cuál es la correcta manualmente.</p>
     ${recordDate ? `<div class="val-info"><div class="val-info-row"><span>Fecha/hora del engrase</span><span>${fmtDate(recordDate)}</span></div></div>` : ''}
     ${validationsActivas.map((validation, idx) => {
       const signatureSrc = signatureSrcs[idx];
       return `
       <div class="val-conflict-item">
-        <div class="val-conflict-item-head">Firma ${idx + 1}</div>
+        <div class="val-conflict-item-head">Firma ${idx + 1}${official ? (official.id === validation.id ? ' · OFICIAL' : ' · ALTERNATIVA CONSERVADA') : ''}</div>
         <div class="val-info">
           <div class="val-info-row"><span>Nombre</span><span>${esc(validation.signerName)}</span></div>
           <div class="val-info-row"><span>Rol</span><span>${validation.signerRole === 'ENCARGADO' ? 'Encargado' : 'Operador'}</span></div>
@@ -9879,7 +9889,23 @@ async function openValidationConflictModal(validationsActivas, equipment, record
         </div>
       </div>`;
     }).join('')}
+    ${canResolve && !official ? `<label>Firma oficial<select class="input" id="resolution-official">${sorted.map(v => `<option value="${esc(v.id)}">${esc(v.signerName)} · ${esc(v.signerRole)}</option>`).join('')}</select></label>
+      <label>Motivo obligatorio<textarea class="input" id="resolution-reason"></textarea></label>
+      <p id="resolution-error" role="alert"></p><button type="button" class="btn btn-accent" id="resolution-confirm">Resolver conflicto</button>` : ''}
   `);
+  $('#resolution-confirm')?.addEventListener('click', async () => {
+    const button = $('#resolution-confirm');
+    button.disabled = true;
+    try {
+      await DB.resolveValidationConflict(sorted[0].lubricationRecordId, expected,
+        $('#resolution-official').value, $('#resolution-reason').value, App.currentUser);
+      const rows = (await DB.allActive('grease_validations')).filter(v => v.lubricationRecordId === sorted[0].lubricationRecordId);
+      await openValidationConflictModal(rows, equipment, recordDate);
+    } catch (error) {
+      $('#resolution-error').textContent = error.message;
+      button.disabled = false;
+    }
+  });
 }
 
 async function drawHistory(equipmentId) {
