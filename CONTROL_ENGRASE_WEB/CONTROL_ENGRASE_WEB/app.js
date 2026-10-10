@@ -9738,6 +9738,12 @@ function validationBadgeHTML(status) {
 // `onDone` se llama tras confirmar, para que quien abrió el modal decida
 // cómo refrescar su propia pantalla (Historial vs. Dashboard).
 async function openValidationModal(record, equipment, onDone) {
+  // Un operador externo puede firmar en el dispositivo del lubricador.
+  // Solo una sesión que identifica al propio validador evita la captura manual.
+  const sessionRole = App.currentUser?.role;
+  const autoRole = ['SUPERVISOR', 'ENCARGADO'].includes(sessionRole) ? 'ENCARGADO' : sessionRole === 'OPERADOR' ? 'OPERADOR' : '';
+  const autoIdentity = autoRole && App.currentUser?.name?.trim();
+  const reasonPresets = ['Operador no disponible', 'Operador se retiró antes de validar', 'Operador no pudo firmar', 'Validación posterior por encargado', 'Falla del dispositivo al momento de validar', 'Otro'];
   const anomaliasRelacionadas = (await DB.allActive('anomalies')).filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
 
   openModal('Validar engrase', `
@@ -9751,15 +9757,16 @@ async function openValidationModal(record, equipment, onDone) {
       ${anomaliasRelacionadas.length ? `<div class="val-info-row"><span>Anomalías abiertas del equipo</span><span>${anomaliasRelacionadas.length}</span></div>` : ''}
     </div>
     <div class="form-grid">
-      <label>Nombre<input type="text" id="val-name" class="input" placeholder="Nombre de quien valida" autocomplete="off"/></label>
+      ${autoIdentity ? `<div class="span-2 val-info"><div class="val-info-row"><span>Nombre</span><span>${esc(App.currentUser.name)}</span></div><div class="val-info-row"><span>Rol</span><span>${autoRole === 'ENCARGADO' ? 'Encargado / Supervisor' : 'Operador'}</span></div><input type="hidden" id="val-name" value="${esc(App.currentUser.name)}"/><input type="hidden" id="val-role" value="${autoRole}"/></div>` : `<label>Nombre<input type="text" id="val-name" class="input" placeholder="Nombre de quien valida" autocomplete="name"/></label>
       <label>Rol
         <select id="val-role" class="input">
           <option value="">— Selecciona —</option>
           <option value="OPERADOR">Operador</option>
           <option value="ENCARGADO">Encargado</option>
         </select>
-      </label>
-      <label class="span-2 hidden" id="val-reason-wrap">Motivo (obligatorio si Encargado)<textarea id="val-reason" class="input" placeholder="Ej: Operador no disponible"></textarea></label>
+      </label>`}
+      <label class="span-2 hidden" id="val-reason-wrap">Motivo (obligatorio si Encargado / Supervisor)<select id="val-reason-preset" class="input"><option value="">Selecciona un motivo</option>${reasonPresets.map(reason => `<option value="${esc(reason)}">${esc(reason)}</option>`).join('')}</select></label>
+      <label class="span-2 hidden" id="val-other-wrap">Describe el otro motivo<textarea id="val-reason" class="input" placeholder="Motivo de la validación"></textarea></label>
     </div>
     <div class="val-signature-wrap">
       <div class="val-signature-label">Firma</div>
@@ -9789,9 +9796,17 @@ async function openValidationModal(record, equipment, onDone) {
   canvas.addEventListener('pointermove', moveStroke);
   window.addEventListener('pointerup', endStroke);
 
-  $('#val-role').addEventListener('change', (e) => {
-    $('#val-reason-wrap').classList.toggle('hidden', e.target.value !== 'ENCARGADO');
-  });
+  function updateReasonFields() {
+    const requiresReason = $('#val-role').value === 'ENCARGADO';
+    const requiresText = requiresReason && $('#val-reason-preset').value === 'Otro';
+    $('#val-reason-wrap').classList.toggle('hidden', !requiresReason);
+    $('#val-reason-preset').required = requiresReason;
+    $('#val-other-wrap').classList.toggle('hidden', !requiresText);
+    $('#val-reason').required = requiresText;
+  }
+  $('#val-role').addEventListener('change', updateReasonFields);
+  $('#val-reason-preset').addEventListener('change', updateReasonFields);
+  updateReasonFields();
   $('#val-clear').addEventListener('click', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     hasSignature = false;
@@ -9800,7 +9815,7 @@ async function openValidationModal(record, equipment, onDone) {
     const form = {
       signerName: $('#val-name').value,
       signerRole: $('#val-role').value,
-      reason: $('#val-reason') ? $('#val-reason').value : '',
+      reason: $('#val-reason-preset').value === 'Otro' ? $('#val-reason').value : $('#val-reason-preset').value,
       hasSignature,
     };
     const result = validateValidationForm(form);

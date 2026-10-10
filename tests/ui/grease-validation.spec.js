@@ -90,6 +90,63 @@ async function storedValidations(page) {
   return page.evaluate(() => window.__stores.grease_validations);
 }
 
+for (const reason of ['Operador no disponible', 'Operador se retiró antes de validar', 'Operador no pudo firmar', 'Validación posterior por encargado', 'Falla del dispositivo al momento de validar']) {
+  test(`supervisor autenticado: identidad automática y motivo «${reason}» conservado offline`, async ({ page, context }) => {
+    await bootPage(page);
+    await page.evaluate(() => { App.currentUser.role = 'SUPERVISOR'; });
+    await openModalForRecord(page);
+    await expect(page.locator('#val-name')).toHaveAttribute('type', 'hidden');
+    await expect(page.locator('#val-role')).toHaveValue('ENCARGADO');
+    await expect(page.locator('.val-info')).toContainText(['45-77', 'Ana Supervisora']);
+    await page.locator('#val-reason-preset').selectOption(reason);
+    await expect(page.locator('#val-other-wrap')).toBeHidden();
+    await drawSignature(page);
+    await context.setOffline(true);
+    await page.locator('#val-confirm').click();
+    const [validation] = await storedValidations(page);
+    expect(validation.signerName).toBe('Ana Supervisora');
+    expect(validation.reason).toBe(reason);
+    expect(validation.signatureLocal).toMatch(/^data:image\/png/);
+    await page.evaluate(({ validation, equipment }) => openValidationDetailModal(validation, equipment), { validation, equipment: EQUIPMENT });
+    await expect(page.locator('.val-info')).toContainText(reason);
+  });
+}
+
+test('Otro exige texto; cambiar a un motivo predefinido no conserva el texto anterior', async ({ page }) => {
+  await bootPage(page);
+  await openModalForRecord(page);
+  await page.locator('#val-name').fill('Encargado externo');
+  await page.locator('#val-role').selectOption('ENCARGADO');
+  await page.locator('#val-reason-preset').selectOption('Otro');
+  await expect(page.locator('#val-reason')).toBeVisible();
+  await expect(page.locator('#val-reason')).toHaveAttribute('required', '');
+  await drawSignature(page);
+  await page.locator('#val-confirm').click();
+  expect(await storedValidations(page)).toHaveLength(0);
+  await page.locator('#val-reason').fill('Explicación específica');
+  await page.locator('#val-reason-preset').selectOption('Operador no pudo firmar');
+  await expect(page.locator('#val-reason')).toBeHidden();
+  await page.locator('#val-confirm').click();
+  expect((await storedValidations(page))[0].reason).toBe('Operador no pudo firmar');
+});
+
+test('Otro conserva la explicación libre y operador autenticado no necesita motivo', async ({ page }) => {
+  await bootPage(page);
+  await page.evaluate(() => { App.currentUser.role = 'SUPERVISOR'; });
+  await openModalForRecord(page);
+  await page.locator('#val-reason-preset').selectOption('Otro');
+  await page.locator('#val-reason').fill('Explicación específica');
+  await drawSignature(page);
+  await page.locator('#val-confirm').click();
+  expect((await storedValidations(page))[0].reason).toBe('Explicación específica');
+  await page.evaluate(() => { __stores.grease_validations = []; App.currentUser.role = 'OPERADOR'; });
+  await openModalForRecord(page);
+  await expect(page.locator('#val-reason-wrap')).toBeHidden();
+  await drawSignature(page);
+  await page.locator('#val-confirm').click();
+  expect((await storedValidations(page))[0].reason).toBeUndefined();
+});
+
 test('muestra la info del engrase (equipo, modelo, fecha, lubricador, turno, horómetro, cantidad) ANTES de firmar', async ({ page }) => {
   await bootPage(page);
   await openModalForRecord(page);
@@ -125,7 +182,7 @@ test('Rol = Encargado SIN motivo → bloquea; CON motivo (+ nombre + firma) → 
   await page.locator('#val-confirm').click();
   await expect(page.locator('#val-error')).toBeVisible(); // sin motivo, sigue bloqueado
 
-  await page.locator('#val-reason').fill('Operador no disponible');
+  await page.locator('#val-reason-preset').selectOption('Operador no disponible');
   await page.locator('#val-confirm').click();
 
   const validations = await storedValidations(page);
