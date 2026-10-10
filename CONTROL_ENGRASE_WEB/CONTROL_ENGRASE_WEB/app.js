@@ -182,8 +182,37 @@ function addPhotoToField(container, dataUrl) {
   return true;
 }
 
-function wirePhotoField(container) {
+function wirePhotoField(container, equipmentCode = null) {
   if (!container) return; // el formulario puede no existir (ej. equipo sin puntos de engrase)
+  // Evidence is stamped at import, before preview, drafts or IndexedDB.
+  // Existing photos are preloaded separately and never stamped again.
+  const equipmentSelect = equipmentCode && container.querySelector('select[name="equipmentId"]');
+  let photoEquipmentId = equipmentSelect?.value;
+  let importing = 0;
+  container.addEventListener('submit', event => {
+    if (!importing) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    alert('Espera a que termine de prepararse la foto.');
+  }, true);
+  equipmentSelect?.addEventListener('change', () => {
+    if (importing || getPhotoFieldPhotos(container).length) {
+      equipmentSelect.value = photoEquipmentId;
+      alert('Las fotos pertenecen al equipo seleccionado. Quita las fotos antes de cambiar de equipo.');
+    } else photoEquipmentId = equipmentSelect.value;
+  });
+  const importPhoto = async (readPhoto) => {
+    importing++;
+    try {
+      const code = typeof equipmentCode === 'function' ? equipmentCode() : equipmentCode;
+      const capturedAt = new Date();
+      const dataUrl = await readPhoto();
+      if (!dataUrl) return;
+      const prepared = equipmentCode ? await stampEquipmentEvidencePhoto(dataUrl, code, capturedAt) : dataUrl;
+      addPhotoToField(container, prepared);
+    } catch (error) {
+      alert(`No se pudo preparar la evidencia: ${error.message}`);
+    } finally { importing--; }
+  };
   // Preguntamos directamente si el plugin de cámara existe — más confiable que una
   // bandera de "plataforma", que puede variar según la configuración del WebView.
   const hasCameraPlugin = !!(window.Capacitor?.Plugins?.Camera);
@@ -191,8 +220,7 @@ function wirePhotoField(container) {
   container.querySelector('.photo-field-web')?.classList.toggle('hidden', hasCameraPlugin);
 
   const pickAndAdd = async (source) => {
-    const dataUrl = await pickPhotoNative(source);
-    if (dataUrl) addPhotoToField(container, dataUrl);
+    await importPhoto(() => pickPhotoNative(source));
   };
   container.querySelector('.photo-pick-camera-btn')?.addEventListener('click', () => pickAndAdd('CAMERA'));
   container.querySelector('.photo-pick-gallery-btn')?.addEventListener('click', () => pickAndAdd('PHOTOS'));
@@ -212,8 +240,7 @@ function wirePhotoField(container) {
       alert(`Solo caben ${espacio} foto(s) más (máximo ${MAX_PHOTOS} en total). Se tomarán las primeras ${espacio}.`);
     }
     for (const file of files.slice(0, espacio)) {
-      const dataUrl = await fileToCompressedDataURL(file);
-      if (dataUrl) addPhotoToField(container, dataUrl);
+      await importPhoto(() => fileToCompressedDataURL(file));
     }
     ev.target.value = ''; // permite volver a elegir el mismo archivo si lo quitó
   });
@@ -4843,7 +4870,7 @@ async function openEditGreaseRecordForm(record) {
     </form>
   `);
 
-  wirePhotoField($('#edit-grease-form'));
+  wirePhotoField($('#edit-grease-form'), () => equipment.code);
   // Carga las fotos que ya tenía el registro, para poder quitarlas o agregar más
   preloadPhotosIntoField($('#edit-grease-form'), photosOf(record));
   if (details.length) {
@@ -8719,7 +8746,7 @@ async function startGreaseFlow(equipmentId, target, options) {
       updateProgress();
       scheduleDraftSave();
     });
-    wirePhotoField($('#grease-form'));
+    wirePhotoField($('#grease-form'), () => equipment.code);
     $$('.check-row-thumb').forEach(img => {
       img.addEventListener('click', (ev) => {
         ev.preventDefault();
@@ -9320,7 +9347,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
       <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic(existing ? "save" : "alert")}${existing ? 'Guardar cambios' : 'Registrar anomalía'}</button></div>
     </form>
   `);
-  wirePhotoField($('#anom-form'));
+  wirePhotoField($('#anom-form'), () => equipos.find(e => e.id === $('#anom-form select[name="equipmentId"]').value)?.code);
   preloadPhotosIntoField($('#anom-form'), photosOf(a));
   wirePhotoThumbs($('#anom-form'));
   $('#anom-form').addEventListener('submit', async (ev) => {
@@ -11576,6 +11603,46 @@ function fileToCompressedDataURL(file, maxDim = 1400, quality = 0.8) {
     };
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
+  });
+}
+
+// Permanent pixel traceability; no EXIF, GPS or personal information.
+// Called ONLY for newly captured/attached operational evidence, never by sync.
+function stampEquipmentEvidencePhoto(dataUrl, equipmentCode, capturedAt) {
+  const code = String(equipmentCode || '').trim();
+  const date = new Date(capturedAt);
+  if (!code || !Number.isFinite(date.getTime())) return Promise.reject(new Error('Equipo o fecha no válidos.'));
+  const pad = value => String(value).padStart(2, '0');
+  const text = `${code} · ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} · ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const scale = Math.min(1, 1400 / Math.max(image.width, image.height));
+        const photoWidth = Math.max(1, Math.round(image.width * scale));
+        const width = Math.max(640, photoWidth);
+        const height = Math.max(1, Math.round(image.height * scale));
+        const fontSize = Math.max(18, Math.round(width / 50));
+        const footerHeight = fontSize * 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height + footerHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(image, (width - photoWidth) / 2, 0, photoWidth, height);
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(0, height, width, footerHeight);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 12, height + footerHeight / 2, width - 24);
+        let output = canvas.toDataURL('image/webp', 0.9);
+        if (!output.startsWith('data:image/webp')) output = canvas.toDataURL('image/jpeg', 0.9);
+        resolve(output);
+      } catch (error) { reject(error); }
+    };
+    image.onerror = () => reject(new Error('La imagen no se pudo decodificar.'));
+    image.src = dataUrl;
   });
 }
 

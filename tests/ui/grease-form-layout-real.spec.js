@@ -49,7 +49,7 @@ const validationSrc = validationNames.map(n => extractDeclaration(validationSour
 const appNames = [
   '$', '$$', 'esc', 'ic', 'fmtDate', 'todayDateISO', 'GREASE_UNIT', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'MAX_PHOTOS', 'trackRecentEquipment', 'photoFieldHTML', 'getPhotoFieldPhotos',
-  'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'fileToCompressedDataURL', 'startGreaseFlow',
+  'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'fileToCompressedDataURL', 'stampEquipmentEvidencePhoto', 'startGreaseFlow',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -168,6 +168,12 @@ test('G — fotos: el botón "+ Agregar fotografías" sigue agregando fotos real
   await fileInput.setInputFiles({ name: 'foto1.png', mimeType: 'image/png', buffer: PNG_1X1 });
   await page.waitForTimeout(300); // fileToCompressedDataURL usa Image/canvas async
   await expect(page.locator('.photo-slot')).toHaveCount(1);
+  // Permanent pixels are present before any later persistence operation.
+  const dimensions = await page.locator('.photo-slot').evaluate(async slot => {
+    const image = new Image(); image.src = slot.dataset.photo; await image.decode();
+    return { width: image.width, height: image.height };
+  });
+  expect(dimensions).toEqual({ width: 640, height: 37 });
 });
 
 test('H — observaciones: el campo de texto sigue siendo un textarea editable normal', async ({ page }) => {

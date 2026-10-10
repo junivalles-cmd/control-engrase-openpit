@@ -246,18 +246,30 @@ describe('Uploads de Storage (fotos/firmas) usan el JWT real en modo supabase �
     expect(JSON.stringify(stored)).not.toContain('token=');
   });
 
-  it('F) reconexión: una foto que falló la primera vez (sigue en base64) se reintenta y sube en el siguiente intento', async () => {
-    const db = makeFakeDB({ anomalies: [{ id: 'an1', photo: 'data:image/jpeg;base64,AAAA', photoUploaded: undefined }] });
-    const { Sync } = loadSyncLogic(db, ['anomalies']);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
-    const row1 = await db.get('anomalies', 'an1');
-    const attempt1 = await Sync.uploadPhotoIfNeeded('anomalies', row1, CFG);
+  it.each(['anomalies', 'lubrication_records'])('F) %s: retry uploads identical image bytes, without stamping again', async (store) => {
+    const db = makeFakeDB({ [store]: [{ id: 'an1', photo: 'data:image/jpeg;base64,AAAA', photoUploaded: undefined }] });
+    const { Sync } = loadSyncLogic(db, [store]);
+    const bodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      bodies.push([...new Uint8Array(await options.body.arrayBuffer())]);
+      return { ok: false, status: 500 };
+    }));
+    const row1 = await db.get(store, 'an1');
+    const attempt1 = await Sync.uploadPhotoIfNeeded(store, row1, CFG);
     expect(attempt1.photo).toBe('data:image/jpeg;base64,AAAA'); // sigue en base64, se reintentará
 
     vi.unstubAllGlobals();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
-    const row2 = await db.get('anomalies', 'an1'); // sin marca de subida, sigue pendiente
-    const attempt2 = await Sync.uploadPhotoIfNeeded('anomalies', row2, CFG);
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      bodies.push([...new Uint8Array(await options.body.arrayBuffer())]);
+      return { ok: true };
+    }));
+    const row2 = await db.get(store, 'an1'); // sin marca de subida, sigue pendiente
+    const attempt2 = await Sync.uploadPhotoIfNeeded(store, row2, CFG);
     expect(attempt2.photo).toContain('/storage/v1/object/public/');
+    expect(bodies).toEqual([[0, 0, 0], [0, 0, 0]]);
+    const local = await db.get(store, 'an1');
+    expect(local.photo).toBe('data:image/jpeg;base64,AAAA');
+    await Sync.uploadPhotoIfNeeded(store, local, CFG);
+    expect(bodies).toEqual([[0, 0, 0], [0, 0, 0], [0, 0, 0]]);
   });
 });
