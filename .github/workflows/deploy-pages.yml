@@ -1,0 +1,52 @@
+name: Deploy GitHub Pages
+
+# Reemplaza el proceso manual descrito en
+# CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/README_SUBIR_A_GITHUB.txt
+# (arrastrar archivos a mano, omite .well-known/.nojekyll con facilidad) por
+# la fuente única del proyecto: source -> npm run build -> dist -> Pages.
+# No reemplaza al build de Android (gradlew assembleDebug/Release sigue
+# siendo un paso aparte) ni toca Supabase/RLS.
+#
+# Requiere, en la configuración del repo (Settings -> Pages), "Source:
+# GitHub Actions" en vez de "Deploy from a branch" — si el repo sigue en
+# "Deploy from a branch" este workflow corre pero Pages no lo usa.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node tools/verify-dist.mjs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
