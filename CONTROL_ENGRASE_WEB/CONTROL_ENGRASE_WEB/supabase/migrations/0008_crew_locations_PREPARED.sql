@@ -5,6 +5,16 @@
 -- evitar sus restricciones. No hay un segundo canal de sincronización.
 begin;
 
+-- Requires the existing Auth/RLS cutover. Do not silently expose the new
+-- store through the permissive legacy transport policy; never perform the
+-- cutover here or change another migration.
+do $$ begin
+  if exists (select 1 from pg_policies where schemaname = 'public'
+    and tablename = 'engrase_sync' and policyname = 'acceso interno con anon key') then
+    raise exception 'Preflight: policy legacy abierta; verificar cutover Auth/RLS antes de 0008';
+  end if;
+end $$;
+
 create table if not exists public.crew_locations (
   id text primary key,
   crew_id text not null,
@@ -15,6 +25,24 @@ create table if not exists public.crew_locations (
   updated_at timestamptz not null default now(),
   unique (crew_id, location_id)
 );
+-- Masters live in engrase_sync, keyed by (store,id), not separate tables.
+-- Fixed generated discriminators prevent references to another store with
+-- the same id. FKs also protect inactive rows and pre-existing backfill.
+alter table public.crew_locations
+  add column if not exists crew_store text generated always as ('cuadrillas'::text) stored,
+  add column if not exists location_store text generated always as ('locations'::text) stored;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.crew_locations'::regclass
+    and conname = 'crew_locations_crew_fk') then
+    alter table public.crew_locations add constraint crew_locations_crew_fk
+      foreign key (crew_store, crew_id) references public.engrase_sync (store, id);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.crew_locations'::regclass
+    and conname = 'crew_locations_location_fk') then
+    alter table public.crew_locations add constraint crew_locations_location_fk
+      foreign key (location_store, location_id) references public.engrase_sync (store, id);
+  end if;
+end $$;
 create unique index if not exists crew_locations_one_principal
   on public.crew_locations (location_id) where active and role = 'PRINCIPAL';
 create index if not exists crew_locations_crew_active

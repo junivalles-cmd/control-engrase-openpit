@@ -35,6 +35,10 @@ Una instalación offline utiliza la cobertura descargada o fallback legacy.
 0008 prepara una tabla con UNIQUE(crew_id, location_id), índice parcial de
 una PRINCIPAL activa por ubicación y un trigger transaccional que proyecta
 las escrituras de engrase_sync; las violaciones abortan la escritura CAS.
+Las FK compuestas referencian los maestros reales (store,id) de engrase_sync,
+con discriminadores generados fijos para cuadrillas y locations; también
+rechazan referencias inexistentes en filas inactivas. No borran maestros
+en cascada. La migración aborta si sigue presente la policy legacy abierta.
 El acceso directo a la proyección es solo lectura autenticada; ADMIN y
 PLANIFICADOR editan vía el store. RLS conserva el alcance por rol del
 catálogo actual, sin afirmar aislamiento por membership en el servidor.
@@ -63,5 +67,45 @@ widget, matrix, COMPLETE adelantado en ambas ubicaciones, PARTIAL y carryover.
 Sin fallos finales ni retries. Suite completa no ejecutada en este lote.
 Typecheck, build y verify:dist aprobados. CSS: cero errores y las mismas
 85 advertencias previas. No se aplicó SQL ni se accedió a producción;
-la revisión ejecutable de constraints/trigger/RLS en PostgreSQL queda
-pendiente en un entorno de prueba antes de autorizar producción.
+esa validación inicial no ejecutó SQL. El preflight posterior se detalla abajo.
+
+## Preflight SQL/RLS local — 2026-10-10
+
+Ejecutado en PostgreSQL 17.5 WASM (PGlite 0.3.15), bases nuevas en memoria
+con datos ficticios. Ninguna conexión a Supabase ni a producción. No se
+modificaron 0003/0005/0007 ni código funcional. La dependencia de validación
+se instaló en una carpeta temporal, fuera de package.json/package-lock.json.
+
+Reproducción: instalar `@electric-sql/pglite@0.3.15` con npm `--prefix`
+en una carpeta temporal y ejecutar `node tools/preflight-crew-locations.mjs`
+con la ruta absoluta a su `node_modules/@electric-sql/pglite/dist/index.js`.
+El harness importa el SQL real de 0008 y las funciones/policies de 0002.
+La instalación local comienza con las policies de cutover ya vigentes;
+otra base con la policy legacy abierta comprueba el aborto previo de 0008.
+Solo se simula auth.uid() mediante el claim de sesión; SET ROLE usa
+authenticated/anon sin SUPERUSER ni BYPASSRLS. No se usa service_role.
+Esto verifica RLS PostgreSQL, no el login ni la validación HTTP de JWT de
+Supabase (fuera del alcance de esta prueba local).
+
+Antes del fix se reprodujeron: ausencia de FK y aceptación de referencias
+huérfanas inactivas; aplicación de 0008 con policy legacy abierta. Después
+del fix pasan A–J, FK activas/inactivas, backfill aditivo e idempotencia,
+soft removal, rechazo de relaciones huérfanas preexistentes y rollback total.
+Dos crews legacy en la misma ubicación abortan: ninguna elección ni
+conversión automática a APOYO. Crews sin ubicación se conservan sin seed.
+
+RLS: los cinco perfiles activos leen; ADMINISTRADOR y PLANIFICADOR insertan,
+actualizan y hacen soft delete por engrase_sync. Toda escritura directa en
+crew_locations se deniega; SUPERVISOR, LUBRICADOR, VISOR y anon no pueden
+escribir su store. Anon no obtiene filas aun con privilegio SELECT concedido.
+
+`docs/CREW_LOCATION_PREFLIGHT_READ_ONLY.sql` está preparada y probada solo
+en las bases ficticias. Detecta duplicados legacy, conflictos entre seed
+y relaciones existentes, ausencia de ubicación, huérfanos, roles inválidos
+y policies del transporte. Antes de producción es necesario ejecutar esa
+consulta con autorización y resolver conflictos; aquí no se conoce su
+existencia real. No aplicar 0008 sin esa revisión y autorización posterior.
+
+Validación posterior: 1.404 unit tests (87 archivos), incluido fallback
+gradual cuando otra crew ya tiene relaciones; typecheck, build y verify:dist
+aprobados. No se ejecutó Playwright en este preflight.

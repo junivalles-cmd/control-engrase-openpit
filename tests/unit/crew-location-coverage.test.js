@@ -27,6 +27,12 @@ describe('Cobertura multiubicación: fuente única de alcance', () => {
     expect(scope().supportLocationIds).toEqual(['acarreo']);
     expect(work().normal.map(e => e.id)).toEqual(['volcan', 'mojon']);
   });
+  it('rollout gradual conserva fallback para crew sin filas aunque otra ya tenga cobertura', () => {
+    const otherRows = [{ id: 'other-a', crew_id: 'other', location_id: 'acarreo', role: 'PRINCIPAL', active: true }];
+    expect(scope(otherRows).principalLocationIds).toEqual(['volcan']);
+    expect(work([], scope(otherRows)).normal.map(e => e.id)).toEqual(['volcan']);
+    expect(resolveCrewLocationCoverage('76-08', cuadrillas, otherRows).legacyFallback).toBe(true);
+  });
   it('una autorización revocada no reaparece por fallback', () => {
     const inactive = rows.map(r => ({ ...r, active: false }));
     expect(resolveCrewLocationCoverage('76-08', cuadrillas, inactive).allAuthorizedLocationIds).toEqual([]);
