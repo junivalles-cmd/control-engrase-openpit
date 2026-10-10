@@ -3510,7 +3510,6 @@ function bootLubricador() {
     if (el) el.textContent = currentShiftId() === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche';
   });
 
-  $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-lub-account-menu')?.addEventListener('click', openLubAccountMenu);
   // Consulta universal (§2 del lote): mismas dos acciones que el shell de
   // escritorio (buscar/escanear QR), visibles en las 4 pestañas del
