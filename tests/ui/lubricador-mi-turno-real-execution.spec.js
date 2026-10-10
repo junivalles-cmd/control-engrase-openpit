@@ -1085,3 +1085,56 @@ test('ASIGNADO-E (diagnóstico) — COMPLETE ASSIGNED (no OUT_OF_PLAN) 1 día an
   expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
   await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
 });
+
+// Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK/MI TURNO", Parte 0B del
+// pedido) — la tarjeta de "Mi Turno" (.lub-eq-btn) es un <div> CONTENEDOR,
+// nunca un botón: antes tenía cursor:pointer + feedback :active (scale +
+// fondo) en TODA la tarjeta, dando la impresión de que cualquier parte era
+// clicable. Solo los <button> explícitos (.lub-mt-reg/.lub-mt-ver) deben
+// disparar acciones reales — se prueba clickeando ÁREAS SIN BOTÓN
+// (código/modelo/ubicación) y confirmando que NO pasa nada, contra el
+// click EN los botones reales, que SÍ debe pasar.
+test('§0.8/§0.9/§0.10 — la card de Mi Turno NO es clicable fuera de sus botones explícitos (Registrar engrase / Ver ficha)', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: '20-5540', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'plan_card', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => {
+    window.__detailCalls = [];
+    window.__greaseFlowCalls = [];
+    window.openEquipmentDetail = (id) => window.__detailCalls.push(id);
+    window.startLubricadorGreaseFlow = (id) => window.__greaseFlowCalls.push(id);
+  });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  const card = page.locator('.lub-eq-btn', { hasText: '20-5540' });
+  await expect(card).toBeVisible();
+
+  // F del pedido: click en código/modelo/ubicación/área blanca -> NADA.
+  await card.locator('.lub-eq-code').click();
+  await card.locator('.lub-eq-model').click();
+  await card.locator('.lub-eq-location').click();
+  await card.click({ position: { x: 5, y: 5 } }); // área blanca real de la tarjeta
+  expect(await page.evaluate(() => window.__detailCalls)).toEqual([]);
+  expect(await page.evaluate(() => window.__greaseFlowCalls)).toEqual([]);
+
+  // I del pedido: la card nunca es role="button".
+  expect(await card.getAttribute('role')).toBeNull();
+  // cursor:default real (nunca pointer) — confirma que §0.8/§0.12 ya no la
+  // hace VERSE clicable tampoco, no solo que no responda.
+  expect(await card.evaluate((el) => getComputedStyle(el).cursor)).not.toBe('pointer');
+
+  // G del pedido: click en "Registrar engrase" SÍ dispara el flujo real.
+  await card.locator('.lub-mt-reg').click();
+  expect(await page.evaluate(() => window.__greaseFlowCalls)).toEqual(['e1']);
+
+  // H del pedido: click en "Ver ficha" SÍ abre la Ficha real.
+  await card.locator('.lub-mt-ver').click();
+  expect(await page.evaluate(() => window.__detailCalls)).toEqual(['e1']);
+
+  expect(errors).toEqual([]);
+});

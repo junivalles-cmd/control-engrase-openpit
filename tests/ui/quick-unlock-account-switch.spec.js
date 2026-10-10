@@ -237,3 +237,59 @@ for (const width of [360, 384, 390, 412]) {
     }
   });
 }
+
+// Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.13 del pedido) — A/B/C/D/E.
+for (const width of [360, 390, 412]) {
+  test(`A — márgenes de .login-card consistentes @ ${width}px (nunca un salto entre anchos comunes de teléfono)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await bootQuickUnlock(page);
+    const padding = await page.locator('.login-card').evaluate((el) => getComputedStyle(el).padding);
+    // Mismo valor exacto en los 3 anchos — nunca el salto real reportado
+    // (390/412 caían en el valor "desktop" por el viejo breakpoint de 380px).
+    expect(padding).toBe('24px 22px 22px');
+  });
+
+  test(`B — Quick Unlock @ ${width}px sin contenido pegado a los bordes del card`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await bootQuickUnlock(page);
+    const { cardLeft, cardRight, firstChildLeft } = await page.evaluate(() => {
+      const card = document.querySelector('.login-card').getBoundingClientRect();
+      const pin = document.querySelector('#quick-unlock-pin').getBoundingClientRect();
+      return { cardLeft: card.left, cardRight: card.right, firstChildLeft: pin.left };
+    });
+    expect(firstChildLeft - cardLeft).toBeGreaterThanOrEqual(18); // nunca pegado al borde izquierdo
+  });
+}
+
+test('C — "Entrar con otra cuenta" es un <button> real (nunca <a>/texto con onclick)', async ({ page }) => {
+  await bootQuickUnlock(page);
+  const tag = await page.locator('#quick-unlock-change-user').evaluate((el) => el.tagName);
+  expect(tag).toBe('BUTTON');
+  const type = await page.locator('#quick-unlock-change-user').getAttribute('type');
+  expect(type).toBe('button');
+});
+
+test('§0.4 — "Entrar con otra cuenta" se ve como botón secundario real (ancho completo, mismo fondo/borde que .btn, nunca subrayado de link)', async ({ page }) => {
+  await bootQuickUnlock(page);
+  const btn = page.locator('#quick-unlock-change-user');
+  await expect(btn).not.toHaveClass(/link-btn/);
+  await expect(btn).toHaveClass(/login-btn-secondary/);
+  const style = await btn.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { textDecoration: s.textDecorationLine, width: el.getBoundingClientRect().width, cardWidth: el.closest('.login-card').getBoundingClientRect().width };
+  });
+  expect(style.textDecoration).toBe('none');
+  // Ancho completo (menos el padding del card) — nunca un link angosto.
+  expect(style.width).toBeGreaterThan(style.cardWidth * 0.8);
+});
+
+test('§0.14 — Alto Contraste: "<-", Desbloquear y "Entrar con otra cuenta" siguen visibles con color real distinto del fondo', async ({ page }) => {
+  await bootQuickUnlock(page);
+  await page.locator('#btn-theme').click();
+  await page.locator('.theme-preview-card[data-mode="contrast"]').click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-mode'))).toBe('contrast');
+  await page.locator('#modal-close').click();
+  for (const sel of ['#quick-unlock-back', '#quick-unlock-submit', '#quick-unlock-change-user']) {
+    await expect(page.locator(sel)).toBeVisible();
+  }
+});

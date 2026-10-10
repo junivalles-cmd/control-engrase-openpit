@@ -329,16 +329,23 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .login-card {
   width: 100%; max-width: 420px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 16px;
-  padding: 32px 26px 26px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  /* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido): un solo
+     padding consistente 360-412-desktop (antes la "versión angosta" de
+     @media max-width:380px dejaba justo a los anchos más comunes —
+     390/412 — cayendo en el valor por defecto, más grande, así que el
+     padding cambiaba de golpe entre 380 y 390px sin motivo real). */
+  padding: 24px 22px 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   position: relative;
 }
 .login-theme-btn { position: absolute; top: 14px; right: 14px; font-size: 18px; }
 /* "←" de Quick Unlock (lote "LOGIN / QUICK UNLOCK / CAMBIO DE USUARIO")
    — mismo patrón de posición que .login-theme-btn, espejado a la
-   izquierda. .icon-btn ya cumple el objetivo táctil >=44px (min-width +
-   min-height, ver regla compartida de .btn/.icon-btn más abajo en este
-   archivo) — no se repite acá. */
-.login-back-btn { position: absolute; top: 14px; left: 14px; font-size: 20px; }
+   izquierda. Fix 2026-10-09 (§0.5 del pedido): .icon-btn comparte
+   min-width:var(--tap) pero NUNCA tuvo min-height — en la práctica medía
+   ~30px de alto, bajo los 44px táctiles exigidos. Se agrega aquí mismo,
+   acotado a este botón (nunca se toca .icon-btn en general, lo usan
+   decenas de pantallas). */
+.login-back-btn { position: absolute; top: 14px; left: 14px; font-size: 20px; min-height: 44px; }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .brand-login { margin-bottom: 4px; padding-right: 30px; }
 /* Con el botón "←" presente, la marca necesita aire a AMBOS lados (antes
@@ -388,6 +395,26 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .pin-area .btn { padding: 0 20px; font-size: 14px; }
 .login-error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .login-footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 18px; line-height: 1.4; }
+
+/* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido) — espaciado
+   consistente SOLO dentro de los formularios de acceso (login/Quick Unlock/
+   configurar PIN), nunca tocando .form-grid en general (lo usan decenas de
+   formularios del resto de la app, fuera de alcance de este pedido).
+   Reutiliza el MISMO .form-grid/.btn ya existentes, solo ajusta medidas. */
+.login-card .form-grid { gap: 15px; }
+.login-card .form-grid label { gap: 7px; }
+.login-card .form-grid input, .login-card .form-grid select {
+  min-height: 46px; padding: 12px 14px; box-sizing: border-box;
+}
+/* §0.1: "entre último campo y botón principal: 18-20px" — 15px del gap
+   general + 5px extra en el propio botón, nunca un contenedor nuevo. */
+.login-card .form-grid button[type="submit"],
+#quick-unlock-area .btn { margin-top: 5px; }
+/* §0.4: "Entrar con otra cuenta" deja de ser texto subrayado (.link-btn) y
+   pasa a un botón secundario REAL — mismo .btn de siempre (ya es el look
+   "secundario" de la app, btn-accent es el único primario), solo ancho
+   completo + separación clara de Desbloquear. Nunca cambia el handler. */
+.login-btn-secondary { width: 100%; justify-content: center; margin-top: 14px; min-height: 44px; }
 
 /* ---------------- Selector de tema — biblioteca de presets (rediseño
    visual 2026-10-08, "ampliar opciones de color"): cada preset es una
@@ -1657,15 +1684,22 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .lub-section-head { margin: var(--sp-3) 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
 .lub-eq-list + .lub-section-head { margin-top: var(--sp-4, 20px); }
+/* Fix 2026-10-09 ("PULIDA MI TURNO", §0.8/§0.12 del pedido): esta tarjeta
+   es un CONTENEDOR informativo, nunca un botón — ya era un <div> (sin
+   onclick ni role="button"), pero cursor:pointer + el :active de abajo
+   (ahora quitado, ver §6 "Estados de interacción claros") daban la
+   impresión visual de que TODA la tarjeta era clicable. Las únicas
+   acciones reales son los <button> explícitos de .lub-arrastrado-actions
+   (Registrar engrase / Ver ficha), que ya tienen su propio feedback vía
+   .btn:active — cursor por defecto (nunca pointer) en el resto. */
 .lub-eq-btn {
   display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
-  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); cursor: pointer; color: var(--text);
+  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); color: var(--text);
 }
 .lub-eq-btn[data-status="VERDE"] { border-left-color: var(--green); }
 .lub-eq-btn[data-status="AMARILLO"] { border-left-color: var(--amber); }
 .lub-eq-btn[data-status="ROJO"] { border-left-color: var(--red); }
 .lub-eq-btn[data-status="GRIS"] { border-left-color: var(--gray-status); }
-.lub-eq-btn:active { background: var(--surface-2); }
 .lub-eq-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .lub-eq-code { font-family: var(--font-mono); font-weight: 700; font-size: 20px; }
 .lub-eq-model { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
@@ -2045,7 +2079,11 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 /* ---------------- Ajustes finos por tamaño de dispositivo ---------------- */
 /* Teléfonos angostos (la mayoría de gama media/baja: 320–380px de ancho) */
 @media (max-width: 380px) {
-  .login-card { padding: 24px 18px 20px; border-radius: 12px; }
+  /* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido): el
+     padding de .login-card ya NO se redefine aquí — debe ser el MISMO
+     valor consistente (24px 22px 22px, ver arriba) en 360/390/412, nunca
+     un segundo salto solo por este breakpoint. */
+  .login-card { border-radius: 12px; }
   .brand-title { font-size: 20px; }
   .login-user { padding: 12px; min-height: 50px; }
   .login-user-icon { width: 34px; height: 34px; font-size: 17px; }
@@ -2878,10 +2916,10 @@ input[type="checkbox"], input[type="radio"] {
 
 /* ---- 6. Estados de interacción claros ----
    Antes muchos elementos clicables no daban señal de que respondían al toque. */
-.btn:active, .eq-card.clickable:active, .lub-eq-btn:active {
+.btn:active, .eq-card.clickable:active {
   transform: scale(0.985);
 }
-.eq-card.clickable, .lub-eq-btn { transition: transform 0.08s ease, border-color 0.15s ease; }
+.eq-card.clickable { transition: transform 0.08s ease, border-color 0.15s ease; }
 
 /* ---- 7. Tablas más legibles en jornadas largas ----
    Filas alternas suaves para no perder el renglón al leer listados largos. */

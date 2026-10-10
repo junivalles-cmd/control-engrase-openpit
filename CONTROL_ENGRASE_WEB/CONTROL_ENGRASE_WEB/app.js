@@ -2640,7 +2640,7 @@ function renderSupabaseLoginForm() {
           <label>Usuario<input required name="username" autocomplete="username" ${online ? '' : 'disabled'}/></label>
           <label>Contraseña<input required type="password" name="password" autocomplete="current-password" ${online ? '' : 'disabled'}/></label>
           <div id="supabase-login-error" class="login-error"></div>
-          <button type="submit" class="btn btn-accent" ${online ? '' : 'disabled'}>Entrar</button>
+          <button type="submit" class="btn btn-accent" ${online ? '' : 'disabled'}>Iniciar sesión</button>
         </form>
       </div>
     </div>`;
@@ -2700,7 +2700,11 @@ function renderQuickUnlockScreen(snapshot) {
           <button type="button" id="quick-unlock-submit" class="btn btn-accent">Desbloquear</button>
         </div>
         <div id="quick-unlock-error" class="login-error"></div>
-        <button type="button" id="quick-unlock-change-user" class="link-btn">Entrar con otra cuenta</button>
+        <!-- Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.4 del pedido):
+             botón secundario REAL (ya era un <button>, solo cambia el look
+             de link subrayado a .btn con ancho completo) — mismo handler,
+             nunca una reimplementación. -->
+        <button type="button" id="quick-unlock-change-user" class="btn login-btn-secondary">${ic('repeat')}Entrar con otra cuenta</button>
         <div class="login-footer">Funciona sin conexión · desbloqueo local de este dispositivo</div>
       </div>
     </div>`;
