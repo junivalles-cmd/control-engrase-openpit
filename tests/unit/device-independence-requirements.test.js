@@ -113,6 +113,7 @@ describe('H — Offline sigue funcionando después de sincronización inicial (s
   it('getCurrentOperationalScope()/resolveOperationalScope() son funciones PURAS/locales (cuadrillas ya sincronizadas vía DB.allActive) — nunca hacen fetch ni dependen de estar online', async () => {
     const db = {
       _data: { cuadrillas: [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, memberUserIds: ['u_lub1'] }] },
+      async all(store) { return this._data[store] || []; },
       async allActive(store) { return this._data[store] || []; },
     };
     const App = { currentUser: { id: 'u_lub1', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };

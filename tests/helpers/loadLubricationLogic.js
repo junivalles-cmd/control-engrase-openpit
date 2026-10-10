@@ -254,7 +254,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'ROLES_CREW_SCOPED',
     'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canManageCrewMembership',
     'canRegisterOutOfPlan', 'getAuthorizedCrews',
-    'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveOperationalScope',
+    'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'validateCrewLocationCoverage', 'resolveOperationalScope',
     'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
     'canLubricadorExecuteEquipment',
@@ -309,7 +309,7 @@ export function loadNotificationRoutingLogic() {
 const DEVICE_IDENTITY_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'stamp']],
   [SHIFTS_JS_PATH, ['currentShiftId']],
-  [OPERATIONAL_SCOPE_JS_PATH, ['ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveOperationalScope']],
+  [OPERATIONAL_SCOPE_JS_PATH, ['ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope']],
   [APP_JS_PATH, [
     'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
     // getCurrentOperationalScope() ahora también alimenta el scope de push

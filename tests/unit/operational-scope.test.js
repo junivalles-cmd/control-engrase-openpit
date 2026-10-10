@@ -374,7 +374,7 @@ describe('Snapshot histórico (§1 del cierre de lote) — CASO A/B/C del pedido
   it('buildExecutionSnapshot(): valores ausentes -> null, nunca undefined ni inventados', () => {
     const snap = buildExecutionSnapshot({});
     expect(snap).toEqual({
-      equipmentLocationIdAtExecution: null, crewId: null, crewLocationIdAtExecution: null,
+      equipmentLocationIdAtExecution: null, executionLocationId: null, crewId: null, crewLocationIdAtExecution: null,
       performedByUserId: null, shiftId: null, assignmentId: null, executionType: 'PLANNED',
       outOfPlanReason: null, executionCompleteness: null, satisfiedOccurrenceKey: null
     });

@@ -38,7 +38,7 @@ const scopeNames = [
   // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release
   // 2026-10-08) — MISMAS funciones reales ya usadas por renderLubricadorHome().
   'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveDefaultCrewForLocation',
-  'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey', 'toISODateUTCLocal',
+  'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey', 'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [

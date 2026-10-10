@@ -37,7 +37,7 @@ const statusSrc = statusNames.map((n) => extractDeclaration(statusSource, n)).jo
 const scopeNames = [
   'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
-  'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
+  'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
   'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map((n) => extractDeclaration(scopeSource, n)).join('\n\n');
@@ -90,7 +90,7 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
         lubrication_assignments: ${JSON.stringify(assignments)},
         grease_validations: [],
       };
-      window.DB = { allActive: async (store) => window.__mockData[store] || [] };
+      window.DB = { getConfig: async () => ({ lastPull: 'fixture-pulled' }), all: async (store) => window.DB.allActive(store), allActive: async (store) => window.__mockData[store] || [] };
       window.__widgetUpdateCalls = [];
       window.__widgetClearCalls = [];
       window.Capacitor = {

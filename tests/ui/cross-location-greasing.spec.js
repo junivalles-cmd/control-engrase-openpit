@@ -25,7 +25,7 @@ const shiftsSrc = extractDeclaration(shiftsSource, 'currentShiftId');
 const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
-  'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveOperationalScope',
+  'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope',
   'computeOccurrenceKey', 'toISODateUTCLocal', 'findActivePendingAssignment',
   'canLubricadorExecuteEquipment', 'findExistingWorkForEquipment', 'classifyEquipmentWork',
 ];
@@ -70,7 +70,7 @@ async function bootPage(page, { equipos = [], plans = [], assignments = [] } = {
         lubrication_records: [],
       };
       window.DB = {
-        allActive: async (store) => window.__mockData[store] || [],
+        all: async (store) => window.DB.allActive(store), allActive: async (store) => window.__mockData[store] || [],
         get: async (store, id) => (window.__mockData[store] || []).find(r => r.id === id) || null,
       };
       ${shiftsSrc}

@@ -35,7 +35,7 @@ const APP_NAMES = [
 const STATUS_NAMES = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const SHIFTS_NAMES = ['currentShiftId'];
 const OP_SCOPE_NAMES = [
-  'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveOperationalScope',
+  'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope',
   'computeOccurrenceKey', 'toISODateUTCLocal',
   'findActivePendingAssignment', 'canLubricadorExecuteEquipment', 'findExistingWorkForEquipment',
 ];
@@ -133,7 +133,7 @@ async function bootPage(page, { role } = {}) {
       try { localStorage.clear(); } catch (e) {}
 
       window.DB = {
-        allActive: async (store) => ({
+        all: async (store) => window.DB.allActive(store), allActive: async (store) => ({
           equipment: ${JSON.stringify(EQUIPOS)},
           locations: ${JSON.stringify(LOCATIONS)},
           lubrication_records: [],

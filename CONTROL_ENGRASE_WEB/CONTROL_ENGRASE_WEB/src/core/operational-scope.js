@@ -251,12 +251,50 @@ function computeOccurrenceKey(plan, { dateISO } = {}) {
    Pura: si hay más de una marcada default por error de datos, gana la de
    creación más antigua (createdAt) — nunca ambigüedad silenciosa, y nunca
    lanza (un dato mal cargado no debe tumbar toda la pantalla). */
-function resolveDefaultCrewForLocation(cuadrillas, locationId) {
+// Single source for location coverage; membership remains the authority
+// for selecting a crew. Legacy location is used only before relation rows exist.
+function resolveCrewLocationCoverage(crewId, cuadrillas = [], crewLocations = []) {
+  const crew = cuadrillas.find(c => c.id === crewId && c.active !== false);
+  const rows = crewLocations.filter(r => r.crew_id === crewId);
+  if (!crew) return { principalLocationIds: [], supportLocationIds: [], allAuthorizedLocationIds: [], legacyFallback: !rows.length };
+  // Tombstones are intentional revocations: never restore legacy access.
+  const active = rows.filter(r => r.active !== false);
+  const principalLocationIds = [...new Set(active.filter(r => r.role === 'PRINCIPAL').map(r => r.location_id))];
+  const supportLocationIds = [...new Set(active.filter(r => r.role === 'APOYO').map(r => r.location_id))];
+  if (!rows.length && crew && crew.locationId) {
+    principalLocationIds.push(crew.locationId);
+  }
+  principalLocationIds.sort((a, b) => a === (crew && crew.locationId) ? -1 : b === (crew && crew.locationId) ? 1 : a.localeCompare(b));
+  return { principalLocationIds, supportLocationIds,
+    allAuthorizedLocationIds: [...new Set([...principalLocationIds, ...supportLocationIds])],
+    legacyFallback: !rows.length };
+}
+
+function resolveDefaultCrewForLocation(cuadrillas, locationId, crewLocations = []) {
   if (!locationId) return null;
+  const explicit = (crewLocations || []).find(r => r.location_id === locationId && r.role === 'PRINCIPAL' && r.active !== false
+    && (cuadrillas || []).some(c => c.id === r.crew_id && c.active !== false));
+  if (explicit) return cuadrillas.find(c => c.id === explicit.crew_id);
   const candidatas = (cuadrillas || [])
-    .filter(c => c.active !== false && c.locationId === locationId && c.isDefault === true)
+    .filter(c => c.active !== false && c.locationId === locationId && c.isDefault === true
+      && !crewLocations.some(r => r.crew_id === c.id))
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   return candidatas[0] || null;
+}
+
+function validateCrewLocationCoverage(crewId, rows, cuadrillas, existing) {
+  const locations = new Set();
+  for (const row of rows) {
+    if (!row.location_id || !['PRINCIPAL', 'APOYO'].includes(row.role) || row.crew_id !== crewId) {
+      throw new Error('Cobertura de cuadrilla no válida.');
+    }
+    if (locations.has(row.location_id)) throw new Error('Ubicación repetida en la cobertura.');
+    locations.add(row.location_id);
+    if (row.active !== false && row.role === 'PRINCIPAL') {
+      const other = resolveDefaultCrewForLocation(cuadrillas, row.location_id, existing);
+      if (other && other.id !== crewId) throw new Error(`La ubicación ya tiene una cuadrilla PRINCIPAL: ${other.name}. Cambia primero su cobertura.`);
+    }
+  }
 }
 
 /* ============================================================
@@ -284,7 +322,7 @@ function getAuthorizedCrews(cuadrillas, userId) {
    caller, ver getSelectedCrewId() en app.js) — SOLO se usa si de verdad
    está en la lista de cuadrillas autorizadas del usuario; si no, se
    ignora en silencio (nunca eleva permisos que el usuario no tiene). */
-function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId }) {
+function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId, crewLocations = [] }) {
   if (!currentUser) return { kind: 'NONE' };
   if (!ROLES_CREW_SCOPED.includes(currentUser.role)) {
     return {
@@ -298,7 +336,8 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
   }
   if (authorizedCrews.length === 1) {
     const crew = authorizedCrews[0];
-    return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: crew.id, crewLocationId: crew.locationId || null, authorizedCrews };
+    return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: crew.id, crewLocationId: crew.locationId || null, authorizedCrews,
+      ...resolveCrewLocationCoverage(crew.id, cuadrillas, crewLocations), crewLocations };
   }
   // 2+ cuadrillas autorizadas: hace falta una selección de sesión válida
   // (una de las YA autorizadas) — nunca se adivina ni se toma la primera.
@@ -306,7 +345,8 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
   if (!selected) {
     return { kind: 'NEEDS_CREW_SELECTION', userId: currentUser.id, role: currentUser.role, shiftId, crewId: null, crewLocationId: null, authorizedCrews };
   }
-  return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: selected.id, crewLocationId: selected.locationId || null, authorizedCrews };
+  return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: selected.id, crewLocationId: selected.locationId || null, authorizedCrews,
+    ...resolveCrewLocationCoverage(selected.id, cuadrillas, crewLocations), crewLocations };
 }
 
 /* ============================================================
@@ -339,12 +379,10 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
     return { normal: equipos || [], assigned: pendientes };
   }
 
-  const defaultCrew = resolveDefaultCrewForLocation(cuadrillas, scope.crewLocationId);
-  const esCuadrillaDefault = !!defaultCrew && defaultCrew.id === scope.crewId;
-
   const normal = (equipos || []).filter(e => {
-    if (e.locationId !== scope.crewLocationId) return false;
-    if (!esCuadrillaDefault) return false; // solo la cuadrilla default recibe trabajo "normal" de la ubicación
+    if (!(scope.principalLocationIds || [scope.crewLocationId]).includes(e.locationId)) return false;
+    const defaultCrew = resolveDefaultCrewForLocation(cuadrillas, e.locationId, scope.crewLocations || []);
+    if (!defaultCrew || defaultCrew.id !== scope.crewId) return false;
     const key = equipoOccurrenceKeyFn ? equipoOccurrenceKeyFn(e) : null;
     if (key) {
       const asg = porOccurrence.get(key);
@@ -390,9 +428,12 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
    equipo entre ubicaciones aquí — cada equipo de `equipos` (ya sin
    duplicados, viene de DB.allActive('equipment')) aparece como mucho una
    vez en el resultado. */
-function equiposForLubricadorMatriz(equipos, scope) {
-  if (!scope || scope.kind !== 'CREW_SCOPED' || !scope.crewLocationId) return [];
-  return (equipos || []).filter(e => e.locationId === scope.crewLocationId);
+function equiposForLubricadorMatriz(equipos, scope, locationId) {
+  if (!scope || scope.kind !== 'CREW_SCOPED') return [];
+  const authorized = scope.legacyFallback === false ? scope.principalLocationIds : [scope.crewLocationId];
+  const selected = locationId || authorized[0];
+  if (!selected || !authorized.includes(selected)) return [];
+  return (equipos || []).filter(e => e.locationId === selected);
 }
 
 /* ============================================================
@@ -474,6 +515,7 @@ function buildExecutionSnapshot({
 }) {
   return {
     equipmentLocationIdAtExecution: equipmentLocationId || null,
+    executionLocationId: equipmentLocationId || null,
     crewId: crewId || null,
     crewLocationIdAtExecution: crewLocationId || null,
     performedByUserId: performedByUserId || null,
@@ -513,10 +555,11 @@ function resolveRecordCrewId(record) {
 }
 
 // Ubicación de ESA cuadrilla al momento de ejecutar — nunca la ubicación
-// ACTUAL de la cuadrilla (que pudo moverse desde entonces, ver CASO
-// equivalente de mover cuadrilla en el pedido).
+// ACTUAL de la cuadrilla. New records prefer their actual execution
+// location; older records keep the original crew-location snapshot.
 function resolveRecordCrewLocationId(record) {
   const snap = record && record.operationalSnapshot;
+  if (snap && snap.executionLocationId) return { value: snap.executionLocationId, source: 'snapshot' };
   if (snap && snap.crewLocationIdAtExecution) return { value: snap.crewLocationIdAtExecution, source: 'snapshot' };
   return { value: null, source: 'legacy_fallback' };
 }
@@ -675,7 +718,7 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
   if (!scope || scope.kind !== 'CREW_SCOPED') return true; // jefaturas: sin restricción aquí
-  if (equipo.locationId === scope.crewLocationId) return true; // dentro de su ubicación normal
+  if ((scope.allAuthorizedLocationIds || [scope.crewLocationId]).includes(equipo.locationId)) return true;
   const pendientes = (assignments || []).filter(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING);
   return pendientes.some(a => a.equipmentId === equipo.id && a.assignedCrewId === scope.crewId);
 }

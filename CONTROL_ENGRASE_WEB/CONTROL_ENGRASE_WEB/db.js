@@ -11,14 +11,15 @@ const DB_NAME = 'engrase_openpit';
 // engrase. Migración NO destructiva: onupgradeneeded ya crea genéricamente
 // cualquier store nuevo que aparezca en STORES (ver v6) — no hace falta
 // tocar esa función, ningún store existente se toca ni se vacía.
-const DB_VERSION = 8;
+// v9: additive crew coverage store; existing records and catalogs stay intact.
+const DB_VERSION = 9;
 
 // Almacenes que se sincronizan con el servidor remoto (todo excepto configuración local del dispositivo)
 const STORES = [
   'users', 'shifts', 'locations', 'equipment_types', 'equipment',
   'lubricants', 'lubrication_plans', 'lubrication_points',
   'lubrication_records', 'anomalies', 'audit_log', 'settings', 'cuadrillas', 'push_tokens',
-  'grease_validations', 'lubrication_assignments', 'lubrication_skips'
+  'grease_validations', 'lubrication_assignments', 'lubrication_skips', 'crew_locations'
 ];
 
 // app_config y grease_drafts viven solo en el dispositivo (credenciales de conexión,
@@ -54,6 +55,16 @@ function tx(storeName, mode = 'readonly') {
 }
 
 const DB = {
+  async putMany(store, rows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(store, 'readwrite');
+      const objectStore = transaction.objectStore(store);
+      rows.forEach(row => objectStore.put(row));
+      transaction.oncomplete = () => resolve(rows);
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  },
   async init() {
     await openDB();
     await ensureDefaultSyncConfig();

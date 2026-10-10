@@ -37,7 +37,7 @@ const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join
 const scopeNames = [
   'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
-  'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
+  'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
   'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
@@ -93,7 +93,7 @@ async function bootPage(page, { cuadrillas = [], cfg = null, syncState = { statu
       // (capturado por los tests de abajo con errors.toEqual([])), nunca
       // pasaría desapercibido.
       window.DB = {
-        allActive: async (store) => window.__mockData[store] || [],
+        all: async (store) => window.DB.allActive(store), allActive: async (store) => window.__mockData[store] || [],
         getConfig: async () => window.__mockCfg,
       };
       // Sync.fullSync() real NUNCA se reimplementa aquí — este stub solo

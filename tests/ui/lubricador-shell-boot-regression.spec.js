@@ -39,7 +39,7 @@ const statusSrc = statusNames.map((n) => extractDeclaration(statusSource, n)).jo
 const scopeNames = [
   'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
-  'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz',
+  'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz',
   'computeOccurrenceKey', 'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map((n) => extractDeclaration(scopeSource, n)).join('\n\n');
@@ -116,7 +116,7 @@ async function bootShell(page) {
         grease_validations: [],
       };
       window.DB = {
-        allActive: async (store) => window.__mockData[store] || [],
+        all: async (store) => window.DB.allActive(store), allActive: async (store) => window.__mockData[store] || [],
         getConfig: async () => ({ lastPull: Date.now() }),
       };
       ${shiftsSrc}

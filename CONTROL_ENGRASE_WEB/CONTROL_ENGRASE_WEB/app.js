@@ -869,10 +869,12 @@ function setSelectedCrewId(userId, crewId) {
 // 2+ autorizadas — ver getSelectedCrewId()).
 async function getCurrentOperationalScope() {
   const cuadrillas = await DB.allActive('cuadrillas');
+  const crewLocations = await DB.all('crew_locations');
   const selectedCrewId = App.currentUser ? getSelectedCrewId(App.currentUser.id) : '';
   return resolveOperationalScope({
     currentUser: App.currentUser,
     cuadrillas,
+    crewLocations,
     selectedCrewId,
     shiftId: currentShiftId()
   });
@@ -2927,10 +2929,10 @@ function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations) {
       <div><b>Cuadrilla activa</b><div>Elige una en el menú principal</div></div>`;
   }
   const crew = cuadrillas.find(c => c.id === scope.crewId);
-  const loc = locations.find(l => l.id === scope.crewLocationId);
+  const locationNames = (scope.principalLocationIds || [scope.crewLocationId]).map(id => (locations.find(l => l.id === id) || {}).name).filter(Boolean);
   return `<div><b>Cuadrilla${(scope.authorizedCrews || []).length > 1 ? 's autorizadas' : ''}</b><div>${autorizadas}</div></div>
     <div><b>Cuadrilla activa</b><div>${crew ? esc(crew.name) : '—'}</div></div>
-    <div><b>Ubicación operativa</b><div>${loc ? esc(loc.name) : 'Sin ubicación'}</div></div>`;
+    <div><b>Ubicación operativa</b><div>${locationNames.length ? esc(locationNames.join(' + ')) : 'Sin ubicación'}</div></div>`;
 }
 
 async function renderMiPerfil() {
@@ -3172,7 +3174,7 @@ async function renderLubricadorConfig() {
         ${scope.kind === 'CREW_SCOPED' ? `
           <div class="detail-grid">
             <div><b>Cuadrilla activa</b><div>${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '—')}</div></div>
-            <div><b>Ubicación</b><div>${esc((locations.find(l => l.id === scope.crewLocationId) || {}).name || 'Sin ubicación')}</div></div>
+            <div><b>Ubicación</b><div>${esc((scope.principalLocationIds || [scope.crewLocationId]).map(id => (locations.find(l => l.id === id) || {}).name).filter(Boolean).join(' + ') || 'Sin ubicación')}</div></div>
             <div><b>Turno</b><div>${esc(turnoLabel)}</div></div>
           </div>
           <div class="lub-config-actions" style="margin-top:10px">
@@ -3662,6 +3664,25 @@ async function renderLubricadorHome() {
   const scope = await getCurrentOperationalScope();
   const cuadrillas = await DB.allActive('cuadrillas');
   const myCrew = cuadrillas.find(cq => cq.id === scope.crewId);
+  if (scope.kind === 'CREW_SCOPED' && lastSyncState.status === 'syncing') {
+    const config = await DB.getConfig();
+    if (!(config && config.lastPull)) {
+      c.innerHTML = '<div class="loading">Sincronizando datos… Cargando cobertura de ubicaciones.</div>';
+      return;
+    }
+  }
+  const principalLocations = scope.principalLocationIds || (scope.crewLocationId ? [scope.crewLocationId] : []);
+  const coverageName = principalLocations.map(id => (locations.find(l => l.id === id) || {}).name || 'Sin ubicación').join(' + ');
+  const filterKey = `crew-location-filter:${App.currentUser.id}:${scope.crewId}`;
+  let locationFilter = '';
+  try { locationFilter = localStorage.getItem(filterKey) || ''; } catch (e) { /* local preference only */ }
+  if (!principalLocations.includes(locationFilter) || principalLocations.length < 2) locationFilter = '';
+  const locationRowsHTML = (rows, render, equipmentOf = row => row.e) => {
+    const filtered = rows.filter(row => !locationFilter || equipmentOf(row).locationId === locationFilter);
+    if (principalLocations.length < 2) return filtered.map(render).join('');
+    const ids = [...new Set(filtered.map(row => equipmentOf(row).locationId))];
+    return ids.map(id => `<div class="lub-location-group"><h3>${esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación')}</h3>${filtered.filter(row => equipmentOf(row).locationId === id).map(render).join('')}</div>`).join('');
+  };
 
   // Corrección arquitectónica 2026-10-02: el usuario, no el dispositivo, es
   // quien está (o no) autorizado para una cuadrilla. Sin ninguna cuadrilla
@@ -3960,7 +3981,7 @@ async function renderLubricadorHome() {
   })();
   const contextChips = [
     `<span class="lub-context-chip">${turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'}</span>`,
-    myCrew ? `<span class="lub-context-chip">📍 ${esc((locations.find(l => l.id === scope.crewLocationId) || {}).name || '—')}</span>` : '',
+    myCrew ? `<span class="lub-context-chip">📍 ${esc(coverageName || '—')}</span>` : '',
     myCrew ? `<span class="lub-context-chip">👥 ${esc(myCrew.name)}</span>` : '',
     syncChip,
   ].join('');
@@ -4195,7 +4216,7 @@ async function renderLubricadorHome() {
     const rec = s.satisfactorio;
     const snap = rec.operationalSnapshot || {};
     const crew = cuadrillas.find(c => c.id === snap.crewId);
-    const crewLoc = locations.find(l => l.id === snap.crewLocationIdAtExecution);
+    const crewLoc = locations.find(l => l.id === (snap.executionLocationId || snap.crewLocationIdAtExecution));
     const diasAtras = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(rec.date).setHours(0, 0, 0, 0)) / 86400000);
     return `
       <div class="lub-arrastrado-card tone-adelantado">
@@ -4220,7 +4241,7 @@ async function renderLubricadorHome() {
   // ubicación/turno que ya se pintan abajo — nunca un cálculo aparte.
   // Equipos: Atrasados primero (más urgente), luego Mi Turno, máximo 3.
   updateLubricadorWidgetSnapshot({
-    locationName: myCrew ? (locations.find(l => l.id === scope.crewLocationId) || {}).name : null,
+    locationName: myCrew ? coverageName : null,
     turnoLabel: turnoActual === 'shift_dia' ? 'Turno Día' : 'Turno Noche',
     overdueCount: arrastradosTotal.length,
     pendingCount: miTurnoTotal.length,
@@ -4260,30 +4281,33 @@ async function renderLubricadorHome() {
     </div>
 
     ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
+    ${principalLocations.length > 1 ? `<div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
+      ${['', ...principalLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${[...arrastradosTotal, ...miTurnoTotal].filter(row => !id || row.e.locationId === id).length})</button>`).join('')}
+    </div><p class="field-hint">Los KPI muestran el total de la cuadrilla. El filtro cambia las listas.</p>` : ''}
 
     ${arrastradosTotal.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosTotal.length})</span></div>
-    <div class="lub-eq-list">${arrastradosTotal.map(arrastradoRowHTML).join('')}</div>
+    <div class="lub-eq-list">${locationRowsHTML(arrastradosTotal, arrastradoRowHTML)}</div>
     ` : ''}
 
     ${miTurnoTotal.length ? `
     <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoTotal.length})</span></div>
-    <div class="lub-eq-list">${miTurnoTotal.map(({ e, s, asignado }) => eqButtonHTML(e, s, asignado)).join('')}</div>
+    <div class="lub-eq-list">${locationRowsHTML(miTurnoTotal, ({ e, s, asignado }) => eqButtonHTML(e, s, asignado))}</div>
     ` : ''}
 
     ${realizadosHoyList.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyList.length})</span></div>
-    <div class="lub-eq-list">${realizadosHoyList.map(realizadoRowHTML).join('')}</div>
+    <div class="lub-eq-list">${locationRowsHTML(realizadosHoyList, realizadoRowHTML, row => equipos.find(e => e.id === row.equipmentId))}</div>
     ` : ''}
 
     ${realizadosAdelantadosList.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosList.length})</span></div>
-    <div class="lub-eq-list">${realizadosAdelantadosList.map(adelantadoRowHTML).join('')}</div>
+    <div class="lub-eq-list">${locationRowsHTML(realizadosAdelantadosList, adelantadoRowHTML)}</div>
     ` : ''}
 
     ${alertasTiempoSinEngrase.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasTiempoSinEngrase.length})</span></div>
-    <div class="lub-eq-list">${alertasTiempoSinEngrase.map(alertaRowHTML).join('')}</div>
+    <div class="lub-eq-list">${locationRowsHTML(alertasTiempoSinEngrase, alertaRowHTML, row => row)}</div>
     ` : `
     <div class="lub-section-head"><span class="dim">ALERTAS</span></div>
     <p class="dim" style="padding:0 2px 10px">Sin alertas de engrase.</p>
@@ -4315,6 +4339,10 @@ async function renderLubricadorHome() {
     </div>
     ${colorLegendHTML()}
   `;
+  $$('.crew-location-filter', c).forEach(b => b.addEventListener('click', () => {
+    try { localStorage.setItem(filterKey, b.dataset.locationId); } catch (e) { /* optional preference */ }
+    renderLubricadorHome();
+  }));
   $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
   $$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
@@ -4347,6 +4375,7 @@ async function renderLubricadorHome() {
     openLubricadorMatrizModal({
       equipos: equiposForLubricadorMatriz(equipos, scope), plans: Object.values(plansByEquipoId), records,
       locationName: (locations.find(l => l.id === scope.crewLocationId) || {}).name,
+      coverage: { equipos, scope, locations },
     });
   });
   // "Cambiar cuadrilla" (punto 2 del pedido — permitir cambiarla cuando
@@ -4381,7 +4410,24 @@ async function renderLubricadorHome() {
 // mismo patrón offset+lunes ya usado en renderMatrizSemanal (nunca una
 // lógica de planificación nueva: `hoy` para comparar estados siempre es la
 // fecha real, solo `lunes` se desplaza para decidir qué semana se muestra).
-function openLubricadorMatrizModal({ equipos, plans, records, locationName }, offset = 0) {
+function openLubricadorMatrizModal({ equipos, plans, records, locationName, coverage }, offset = 0, selectedLocationId) {
+  let locationTabs = '';
+  let preferenceKey = '';
+  if (coverage) {
+    const ids = coverage.scope.legacyFallback === false ? coverage.scope.principalLocationIds : [coverage.scope.crewLocationId].filter(Boolean);
+    preferenceKey = `crew-matrix-location:${coverage.scope.userId}:${coverage.scope.crewId}`;
+    if (!selectedLocationId) {
+      try { selectedLocationId = localStorage.getItem(preferenceKey); } catch (e) { /* optional preference */ }
+    }
+    if (!ids.includes(selectedLocationId)) selectedLocationId = ids[0];
+    equipos = equiposForLubricadorMatriz(coverage.equipos, coverage.scope, selectedLocationId);
+    locationName = (coverage.locations.find(l => l.id === selectedLocationId) || {}).name;
+    if (ids.length > 1) locationTabs = `<div class="crew-location-filters" role="group" aria-label="Ubicación de la matriz">${ids.map(id => `<button type="button" class="btn crew-matrix-location" data-location-id="${esc(id)}" aria-pressed="${id === selectedLocationId}">${esc((coverage.locations.find(l => l.id === id) || {}).name || 'Sin ubicación')}</button>`).join('')}</div>`;
+  }
+  const wireLocationTabs = () => $$('.crew-matrix-location').forEach(b => b.addEventListener('click', () => {
+    try { localStorage.setItem(preferenceKey, b.dataset.locationId); } catch (e) { /* optional preference */ }
+    openLubricadorMatrizModal({ equipos, plans, records, locationName, coverage }, offset, b.dataset.locationId);
+  }));
   const visibles = equipos.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
     return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
@@ -4389,7 +4435,8 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName }, of
 
   if (!visibles.length) {
     const lugar = locationName ? `de ${esc(locationName)} ` : '';
-    openModal('Matriz semanal', `<div class="empty-state">Ningún equipo ${lugar}tiene un plan por día y turno configurado.</div>`);
+    openModal('Matriz semanal', `${locationTabs}<div class="empty-state">Ningún equipo ${lugar}tiene un plan por día y turno configurado.</div>`, 'modal-lub-matriz');
+    wireLocationTabs();
     return;
   }
 
@@ -4417,6 +4464,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName }, of
   const contextoLinea = [locationName, 'Todos los equipos', 'Día y Noche', 'Solo lectura'].filter(Boolean).join(' · ');
 
   const html = `
+    ${locationTabs}
     <p class="lub-mtz-context dim">${esc(contextoLinea)}</p>
     <div class="lub-mtz-nav-row">
       <button type="button" class="icon-btn" id="lubmtz-prev" aria-label="Semana anterior" title="Semana anterior">‹</button>
@@ -4454,14 +4502,22 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName }, of
     </div>
   `;
   openModal('Matriz semanal', html, 'modal-lub-matriz');
+  wireLocationTabs();
   $$('.matriz-wrap').forEach(wireMatrizScrollHint);
-  const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, locationName }, newOffset);
+  const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, locationName, coverage }, newOffset, selectedLocationId);
   $('#lubmtz-prev').addEventListener('click', () => reopen(offset - 1));
   $('#lubmtz-next').addEventListener('click', () => reopen(offset + 1));
   $('#lubmtz-hoy')?.addEventListener('click', () => reopen(0));
 }
 
 async function startLubricadorGreaseFlow(equipmentId, options) {
+  const scope = await getCurrentOperationalScope();
+  const equipment = await DB.get('equipment', equipmentId);
+  if (equipment && (scope.supportLocationIds || []).includes(equipment.locationId)) {
+    const assignments = await DB.allActive('lubrication_assignments');
+    const assigned = assignments.some(a => a.status === ASSIGNMENT_STATUS.PENDING && a.equipmentId === equipmentId && a.assignedCrewId === scope.crewId);
+    if (!assigned) options = { ...options, outOfPlan: true, outOfPlanReason: 'SUPPORT_OTHER_LOCATION' };
+  }
   const c = $('#app-content');
   if (!c) return;
   App.lubricadorGreaseFlowActive = true;
@@ -4499,7 +4555,7 @@ async function openOutOfPlanEquipmentPicker() {
       // está vencido/próximo — se agrega el resto de la ubicación de la
       // cuadrilla aunque hoy no le "toque" nada (nunca toda la flota, ver §4).
       const idsYa = new Set(candidatos.map(e => e.id));
-      equipos.filter(e => e.locationId === scope.crewLocationId && !idsYa.has(e.id)).forEach(e => candidatos.push(e));
+      equipos.filter(e => (scope.allAuthorizedLocationIds || [scope.crewLocationId]).includes(e.locationId) && !idsYa.has(e.id)).forEach(e => candidatos.push(e));
     }
   }
 
@@ -4543,6 +4599,11 @@ async function handleOutOfPlanEquipoSelected(equipmentId) {
   if (App.currentUser.role === 'LUBRICADOR') {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
+    const assignedHere = assignments.some(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING && a.equipmentId === equipo.id && a.assignedCrewId === scope.crewId);
+    if (scope.supportLocationIds && scope.supportLocationIds.includes(equipo.locationId) && !assignedHere) {
+      startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
+      return;
+    }
     if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
       // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
       // pedido): canLubricadorExecuteEquipment() ya devuelve true si existe
@@ -4554,7 +4615,7 @@ async function handleOutOfPlanEquipoSelected(equipmentId) {
       // esto solo decide si se puede CONTINUAR, nada más.
       const locationsCross = await DB.allActive('locations');
       const equipoLocName = (locationsCross.find(l => l.id === equipo.locationId) || {}).name || 'otra ubicación';
-      const crewLocName = (locationsCross.find(l => l.id === scope.crewLocationId) || {}).name || 'tu ubicación actual';
+      const crewLocName = (scope.allAuthorizedLocationIds || [scope.crewLocationId]).map(id => (locationsCross.find(l => l.id === id) || {}).name).filter(Boolean).join(' + ') || 'sin ubicación autorizada';
       openModal('Equipo fuera de tu ubicación', `
         <p>Este equipo pertenece a <b>${esc(equipoLocName)}</b> y tu cuadrilla activa está en <b>${esc(crewLocName)}</b>.</p>
         <p class="dim">Puedes registrar el engrase como trabajo fuera de plan.</p>
@@ -6159,10 +6220,10 @@ async function openEquipmentDetail(id) {
   // Ubicación DESDE la que se ejecutó el último engrase (operationalSnapshot
   // ya existente, buildExecutionSnapshot() — nunca mueve equipment.locationId
   // ni la cuadrilla principal del equipo, solo lo muestra). Registros
-  // anteriores a esta trazabilidad (sin operationalSnapshot) caen al
-  // locationId ACTUAL de la cuadrilla como mejor esfuerzo.
+  // sin ubicación histórica explícita no inventan una ubicación de
+  // ejecución a partir de la cuadrilla actual.
   const snapUltimoDet = ultimoRecordDet ? (ultimoRecordDet.operationalSnapshot || null) : null;
-  const ubicEjecucionIdDet = snapUltimoDet ? snapUltimoDet.crewLocationIdAtExecution : (crewUltimoDet ? crewUltimoDet.locationId : null);
+  const ubicEjecucionIdDet = snapUltimoDet ? (snapUltimoDet.executionLocationId || snapUltimoDet.crewLocationIdAtExecution) : null;
   const ubicEjecucionDet = ubicEjecucionIdDet ? (locationsDet.find(l => l.id === ubicEjecucionIdDet) || null) : null;
   const esCrossLocationDet = !!(ubicEjecucionDet && ubicacionActualDet && ubicEjecucionDet.id !== ubicacionActualDet.id);
   // Tarjeta "REALIZADO ADELANTADO" (§5 del pedido): s.satisfactorio ya viene
@@ -6171,7 +6232,7 @@ async function openEquipmentDetail(id) {
   const adelantadoRecDet = s.adelantado ? s.satisfactorio : null;
   const adelantadoSnapDet = adelantadoRecDet ? (adelantadoRecDet.operationalSnapshot || {}) : {};
   const adelantadoCrewDet = adelantadoSnapDet.crewId ? (cuadrillasDet.find(c => c.id === adelantadoSnapDet.crewId) || null) : null;
-  const adelantadoCrewLocDet = adelantadoSnapDet.crewLocationIdAtExecution ? (locationsDet.find(l => l.id === adelantadoSnapDet.crewLocationIdAtExecution) || null) : null;
+  const adelantadoCrewLocDet = locationsDet.find(l => l.id === (adelantadoSnapDet.executionLocationId || adelantadoSnapDet.crewLocationIdAtExecution)) || null;
   // horaFmt/fechaCortaFor son los mismos fmtTime()/fmtDateOnly() globales
   // (ver su definición junto a fmtDate()) — alias locales para no tocar
   // cada call site de esta función.
@@ -8261,7 +8322,7 @@ async function startGreaseFlow(equipmentId, target, options) {
         <div class="form-grid">
           <label class="span-2">Motivo del engrase fuera de plan
             <select required name="outOfPlanReason" id="oop-reason-select">
-              ${OUT_OF_PLAN_REASONS.map(r => `<option value="${r}">${OUT_OF_PLAN_REASON_LABELS[r]}</option>`).join('')}
+              ${OUT_OF_PLAN_REASONS.map(r => `<option value="${r}" ${options && options.outOfPlanReason === r ? 'selected' : ''}>${OUT_OF_PLAN_REASON_LABELS[r]}</option>`).join('')}
             </select>
           </label>
         </div>
@@ -12601,23 +12662,25 @@ function wireSimpleListPanel(container, store, onChange) {
    src/core/operational-scope.js). ---------- */
 async function cuadrillasPanelHTML() {
   const cuadrillas = await DB.allActive('cuadrillas');
+  const crewLocations = await DB.all('crew_locations');
   const locations = await DB.allActive('locations');
   const locName = (id) => (locations.find(l => l.id === id) || {}).name || '—';
   return `
     <div class="panel" data-cuadrillas-panel>
       <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Una cuadrilla marcada "por defecto" recibe el trabajo normal de engrase de su ubicación. Puede haber más de una cuadrilla en la misma ubicación (por ejemplo, una auxiliar) — solo la default recibe el trabajo normal; el resto solo ve lo que se le asigne manualmente desde Plan de Engrase o la ficha del equipo. "Miembros autorizados" son las personas (Supervisor/Lubricador) que pueden trabajar como esta cuadrilla, desde cualquier dispositivo — editar la lista requiere conexión.</div>
+      <div class="dim" style="padding:0 14px 10px">Cobertura: PRINCIPAL recibe el trabajo programado; APOYO permite trabajo fuera de plan y asignaciones. Una cuadrilla puede ser principal en varias ubicaciones. Editar conserva la ubicación legacy; Cobertura administra las autorizaciones actuales. Los miembros autorizados pueden trabajar desde cualquier dispositivo.</div>
       <table class="data-table">
         <thead><tr><th>Nombre</th><th>Ubicación</th><th>Rol</th><th>Miembros autorizados</th><th></th></tr></thead>
         <tbody>
           ${cuadrillas.map(cq => `
             <tr data-id="${cq.id}">
               <td>${esc(cq.name)}</td>
-              <td>${esc(locName(cq.locationId))}</td>
-              <td>${cq.isDefault ? '<span class="status-chip" style="--c:var(--green)">PRINCIPAL</span>' : '<span class="status-chip" style="--c:var(--gray-status)">APOYO</span>'}</td>
+              <td>${resolveCrewLocationCoverage(cq.id, cuadrillas, crewLocations).allAuthorizedLocationIds.map(id => esc(locName(id))).join(' · ') || '—'}</td>
+              <td>${resolveCrewLocationCoverage(cq.id, cuadrillas, crewLocations).principalLocationIds.length} PRINCIPAL · ${resolveCrewLocationCoverage(cq.id, cuadrillas, crewLocations).supportLocationIds.length} APOYO</td>
               <td>${(cq.memberUserIds || []).length}</td>
               <td class="row-actions">
                 <button class="btn btn-sm cq-edit">${ic("edit")}Editar</button>
+                ${canManageCrewMembership(App.currentUser.role) ? '<button type="button" class="btn btn-sm cq-coverage">Cobertura</button>' : ''}
                 <button class="btn btn-sm btn-danger cq-remove">${ic("trash")}Eliminar</button>
               </td>
             </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin cuadrillas todavía.</td></tr>'}
@@ -12632,6 +12695,47 @@ async function cuadrillasPanelHTML() {
 function wireCuadrillasPanel(container, onChange) {
   const panel = container.querySelector('[data-cuadrillas-panel]');
   if (!panel) return;
+
+  panel.querySelectorAll('.cq-coverage').forEach(button => button.addEventListener('click', async () => {
+    if (!canManageCrewMembership(App.currentUser.role)) return;
+    const crewId = button.closest('tr').dataset.id;
+    const [cuadrillas, locations, existing] = await Promise.all([DB.allActive('cuadrillas'), DB.allActive('locations'), DB.all('crew_locations')]);
+    const crew = cuadrillas.find(c => c.id === crewId);
+    if (!crew) return;
+    const coverage = resolveCrewLocationCoverage(crewId, cuadrillas, existing);
+    openModal(`Cobertura · ${esc(crew.name)}`, `<form id="crew-coverage-form">
+      <p class="field-hint">PRINCIPAL recibe trabajo programado. APOYO permite trabajo fuera de plan y asignaciones. Solo una cuadrilla principal por ubicación.</p>
+      ${locations.map(l => `<div class="crew-coverage-row"><label class="check-row"><input type="checkbox" class="coverage-location" value="${esc(l.id)}" ${coverage.allAuthorizedLocationIds.includes(l.id) ? 'checked' : ''}/><span>${esc(l.name)}</span></label><label>Rol en ${esc(l.name)}<select class="coverage-role" data-location-id="${esc(l.id)}"><option value="PRINCIPAL" ${coverage.principalLocationIds.includes(l.id) ? 'selected' : ''}>PRINCIPAL</option><option value="APOYO" ${coverage.supportLocationIds.includes(l.id) ? 'selected' : ''}>APOYO</option></select></label></div>`).join('')}
+      <p id="coverage-error" role="alert"></p><div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar cobertura</button></div></form>`);
+    $('#crew-coverage-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!canManageCrewMembership(App.currentUser.role)) return;
+      const form = event.target;
+      const save = form.querySelector('[type="submit"]');
+      save.disabled = true;
+      try {
+        const now = nowISO();
+        const rows = [];
+        form.querySelectorAll('.coverage-location').forEach(check => {
+          const previous = existing.find(r => r.crew_id === crewId && r.location_id === check.value);
+          if (!check.checked && !previous && !coverage.allAuthorizedLocationIds.includes(check.value)) return;
+          rows.push(stamp({ ...(previous || {}), id: previous ? previous.id : `cl:${encodeURIComponent(crewId)}:${encodeURIComponent(check.value)}`,
+            crew_id: crewId, location_id: check.value, role: form.querySelector(`.coverage-role[data-location-id="${CSS.escape(check.value)}"]`).value,
+            active: check.checked, created_at: previous ? previous.created_at : now, updated_at: now }, App.currentUser.name));
+        });
+        // Re-read before saving: reject conflicts instead of silently demoting another crew.
+        validateCrewLocationCoverage(crewId, rows, await DB.allActive('cuadrillas'), await DB.all('crew_locations'));
+        await DB.putMany('crew_locations', rows);
+        await logAudit('CREW_COVERAGE_CHANGED', `${crew.name}: cobertura actualizada`, App.currentUser.name);
+        closeModal();
+        onChange();
+        Sync.fullSync();
+      } catch (error) {
+        $('#coverage-error').textContent = error.message;
+        save.disabled = false;
+      }
+    });
+  }));
 
   async function openCuadrillaForm(cuadrilla) {
     const locations = await DB.allActive('locations');

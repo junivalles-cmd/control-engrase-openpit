@@ -36,6 +36,7 @@ function makeFakeDB(seed = {}) {
       if (i >= 0) data[store][i] = obj; else data[store].push(obj);
       return obj;
     },
+    async all(store) { return data[store] || []; },
     async allActive(store) { return (data[store] || []).filter(r => r.active !== false); },
   };
 }
