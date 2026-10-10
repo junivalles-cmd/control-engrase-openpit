@@ -8357,6 +8357,8 @@ async function startGreaseFlow(equipmentId, target, options) {
   const ultimoEngraseLabelReg = ultimoEngraseReg ? `${fmtDate(ultimoEngraseReg.date)} · ${fmt(ultimoEngraseReg.hourmeter)} h` : 'Nunca registrado';
 
   const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', SUPPORT_OTHER_LOCATION: 'Apoyo a otra ubicación', OTRO: 'Otro' };
+  const pointLubricants = [...new Set(points.map(point => point.greaseType).filter(Boolean))];
+  const suggestedLubricant = pointLubricants.length === 1 ? pointLubricants[0] : '';
   const html = `
     <div class="grease-flow-panel">
       <div class="grease-flow-card grease-flow-equipo-card">
@@ -8384,7 +8386,7 @@ async function startGreaseFlow(equipmentId, target, options) {
         <h4 class="grease-flow-card-head">Motivo</h4>
         <div class="form-grid">
           <label class="span-2">Motivo del engrase fuera de plan
-            <select required name="outOfPlanReason" id="oop-reason-select">
+            <select required name="outOfPlanReason" id="oop-reason-select" form="grease-form">
               ${OUT_OF_PLAN_REASONS.map(r => `<option value="${r}" ${options && options.outOfPlanReason === r ? 'selected' : ''}>${OUT_OF_PLAN_REASON_LABELS[r]}</option>`).join('')}
             </select>
           </label>
@@ -8444,7 +8446,7 @@ async function startGreaseFlow(equipmentId, target, options) {
           <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
           <div class="form-grid grease-flow-lube-grid">
             <label>Tipo de grasa utilizada
-              <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
+              <select name="greaseType">${lubricants.map(l => `<option value="${l.id}" ${l.id === suggestedLubricant ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
             </label>
             <label>Cantidad utilizada
               <span class="input-suffix-group">
@@ -8492,7 +8494,7 @@ async function startGreaseFlow(equipmentId, target, options) {
         <div class="grease-flow-card grease-flow-card-evidencia">
           <h4 class="grease-flow-card-head">Evidencia</h4>
           <div class="form-grid">
-            <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
+            <details class="span-2 field-notes" id="grease-notes"><summary>Observaciones (opcional)</summary><label id="grease-notes-label">Observaciones<textarea name="notes" rows="2"></textarea></label></details>
             ${photoFieldHTML()}
           </div>
         </div>
@@ -8660,7 +8662,7 @@ async function startGreaseFlow(equipmentId, target, options) {
     const form = $('#grease-form');
     if (!form || !d) return;
     Object.entries(d.fields || {}).forEach(([k, v]) => {
-      const field = form.querySelector(`[name="${k}"]`);
+      const field = form.elements.namedItem(k);
       if (field && field.type !== 'file') field.value = v;
     });
     (d.checklist || []).forEach(entry => {
@@ -8678,6 +8680,19 @@ async function startGreaseFlow(equipmentId, target, options) {
     // Si por cualquier motivo el formulario no llegó a dibujarse (pantalla cambiada,
     // contenedor inexistente), salimos en silencio en vez de romper la app.
     if (!$('#grease-form')) return;
+    function updateOptionalNotes() {
+      const otherReason = $('#oop-reason-select')?.value === 'OTRO';
+      const notes = $('#grease-form textarea[name="notes"]');
+      const section = $('#grease-notes');
+      notes.required = otherReason;
+      section.querySelector('summary').textContent = otherReason ? 'Describe el otro motivo (obligatorio)' : 'Observaciones (opcional)';
+      if (otherReason || notes.value.trim()) section.open = true;
+    }
+    $('#oop-reason-select')?.addEventListener('change', () => {
+      updateOptionalNotes();
+      scheduleDraftSave();
+    });
+    updateOptionalNotes();
     function updateProgress() {
       const total = $$('.chk-done').length;
       if (!total) return;
@@ -8751,6 +8766,7 @@ async function startGreaseFlow(equipmentId, target, options) {
 
     $('#btn-restore-draft')?.addEventListener('click', () => {
       restoreDraftIntoForm(draft);
+      updateOptionalNotes();
       updateProgress();
       $('#draft-banner')?.remove();
     });
@@ -9093,7 +9109,7 @@ async function renderHorometros() {
               <td class="mono">${esc(e.code)}</td>
               <td>${esc(e.brand)} ${esc(e.model)}</td>
               <td class="mono">${fmt(e.hourmeter)} h</td>
-              <td><input type="number" step="0.1" class="input input-sm hm-input" value="${e.hourmeter}"/></td>
+              <td><input type="number" step="0.1" inputmode="decimal" aria-label="Horómetro actual de ${esc(e.code)}" class="input input-sm hm-input" value="${e.hourmeter}"/></td>
               <td><button class="btn btn-sm btn-accent hm-save">${ic("save")}Guardar</button></td>
             </tr>`).join('')}
         </tbody>
@@ -9309,10 +9325,13 @@ async function createAutoAnomalies(record, equipment) {
 async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
   const equipos = await DB.allActive('equipment');
   const a = existing || { equipmentId, component: '', description: '', criticality: 'Alta', photo: null };
+  const fixedEquipment = !existing && equipos.find(e => e.id === equipmentId);
+  const fixedLocation = fixedEquipment?.locationId ? await DB.get('locations', fixedEquipment.locationId) : null;
   const componentOptions = ['Grasera dañada', 'Línea de grasa rota', 'Falta de lubricación', 'Buje con juego', 'Pin con desgaste', 'Fuga de aceite', 'Fuga de grasa', 'Sello dañado', 'Manguera dañada', 'Componente flojo', 'Daño estructural', 'Otro'];
   openModal(existing ? `Editar anomalía · ${esc(existing.component)}` : 'Reportar anomalía', `
     <form id="anom-form" class="form-grid">
-      <label>Equipo
+      <div class="span-2 val-info"><div class="val-info-row"><span>Registrado por</span><span>${esc(a.createdBy || App.currentUser.name)}</span></div><div class="val-info-row"><span>Fecha/hora</span><span>${fmtDate(a.createdAt || nowISO())}</span></div>${fixedEquipment ? `<div class="val-info-row"><span>Equipo</span><span>${esc(fixedEquipment.code)} · ${esc(fixedEquipment.brand)} ${esc(fixedEquipment.model)}</span></div>${fixedLocation ? `<div class="val-info-row"><span>Ubicación</span><span>${esc(fixedLocation.name)}</span></div>` : ''}` : ''}</div>
+      <label ${fixedEquipment ? 'class="hidden"' : ''}>Equipo
         <select name="equipmentId">
           ${equipos.map(e => `<option value="${e.id}" ${e.id === (a.equipmentId || equipmentId) ? 'selected' : ''}>${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
         </select>
@@ -9322,7 +9341,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
           ${componentOptions.map(o => `<option ${o === a.component ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </label>
-      <label>Descripción<textarea required name="description" rows="2">${a.description || ''}</textarea></label>
+      <label>Descripción<textarea required name="description" rows="2">${esc(a.description || '')}</textarea></label>
       <label>Criticidad
         <select name="criticality">
           ${['Baja', 'Media', 'Alta', 'Crítica'].map(o => `<option ${o === a.criticality ? 'selected' : ''}>${o}</option>`).join('')}

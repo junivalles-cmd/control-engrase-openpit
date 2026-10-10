@@ -90,6 +90,21 @@ async function storedValidations(page) {
   return page.evaluate(() => window.__stores.grease_validations);
 }
 
+for (const width of [360, 390, 412]) {
+  test(`${width}px: validación de firmante externo conserva controles de 44px sin overflow`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await bootPage(page);
+    await page.evaluate(() => { App.currentUser.role = 'LUBRICADOR'; });
+    await openModalForRecord(page);
+    await page.locator('#val-role').selectOption('ENCARGADO');
+    await page.locator('#val-reason-preset').selectOption('Falla del dispositivo al momento de validar');
+    for (const selector of ['#val-name', '#val-role', '#val-reason-preset', '#val-confirm']) {
+      expect((await page.locator(selector).boundingBox()).height).toBeGreaterThanOrEqual(44);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
 for (const reason of ['Operador no disponible', 'Operador se retiró antes de validar', 'Operador no pudo firmar', 'Validación posterior por encargado', 'Falla del dispositivo al momento de validar']) {
   test(`supervisor autenticado: identidad automática y motivo «${reason}» conservado offline`, async ({ page, context }) => {
     await bootPage(page);
