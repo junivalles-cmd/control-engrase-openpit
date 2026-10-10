@@ -932,3 +932,156 @@ test('O-D — COMPLETE a +3 días (fuera de la ventana de 1 día) NUNCA satisfac
   expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
   await expect(seccion(page, 'MI TURNO')).toContainText('20-5532');
 });
+
+// Fix 2026-10-09 ("DIAGNÓSTICO A-02 SIGUE EN MI TURNO") — hueco real: O-A/
+// O-B/O-D (arriba) nunca probaron un equipo que llega por el camino
+// ASIGNADO (statusesAssigned, vía lubrication_assignments) combinado con
+// "adelantado". El merge real (renderLubricadorHome(), bloque
+// "statusesAssigned.forEach" tras "Mi Turno simplificado") ya filtra por
+// `s.code !== 'VERDE'` antes de reinsertar un equipo asignado — si
+// weekdayStatusFor() (lubrication-status.js) marcó VERDE/adelantado=true,
+// el assignment NUNCA debe reinsertarlo. Estos 4 casos (A/B/C/D del pedido)
+// lo prueban de verdad, con una assignment PENDING real hacia la cuadrilla
+// del Lubricador — equipo en OTRA ubicación (l2) para pasar 100% por
+// "asignado", nunca por "normal".
+test('ASIGNADO-A — assignment activo + plan hoy + COMPLETE fuera de plan AYER que satisface la ocurrencia: NUNCA reinsertado en Mi Turno, SÍ en Realizados Adelantados', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'plan_asig_a', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r_asig_a', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'OPORTUNIDAD', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: `plan_asig_a:${isoDateOnly(0)}`, crewId: 'crew1', crewLocationIdAtExecution: 'l1' },
+  }];
+  const assignments = [{
+    id: 'asg1', active: true, status: 'PENDING', occurrenceKey: `plan_asig_a:${isoDateOnly(0)}`,
+    equipmentId: 'e1', planId: 'plan_asig_a', assignedCrewId: 'crew1',
+  }];
+
+  await bootPage(page, { equipos, plans, records, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
+  expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
+  await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS')).toContainText('A-02');
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
+});
+
+test('ASIGNADO-B — assignment activo + plan hoy + COMPLETE hace 2 días (fuera de ventana): SIGUE pendiente en Mi Turno', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'plan_asig_b', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r_asig_b', equipmentId: 'e1', date: isoDaysAgo(2), createdAt: isoDaysAgo(2), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'OTRO', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: null },
+  }];
+  const assignments = [{
+    id: 'asg2', active: true, status: 'PENDING', occurrenceKey: `plan_asig_b:${isoDateOnly(0)}`,
+    equipmentId: 'e1', planId: 'plan_asig_b', assignedCrewId: 'crew1',
+  }];
+
+  await bootPage(page, { equipos, plans, records, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
+  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
+});
+
+test('ASIGNADO-C — assignment activo + PARTIAL ayer: PARTIAL nunca satisface, sigue pendiente en Mi Turno', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'plan_asig_c', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r_asig_c', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 3.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'OTRO', executionCompleteness: 'PARTIAL', satisfiedOccurrenceKey: null },
+  }];
+  const assignments = [{
+    id: 'asg3', active: true, status: 'PENDING', occurrenceKey: `plan_asig_c:${isoDateOnly(0)}`,
+    equipmentId: 'e1', planId: 'plan_asig_c', assignedCrewId: 'crew1',
+  }];
+
+  await bootPage(page, { equipos, plans, records, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
+  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
+});
+
+test('ASIGNADO-D — una occurrence ya satisfecha (adelantado) nunca vuelve a aparecer aunque exista un assignment activo apuntando exactamente a esa misma occurrenceKey', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'plan_asig_d', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const occurrenceKeyHoy = `plan_asig_d:${isoDateOnly(0)}`;
+  const records = [{
+    id: 'r_asig_d', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'OPORTUNIDAD', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: occurrenceKeyHoy, crewId: 'crew1', crewLocationIdAtExecution: 'l1' },
+  }];
+  // La misma occurrenceKey que ya satisfizo el record de arriba — simula el
+  // caso real reportado: una assignment PENDING sigue viva para la MISMA
+  // ocurrencia que un COMPLETE adelantado ya resolvió.
+  const assignments = [{
+    id: 'asg4', active: true, status: 'PENDING', occurrenceKey: occurrenceKeyHoy,
+    equipmentId: 'e1', planId: 'plan_asig_d', assignedCrewId: 'crew1',
+  }];
+
+  await bootPage(page, { equipos, plans, records, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
+  expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
+  expect(await page.locator('.lub-eq-code', { hasText: 'A-02' }).count()).toBe(1); // una sola vez, solo en Realizados Adelantados
+  await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
+});
+
+// Documenta el MECANISMO REAL más probable detrás de "A-02 sigue en Mi
+// Turno" (diagnóstico 2026-10-09): resolveOutOfPlanSatisfaction() SOLO se
+// llama cuando executionType === 'OUT_OF_PLAN' (ver app.js, guardado del
+// formulario) — un ASSIGNED/PLANNED nunca calcula satisfiedOccurrenceKey,
+// sin importar qué tan cerca esté de la ocurrencia de hoy. Esto es DISEÑO
+// documentado ("Solo un engrase fuera de plan puede satisfacer por
+// adelantado"), no un bug de merge/dedup (ya descartado en ASIGNADO-A/D) —
+// pero es EXACTAMENTE lo que produce el síntoma reportado si el engrase de
+// ayer se registró como ASSIGNED/PLANNED (botón normal "Registrar
+// engrase") en vez de "Registrar fuera de plan".
+test('ASIGNADO-E (diagnóstico) — COMPLETE ASSIGNED (no OUT_OF_PLAN) 1 día antes NUNCA calcula satisfiedOccurrenceKey → sigue pendiente, aunque la diferencia sea de 1 día', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
+  const plans = [{ id: 'plan_asig_e', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r_asig_e', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
+    // Mismo resultado real que produce app.js al guardar: executionType
+    // ASSIGNED/PLANNED NUNCA llama resolveOutOfPlanSatisfaction() -> queda null.
+    operationalSnapshot: { executionType: 'ASSIGNED', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: null, crewId: 'crew1', crewLocationIdAtExecution: 'l1', assignmentId: 'asg5' },
+  }];
+  const assignments = [{
+    id: 'asg5', active: true, status: 'PENDING', occurrenceKey: `plan_asig_e:${isoDateOnly(0)}`,
+    equipmentId: 'e1', planId: 'plan_asig_e', assignedCrewId: 'crew1',
+  }];
+
+  await bootPage(page, { equipos, plans, records, assignments });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
+  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
+});
