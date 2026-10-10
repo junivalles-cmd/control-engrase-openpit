@@ -3676,10 +3676,12 @@ async function renderLubricadorHome() {
   const filterKey = `crew-location-filter:${App.currentUser.id}:${scope.crewId}`;
   let locationFilter = '';
   try { locationFilter = localStorage.getItem(filterKey) || ''; } catch (e) { /* local preference only */ }
-  if (!principalLocations.includes(locationFilter) || principalLocations.length < 2) locationFilter = '';
+  let filterLocations = principalLocations;
+  const filterLocationRows = (rows, equipmentOf = row => row.e, selected = locationFilter) =>
+    rows.filter(row => !selected || equipmentOf(row)?.locationId === selected);
   const locationRowsHTML = (rows, render, equipmentOf = row => row.e) => {
-    const filtered = rows.filter(row => !locationFilter || equipmentOf(row).locationId === locationFilter);
-    if (principalLocations.length < 2) return filtered.map(render).join('');
+    const filtered = filterLocationRows(rows, equipmentOf);
+    if (filterLocations.length < 2) return filtered.map(render).join('');
     const ids = [...new Set(filtered.map(row => equipmentOf(row).locationId))];
     return ids.map(id => `<div class="lub-location-group"><h3>${esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación')}</h3>${filtered.filter(row => equipmentOf(row).locationId === id).map(render).join('')}</div>`).join('');
   };
@@ -4235,6 +4237,24 @@ async function renderLubricadorHome() {
       </div>`;
   };
 
+  // Apply the selected location after assignment priority, deduplication and
+  // status classification. Sections and all four KPIs share these exact rows.
+  const recordEquipment = row => equipos.find(e => e.id === row.equipmentId);
+  const participatingLocations = new Set([
+    ...arrastradosTotal.map(row => row.e.locationId),
+    ...miTurnoTotal.map(row => row.e.locationId),
+    ...realizadosHoyList.map(row => recordEquipment(row)?.locationId),
+  ]);
+  filterLocations = [...principalLocations, ...(scope.supportLocationIds || [])
+    .filter(id => !principalLocations.includes(id) && participatingLocations.has(id))];
+  if (!filterLocations.includes(locationFilter) || filterLocations.length < 2) locationFilter = '';
+  const arrastradosVisibles = filterLocationRows(arrastradosTotal);
+  const miTurnoVisible = filterLocationRows(miTurnoTotal);
+  const realizadosHoyVisibles = filterLocationRows(realizadosHoyList, recordEquipment);
+  const vencidosHorometroVisibles = filterLocationRows(vencidosHorometro);
+  const realizadosAdelantadosVisibles = filterLocationRows(realizadosAdelantadosList);
+  const alertasVisibles = filterLocationRows(alertasTiempoSinEngrase, row => row);
+
   // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
   // el render (no-op fuera de Android, ver isNative() en
   // updateLubricadorWidgetSnapshot()). Mismos 3 contadores y la misma
@@ -4274,40 +4294,40 @@ async function renderLubricadorHome() {
          bandeja de trabajo — significados distintos, overlap aceptado a
          propósito, ver §4 del pedido). -->
     <div class="lub-kpi-row">
-      ${kpiTile('Vencidos por horas', vencidosHorometro.length, vencidosHorometro.length ? 'red' : 'neutral')}
-      ${kpiTile('Pendientes hoy', miTurnoTotal.length, miTurnoTotal.length ? 'amber' : 'neutral')}
-      ${kpiTile('Arrastrados', arrastradosTotal.length, arrastradosTotal.length ? 'amber' : 'neutral')}
-      ${kpiTile('Realizados hoy', realizadosHoyList.length, 'green')}
+      ${kpiTile('Vencidos por horas', vencidosHorometroVisibles.length, vencidosHorometroVisibles.length ? 'red' : 'neutral')}
+      ${kpiTile('Pendientes hoy', miTurnoVisible.length, miTurnoVisible.length ? 'amber' : 'neutral')}
+      ${kpiTile('Arrastrados', arrastradosVisibles.length, arrastradosVisibles.length ? 'amber' : 'neutral')}
+      ${kpiTile('Realizados hoy', realizadosHoyVisibles.length, 'green')}
     </div>
 
     ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
-    ${principalLocations.length > 1 ? `<div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
-      ${['', ...principalLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${[...arrastradosTotal, ...miTurnoTotal].filter(row => !id || row.e.locationId === id).length})</button>`).join('')}
-    </div><p class="field-hint">Los KPI muestran el total de la cuadrilla. El filtro cambia las listas.</p>` : ''}
+    ${filterLocations.length > 1 ? `<div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
+      ${['', ...filterLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${filterLocationRows([...arrastradosTotal, ...miTurnoTotal], undefined, id).length})</button>`).join('')}
+    </div><p class="field-hint">Los KPI corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
 
-    ${arrastradosTotal.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosTotal.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(arrastradosTotal, arrastradoRowHTML)}</div>
+    ${arrastradosVisibles.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosVisibles.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(arrastradosVisibles, arrastradoRowHTML)}</div>
     ` : ''}
 
-    ${miTurnoTotal.length ? `
-    <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoTotal.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(miTurnoTotal, ({ e, s, asignado }) => eqButtonHTML(e, s, asignado))}</div>
+    ${miTurnoVisible.length ? `
+    <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoVisible.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(miTurnoVisible, ({ e, s, asignado }) => eqButtonHTML(e, s, asignado))}</div>
     ` : ''}
 
-    ${realizadosHoyList.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyList.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(realizadosHoyList, realizadoRowHTML, row => equipos.find(e => e.id === row.equipmentId))}</div>
+    ${realizadosHoyVisibles.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyVisibles.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(realizadosHoyVisibles, realizadoRowHTML, recordEquipment)}</div>
     ` : ''}
 
-    ${realizadosAdelantadosList.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosList.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(realizadosAdelantadosList, adelantadoRowHTML)}</div>
+    ${realizadosAdelantadosVisibles.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosVisibles.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(realizadosAdelantadosVisibles, adelantadoRowHTML)}</div>
     ` : ''}
 
-    ${alertasTiempoSinEngrase.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasTiempoSinEngrase.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(alertasTiempoSinEngrase, alertaRowHTML, row => row)}</div>
+    ${alertasVisibles.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasVisibles.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(alertasVisibles, alertaRowHTML, row => row)}</div>
     ` : `
     <div class="lub-section-head"><span class="dim">ALERTAS</span></div>
     <p class="dim" style="padding:0 2px 10px">Sin alertas de engrase.</p>

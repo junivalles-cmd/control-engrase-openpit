@@ -249,7 +249,7 @@ describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () =
   ];
   const occFn = (e) => `plan_${e.id}:2026-09-28`;
 
-  it('CASO 3 — equipo de Volcán asignado manualmente a Taller: sigue en Volcán, pero el trabajo aparece en Taller, no en Volcán (sin doble ejecución)', () => {
+  it('CASO 3 — assignment no amplía cobertura; Taller necesita APOYO Volcán para verla automáticamente', () => {
     const assignments = [
       { id: 'a1', occurrenceKey: occFn(equipos[0]), equipmentId: 'eq_0568', assignedCrewId: 'crew_taller', status: ASSIGNMENT_STATUS.PENDING, active: true }
     ];
@@ -260,7 +260,13 @@ describe('classifyEquipmentWork() (§J, §K, §L) — CASO 3/7 del pedido', () =
     expect(volcanWork.normal.find(e => e.id === 'eq_0568')).toBeUndefined(); // ya no es normal-ejecutable en Volcán
     expect(volcanWork.normal.find(e => e.id === 'eq_otro')).toBeDefined(); // el resto de Volcán sigue normal
 
-    const tallerWork = classifyEquipmentWork({ scope: scopeTaller, equipos: [], cuadrillas, assignments, equipoOccurrenceKeyFn: occFn });
+    expect(classifyEquipmentWork({ scope: scopeTaller, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn: occFn }).assigned).toEqual([]);
+    const crewLocations = [
+      { crew_id: 'crew_taller', location_id: 'loc_taller', role: 'PRINCIPAL', active: true },
+      { crew_id: 'crew_taller', location_id: 'loc_volcan', role: 'APOYO', active: true },
+    ];
+    const authorizedScope = resolveOperationalScope({ currentUser: { id: 'u2', role: 'LUBRICADOR' }, cuadrillas, crewLocations, shiftId: 'shift_dia' });
+    const tallerWork = classifyEquipmentWork({ scope: authorizedScope, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn: occFn });
     expect(tallerWork.assigned).toHaveLength(1);
     expect(tallerWork.assigned[0].equipmentId).toBe('eq_0568');
   });

@@ -17,6 +17,42 @@ const equipos = ['volcan', 'mojon', 'acarreo', 'outside'].map(locationId => ({ i
 const scope = (crewLocations = rows) => resolveOperationalScope({ currentUser: { id: 'lub', role: 'LUBRICADOR' }, cuadrillas, crewLocations, shiftId: 'shift_dia' });
 const work = (assignments = [], resolvedScope = scope()) => classifyEquipmentWork({ scope: resolvedScope, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn: e => `${e.id}:today` });
 
+// Synthetic IDs: these fixtures do not claim to be the user's IndexedDB cache.
+describe('C1: trabajo automático limitado a cobertura por IDs ficticios', () => {
+  const crew = { id: 'C1', name: 'Cuadrilla ficticia C1', locationId: 'fixture-troja', isDefault: true, memberUserIds: ['lub'] };
+  const equipment = [
+    { id: 'E1', code: 'E1', locationId: 'fixture-volcan' },
+    { id: 'E2', code: 'E2', locationId: 'fixture-mojon' },
+    { id: 'E3', code: 'E3', locationId: 'fixture-troja' },
+  ];
+  const assignments = equipment.map(e => ({ id: `assignment:${e.id}`, equipmentId: e.id, occurrenceKey: `${e.id}:today`, assignedCrewId: crew.id, status: 'PENDING', active: true }));
+  const coverage = [
+    { crew_id: crew.id, location_id: 'fixture-troja', role: 'PRINCIPAL' },
+    { crew_id: crew.id, location_id: 'fixture-volcan', role: 'PRINCIPAL' },
+    { crew_id: crew.id, location_id: 'fixture-mojon', role: 'APOYO' },
+  ];
+  const classify = (relations, assigned) => classifyEquipmentWork({
+    scope: resolveOperationalScope({ currentUser: { id: 'lub', role: 'LUBRICADOR' }, cuadrillas: [crew], crewLocations: relations }),
+    equipos: equipment, cuadrillas: [crew], assignments: assigned, equipoOccurrenceKeyFn: e => `${e.id}:today`,
+  });
+  it.each([{ relations: [] }, { relations: [coverage[0]] }])('Troja única: no muestra assignments de Volcán/Mojón ni los modifica (coverage=$relations)', ({ relations }) => {
+    const before = JSON.stringify({ assignments, equipment });
+    const result = classify(relations, assignments);
+    expect(result.normal).toEqual([]);
+    expect(result.assigned.map(a => a.equipmentId)).toEqual(['E3']);
+    expect(JSON.stringify({ assignments, equipment })).toBe(before);
+  });
+  it('dos PRINCIPALES muestran programación; APOYO solo aparece con assignment explícito', () => {
+    expect(classify(coverage, []).normal.map(e => e.code)).toEqual(['E1', 'E3']);
+    const result = classify(coverage, [assignments[1]]);
+    expect(result.normal.map(e => e.code)).toEqual(['E1', 'E3']);
+    expect(result.assigned.map(a => a.equipmentId)).toEqual(['E2']);
+  });
+  it('assignment sin equipo maestro no puede ampliar el scope', () => {
+    expect(classify(coverage, [{ ...assignments[0], equipmentId: 'missing' }]).assigned).toEqual([]);
+  });
+});
+
 describe('Cobertura multiubicación: fuente única de alcance', () => {
   it('fallback legacy conserva ubicación y recepción por isDefault', () => {
     expect(scope([]).principalLocationIds).toEqual(['volcan']);
@@ -42,11 +78,11 @@ describe('Cobertura multiubicación: fuente única de alcance', () => {
     const inactive = cuadrillas.map(c => c.id === '76-08' ? { ...c, active: false } : c);
     expect(resolveCrewLocationCoverage('76-08', inactive, rows).allAuthorizedLocationIds).toEqual([]);
   });
-  it('una asignación de cualquier ubicación conserva prioridad y deduplicación', () => {
+  it('una asignación autorizada conserva prioridad y deduplicación; externa no entra', () => {
     const assignments = ['volcan', 'acarreo', 'outside'].map(id => ({ equipmentId: id, occurrenceKey: `${id}:today`, assignedCrewId: '76-08', status: 'PENDING' }));
     expect(work(assignments).normal.map(e => e.id)).toEqual(['mojon']);
-    expect(work(assignments).assigned.map(a => a.equipmentId)).toEqual(['volcan', 'acarreo', 'outside']);
-    expect(new Set([...work(assignments).normal.map(e => e.id), ...work(assignments).assigned.map(a => a.equipmentId)]).size).toBe(4);
+    expect(work(assignments).assigned.map(a => a.equipmentId)).toEqual(['volcan', 'acarreo']);
+    expect(new Set([...work(assignments).normal.map(e => e.id), ...work(assignments).assigned.map(a => a.equipmentId)]).size).toBe(3);
   });
   it('la asignación hacia otra cuadrilla retira el trabajo normal de esa ocurrencia', () => {
     expect(work([{ equipmentId: 'mojon', occurrenceKey: 'mojon:today', assignedCrewId: 'other', status: 'PENDING' }]).normal.map(e => e.id)).toEqual(['volcan']);

@@ -13,8 +13,12 @@ a recibir trabajo por este cambio). Una relación inactiva revoca acceso y
 evita que el fallback lo restaure. PRINCIPAL explícito tiene prioridad.
 
 Mi Turno consolida el trabajo normal de las principales y las asignaciones
-explícitas de cualquier ubicación. Los KPI mantienen su deduplicación y
-muestran el consolidado; los filtros locales cambian las listas. La matriz
+explícitas cuya ubicación maestra esté en PRINCIPAL o APOYO autorizada.
+Un assignment externo se conserva, pero no amplía cobertura ni entra
+automáticamente en Mi Turno. Los cuatro KPI usan las mismas listas finales
+que las secciones, después del filtro de ubicación: Todas muestra el
+consolidado; una ubicación muestra solo sus filas. El widget mantiene el
+consolidado de la cuadrilla. La matriz
 conserva una tabla por ubicación principal, ambos turnos y solo lectura.
 APOYO sin asignación abre fuera de plan; una asignación propia tiene prioridad.
 Ubicaciones ajenas conservan advertencia. No se cambia equipment.locationId.
@@ -109,3 +113,38 @@ existencia real. No aplicar 0008 sin esa revisión y autorización posterior.
 Validación posterior: 1.404 unit tests (87 archivos), incluido fallback
 gradual cuando otra crew ya tiene relaciones; typecheck, build y verify:dist
 aprobados. No se ejecutó Playwright en este preflight.
+
+## Scope automático y KPI por filtro — 2026-10-10
+
+La clasificación central resuelve el equipo maestro por equipmentId antes
+de admitir una asignación: su locationId debe pertenecer a
+allAuthorizedLocationIds. Sin filas de cobertura para esa cuadrilla,
+principalLocationIds y allAuthorizedLocationIds conservan crew.locationId.
+Una asignación sin equipo maestro disponible tampoco entra automáticamente.
+No se borran assignments ni se cambia equipment.locationId.
+
+Los filtros contienen PRINCIPALES reales y añaden APOYO solo cuando tiene
+trabajo visible. APOYO sin assignment no carga programación normal ni genera
+pestañas de Matrix. Se conserva el flujo explícito de ejecución fuera de
+plan/cross-location, sus advertencias y los motivos existentes.
+
+Las secciones y sus encabezados, Vencidos por horas, Pendientes hoy,
+Arrastrados y Realizados hoy comparten las filas de su filtro; no se
+recalculan estados, cumplimiento ni satisfacción de occurrences.
+
+Caso real 80-177: cobertura real NO VERIFICADA. No hay export de su cache
+accesible en esta sesión. Los nombres visibles en la captura no demuestran
+ubicaciones autorizadas. Se usaron únicamente fixtures C1/E1/E2/E3 con IDs
+ficticios, por autorización expresa del usuario: Troja única excluye los
+assignments de Volcán/Mojón, dos PRINCIPALES reciben programación y APOYO
+requiere assignment. El escenario KPI comprueba Todas=3, Volcán=2, Mojón=1.
+El test anterior que exigía KPI siempre consolidado se actualizó por el
+cambio explícito de especificación. Fixtures de ejecución asignada declaran
+APOYO explícito; la asignación sola no lo concede.
+
+Unit: 1.408 aprobados (87 archivos). Typecheck, build y verify:dist aprobados.
+Playwright dirigido de cobertura: 91 casos aprobados en siete resoluciones.
+Regresión cercana: 399 casos aprobados de ejecución real de Mi Turno,
+cross-location explícito, Matrix responsive y widget; total dirigido 490,
+sin fallos, skips ni retries.
+No se ejecuta la suite completa ni se accede a producción en este fix.

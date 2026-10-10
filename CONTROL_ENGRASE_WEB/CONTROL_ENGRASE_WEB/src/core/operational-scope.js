@@ -363,7 +363,8 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
        cuadrilla, ver §L: "NO debe seguir como trabajo ejecutable
        simultáneo para la cuadrilla original").
      - "assigned": occurrences con una lubrication_assignments PENDING cuyo
-       assignedCrewId === scope.crewId, sin importar dónde esté el equipo.
+       assignedCrewId === scope.crewId y equipo maestro en una ubicación
+       PRINCIPAL o APOYO autorizada. No amplía cobertura por sí sola.
    `equipoOccurrenceKeyFn(equipo)` la provee el caller (depende del plan
    vigente de ese equipo, ya resuelto aparte — este módulo no conoce
    lubrication_plans/estadoCelda en detalle, para no duplicar esa lógica). */
@@ -395,7 +396,10 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
     return true;
   });
 
-  const assignedAquí = pendientes.filter(a => a.assignedCrewId === scope.crewId);
+  const authorizedLocations = scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean);
+  const equipmentById = new Map((equipos || []).map(e => [e.id, e]));
+  const assignedAquí = pendientes.filter(a => a.assignedCrewId === scope.crewId
+    && authorizedLocations.includes(equipmentById.get(a.equipmentId)?.locationId));
   const idsAsignados = new Set(assignedAquí.map(a => a.equipmentId));
   // El equipo puede aparecer en "normal" (misma cuadrilla, asignación
   // redundante) — se excluye de "normal" para no duplicarlo, queda solo en

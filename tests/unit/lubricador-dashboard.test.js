@@ -115,10 +115,10 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
     const iRow = src.indexOf('<div class="lub-kpi-row">');
     const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
     const block = src.slice(iRow, iEnd);
-    expect(block).toContain("kpiTile('Vencidos por horas', vencidosHorometro.length");
-    expect(block).toContain("kpiTile('Pendientes hoy', miTurnoTotal.length");
-    expect(block).toContain("kpiTile('Arrastrados', arrastradosTotal.length");
-    expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyList.length");
+    expect(block).toContain("kpiTile('Vencidos por horas', vencidosHorometroVisibles.length");
+    expect(block).toContain("kpiTile('Pendientes hoy', miTurnoVisible.length");
+    expect(block).toContain("kpiTile('Arrastrados', arrastradosVisibles.length");
+    expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyVisibles.length");
   });
 
   // Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
@@ -139,20 +139,20 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
 });
 
 describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas), nunca una tarjeta en 0 (hardening UI 2026-10-08, "simplificar Mi Turno")', () => {
-  it('"Atrasados" solo se renderiza si arrastradosTotal.length > 0', () => {
-    expect(src).toContain('${arrastradosTotal.length ? `');
+  it('"Atrasados" solo se renderiza si hay filas visibles en el filtro', () => {
+    expect(src).toContain('${arrastradosVisibles.length ? `');
   });
 
-  it('"Mi Turno" solo se renderiza si miTurnoTotal.length > 0', () => {
-    expect(src).toContain('${miTurnoTotal.length ? `');
+  it('"Mi Turno" solo se renderiza si hay filas visibles en el filtro', () => {
+    expect(src).toContain('${miTurnoVisible.length ? `');
   });
 
-  it('"Realizados" solo se renderiza si realizadosHoyList.length > 0', () => {
-    expect(src).toContain('${realizadosHoyList.length ? `');
+  it('"Realizados" solo se renderiza si hay filas visibles en el filtro', () => {
+    expect(src).toContain('${realizadosHoyVisibles.length ? `');
   });
 
   it('"Alertas" (fix 2026-10-09, §7 del pedido) SIEMPRE muestra el encabezado — con lista si hay alertas, o "Sin alertas de engrase" si no hay ninguna (nunca desaparece en silencio, a diferencia de Atrasados/Mi Turno/Realizados)', () => {
-    expect(src).toContain('${alertasTiempoSinEngrase.length ? `');
+    expect(src).toContain('${alertasVisibles.length ? `');
     expect(src).toContain('Sin alertas de engrase.');
   });
 });

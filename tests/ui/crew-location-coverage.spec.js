@@ -18,7 +18,9 @@ const crew = { id: '76-08', name: '76-08 Camión Lubrico', locationId: 'volcan',
 const locations = [{ id: 'volcan', name: 'Volcán' }, { id: 'mojon', name: 'Mojón' }, { id: 'acarreo', name: 'Acarreo' }, { id: 'outside', name: 'Otra' }];
 const coverage = locations.slice(0, 3).map(l => ({ id: `cl:${l.id}`, crew_id: crew.id, location_id: l.id, role: l.id === 'acarreo' ? 'APOYO' : 'PRINCIPAL', active: true, updatedAt: '2026-10-10T10:00:00.000Z' }));
 
-async function boot(page, { legacy = false, assignment = false, firstPull = false } = {}) {
+async function boot(page, { legacy = false, assignment = false, firstPull = false,
+  fixtureCrew = crew, fixtureLocations = locations, fixtureCoverage = coverage,
+  equipmentRows = null, assignmentRows = null } = {}) {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   // Dedicated local origin: no app boot, authentication or remote requests.
@@ -47,25 +49,130 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
     window.wireCuadrillasPanel = wireCuadrillasPanel;
     window.__setSyncStatus = status => { lastSyncState.status = status; };
   ` });
-  await page.evaluate(async ({ crew, locations, coverage, legacy, assignment, firstPull }) => {
+  await page.evaluate(async ({ crew, locations, coverage, legacy, assignment, firstPull, equipmentRows, assignmentRows }) => {
     await openDB();
     await DB.setConfig(firstPull ? {} : { lastPull: '2026-10-10T10:00:00.000Z' });
     await DB.put('cuadrillas', crew);
     for (const l of locations) await DB.put('locations', l);
     if (!legacy) await DB.putMany('crew_locations', coverage);
     const day = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][new Date().getDay()];
-    for (const l of locations) {
-      await DB.put('equipment', { id: `eq:${l.id}`, code: l.id.toUpperCase(), brand: 'CAT', model: 'D8', status: 'Operativo', locationId: l.id, hourmeter: 100, active: true });
-      await DB.put('lubrication_plans', { id: `plan:${l.id}`, equipmentId: `eq:${l.id}`, controlType: 'Día y turno de la semana', assignedDays: [day], active: true });
+    const equipment = equipmentRows || locations.map(l => ({ id: `eq:${l.id}`, code: l.id.toUpperCase(), locationId: l.id }));
+    for (const e of equipment) {
+      await DB.put('equipment', { brand: 'CAT', model: 'D8', status: 'Operativo', hourmeter: 100, active: true, ...e });
+      await DB.put('lubrication_plans', { id: `plan:${equipmentRows ? e.id : e.locationId}`, equipmentId: e.id, controlType: 'Día y turno de la semana', assignedDays: [day], active: true });
     }
+    for (const a of assignmentRows || []) await DB.put('lubrication_assignments', {
+      active: true, status: 'PENDING', assignedCrewId: crew.id,
+      occurrenceKey: `plan:${a.equipmentId}:${todayDateISO()}`, ...a,
+    });
     if (assignment) await DB.put('lubrication_assignments', { id: 'asg', equipmentId: 'eq:acarreo', occurrenceKey: `plan:acarreo:${todayDateISO()}`, assignedCrewId: crew.id, status: 'PENDING', active: true });
     await renderLubricadorHome();
-  }, { crew, locations, coverage, legacy, assignment, firstPull });
+  }, { crew: fixtureCrew, locations: fixtureLocations, coverage: fixtureCoverage, legacy, assignment, firstPull, equipmentRows, assignmentRows });
   return errors;
 }
 const kpi = page => page.locator('.lub-kpi-card', { hasText: 'Pendientes hoy' }).locator('.lub-kpi-value');
 
-test('Mi Turno consolida principales, filtra localmente, agrupa y mantiene KPI/widget', async ({ page }) => {
+// Controlled C1/E1/E2/E3 scenarios. No real IDs/cache from 80-177 are inferred.
+const scenarioLocations = [
+  { id: 'fixture-troja', name: 'Troja' },
+  { id: 'fixture-volcan', name: 'Volcán' },
+  { id: 'fixture-mojon', name: 'Mojón' },
+];
+const scenarioCrew = { id: 'C1', name: 'Cuadrilla ficticia C1', locationId: 'fixture-troja', isDefault: true, memberUserIds: ['lub'], active: true };
+const scenarioEquipment = [
+  { id: 'E1', code: 'E1', locationId: 'fixture-volcan' },
+  { id: 'E2', code: 'E2', locationId: 'fixture-mojon' },
+  { id: 'E3', code: 'E3', locationId: 'fixture-troja' },
+];
+const scenarioCoverage = scenarioLocations.map(l => ({ id: `fixture:${l.id}`, crew_id: 'C1', location_id: l.id, role: l.id === 'fixture-mojon' ? 'APOYO' : 'PRINCIPAL', active: true }));
+const scenarioOptions = { fixtureCrew: scenarioCrew, fixtureLocations: scenarioLocations, fixtureCoverage: scenarioCoverage, equipmentRows: scenarioEquipment };
+
+for (const legacy of [false, true]) test(`Scenario A: solo Troja muestra E3; assignments externos intactos (legacy=${legacy})`, async ({ page }) => {
+  const errors = await boot(page, { ...scenarioOptions, legacy,
+    fixtureCoverage: [scenarioCoverage[0]], assignmentRows: scenarioEquipment.map(e => ({ id: `asg:${e.id}`, equipmentId: e.id })),
+  });
+  await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('E3');
+  await expect(kpi(page)).toHaveText('1');
+  await expect(page.locator('.crew-location-filter')).toHaveCount(0);
+  const saved = await page.evaluate(async () => ({ equipment: await DB.all('equipment'), assignments: await DB.all('lubrication_assignments') }));
+  expect(saved.assignments).toHaveLength(3);
+  expect(saved.assignments.every(a => a.status === 'PENDING' && a.active)).toBe(true);
+  expect(saved.equipment.map(e => [e.id, e.locationId]).sort()).toEqual(scenarioEquipment.map(e => [e.id, e.locationId]).sort());
+  expect(errors).toEqual([]);
+});
+
+test('Scenario B: principales reciben planes, APOYO solo assignment y no genera Matrix tab', async ({ page }) => {
+  const errors = await boot(page, scenarioOptions);
+  await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText(['E1', 'E3']);
+  await expect(kpi(page)).toHaveText('2');
+  await expect(page.locator('.crew-location-filter[data-location-id="fixture-mojon"]')).toHaveCount(0);
+  await page.evaluate(async () => {
+    await DB.put('lubrication_assignments', { id: 'asg:E2', equipmentId: 'E2', assignedCrewId: 'C1', occurrenceKey: `plan:E2:${todayDateISO()}`, status: 'PENDING', active: true });
+    await renderLubricadorHome();
+  });
+  await expect(page.locator('.lub-mt-reg')).toHaveCount(3);
+  await expect(page.locator('.lub-eq-btn', { hasText: 'E2' }).locator('.chip-origen')).toHaveText('ASIGNADO');
+  await page.locator('.crew-location-filter[data-location-id="fixture-mojon"]').click();
+  await expect(kpi(page)).toHaveText('1');
+  await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('E2');
+  await page.getByRole('button', { name: 'Matriz semanal', exact: true }).click();
+  await expect(page.locator('.crew-matrix-location')).toHaveCount(2);
+  await expect(page.locator('.crew-matrix-location[data-location-id="fixture-mojon"]')).toHaveCount(0);
+  await expect(page.locator('.matriz-eq.mono')).toHaveText('E3');
+  await page.locator('.crew-matrix-location[data-location-id="fixture-volcan"]').click();
+  await expect(page.locator('.matriz-eq.mono')).toHaveText('E1');
+  expect(errors).toEqual([]);
+});
+
+test('Scenario C: Todas 3, Volcán 2, Mojón 1 coinciden en KPI, tarjetas y encabezados', async ({ page }) => {
+  const equipmentRows = [
+    { id: 'V1', code: 'V1', locationId: 'volcan' },
+    { id: 'V2', code: 'V2', locationId: 'volcan' },
+    { id: 'M1', code: 'M1', locationId: 'mojon' },
+  ];
+  const errors = await boot(page, { equipmentRows });
+  for (const [location, count] of [['', 3], ['volcan', 2], ['mojon', 1], ['', 3]]) {
+    await page.locator(`.crew-location-filter[data-location-id="${location}"]`).click();
+    await expect(kpi(page)).toHaveText(String(count));
+    await expect(page.locator('.lub-mt-reg')).toHaveCount(count);
+    await expect(page.locator('.lub-section-head', { hasText: 'MI TURNO' })).toHaveText(`MI TURNO (${count})`);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('los cuatro KPI y secciones usan filas del filtro, conservando clasificación y deduplicación', async ({ page }) => {
+  const equipmentRows = [
+    ...['V1', 'V2'].map(id => ({ id, code: id, locationId: 'volcan' })),
+    { id: 'M1', code: 'M1', locationId: 'mojon' },
+    ...['hours', 'late', 'done'].flatMap(kind => ['volcan', 'mojon'].map(locationId => ({ id: `${kind}:${locationId}`, code: `${kind}:${locationId}`, locationId }))),
+  ];
+  const errors = await boot(page, { equipmentRows });
+  await page.evaluate(async () => {
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+    const day = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][yesterday.getDay()];
+    for (const location of ['volcan', 'mojon']) {
+      const equipment = await DB.get('equipment', `hours:${location}`);
+      await DB.put('equipment', { ...equipment, hourmeter: 200 });
+      await DB.put('lubrication_plans', { id: `plan:hours:${location}`, equipmentId: equipment.id, controlType: 'Horas de operación', frequency: 100, lastGreaseHour: 0, active: true });
+      const plan = await DB.get('lubrication_plans', `plan:late:${location}`);
+      await DB.put('lubrication_plans', { ...plan, assignedDays: [day] });
+      await DB.put('lubrication_records', { id: `complete:${location}`, equipmentId: `done:${location}`, date: new Date().toISOString(), userName: 'Fixture', active: true,
+        operationalSnapshot: { executionCompleteness: 'COMPLETE', crewId: '76-08', executionLocationId: location } });
+    }
+    await renderLubricadorHome();
+  });
+  const labels = ['Vencidos por horas', 'Pendientes hoy', 'Arrastrados', 'Realizados hoy'];
+  for (const [location, counts] of [['', [2, 3, 2, 2]], ['volcan', [1, 2, 1, 1]], ['mojon', [1, 1, 1, 1]]]) {
+    await page.locator(`.crew-location-filter[data-location-id="${location}"]`).click();
+    for (const [i, label] of labels.entries()) await expect(page.locator('.lub-kpi-card', { hasText: label }).locator('.lub-kpi-value')).toHaveText(String(counts[i]));
+    await expect(page.locator('.lub-mt-reg')).toHaveCount(counts[1]);
+    await expect(page.locator('.lub-arr-reg')).toHaveCount(counts[2]);
+    await expect(page.locator('.lub-real-ver')).toHaveCount(counts[3]);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('Mi Turno consolida principales, filtra listas y KPI por ubicación y mantiene widget consolidado', async ({ page }) => {
   const errors = await boot(page);
   await expect(page.locator('.lub-mt-reg')).toHaveCount(2);
   await expect(kpi(page)).toHaveText('2');
@@ -74,9 +181,14 @@ test('Mi Turno consolida principales, filtra localmente, agrupa y mantiene KPI/w
   await page.getByRole('button', { name: 'Mojón (1)', exact: true }).click();
   await expect(page.locator('.lub-mt-reg')).toHaveCount(1);
   await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('MOJON');
-  await expect(kpi(page)).toHaveText('2');
+  await expect(kpi(page)).toHaveText('1');
+  await expect(page.locator('.lub-section-head', { hasText: 'MI TURNO' })).toHaveText('MI TURNO (1)');
+  await page.getByRole('button', { name: 'Volcán (1)', exact: true }).click();
+  await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('VOLCAN');
+  await expect(kpi(page)).toHaveText('1');
   await page.getByRole('button', { name: 'Todas (2)', exact: true }).click();
   await expect(page.locator('.lub-mt-reg')).toHaveCount(2);
+  await expect(kpi(page)).toHaveText('2');
   expect(await page.evaluate(() => __widget.locationName)).toBe('Volcán + Mojón');
   expect(await page.evaluate(() => DB.all('equipment').then(rows => rows.map(e => e.locationId).sort()))).toEqual(['acarreo', 'mojon', 'outside', 'volcan']);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);

@@ -57,6 +57,12 @@ const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
 const LOCATIONS = [{ id: 'l1', name: 'Rajo Principal' }, { id: 'l2', name: 'Rajo Sur' }];
 const CREW = [{ id: 'crew1', name: 'Cuadrilla A', active: true, locationId: 'l1', isDefault: true, memberUserIds: ['lub1'] }];
+// Explicit authorization for the assigned execution/status cases below.
+// An assignment alone never grants coverage; unconfigured cases stay legacy.
+const ASSIGNMENT_COVERAGE = [
+  { id: 'cl:crew1:l1', crew_id: 'crew1', location_id: 'l1', role: 'PRINCIPAL', active: true },
+  { id: 'cl:crew1:l2', crew_id: 'crew1', location_id: 'l2', role: 'APOYO', active: true },
+];
 
 function weekdayName(d) {
   return ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][d.getDay()];
@@ -76,7 +82,7 @@ function isoDateOnly(n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [], validations = [] } = {}) {
+async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [], validations = [], crewLocations = [] } = {}) {
   await page.setContent('<div id="app-content"></div>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
@@ -106,6 +112,7 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
         equipment: ${JSON.stringify(equipos)},
         locations: ${JSON.stringify(LOCATIONS)},
         cuadrillas: ${JSON.stringify(CREW)},
+        crew_locations: ${JSON.stringify(crewLocations)},
         lubrication_plans: ${JSON.stringify(plans)},
         lubrication_records: ${JSON.stringify(records)},
         lubrication_skips: ${JSON.stringify(skips)},
@@ -248,7 +255,7 @@ test('un equipo asignado (ASIGNADO) con un registro COMPLETE de hoy también sal
   const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
   const records = [{ id: 'r1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), userName: 'Ana G.', qty: 2.0, shiftId: 'shift_dia' }];
 
-  await bootPage(page, { equipos, plans, assignments, records });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments, records });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -626,7 +633,7 @@ test('A/F — 2 equipos ASIGNADOS "PROGRAMADO HOY" en Mi Turno: el KPI "Pendient
     { id: 'a2', equipmentId: 'e2', assignedCrewId: 'crew1', status: 'PENDING', active: true },
   ];
 
-  await bootPage(page, { equipos, plans, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -655,7 +662,7 @@ test('B — una de las 2 asignaciones pasa a COMPLETE: sale de Mi Turno (Pendien
     { id: 'a2', equipmentId: 'e2', assignedCrewId: 'crew1', status: 'PENDING', active: true },
   ];
 
-  await bootPage(page, { equipos, plans, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('2');
   await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
@@ -688,7 +695,7 @@ test('C — un equipo ASIGNADO con un PARTIAL de hoy sigue PENDIENTE (nunca desa
     operationalSnapshot: { executionCompleteness: 'PARTIAL' },
   }];
 
-  await bootPage(page, { equipos, plans, assignments, records });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments, records });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -743,7 +750,7 @@ test('B — un equipo ASIGNADO (no normal) vencido por HORÓMETRO también cuent
   const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
   const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
 
-  await bootPage(page, { equipos, plans, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -767,7 +774,7 @@ test('D — un equipo que clasifica como asignado a SU PROPIA cuadrilla (redunda
   const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100, alertYellowHours: 10 }];
   const assignments = [{ id: 'a1', equipmentId: 'e1', assignedCrewId: 'crew1', status: 'PENDING', active: true }];
 
-  await bootPage(page, { equipos, plans, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -960,7 +967,7 @@ test('ASIGNADO-A — assignment activo + plan hoy + COMPLETE fuera de plan AYER 
     equipmentId: 'e1', planId: 'plan_asig_a', assignedCrewId: 'crew1',
   }];
 
-  await bootPage(page, { equipos, plans, records, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, records, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -987,7 +994,7 @@ test('ASIGNADO-B — assignment activo + plan hoy + COMPLETE hace 2 días (fuera
     equipmentId: 'e1', planId: 'plan_asig_b', assignedCrewId: 'crew1',
   }];
 
-  await bootPage(page, { equipos, plans, records, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, records, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -1012,7 +1019,7 @@ test('ASIGNADO-C — assignment activo + PARTIAL ayer: PARTIAL nunca satisface, 
     equipmentId: 'e1', planId: 'plan_asig_c', assignedCrewId: 'crew1',
   }];
 
-  await bootPage(page, { equipos, plans, records, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, records, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -1040,7 +1047,7 @@ test('ASIGNADO-D — una occurrence ya satisfecha (adelantado) nunca vuelve a ap
     equipmentId: 'e1', planId: 'plan_asig_d', assignedCrewId: 'crew1',
   }];
 
-  await bootPage(page, { equipos, plans, records, assignments });
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, records, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
@@ -1082,7 +1089,7 @@ for (const tipo of ['PLANNED', 'ASSIGNED', 'OUT_OF_PLAN']) {
       equipmentId: 'e1', planId: 'plan_tipo_' + tipo, assignedCrewId: 'crew1',
     }] : [];
 
-    await bootPage(page, { equipos, plans, records, assignments });
+    await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, records, assignments });
     await page.evaluate(() => window.renderLubricadorHome());
 
     expect(errors).toEqual([]);
