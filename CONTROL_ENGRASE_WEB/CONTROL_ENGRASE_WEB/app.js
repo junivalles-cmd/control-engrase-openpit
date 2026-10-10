@@ -1649,6 +1649,16 @@ const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 /* fmt() se movió a src/core/lubrication-status.js (sigue disponible como
    global, ver docs/MODULARIZATION.md). */
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+// fmtDate() ya incluye hora+meridiano — cuando una pantalla muestra "Fecha"
+// y "Hora" como dos campos separados del MISMO timestamp (Ficha → "Última
+// ejecución", "Detalle del engrase"), usar fmtDate() en el campo Fecha
+// duplica visualmente el meridiano ("02:42 p. m." seguido del "p. m." que
+// alcanza a envolver en la celda de al lado — bug real reportado "02:42 p.
+// m. p. m."). fmtDateOnly()/fmtTime() son el mismo Intl de siempre, solo
+// separado en sus dos mitades — nunca cambian el locale ni concatenan nada
+// a mano.
+const fmtDateOnly = (iso) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' });
 
 // Mejora: intervalo de auto-sync configurable por el Administrador desde
 // Configuración → Sincronización. Opciones FIJAS (nunca texto libre, nunca
@@ -6154,11 +6164,11 @@ async function openEquipmentDetail(id) {
   const adelantadoSnapDet = adelantadoRecDet ? (adelantadoRecDet.operationalSnapshot || {}) : {};
   const adelantadoCrewDet = adelantadoSnapDet.crewId ? (cuadrillasDet.find(c => c.id === adelantadoSnapDet.crewId) || null) : null;
   const adelantadoCrewLocDet = adelantadoSnapDet.crewLocationIdAtExecution ? (locationsDet.find(l => l.id === adelantadoSnapDet.crewLocationIdAtExecution) || null) : null;
-  const horaFmt = (iso) => new Date(iso).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' });
-  // fmtDate() (global) ya incluye hora — para una sola línea "fecha · hora"
-  // (tarjetas/filas compactas) se necesita la fecha SOLA, nunca duplicar la
-  // hora dos veces.
-  const fechaCortaFor = (iso) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  // horaFmt/fechaCortaFor son los mismos fmtTime()/fmtDateOnly() globales
+  // (ver su definición junto a fmtDate()) — alias locales para no tocar
+  // cada call site de esta función.
+  const horaFmt = fmtTime;
+  const fechaCortaFor = fmtDateOnly;
   const turnoLabelFor = (shiftId) => shiftId === 'shift_dia' ? 'Día' : 'Noche';
 
   openModal(esc(e.code), `
@@ -6197,7 +6207,7 @@ async function openEquipmentDetail(id) {
     <div class="ficha-bloque">
       <h4>${ic("check")}Última ejecución</h4>
       <div class="detail-grid">
-        <div><b>Fecha</b><div class="mono">${fmtDate(ultimoRecordDet.date)}</div></div>
+        <div><b>Fecha</b><div class="mono">${fechaCortaFor(ultimoRecordDet.date)}</div></div>
         <div><b>Hora</b><div class="mono">${horaFmt(ultimoRecordDet.date)}</div></div>
         <div><b>Lubricador</b><div>${esc(ultimoRecordDet.userName)}${ultimoRecordDet.retroactivo ? ' <span class="retro-tag">atrasado</span>' : ''}</div></div>
         <div><b>Cuadrilla</b><div>${crewUltimoDet ? esc(crewUltimoDet.name) : '—'}</div></div>
@@ -11502,8 +11512,8 @@ async function openGreaseRecordDetailModal(record, equipo) {
   openModal(`Detalle del engrase${equipo ? ' · ' + esc(equipo.code) : ''}`, `
     <div class="detail-grid">
       ${equipo ? `<div><b>Equipo</b><div>${esc(equipo.code)} — ${esc(equipo.brand)} ${esc(equipo.model)}</div></div>` : ''}
-      <div><b>Fecha</b><div>${fmtDate(record.date)}</div></div>
-      <div><b>Hora</b><div>${new Date(record.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</div></div>
+      <div><b>Fecha</b><div>${fmtDateOnly(record.date)}</div></div>
+      <div><b>Hora</b><div>${fmtTime(record.date)}</div></div>
       <div><b>Lubricador</b><div>${esc(record.userName)}</div></div>
       <div><b>Tipo</b><div>${esc(tipoLabel)}</div></div>
       <div><b>Estado</b><div>${esc(estadoLabel)}</div></div>
