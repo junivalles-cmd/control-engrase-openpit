@@ -16,7 +16,10 @@ it('all dashboard calculations and data scopes match the initial release source'
 it('all dashboard action and filter handlers match the initial release source', () => {
   const handlers = source => {
     const render = extractDeclaration(source, 'renderDashboard');
-    return normalize(render.slice(render.indexOf("  $$('.arreglar-plan'")));
+    // Only the newly authorized row target is excluded; existing actions/filters stay exact.
+    return normalize(render.slice(render.indexOf("  $$('.arreglar-plan'"))
+      .replace(/<div class="dash-cola-row"[^>]*>/g, '<div class="dash-cola-row">')
+      .replace('    wireDashboardEquipmentRows(cont);\n', ''));
   };
   expect(handlers(current)).toBe(handlers(baseline));
 });

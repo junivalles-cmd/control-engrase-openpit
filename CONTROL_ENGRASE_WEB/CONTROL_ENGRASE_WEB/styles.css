@@ -3394,11 +3394,17 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content .dash-admin-dashboard .filter-label select { width: 100%; min-height: 44px; }
 #app-content .dash-admin-dashboard .dash-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #app-content .dash-admin-dashboard .dash-hero-card { padding: 8px 10px; min-width: 0; }
-#app-content .dash-admin-dashboard .dash-hero-value { font-size: 30px; }
+#app-content .dash-admin-dashboard .dash-hero-value { display: block; font-size: 30px; }
 #app-content .dash-admin-dashboard .dash-hero-label { display: block; font-size: 12px; letter-spacing: 0.03em; text-align: left; }
-#app-content .dash-admin-dashboard button.kpi-clickable { font-family: inherit; font-size: 12px; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; min-height: 44px; text-align: left; width: 100%; text-decoration: none; border-radius: 4px; }
+#app-content .dash-admin-dashboard button.kpi-clickable { appearance: none; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer; min-height: 44px; text-align: left; width: 100%; text-decoration: none; transition: background-color 0.1s ease; transform: none; }
 #app-content .dash-admin-dashboard button.kpi-clickable:hover { text-decoration: none; background: var(--surface-2); }
 #app-content .dash-admin-dashboard button.kpi-clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+#app-content .dash-admin-dashboard button.kpi-clickable:active { transform: none; background: var(--surface-2); }
+#app-content .dash-admin-dashboard .dash-hero-card:not(button),
+#app-content .dash-admin-dashboard .dash-activity-card:not(button) { cursor: default; }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id] { cursor: pointer; }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id]:hover { background: var(--surface); }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #app-content .dash-admin-dashboard .dash-hero-card:last-child { grid-column: 1 / -1; }
 #app-content .dash-admin-dashboard .progress-track { margin-top: 6px; }
 #app-content .dash-admin-dashboard .tone-green .progress-fill { color: var(--green); }

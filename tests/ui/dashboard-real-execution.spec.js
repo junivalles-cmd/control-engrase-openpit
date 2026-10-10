@@ -53,6 +53,7 @@ const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  'wireDashboardEquipmentRows',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
   // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release 2026-10-08).
@@ -261,8 +262,8 @@ test('tarjeta "Pendientes hoy" (categoría "Qué requiere acción") es clicable 
   // Antes del fix: esta tarjeta no tenía data-kpi-action (null) — no era
   // clicable, a diferencia de "Vencidos"/"Próximos" en la misma sección.
   const card = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes hoy' }) });
-  await expect(card.locator('button')).toHaveClass(/kpi-clickable/);
-  await card.locator('[data-kpi-action]').click();
+  await expect(card).toHaveClass(/kpi-clickable/);
+  await card.click();
 
   const modal = page.locator('.modal');
   await expect(modal).toBeVisible();
@@ -294,8 +295,8 @@ test('tarjeta "Pendientes de validación" es clicable y manda a la acción real 
   await page.evaluate(() => window.renderDashboard());
 
   const card = page.locator('.dash-activity-card', { has: page.locator('.dash-activity-label', { hasText: 'Pendientes de validación' }) });
-  await expect(card.locator('button')).toHaveClass(/kpi-clickable/);
-  await card.locator('[data-kpi-action]').click();
+  await expect(card).toHaveClass(/kpi-clickable/);
+  await card.click();
 
   const modal = page.locator('.modal');
   await expect(modal).toBeVisible();
@@ -314,14 +315,14 @@ test('"Pendientes hoy" y "Pendientes de validación" son clicables incluso en 0 
 
   const pendientesHoyCard = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Pendientes hoy' }) });
   const pendientesValidacionCard = page.locator('.dash-activity-card', { has: page.locator('.dash-activity-label', { hasText: 'Pendientes de validación' }) });
-  await expect(pendientesHoyCard.locator('button')).toHaveClass(/kpi-clickable/);
-  await expect(pendientesValidacionCard.locator('button')).toHaveClass(/kpi-clickable/);
+  await expect(pendientesHoyCard).toHaveClass(/kpi-clickable/);
+  await expect(pendientesValidacionCard).toHaveClass(/kpi-clickable/);
 
-  await pendientesHoyCard.locator('[data-kpi-action]').click();
+  await pendientesHoyCard.click();
   await expect(page.locator('.modal')).toContainText('Sin pendientes');
   await page.evaluate(() => window.closeModal());
 
-  await pendientesValidacionCard.locator('[data-kpi-action]').click();
+  await pendientesValidacionCard.click();
   await expect(page.locator('.modal')).toContainText('Sin pendientes');
 
   expect(errors).toEqual([]);
@@ -348,7 +349,7 @@ test('"Próximos" incluye un equipo Día/turno "al día" (VERDE) cuyo PRÓXIMO d
 
   expect(errors).toEqual([]);
   const card = page.locator('.dash-hero-card', { has: page.locator('.dash-hero-label', { hasText: 'Próximos' }) });
-  await card.locator('[data-kpi-action]').click();
+  await card.click();
 
   const modal = page.locator('.modal');
   await expect(modal).toBeVisible();

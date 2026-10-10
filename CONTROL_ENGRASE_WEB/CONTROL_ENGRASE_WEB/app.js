@@ -5716,7 +5716,7 @@ async function renderDashboard() {
     // de los huecos horizontales en desktop): CSS decide cuántas líneas usar
     // según el ancho real (flex-wrap en móvil, una sola fila en desktop).
     cont.innerHTML = filtered.map(item => `
-      <div class="dash-cola-row">
+      <div class="dash-cola-row" data-equipment-id="${item.e.id}" tabindex="0" role="group" aria-label="Abrir ficha de ${esc(item.e.code)}">
         <span class="dash-cola-badge tone-${item.tone}">${item.estado}</span>
         <button type="button" class="dash-cola-code dash-code-link mono" data-id="${item.e.id}">${esc(item.e.code)}</button>
         <span class="dash-cola-meta dim">${esc(item.e.brand)} ${esc(item.e.model)} · ${esc((locPorId[item.e.locationId] || {}).name || '—')}</span>
@@ -5734,6 +5734,7 @@ async function renderDashboard() {
     // Ficha de Engrase ya existente (openEquipmentDetail) — solo consulta,
     // nunca cambia permisos/scope ni reemplaza Historial/Registrar.
     $$('.dash-cola-code', cont).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+    wireDashboardEquipmentRows(cont);
   }
   drawColaAtencion();
   $('#att-turno')?.addEventListener('change', drawColaAtencion);
@@ -5824,19 +5825,36 @@ function kpiCard(label, value, tone, action) {
 // "Actividad" (dashActivityCard) — mismo mecanismo data-kpi-action/
 // kpi-clickable que kpiCard(), solo cambia la presentación (styles.css).
 function dashHeroCard(label, value, tone, action) {
-  return `<div class="dash-hero-card tone-${tone}">
-    <div class="dash-hero-value">${fmt(value)}</div>
-    ${action ? `<button type="button" class="dash-hero-label kpi-clickable" data-kpi-action="${action}" aria-label="Ver ${label}">${label}</button>` : `<div class="dash-hero-label">${label}</div>`}
-  </div>`;
+  const tag = action ? 'button' : 'div';
+  return `<${tag} class="dash-hero-card tone-${tone}${action ? ' kpi-clickable' : ''}" ${action ? `type="button" data-kpi-action="${action}" aria-label="Ver ${label}"` : ''}>
+    <span class="dash-hero-value">${fmt(value)}</span>
+    <span class="dash-hero-label">${label}</span>
+  </${tag}>`;
 }
 // Tarjetas SECUNDARIAS de "Actividad" — número arriba (más visible), label
 // debajo (mismo orden visual que dashHeroCard, pero más chicas: son de
 // menor jerarquía que Al día/Próximos/Vencidos/Sin plan/Pausados).
 function dashActivityCard(label, value, tone, action) {
-  return `<div class="dash-activity-card tone-${tone}">
+  const tag = action ? 'button' : 'div';
+  return `<${tag} class="dash-activity-card tone-${tone}${action ? ' kpi-clickable' : ''}" ${action ? `type="button" data-kpi-action="${action}" aria-label="Ver ${label}"` : ''}>
     <span class="dash-activity-value">${fmt(value)}</span>
-    ${action ? `<button type="button" class="dash-activity-label kpi-clickable" data-kpi-action="${action}" aria-label="Ver ${label}">${label}</button>` : `<span class="dash-activity-label">${label}</span>`}
-  </div>`;
+    <span class="dash-activity-label">${label}</span>
+  </${tag}>`;
+}
+
+// Rows contain independent buttons: only the free surface opens the same Ficha.
+function wireDashboardEquipmentRows(root) {
+  $$('.dash-cola-row[data-equipment-id]', root).forEach(row => {
+    row.addEventListener('click', event => {
+      if (event.target.closest('button, a, input, select, textarea, [role="button"]')) return;
+      openEquipmentDetail(row.dataset.equipmentId);
+    });
+    row.addEventListener('keydown', event => {
+      if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      openEquipmentDetail(row.dataset.equipmentId);
+    });
+  });
 }
 
 // Tarjeta de "Cumplimiento operativo" (Hoy/Semana/Turno actual): % +

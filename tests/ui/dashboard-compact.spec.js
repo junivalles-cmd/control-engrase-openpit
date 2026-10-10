@@ -105,7 +105,7 @@ test('operational cards and tables retain accessible actions and data structure'
   const heights = await cards.evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().height));
   expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
   await expect(cards.locator('a')).toHaveCount(0);
-  const action = cards.first().locator('button');
+  const action = cards.first();
   await action.hover();
   expect(await action.evaluate(n => getComputedStyle(n).textDecorationLine)).toBe('none');
   await action.focus();
@@ -124,4 +124,62 @@ test('operational cards and tables retain accessible actions and data structure'
   await page.evaluate(() => { window.__navigation = []; window.navigate = route => window.__navigation.push(route); });
   await rows.first().locator('.dash-exc-hist-btn').click();
   expect(await page.evaluate(() => window.__navigation)).toContain('historial');
+});
+
+test('whole KPI surfaces use existing destinations; informative cards stay inert', async ({ page }) => {
+  await render(page);
+  const pending = page.locator('[data-kpi-action="pendientes-hoy"]');
+  const box = await pending.boundingBox();
+  await pending.click({ position: { x: box.width - 6, y: box.height - 6 } });
+  await expect(page.locator('.modal')).toContainText('Pendientes hoy');
+  await page.evaluate(() => window.closeModal());
+  const conflict = page.locator('[data-kpi-action="conflictos-validacion"]');
+  const bounds = await conflict.boundingBox();
+  await conflict.click({ position: { x: bounds.width - 6, y: 6 } });
+  await expect(page.locator('.modal')).toContainText('TEST-3');
+  await page.evaluate(() => window.closeModal());
+  const compliance = page.locator('#dash-summary .dash-hero-card').last();
+  await expect(compliance).not.toHaveAttribute('data-kpi-action');
+  expect(await compliance.evaluate(n => n.tagName)).toBe('DIV');
+  await compliance.click();
+  await expect(page.locator('.modal')).toHaveCount(0);
+  await expect(page.locator('button button')).toHaveCount(0);
+  await page.evaluate(async () => {
+    const all = window.DB.allActive;
+    window.DB.allActive = store => ['lubrication_records', 'grease_validations', 'anomalies'].includes(store) ? Promise.resolve([]) : all(store);
+    await window.renderDashboard();
+  });
+  await expect(conflict.locator('.dash-activity-value')).toHaveText('0');
+  await conflict.click();
+  await expect(page.locator('.modal')).toContainText(/conflictos/i);
+});
+
+test('equipment row free space and keyboard open Ficha by id; inner actions fire only once', async ({ page }, testInfo) => {
+  // Controlled fixture: the visible code does not define the equipment identity.
+  await render(page, false, { equipos: equipos.map(e => e.id === 'e1' ? { ...e, code: '20-5530' } : e) });
+  await page.evaluate(() => {
+    window.__details = []; window.__routes = []; window.__startGreaseFlowCalls = [];
+    window.openEquipmentDetail = id => window.__details.push(id);
+    window.navigate = route => window.__routes.push(route);
+  });
+  const row = page.locator('.dash-cola-row[data-equipment-id="e1"]');
+  for (const target of ['.dash-cola-badge', '.dash-cola-code', '.dash-cola-meta', '.dash-cola-plan']) {
+    await row.locator(target).click();
+  }
+  const box = await row.boundingBox();
+  await row.click({ position: { x: 2, y: 2 } });
+  await row.focus(); await row.press('Enter'); await row.press('Space');
+  const touch = testInfo.project.use.hasTouch;
+  if (touch) await row.tap({ position: { x: 2, y: 2 } });
+  const detailCount = touch ? 8 : 7;
+  expect(await page.evaluate(() => window.__details)).toEqual(Array(detailCount).fill('e1'));
+  await row.locator('.dash-cola-hist').click();
+  await row.locator('.dash-cola-reg').click();
+  await row.locator('.dash-cola-hist').focus(); await row.locator('.dash-cola-hist').press('Enter');
+  await row.locator('.dash-cola-reg').focus(); await row.locator('.dash-cola-reg').press('Enter');
+  expect(await page.evaluate(() => window.__details)).toHaveLength(detailCount);
+  expect(await page.evaluate(() => window.__routes)).toEqual(['historial', 'historial']);
+  expect(await page.evaluate(() => window.__startGreaseFlowCalls)).toEqual(['e1', 'e1']);
+  expect(await page.evaluate(() => window.App.dashJumpEquipoId)).toBe('e1');
+  await expect(page.locator('button button')).toHaveCount(0);
 });

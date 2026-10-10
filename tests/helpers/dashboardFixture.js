@@ -38,6 +38,7 @@ const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  'wireDashboardEquipmentRows',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
   // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release 2026-10-08).
@@ -59,7 +60,7 @@ export async function bootDashboard(page, {
 } = {}) {
   await page.setContent('<main class="app-content" id="app-content"></main>');
   await page.addStyleTag(css ? { content: css } : { path: STYLES_PATH });
-  const injectedAppSrc = appNames.map(n => extractDeclaration(source, n)).join("\n\n");
+  const injectedAppSrc = appNames.filter(n => n !== 'wireDashboardEquipmentRows' || source.includes('function wireDashboardEquipmentRows(')).map(n => extractDeclaration(source, n)).join("\n\n");
   await page.addScriptTag({
     content: `
       window.App = {
