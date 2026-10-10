@@ -2915,7 +2915,22 @@ function quickUnlockConfigureModal(mode, onDone = renderConfig) {
    aparecen como editables en esta pantalla (§7) — ni siquiera se
    construye un <input> para ellos, se muestran solo como texto.
    ============================================================ */
-function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations) {
+// Presentation only: consume resolved scope; never choose or authorize locations.
+function crewCoveragePresentation(scope, locations) {
+  const ids = scope.allAuthorizedLocationIds || (scope.principalLocationIds
+    ? [...scope.principalLocationIds, ...(scope.supportLocationIds || [])]
+    : [scope.crewLocationId].filter(Boolean));
+  const principal = scope.principalLocationIds || [scope.crewLocationId];
+  const rows = ids.map(id => ({ name: (locations.find(l => l.id === id) || {}).name || 'Sin ubicación', principal: principal.includes(id) }));
+  const names = rows.map(row => row.name);
+  return {
+    label: names.length >= 3 ? names.length + ' ubicaciones' : names.join(' + ') || 'Sin ubicación',
+    title: names.join(' + '),
+    html: '<ul class="crew-coverage-list">' + rows.map(row => '<li><span class="crew-coverage-name">' + esc(row.name) + '</span><span class="crew-coverage-role ' + (row.principal ? 'principal' : 'support') + '">' + (row.principal ? 'PRINCIPAL' : 'APOYO') + '</span></li>').join('') + '</ul>',
+  };
+}
+
+function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations, includeContext = true) {
   if (!scope || scope.kind === 'NONE') return '<div><b>Cuadrilla</b><div>—</div></div>';
   if (scope.kind === 'GLOBAL') {
     return '<div><b>Alcance</b><div>Global (según permisos del rol)</div></div>';
@@ -2923,16 +2938,17 @@ function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations) {
   if (scope.kind === 'NO_CREW_ASSIGNED') {
     return '<div><b>Cuadrilla</b><div>Sin cuadrilla autorizada todavía — pide a Administración/Planificación que te agregue a una.</div></div>';
   }
-  const autorizadas = (scope.authorizedCrews || []).map(c => esc(c.name)).join(', ') || '—';
+  const autorizadas = (scope.authorizedCrews || []).map(c => '<span class="authorized-crew-chip">' + esc(c.name) + '</span>').join('') || '—';
   if (scope.kind === 'NEEDS_CREW_SELECTION') {
-    return `<div><b>Cuadrillas autorizadas</b><div>${autorizadas}</div></div>
+    return `<div><b>Cuadrillas autorizadas</b><div class="authorized-crew-list">${autorizadas}</div></div>
       <div><b>Cuadrilla activa</b><div>Elige una en el menú principal</div></div>`;
   }
+  if (!includeContext) return `<div><b>Cuadrillas autorizadas</b><div class="authorized-crew-list">${autorizadas}</div></div>`;
   const crew = cuadrillas.find(c => c.id === scope.crewId);
-  const locationNames = (scope.principalLocationIds || [scope.crewLocationId]).map(id => (locations.find(l => l.id === id) || {}).name).filter(Boolean);
+  const coverage = crewCoveragePresentation(scope, locations);
   return `<div><b>Cuadrilla${(scope.authorizedCrews || []).length > 1 ? 's autorizadas' : ''}</b><div>${autorizadas}</div></div>
     <div><b>Cuadrilla activa</b><div>${crew ? esc(crew.name) : '—'}</div></div>
-    <div><b>Ubicación operativa</b><div>${locationNames.length ? esc(locationNames.join(' + ')) : 'Sin ubicación'}</div></div>`;
+    <div class="crew-coverage-detail"><b>Cobertura</b>${coverage.html}</div>`;
 }
 
 async function renderMiPerfil() {
@@ -2950,7 +2966,7 @@ async function renderMiPerfil() {
   const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
   const offline = !navigator.onLine;
 
-  c.innerHTML = `
+  c.innerHTML = `<div class="lub-profile-layout">
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Mis datos</h3></div>
       <div style="padding:14px">
@@ -2958,10 +2974,19 @@ async function renderMiPerfil() {
           <div><b>Nombre</b><div>${esc(profile.displayName)}</div></div>
           <div><b>Usuario</b><div class="mono">${esc(username)}</div></div>
           <div><b>Rol</b><div>${esc(profile.role)}</div></div>
-          ${miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations)}
+          ${miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations, false)}
         </div>
       </div>
     </div>
+
+    ${scope.kind === 'CREW_SCOPED' ? `<div class="panel config-narrow">
+      <div class="panel-head"><h3>Contexto operativo</h3></div>
+      <div style="padding:14px" class="detail-grid lub-operational-context" data-crew-name="${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '')}" data-coverage-label="${esc(crewCoveragePresentation(scope, locations).label)}" data-coverage-title="${esc(crewCoveragePresentation(scope, locations).title)}">
+        <div><b>Cuadrilla activa</b><div>${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '—')}</div></div>
+        <div><b>Turno</b><div>${scope.shiftId === 'shift_noche' ? 'Noche' : 'Día'}</div></div>
+        <div class="crew-coverage-detail"><b>Cobertura</b>${crewCoveragePresentation(scope, locations).html}</div>
+      </div>
+    </div>` : ''}
 
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Nombre visible</h3></div>
@@ -2999,7 +3024,7 @@ async function renderMiPerfil() {
           ? `<button type="button" class="btn" id="mi-perfil-pin-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="mi-perfil-pin-disable">Desactivar PIN rápido</button>`
           : `<button type="button" class="btn btn-accent" id="mi-perfil-pin-configure">Configurar PIN rápido</button>`}
       </div>
-    </div>`;
+    </div></div>`;
 
   $('#mi-perfil-pin-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure', renderMiPerfil));
   $('#mi-perfil-pin-change')?.addEventListener('click', () => quickUnlockConfigureModal('change', renderMiPerfil));
@@ -3138,16 +3163,10 @@ async function renderLubricadorConfig() {
   const themeObj = THEMES.find(t => t.id === temaActual.accent) || THEMES[0];
   const modeObj = MODES.find(m => m.id === temaActual.mode) || MODES[0];
 
-  // Fix 2026-10-09 ("CONFIGURACIÓN FINAL", Parte A/§1 del pedido): "Mi
-  // perfil" deja de reusar miPerfilRoleCrewSummaryHTML() AQUÍ — ese helper
-  // sigue intacto para renderMiPerfil() (pantalla compartida con otros
-  // roles, fuera de alcance), pero su salida (cuadrilla ACTIVA/ubicación)
-  // duplicaba exactamente lo que ya muestra "Trabajo / Contexto operativo"
-  // más abajo. Esta tarjeta queda SOLO identidad — nombre/usuario/rol/
-  // cuadrillas AUTORIZADAS (todas, no la activa) — más compacta
-  // (padding 10px/14px en vez de 14px/14px, sin achicar texto).
-  const autorizadasHTML = (scope.authorizedCrews || []).map(cq => esc(cq.name)).join(', ') || '—';
-  c.innerHTML = `
+  // Identity and resolved operational context are presented separately.
+  const autorizadasHTML = (scope.authorizedCrews || []).map(cq => '<span class="authorized-crew-chip">' + esc(cq.name) + '</span>').join('') || '—';
+  const coverage = crewCoveragePresentation(scope, locations);
+  c.innerHTML = `<div class="lub-profile-layout">
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Mi perfil</h3></div>
       <div style="padding:10px 14px">
@@ -3155,32 +3174,25 @@ async function renderLubricadorConfig() {
           <div><b>Nombre</b><div>${esc(profile.displayName)}</div></div>
           <div><b>Usuario</b><div class="mono">${esc(username)}</div></div>
           <div><b>Rol</b><div>${esc(profile.role)}</div></div>
-          <div><b>Cuadrillas autorizadas</b><div>${autorizadasHTML}</div></div>
+          <div><b>Cuadrillas autorizadas</b><div class="authorized-crew-list">${autorizadasHTML}</div></div>
         </div>
       </div>
     </div>
 
-    <!-- Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN", §A del
-         pedido): reusa EXACTAMENTE el mismo flujo de selección ya usado en
-         Mi Turno (setSelectedCrewId('') → scope.kind 'NEEDS_CREW_SELECTION'
-         → el picker real de renderLubricadorHome(), nunca un segundo
-         selector) — ver goToLubricadorTurno() arriba. Con 1 sola cuadrilla
-         autorizada el botón queda deshabilitado con su propio texto (§2:
-         "la solución más clara"), nunca una acción que no hace nada sin
-         explicar por qué. -->
+    <!-- Reuse the existing crew selection flow; hide the action for one crew. -->
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Trabajo / Contexto operativo</h3></div>
       <div style="padding:14px">
         ${scope.kind === 'CREW_SCOPED' ? `
-          <div class="detail-grid">
+          <div class="detail-grid lub-operational-context" data-crew-name="${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '')}" data-coverage-label="${esc(coverage.label)}" data-coverage-title="${esc(coverage.title)}">
             <div><b>Cuadrilla activa</b><div>${esc((cuadrillas.find(cq => cq.id === scope.crewId) || {}).name || '—')}</div></div>
-            <div><b>Ubicación</b><div>${esc((scope.principalLocationIds || [scope.crewLocationId]).map(id => (locations.find(l => l.id === id) || {}).name).filter(Boolean).join(' + ') || 'Sin ubicación')}</div></div>
             <div><b>Turno</b><div>${esc(turnoLabel)}</div></div>
+            <div class="crew-coverage-detail"><b>Cobertura</b>${coverage.html}</div>
           </div>
           <div class="lub-config-actions" style="margin-top:10px">
             ${scope.authorizedCrews.length > 1
-              ? `<button type="button" class="btn" id="lub-config-change-crew">${ic('repeat')}Cambiar cuadrilla</button>`
-              : `<button type="button" class="btn" id="lub-config-change-crew" disabled>${ic('repeat')}Solo tienes una cuadrilla autorizada</button>`}
+              ? `<button type="button" class="btn lub-change-crew" id="lub-config-change-crew">⇄ Cambiar cuadrilla</button>`
+              : ''}
           </div>
         ` : `<p class="dim">${scope.kind === 'NO_CREW_ASSIGNED' ? 'Sin cuadrilla autorizada todavía — pide a Administración/Planificación que te agregue a una.' : 'Entra a Mi Turno para elegir con cuál cuadrilla vas a trabajar.'}</p>`}
       </div>
@@ -3209,7 +3221,7 @@ async function renderLubricadorConfig() {
         </div>
         <button type="button" class="btn btn-accent" id="lub-config-theme" style="margin-top:10px">🎨 Personalizar apariencia</button>
       </div>
-    </div>`;
+    </div></div>`;
 
   $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
   $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
@@ -3494,10 +3506,24 @@ function makeTablesResponsive(container) {
 // nueva función — NUNCA toca confirmLogout(), esa sigue siendo la del
 // shell de escritorio) decide el texto/los botones según conexión/
 // pendientes; el cierre real sigue siendo logout(), sin cambios.
-function openLubAccountMenu() {
+async function openLubAccountMenu() {
+  let context = document.querySelector('#app-content .lub-operational-context')?.dataset;
+  if (!context) {
+    const [scope, crews, locations] = await Promise.all([
+      getCurrentOperationalScope(), DB.allActive('cuadrillas'), DB.allActive('locations'),
+    ]);
+    if (scope.kind === 'CREW_SCOPED') {
+      const coverage = crewCoveragePresentation(scope, locations);
+      context = {
+        crewName: (crews.find(crew => crew.id === scope.crewId) || {}).name || '',
+        coverageLabel: coverage.label, coverageTitle: coverage.title,
+      };
+    }
+  }
   const supa = typeof Auth !== 'undefined' && Auth.isSupabaseMode();
   openModal('Mi cuenta', `
     <div class="lub-account-menu">
+      <div class="lub-account-summary"><strong>${esc(App.currentUser.name)}</strong><span>${esc(App.currentUser.role)}${context?.crewName ? ' · ' + esc(context.crewName) : ''}</span>${context?.coverageLabel ? `<span title="${esc(context.coverageTitle)}">${esc(context.coverageLabel)}</span>` : ''}</div>
       <button type="button" class="btn" id="lub-menu-mi-perfil">${ic('users')}Mi Perfil</button>
       ${supa ? `<button type="button" class="btn" id="lub-menu-config">${ic('gear')}Configuración</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-lock">${ic('lock')}Bloquear</button>` : ''}
@@ -3981,9 +4007,10 @@ async function renderLubricadorHome() {
     if (st === 'unconfigured' || st === 'idle') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Solo local</span>`;
     return `<span class="lub-context-chip tone-red"><span class="dot"></span>Sin conexión</span>`;
   })();
+  const headerCoverage = crewCoveragePresentation(scope, locations);
   const contextChips = [
     `<span class="lub-context-chip">${turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'}</span>`,
-    myCrew ? `<span class="lub-context-chip">📍 ${esc(coverageName || '—')}</span>` : '',
+    myCrew ? `<span class="lub-context-chip lub-coverage-chip" title="${esc(headerCoverage.title)}" aria-label="Cobertura: ${esc(headerCoverage.title)}">📍 ${esc(headerCoverage.label)}</span>` : '',
     myCrew ? `<span class="lub-context-chip">👥 ${esc(myCrew.name)}</span>` : '',
     syncChip,
   ].join('');
@@ -4273,7 +4300,9 @@ async function renderLubricadorHome() {
     <div class="lub-welcome-card">
       <div class="lub-welcome-name">${esc(App.currentUser.name)}</div>
       <div class="lub-welcome-role">${esc(App.currentUser.role)}</div>
-      <div class="lub-context-row">${contextChips}</div>
+      <div class="lub-context-row lub-operational-context" data-crew-name="${esc(myCrew?.name || '')}" data-coverage-label="${esc(headerCoverage.label)}" data-coverage-title="${esc(headerCoverage.title)}">${contextChips}
+        ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<button type="button" class="btn lub-change-crew" id="lub-change-crew">⇄ Cambiar cuadrilla</button>` : ''}
+      </div>
     </div>
 
     <!-- Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
@@ -4300,10 +4329,9 @@ async function renderLubricadorHome() {
       ${kpiTile('Realizados hoy', realizadosHoyVisibles.length, 'green')}
     </div>
 
-    ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<p class="lub-sub"><button type="button" class="link-btn" id="lub-change-crew">Cambiar cuadrilla</button></p>` : ''}
-    ${filterLocations.length > 1 ? `<div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
+    ${filterLocations.length > 1 ? `<div class="crew-location-filter-label">FILTRAR UBICACIÓN</div><div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
       ${['', ...filterLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${filterLocationRows([...arrastradosTotal, ...miTurnoTotal], undefined, id).length})</button>`).join('')}
-    </div><p class="field-hint">Los KPI corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
+    </div><p class="field-hint crew-location-filter-hint">Los KPI corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
 
     ${arrastradosVisibles.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosVisibles.length})</span></div>

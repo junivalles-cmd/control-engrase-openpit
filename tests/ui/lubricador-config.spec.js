@@ -26,7 +26,7 @@ const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
   'quickUnlockConfigureModal', // se re-asigna a un espía después de extraerla
   'confirmChangeUser', // real: solo abre un modal de confirmación
-  'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
+  'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
   'getTheme', 'applyTheme', 'saveTheme', 'openThemePicker',
   'THEMES', 'MODES', 'THEME_COLOR_BY_MODE',
   // Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN"): reales — se
@@ -63,7 +63,7 @@ async function bootConfig(page, {
     }
   });
   await page.goto('/');
-  await page.setContent('<div id="app-content"></div>');
+  await page.setContent('<main id="app-content" class="lub-content"></main>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
@@ -104,6 +104,7 @@ async function bootConfig(page, {
       window.renderLubricadorHome = () => { window.__renderLubricadorHomeCalls = (window.__renderLubricadorHomeCalls || 0) + 1; };
       ${appRealSrc}
       quickUnlockConfigureModal = (mode) => { window.__quickUnlockConfigureModalCalls = mode; };
+      applyTheme(getTheme());
       window.renderLubricadorConfig = renderLubricadorConfig;
       window.goToLubricadorTurno = goToLubricadorTurno;
       // const THEMES/const MODES son declaraciones de script clásico —
@@ -308,14 +309,13 @@ const SCOPE_NO_CREW = {
 };
 
 test.describe('H) Trabajo / Contexto operativo — Cambiar cuadrilla', () => {
-  test('A. 1 cuadrilla autorizada: se muestra como activa (cuadrilla/ubicación/turno) y el botón queda deshabilitado con su propio texto explicativo', async ({ page }) => {
+  test('A. 1 cuadrilla autorizada: se muestra como activa (cuadrilla/ubicación/turno) y no muestra una acción inútil', async ({ page }) => {
     await bootConfig(page, { scope: SCOPE_CREW, cuadrillas: [{ id: 'cq1', name: 'Cuadrilla 76-08' }], locations: [{ id: 'loc1', name: 'Volcán' }] });
     const panel = page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..');
     await expect(panel).toContainText('Cuadrilla 76-08');
     await expect(panel).toContainText('Volcán');
     const btn = page.locator('#lub-config-change-crew');
-    await expect(btn).toBeDisabled();
-    await expect(btn).toContainText('Solo tienes una cuadrilla autorizada');
+    await expect(btn).toHaveCount(0);
   });
 
   test('B. 2+ cuadrillas autorizadas: el botón "Cambiar cuadrilla" está habilitado y visible', async ({ page }) => {
@@ -375,4 +375,20 @@ test.describe('H) Trabajo / Contexto operativo — Cambiar cuadrilla', () => {
     await expect(page.locator('#lub-config-change-crew')).toHaveCount(0);
     await expect(page.locator('.panel-head:has-text("Trabajo / Contexto operativo")').locator('..')).toContainText('Sin cuadrilla autorizada todavía');
   });
+});
+
+test('UX coverage roles, informative memberships and responsive natural-height layout', async ({ page }, testInfo) => {
+  const locs = [{ id: 'loc1', name: 'Volcán' }, { id: 'loc2', name: 'Mojón' }, { id: 'loc3', name: 'Ubicación ficticia de apoyo con nombre largo' }];
+  await bootConfig(page, { scope: { ...SCOPE_CREW_MULTI, allAuthorizedLocationIds: locs.map(l => l.id), principalLocationIds: ['loc1', 'loc2'], supportLocationIds: ['loc3'] }, locations: locs });
+  await expect(page.locator('.crew-coverage-list li')).toHaveCount(3);
+  await expect(page.locator('.crew-coverage-role.principal')).toHaveCount(2);
+  await expect(page.locator('.crew-coverage-role.support')).toHaveText('APOYO');
+  await expect(page.locator('.authorized-crew-chip')).toHaveCount(2);
+  await expect(page.locator('.authorized-crew-list button, .authorized-crew-list [role=button]')).toHaveCount(0);
+  await expect(page.locator('.lub-operational-context b', { hasText: /^Ubicación$/ })).toHaveCount(0);
+  const sizes = await page.evaluate(() => ({ width: innerWidth, columns: getComputedStyle(document.querySelector('.lub-profile-layout')).gridTemplateColumns.split(' ').length, overflow: document.documentElement.scrollWidth > innerWidth, max: getComputedStyle(document.querySelector('.lub-profile-layout')).maxWidth }));
+  expect(sizes.columns).toBe(sizes.width >= 1024 ? 2 : 1);
+  expect(sizes.max).toBe('920px'); expect(sizes.overflow).toBe(false);
+  expect((await page.locator('#lub-config-change-crew').boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: testInfo.outputPath('config-coverage.png'), fullPage: true });
 });

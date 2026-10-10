@@ -51,7 +51,7 @@ const validationSrc = validationNames.map(n => extractDeclaration(validationSour
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 

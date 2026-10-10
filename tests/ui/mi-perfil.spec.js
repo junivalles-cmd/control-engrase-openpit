@@ -22,7 +22,7 @@ const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'withSubmitGuard',
   'quickUnlockConfigureModal', // se re-asigna a un espía DESPUÉS de extraerla (abajo) — se extrae solo para que no truene como ReferenceError si algo más la referencia indirectamente
-  'miPerfilRoleCrewSummaryHTML', 'renderMiPerfil', 'miPerfilErrorMessage',
+  'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderMiPerfil', 'miPerfilErrorMessage',
 ];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -206,4 +206,14 @@ test.describe('H) solo modo supabase — en modo legacy no se ofrece (no hay Aut
     await page.evaluate(() => window.renderMiPerfil ? window.renderMiPerfil() : renderMiPerfil());
     await expect(page.locator('#mi-perfil-nombre-form')).toHaveCount(0);
   });
+});
+
+test('UX profile has separate resolved coverage and informative crew chips', async ({ page }) => {
+  await bootMiPerfil(page, { role: 'LUBRICADOR', scope: { ...SCOPE_CREW, allAuthorizedLocationIds: ['loc1', 'loc2'], principalLocationIds: ['loc1'], supportLocationIds: ['loc2'] }, cuadrillas: [{ id: 'cq1', name: 'Cuadrilla ficticia' }], locations: [{ id: 'loc1', name: 'Principal ficticia' }, { id: 'loc2', name: 'Apoyo ficticio' }] });
+  await expect(page.locator('.crew-coverage-list li')).toHaveCount(2);
+  await expect(page.locator('.crew-coverage-role.support')).toHaveText('APOYO');
+  await expect(page.locator('.authorized-crew-chip')).toHaveCount(1);
+  await expect(page.locator('.authorized-crew-list button, .authorized-crew-list [role=button]')).toHaveCount(0);
+  const sizes = await page.evaluate(() => ({ width: innerWidth, columns: getComputedStyle(document.querySelector('.lub-profile-layout')).gridTemplateColumns.split(' ').length, overflow: document.documentElement.scrollWidth > innerWidth }));
+  expect(sizes.columns).toBe(sizes.width >= 1024 ? 2 : 1); expect(sizes.overflow).toBe(false);
 });

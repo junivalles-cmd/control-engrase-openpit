@@ -54,7 +54,7 @@ const validationSrc = validationNames.map((n) => extractDeclaration(validationSo
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
   // El shell real — esto es lo que se rompió. openModal/closeModal reales
   // (nunca un stub no-op) para que el modal de "Mi cuenta" sea verificable.
   'openModal', 'closeModal', 'updateConnBadge', 'wireShiftTimer', 'wireQuickFind', 'openLubAccountMenu', 'bootLubricador',

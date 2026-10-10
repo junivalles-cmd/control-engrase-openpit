@@ -10,8 +10,8 @@ const source = [
   declarations(DB_JS_PATH, ['DB_NAME', 'DB_VERSION', 'STORES', 'LOCAL_STORES', 'tx', 'openDB', 'DB', 'uid', 'nowISO', 'stamp']),
   ...[SHIFTS_JS_PATH, LUBRICATION_STATUS_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH, WEEKLY_MATRIX_JS_PATH].map(readSource),
   declarations(APP_JS_PATH, ['$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
-    'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'getCurrentOperationalScope',
-    'loadAssignmentContext', 'equipoOccurrenceKey', 'renderLubricadorHome', 'openModal', 'closeModal', 'wireMatrizScrollHint',
+    'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
+    'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome', 'openModal', 'closeModal', 'wireMatrizScrollHint',
     'openLubricadorMatrizModal', 'handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'cuadrillasPanelHTML', 'wireCuadrillasPanel']),
 ].join('\n');
 const crew = { id: '76-08', name: '76-08 Camión Lubrico', locationId: 'volcan', isDefault: true, memberUserIds: ['lub'], active: true };
@@ -306,4 +306,36 @@ test('COMPLETE adelantado en ambas principales no reaparece; PARTIAL y carryover
   await expect(page.locator('.lub-arr-reg, .lub-mt-reg')).toHaveCount(1);
   await expect(page.locator('.lub-real-ver')).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+for (const count of [1, 2, 3, 5]) {
+  test('UX header coverage ' + count + ' locations, including support and long names', async ({ page }, testInfo) => {
+    const locs = Array.from({ length: count }, (_, i) => ({ id: 'fixture-ux-' + i, name: count >= 5 ? 'Ubicación operacional ficticia con nombre muy largo ' + i : 'Zona ' + i }));
+    const cq = { ...crew, locationId: locs[0].id };
+    const rows = locs.map((l, i) => ({ id: 'coverage-' + i, crew_id: cq.id, location_id: l.id, role: i ? 'APOYO' : 'PRINCIPAL', active: true }));
+    expect(await boot(page, { fixtureCrew: cq, fixtureLocations: locs, fixtureCoverage: rows })).toEqual([]);
+    const chip = page.locator('.lub-coverage-chip');
+    await expect(chip).toContainText(count >= 3 ? count + ' ubicaciones' : locs.map(l => l.name).join(' + '));
+    await expect(chip).toHaveAttribute('title', locs.map(l => l.name).join(' + '));
+    await expect(chip).toHaveAttribute('aria-label', 'Cobertura: ' + locs.map(l => l.name).join(' + '));
+    await expect(page.locator('.lub-welcome-card')).not.toContainText('APOYO');
+    await expect(page.locator('#lub-change-crew')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (count === 5) await page.screenshot({ path: testInfo.outputPath('header-long-coverage.png'), fullPage: true });
+  });
+}
+test('UX change crew belongs to welcome context and invokes existing selection flow', async ({ page }) => {
+  await boot(page);
+  await page.evaluate(async () => {
+    await DB.put('cuadrillas', { id: 'fixture-second', name: 'Segunda cuadrilla ficticia', locationId: 'volcan', memberUserIds: ['lub'], active: true });
+    setSelectedCrewId('lub', '76-08');
+    await renderLubricadorHome();
+  });
+  const btn = page.locator('.lub-welcome-card button#lub-change-crew');
+  await expect(btn).toBeVisible();
+  await expect(btn).not.toHaveClass(/link-btn/);
+  expect((await btn.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await btn.click();
+  expect(await page.evaluate(() => getSelectedCrewId('lub'))).toBe('');
+  await expect(page.locator('#lub-change-crew')).toHaveCount(0);
 });

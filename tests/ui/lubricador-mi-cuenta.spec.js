@@ -18,7 +18,7 @@ const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles
 const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
-  'confirmChangeUser', 'openLubAccountMenu', 'confirmLubricadorLogout', 'lockApp',
+  'confirmChangeUser', 'crewCoveragePresentation', 'openLubAccountMenu', 'confirmLubricadorLogout', 'lockApp',
 ];
 const appRealSrc = APP_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -50,11 +50,13 @@ async function bootMenu(page, { online = true, pendingCount = 0 } = {}) {
         disable: async () => { window.__dbWriteCalls.push('QuickUnlock.disable'); },
       };
       window.DB = {
+        allActive: async () => [],
         put: async (...a) => { window.__dbWriteCalls.push(['put', ...a]); },
         delete: async (...a) => { window.__dbWriteCalls.push(['delete', ...a]); },
         clear: async (...a) => { window.__dbWriteCalls.push(['clear', ...a]); },
       };
       window.Sync = { pendingCount: async () => ${pendingCount} };
+      window.getCurrentOperationalScope = async () => ({ kind: 'NO_CREW_ASSIGNED', authorizedCrews: [] });
       window.clearAppBadge = () => {};
       window.stopInactivityTimer = () => {};
       window.renderAuthGateSupabase = () => { window.__renderAuthGateCalls++; };
