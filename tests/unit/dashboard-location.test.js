@@ -33,12 +33,12 @@ describe('F — "Estado por ubicación" dinámico, nunca hardcodeado', () => {
 
   it('la tabla muestra Ubicación/Equipos/Al día/Próximos/Vencidos, coloreados con los semánticos ya definidos (verde/amber/rojo)', () => {
     const iPanel = src.indexOf('dash-ubic-panel');
-    const panelSrc = src.slice(iPanel, iPanel + 900);
-    expect(panelSrc).toContain('<thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>');
+    const panelSrc = src.slice(iPanel, iPanel + 1300);
+    for (const label of ['Ubicación', 'Equipos', 'Al día', 'Próximos', 'Vencidos']) expect(panelSrc).toContain(`<th scope="col">${label}</th>`);
     expect(panelSrc).toContain('u.location.name');
-    expect(panelSrc).toContain("color:var(--green)");
-    expect(panelSrc).toContain("color:var(--amber)");
-    expect(panelSrc).toContain("color:var(--red)");
+    expect(panelSrc).toContain("u.verde ? '--green' : '--text-dim'");
+    expect(panelSrc).toContain("u.amarillo ? '--amber' : '--text-dim'");
+    expect(panelSrc).toContain("u.rojo ? '--red' : '--text-dim'");
   });
 
   it('el panel completo (incluyendo el <h3>) solo se renderiza si hay más de 1 ubicación con equipos — nunca ocupa espacio con 0 o 1 ubicación', () => {

@@ -216,7 +216,7 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
   });
 
   it('el peor caso (isMax) recibe SOLO un acento ámbar discreto (borde + color en los días), NUNCA una tarjeta separada ni distinto tamaño de fila', () => {
-    expect(rowSrc).toContain("dash-exc-row${isMax ? ' is-max' : ''}");
+    expect(rowSrc).toContain("dash-exc-row operational-table-row${isMax ? ' is-max' : ''}");
     expect(rowSrc).not.toContain('is-worst');
   });
 
@@ -241,11 +241,11 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
     expect(modalSrc).not.toContain('>Registrar<'); // el comentario SÍ puede mencionar la palabra; el BOTÓN no debe existir
   });
 
-  it('grid/ranking eliminados: la lista es vertical (flex-column) de filas bajas con divisores sutiles, no un grid de cards', () => {
+  it('lista de filas con separadores; desktop permite columnas tabulares sin ranking de cards', () => {
     const cssSource = readSource(STYLES_CSS_PATH);
     expect(cssSource).toMatch(/\.dash-exc-list\s*\{\s*display:\s*flex;\s*flex-direction:\s*column;/);
     expect(cssSource).toContain('border-bottom: 1px solid var(--border)'); // divisor sutil, no whitespace grande
-    expect(cssSource).not.toMatch(/\.dash-exc-(list|row)\s*\{[^}]*display:\s*grid/);
+    expect(cssSource).toContain('grid-template-columns: minmax(80px, 0.65fr)');
     expect(cssSource).not.toContain('.dash-tiempo-ranking');
   });
 

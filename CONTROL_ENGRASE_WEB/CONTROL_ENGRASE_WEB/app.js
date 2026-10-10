@@ -5384,14 +5384,14 @@ async function renderDashboard() {
     <div class="panel" id="dash-ubic-panel">
       <div class="panel-head"><h3>Estado por ubicación</h3></div>
       <div class="dash-ubic-breakdown">
-        <table class="data-table">
-          <thead><tr><th>Ubicación</th><th>Equipos</th><th>Al día</th><th>Próximos</th><th>Vencidos</th></tr></thead>
-          <tbody>${estadoPorUbicacion.map(u => `<tr>
+        <table class="data-table dash-operational-table">
+          <thead class="operational-table-header"><tr><th scope="col">Ubicación</th><th scope="col">Equipos</th><th scope="col">Al día</th><th scope="col">Próximos</th><th scope="col">Vencidos</th></tr></thead>
+          <tbody>${estadoPorUbicacion.map(u => `<tr class="operational-table-row">
             <td>${esc(u.location.name)}</td>
             <td>${u.total}</td>
-            <td style="color:var(--green)">${u.verde}</td>
-            <td style="color:var(--amber)">${u.amarillo}</td>
-            <td style="color:var(--red)">${u.rojo}</td>
+            <td style="color:var(${u.verde ? '--green' : '--text-dim'})">${u.verde}</td>
+            <td style="color:var(${u.amarillo ? '--amber' : '--text-dim'})">${u.amarillo}</td>
+            <td style="color:var(${u.rojo ? '--red' : '--text-dim'})">${u.rojo}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -5449,7 +5449,8 @@ async function renderDashboard() {
         ${tiempoSinEngraseMaxDias !== null ? `<span class="dash-exc-summary">Máximo: ${tiempoSinEngraseMaxDias} d · <span class="mono">${esc(tiempoSinEngraseMaxCode)}</span></span>` : ''}
       </div>
       ${tiempoSinEngrase.length === 0 ? `<div class="empty-state">Sin equipos para mostrar.</div>` : `
-      <div class="dash-exc-list">
+      <div class="dash-exc-table-head operational-table-header" aria-hidden="true"><span>Equipo</span><span>Modelo / ubicación</span><span>Último engrase</span><span>Días sin engrasar</span><span>Acción</span></div>
+      <div class="dash-exc-list dash-operational-table">
         ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0)).join('')}
       </div>
       `}
@@ -5888,7 +5889,7 @@ function pendienteValidacionRowHTML(r, eq) {
 // acento ámbar discreto vía CSS (borde + número), nunca una tarjeta aparte.
 // Reutilizada también en "Ver todos" (mismo patrón visual, nunca otra tabla).
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
-  return `<div class="dash-exc-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
+  return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
     <div class="dash-exc-main">
       <div class="dash-exc-line1"><button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
       <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>

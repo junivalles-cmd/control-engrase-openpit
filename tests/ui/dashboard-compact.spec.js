@@ -96,3 +96,32 @@ test('empty previous shift stays compact; conflict indicator opens the existing 
   await page.locator('[data-kpi-action="conflictos-validacion"]').click();
   await expect(page.locator('.modal')).toContainText('TEST-3');
 });
+
+test('operational cards and tables retain accessible actions and data structure', async ({ page }) => {
+  await render(page);
+  const cards = page.locator('#dash-requires-attention .dash-activity-card');
+  await expect(cards).toHaveCount(3);
+  expect(await cards.evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().height))).toEqual(expect.arrayContaining([expect.any(Number)]));
+  const heights = await cards.evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().height));
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
+  await expect(cards.locator('a')).toHaveCount(0);
+  const action = cards.first().locator('button');
+  await action.hover();
+  expect(await action.evaluate(n => getComputedStyle(n).textDecorationLine)).toBe('none');
+  await action.focus();
+  expect(await action.evaluate(n => getComputedStyle(n).outlineStyle)).not.toBe('none');
+  await action.press('Enter');
+  await expect(page.locator('.modal')).toContainText('TEST-3');
+  await page.evaluate(() => window.closeModal());
+  await action.focus();
+  await action.press('Space');
+  await expect(page.locator('.modal')).toContainText('TEST-3');
+  await page.evaluate(() => window.closeModal());
+  await expect(page.locator('#dash-ubic-panel th[scope="col"]')).toHaveCount(5);
+  const rows = page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-row');
+  await expect(rows).toHaveCount(5);
+  // Observe the unchanged navigation handler, without navigating outside the fixture.
+  await page.evaluate(() => { window.__navigation = []; window.navigate = route => window.__navigation.push(route); });
+  await rows.first().locator('.dash-exc-hist-btn').click();
+  expect(await page.evaluate(() => window.__navigation)).toContain('historial');
+});

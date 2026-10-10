@@ -21,6 +21,6 @@ it('all dashboard action and filter handlers match the initial release source', 
   expect(handlers(current)).toBe(handlers(baseline));
 });
 it.each(['computeAllStatuses', 'getCurrentOperationalScope', 'openValidationConflictModal', 'openValidationDetailModal',
-  'stampEquipmentEvidencePhoto', 'wirePhotoField'])('%s is unchanged', name => {
+  'stampEquipmentEvidencePhoto', 'wirePhotoField', 'boot', 'MENU'])('%s is unchanged', name => {
   expect(extractDeclaration(current, name)).toBe(extractDeclaration(baseline, name));
 });
