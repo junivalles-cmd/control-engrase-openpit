@@ -43,7 +43,7 @@ const validationNames = [
 ];
 const validationSrc = validationNames.map(n => extractDeclaration(validationSource, n)).join('\n\n');
 const appNames = [
-  '$', '$$', 'esc', 'ic', 'fmtDate', 'GREASE_UNIT', 'evidenceValueAttr', 'openModal', 'closeModal',
+  '$', '$$', 'esc', 'ic', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'GREASE_UNIT', 'evidenceValueAttr', 'openModal', 'closeModal',
   'photosOf', 'photoIndicatorHTML', 'photoThumbHTML', 'photoThumbsHTML', 'resolvePhotoThumbSrcs',
   'resolveEvidenceSrc', 'wirePhotoThumbs', 'openPhotoLightbox', 'openGreaseRecordDetailModal',
   'validationBadgeHTML', 'renderLubricadorHistorial',
