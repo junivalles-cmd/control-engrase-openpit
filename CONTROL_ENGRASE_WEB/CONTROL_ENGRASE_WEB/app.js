@@ -131,7 +131,8 @@ function photoFieldHTML() {
         </div>
       </div>
       <div class="photo-field-web">
-        <input type="file" name="photo" accept="image/*" multiple/>
+        <button type="button" class="btn photo-pick-web-btn">${ic("plus")}Agregar fotografías</button>
+        <input type="file" name="photo" accept="image/*" multiple class="sr-only"/>
         <span class="field-hint">Puedes seleccionar varias a la vez (máximo ${MAX_PHOTOS})</span>
       </div>
       <div class="photo-gallery-strip"></div>
@@ -156,6 +157,7 @@ function renderPhotoStrip(container) {
   // Oculta los botones de agregar cuando ya se llegó al tope
   const full = photos.length >= MAX_PHOTOS;
   container.querySelector('.photo-pick-row')?.classList.toggle('hidden', full);
+  container.querySelector('.photo-pick-web-btn')?.classList.toggle('hidden', full);
   const webInput = container.querySelector('input[name="photo"]');
   if (webInput) webInput.disabled = full;
 }
@@ -194,6 +196,13 @@ function wirePhotoField(container) {
   };
   container.querySelector('.photo-pick-camera-btn')?.addEventListener('click', () => pickAndAdd('CAMERA'));
   container.querySelector('.photo-pick-gallery-btn')?.addEventListener('click', () => pickAndAdd('PHOTOS'));
+  // Botón estilizado que dispara el <input type="file"> real (oculto con
+  // .sr-only, nunca display:none, para que siga siendo focuseable/
+  // funcional) — solo presentación, el input y su listener de abajo
+  // (selección/compresión/límite) no cambian.
+  container.querySelector('.photo-pick-web-btn')?.addEventListener('click', () => {
+    container.querySelector('input[name="photo"]')?.click();
+  });
 
   // Versión web: permite elegir varias de una vez
   container.querySelector('input[name="photo"]')?.addEventListener('change', async (ev) => {
@@ -8230,7 +8239,7 @@ async function startGreaseFlow(equipmentId, target, options) {
         ${outOfPlan ? `<span class="oop-badge">FUERA DE PLAN</span>` : ''}
         <div class="grease-flow-equipo-code">${esc(equipment.code)}</div>
         <div class="grease-flow-equipo-model">${esc(equipment.brand)} ${esc(equipment.model)}</div>
-        <div class="grease-flow-equipo-meta">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())} · ${currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche'}</div>
+        <div class="grease-flow-equipo-meta">Registrado por ${esc(App.currentUser.name)} · ${fmtDate(nowISO())}</div>
         ${turnoDistintoReg ? `<div class="grease-flow-turno-warn">⚠ Turno programado: ${shiftLabel(turnoProgramadoReg)} · Registrando en turno ${shiftLabel(turnoActualReg)} — quedará como "Realizado atrasado".</div>` : ''}
         ${estadoPrevio === 'ROJO' ? `<div class="grease-flow-vencido-warn">⚠ Este equipo está VENCIDO — no se engrasó en el ciclo esperado.</div>` : ''}
         ${carriedOverSkip ? `<div class="grease-flow-carryover-warn">⚠ El turno ${shiftLabel(carriedOverSkip.shiftId)} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carriedOverSkip.reason] || carriedOverSkip.reason)}${carriedOverSkip.observacion ? ' · ' + esc(carriedOverSkip.observacion) : ''} (${esc(carriedOverSkip.userName)}).</div>` : ''}
@@ -8238,9 +8247,11 @@ async function startGreaseFlow(equipmentId, target, options) {
         <dl class="grease-flow-contexto">
           <div><dt>Ubicación</dt><dd>${esc(ubicacionReg ? ubicacionReg.name : '—')}</dd></div>
           <div><dt>Tipo de trabajo</dt><dd>${esc(tipoTrabajoLabelReg)}</dd></div>
-          <div><dt>Estado</dt><dd>${esc(ESTADO_PREVIO_LABELS[estadoPrevio] || estadoPrevio)}</dd></div>
-          <div><dt>Programado</dt><dd>${esc(programadoLabelReg)}</dd></div>
-          <div><dt>Turno actual</dt><dd>${shiftLabel(turnoActualReg)}</dd></div>
+          <div><dt>Estado</dt><dd><span class="status-chip" style="--c:${STATUS_COLOR[estadoPrevio] || 'var(--text-dim)'}">${esc(ESTADO_PREVIO_LABELS[estadoPrevio] || estadoPrevio)}</span></dd></div>
+          <div><dt>Programación</dt><dd>${plan && plan.controlType === 'Día y turno de la semana' && (plan.assignedDays || []).length
+            ? `<span class="grease-flow-chip-row">${plan.assignedDays.map(d => `<span class="grease-flow-daychip">${esc(WEEKDAY_ABBR_DASH[d] || d)}</span>`).join('')}</span>`
+            : esc(programadoLabelReg)}</dd></div>
+          <div><dt>Turno actual</dt><dd><span class="grease-flow-daychip">${shiftLabel(turnoActualReg)}</span></dd></div>
           <div><dt>Último engrase</dt><dd>${esc(ultimoEngraseLabelReg)}</dd></div>
         </dl>
       </div>
@@ -8258,11 +8269,14 @@ async function startGreaseFlow(equipmentId, target, options) {
       ${duplicateWarning}
       ${draft ? `<div class="draft-banner" id="draft-banner">📝 Tienes un progreso sin terminar guardado ${fmtDate(draft.savedAt)}. <button type="button" class="btn btn-sm btn-accent" id="btn-restore-draft">Continuar</button> <button type="button" class="btn btn-sm" id="btn-discard-draft">Descartar</button></div>` : ''}
       <form id="grease-form" class="grease-flow-form">
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-horometro">
           <h4 class="grease-flow-card-head">Horómetro</h4>
           <div class="grease-flow-hm-row">
             <label class="grease-flow-hm-field">Horómetro actual
-              <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
+              <span class="input-suffix-group">
+                <input required type="number" step="0.1" inputmode="decimal" name="hourmeter" id="hourmeter-input" value="${equipment.hourmeter}" class="big-input"/>
+                <span class="input-suffix" aria-hidden="true">h</span>
+              </span>
             </label>
             <label class="grease-flow-toggle-row">
               <input type="checkbox" id="nohm-check" ${equipment.noHourmeter ? 'checked' : ''}/>
@@ -8279,7 +8293,7 @@ async function startGreaseFlow(equipmentId, target, options) {
           </div>
         </div>
 
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-puntos">
           <div class="grease-flow-points-head">
             <h4 class="grease-flow-card-head">Puntos de engrase</h4>
             ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
@@ -8302,13 +8316,18 @@ async function startGreaseFlow(equipmentId, target, options) {
           </div>
         </div>
 
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-lubricante">
           <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
           <div class="form-grid grease-flow-lube-grid">
             <label>Tipo de grasa utilizada
               <select name="greaseType">${lubricants.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
             </label>
-            <label>Cantidad utilizada (${GREASE_UNIT})<input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/></label>
+            <label>Cantidad utilizada
+              <span class="input-suffix-group">
+                <input type="number" step="0.1" inputmode="decimal" name="qty" value="0"/>
+                <span class="input-suffix" aria-hidden="true">${esc(GREASE_UNIT)}</span>
+              </span>
+            </label>
           </div>
           ${puedeRetroactivo ? `
           <details class="reg-advanced">
@@ -8335,7 +8354,7 @@ async function startGreaseFlow(equipmentId, target, options) {
           </details>` : ''}
         </div>
 
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-condicion">
           <h4 class="grease-flow-card-head">Condición del equipo</h4>
           <div class="form-grid">
             <label class="span-2">Condición encontrada
@@ -8346,7 +8365,7 @@ async function startGreaseFlow(equipmentId, target, options) {
           </div>
         </div>
 
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-evidencia">
           <h4 class="grease-flow-card-head">Evidencia</h4>
           <div class="form-grid">
             <label class="span-2">Observaciones<textarea name="notes" rows="2"></textarea></label>
@@ -8355,9 +8374,11 @@ async function startGreaseFlow(equipmentId, target, options) {
         </div>
 
         <div class="grease-flow-final">
-          <div class="modal-actions">
-            ${!outOfPlan && trabajoReg.kind !== 'NONE' ? `<button type="button" class="btn" id="btn-no-ejecutado">No se pudo ejecutar</button>` : ''}
-            <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
+          <div class="modal-actions grease-flow-actions">
+            <div class="grease-flow-actions-secondary">
+              ${!outOfPlan && trabajoReg.kind !== 'NONE' ? `<button type="button" class="btn" id="btn-no-ejecutado">No se pudo ejecutar</button>` : ''}
+              <button type="button" class="btn" id="btn-report-anomaly">${ic("alert")}Reportar anomalía</button>
+            </div>
             <button type="submit" class="btn btn-accent btn-grease-submit">${ic("check")}Finalizar engrase</button>
           </div>
           <div class="dim" id="draft-save-indicator" style="text-align:right; margin-top:6px; min-height:14px"></div>

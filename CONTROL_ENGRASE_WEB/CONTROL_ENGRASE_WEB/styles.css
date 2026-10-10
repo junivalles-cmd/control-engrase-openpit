@@ -289,6 +289,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .photo-pick-row { display: flex; gap: 8px; }
 .photo-pick-camera-btn, .photo-pick-gallery-btn { flex: 1; justify-content: center; padding: 12px 8px; font-size: 13px; }
 @media (max-width: 420px) { .photo-pick-row { flex-direction: column; } }
+/* Botón estilizado del selector web (§7 del pedido "REDISEÑO UX FORMULARIO
+   REGISTRAR ENGRASE", 2026-10-10) — reemplaza visualmente al <input
+   type="file"> nativo (que queda .sr-only, funcional pero invisible). */
+.photo-pick-web-btn { justify-content: center; width: 100%; }
 .photo-preview-wrap { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 .photo-preview { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
 
@@ -1218,25 +1222,39 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 }
 .grease-flow-points-head .grease-flow-card-head { margin-bottom: 0; }
 
-/* ---- Acción final: fuera de las cards, como cierre de página (no otra card) ----
-   Finalizar engrase/Reportar anomalía van SIEMPRE en flujo normal (pedido
-   explícito 2026-10-08: "ya no deben ser sticky/fixed/flotantes", en ningún
-   ancho ni estado — la versión anterior los hacía sticky en móvil, con un
-   override para "destickyficarlos" solo mientras el teclado estaba abierto;
-   ambas cosas se quitan, position:static es ahora el único estado posible,
-   nunca condicional). Se llega a ellos con scroll normal, como cualquier
-   otro bloque del formulario. */
+/* ---- Acción final: barra de acciones (§8/§9 del pedido "REDISEÑO UX
+   FORMULARIO REGISTRAR ENGRASE", 2026-10-10) ----
+   Jerarquía: "Finalizar engrase" es la única acción primaria
+   (.btn-grease-submit, ya era .btn-accent), "No se pudo ejecutar"/"Reportar
+   anomalía" quedan agrupadas aparte como secundarias — nunca las 3 con el
+   mismo peso visual.
+   Flotante ("sticky", §9) — PROBADO y descartado, con autorización
+   explícita del usuario: se implementó con position:fixed (corrige un bug
+   real de position:sticky, que al ser .grease-flow-final el ÚLTIMO hijo
+   sin hermanos después se "pegaba" desde el primer pixel de scroll,
+   verificado con getBoundingClientRect() en una ejecución real de
+   startGreaseFlow()) — pero incluso corregido así, en equipos con pocos
+   puntos de engrase la barra flotante SÍ llegaba a tapar parcialmente el
+   último punto del checklist en ciertas posiciones de scroll (inherente a
+   cualquier barra siempre-visible superpuesta al contenido). Eso es
+   exactamente lo que el pedido pidió evitar ("SIN tapar campos ni
+   teclado") — se le presentó la disyuntiva al usuario (aceptar ese
+   riesgo vs. quedarse en flujo normal) y se confirmó MANTENER
+   position:static (misma decisión seguridad-primero que el pedido
+   explícito 2026-10-08 que había quitado el sticky original). */
 .grease-flow-final { margin-top: var(--sp-3); position: static !important; }
+.grease-flow-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.grease-flow-actions-secondary { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.grease-flow-actions .btn-grease-submit { font-weight: 700; }
 @media (max-width: 640px) {
-  /* Teclado virtual abierto: el footer YA es static siempre (arriba), así
-     que no necesita nada especial aquí — lo único que sigue cambiando con
-     .keyboard-open es ocultar la barra inferior fija (.lub-bottom-nav),
-     que sí compite por espacio con el teclado. Reaparece sola al cerrarse
-     (vía el blur+timeout de wireKeyboardOpenWatcher() en app.js). */
+  .grease-flow-actions { flex-direction: column-reverse; align-items: stretch; }
+  .grease-flow-actions-secondary { justify-content: center; }
+  /* Teclado virtual abierto: el footer ya es static siempre (arriba) — lo
+     único que sigue cambiando con .keyboard-open es ocultar la barra
+     inferior fija (.lub-bottom-nav), que sí compite por espacio con el
+     teclado. Reaparece sola al cerrarse, vía el blur+timeout de
+     wireKeyboardOpenWatcher() en app.js. */
   .lub-shell.keyboard-open .lub-bottom-nav { display: none; }
-  /* Con la barra inferior oculta, ya no hace falta reservarle 100px de
-     margen debajo del formulario — se recupera esa altura para que el
-     scroll llegue más cómodo hasta el final real del contenido. */
   .lub-shell.keyboard-open .lub-content { padding-bottom: var(--sp-3); }
 }
 
@@ -1245,10 +1263,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    .app-content. Tablet (≥768): contenedor propio ~720px, centrado — se
    neutraliza el límite de 560px que .lub-content aplica a otras pantallas
    del Lubricador (Mi Turno, etc.) SOLO cuando contiene .grease-flow-panel,
-   vía :has() (ya usado en este archivo, líneas 157/1182). Desktop (≥1024):
-   contenedor ~960px; Horómetro y Lubricante comparten una fila de 2
-   columnas, el resto (Puntos/Condición/Evidencia/Finalizar) ocupa todo el
-   ancho del contenedor. */
+   vía :has() (ya usado en este archivo, líneas 157/1182). */
 .grease-flow-panel { width: 100%; }
 @media (min-width: 768px) {
   .grease-flow-panel { max-width: 720px; margin: 0 auto; }
@@ -1256,13 +1271,31 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   .grease-flow-equipo-card { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: var(--sp-3); }
   .grease-flow-equipo-meta { flex-basis: 100%; }
 }
+/* Fix 2026-10-10 ("REDISEÑO UX FORMULARIO REGISTRAR ENGRASE", §1): Horómetro
+   y Puntos vivían en la MISMA fila de un grid 1fr/1fr — con
+   align-items:stretch (default) la card de Horómetro (poca altura real) se
+   estiraba hasta igualar la de Puntos (bastante más alta), dejando un hueco
+   enorme. Reemplazado por: columna izquierda ~34% (Horómetro, Lubricante,
+   Condición — cada card con SU propia altura, apiladas por orden de fuente
+   vía grid-column:1 + auto-placement, nunca una 2a envoltura en el DOM) y
+   columna derecha ~66% (Puntos, grid-row:1/span 3 para cubrir las 3 filas
+   de la izquierda). Evidencia y Acciones ocupan todo el ancho debajo
+   (grid-column:1/-1, se auto-colocan en la siguiente fila libre). El orden
+   real del DOM (Horómetro, Puntos, Lubricante, Condición, Evidencia) NO
+   cambia — sigue siendo el orden correcto en móvil (§12 del pedido) sin
+   necesitar ninguna regla aparte ahí. align-items:start es la otra mitad
+   del fix: ningún item se estira a la altura de su fila. */
 @media (min-width: 1024px) {
   .grease-flow-panel { max-width: 960px; }
-  .grease-flow-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+  .grease-flow-form {
+    display: grid; grid-template-columns: minmax(260px, 34%) 1fr;
+    gap: var(--sp-3); align-items: start;
+  }
   .grease-flow-form > .grease-flow-card { margin-bottom: 0; }
-  /* Hijos 3 en adelante (Puntos, Condición, Evidencia, Finalizar): todo el ancho. */
-  .grease-flow-form > *:nth-child(n+3) { grid-column: 1 / -1; }
-  .grease-flow-panel .check-row { padding: 18px 10px; gap: 18px; }
+  .grease-flow-card-horometro, .grease-flow-card-lubricante, .grease-flow-card-condicion { grid-column: 1; }
+  .grease-flow-card-puntos { grid-column: 2; grid-row: 1 / span 3; }
+  .grease-flow-card-evidencia, .grease-flow-final { grid-column: 1 / -1; }
+  .grease-flow-panel .check-row { padding: 14px 10px; gap: 14px; }
 }
 
 /* ---------------- Checklist ---------------- */
@@ -1893,6 +1926,28 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .grease-flow-contexto dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0; }
 .grease-flow-contexto dd { font-size: 13px; margin: 1px 0 0; overflow-wrap: break-word; }
 @media (min-width: 640px) { .grease-flow-contexto { grid-template-columns: repeat(3, 1fr); } }
+
+/* Programación/Turno como chips compactos (§2 del pedido "REDISEÑO UX
+   FORMULARIO REGISTRAR ENGRASE", 2026-10-10) en vez de texto largo "Lun ·
+   Mié · Vie · Noche" — mismo dato (plan.assignedDays), solo presentación.
+   Tono neutro (var(--surface)/var(--border)), igual que el resto de
+   .grease-flow-contexto — nunca un color nuevo. */
+.grease-flow-chip-row { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.grease-flow-daychip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; padding: 2px 7px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--text);
+}
+
+/* Sufijo visual "h"/"lb" (§3/§5): el valor numérico del <input> nunca
+   incluye la unidad como texto — solo se superpone visualmente encima. */
+.input-suffix-group { position: relative; display: block; }
+.input-suffix-group input { padding-right: 34px; width: 100%; box-sizing: border-box; }
+.input-suffix-group .input-suffix {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; font-weight: 700; color: var(--text-dim); pointer-events: none;
+}
 
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;

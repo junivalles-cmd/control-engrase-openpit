@@ -25,31 +25,30 @@ const FIXTURE = `
       <div class="grease-flow-card grease-flow-equipo-card">
         <div class="grease-flow-equipo-code">EQ-0001</div>
         <div class="grease-flow-equipo-model">Marca Modelo</div>
-        <div class="grease-flow-equipo-meta">Registrado por Usuario de prueba · Turno Día</div>
+        <div class="grease-flow-equipo-meta">Registrado por Usuario de prueba · 01/01/2026</div>
         <div class="grease-flow-turno-warn">⚠ Turno programado: Día · Registrando en turno Noche — quedará como "Realizado atrasado".</div>
         <div class="grease-flow-vencido-warn">⚠ Este equipo está VENCIDO — no se engrasó en el ciclo esperado.</div>
         <div class="grease-flow-carryover-warn">⚠ El turno Día no pudo ejecutar este engrase hoy — motivo: Condición insegura (Ana G.).</div>
+        <dl class="grease-flow-contexto">
+          <div><dt>Ubicación</dt><dd>Botadero Norte</dd></div>
+          <div><dt>Tipo de trabajo</dt><dd>Planificado</dd></div>
+          <div><dt>Estado</dt><dd><span class="status-chip" style="--c:var(--amber)">Próximo a vencer</span></dd></div>
+          <div><dt>Programación</dt><dd><span class="grease-flow-chip-row"><span class="grease-flow-daychip">LUN</span><span class="grease-flow-daychip">MIÉ</span><span class="grease-flow-daychip">VIE</span></span></dd></div>
+          <div><dt>Turno actual</dt><dd><span class="grease-flow-daychip">Día</span></dd></div>
+          <div><dt>Último engrase</dt><dd>01/01/2026 · 1,200 h</dd></div>
+        </dl>
       </div>
       <form id="grease-form" class="grease-flow-form">
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-horometro">
           <h4 class="grease-flow-card-head">Horómetro</h4>
           <div class="grease-flow-hm-row">
-            <label class="grease-flow-hm-field">Horómetro actual<input type="number" value="1234" class="big-input"/></label>
+            <label class="grease-flow-hm-field">Horómetro actual
+              <span class="input-suffix-group"><input type="number" value="1234" class="big-input"/><span class="input-suffix">h</span></span>
+            </label>
             <label class="grease-flow-toggle-row"><input type="checkbox"/><span>Sin horómetro / dañado</span></label>
           </div>
         </div>
-        <div class="grease-flow-card">
-          <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
-          <div class="form-grid grease-flow-lube-grid">
-            <label>Tipo de grasa utilizada<select><option>Grasa</option></select></label>
-            <label>Cantidad utilizada (lb)<input type="number" value="0.5"/></label>
-          </div>
-          <div class="retro-box">
-            <h5 class="grease-flow-retro-head">Registro retroactivo</h5>
-            <label class="retro-toggle"><input type="checkbox"/><span>Registrar como engrase ATRASADO (con fecha anterior)</span></label>
-          </div>
-        </div>
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-puntos">
           <div class="grease-flow-points-head">
             <h4 class="grease-flow-card-head">Puntos de engrase</h4>
             <button type="button" class="btn btn-sm">Marcar todos</button>
@@ -59,22 +58,37 @@ const FIXTURE = `
             <div class="checklist-item"><label class="check-row"><input type="checkbox" class="chk-done" checked/><span class="check-row-text">Punto B</span></label></div>
           </div>
         </div>
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-lubricante">
+          <h4 class="grease-flow-card-head">Lubricante utilizado</h4>
+          <div class="form-grid grease-flow-lube-grid">
+            <label>Tipo de grasa utilizada<select><option>Grasa</option></select></label>
+            <label>Cantidad utilizada
+              <span class="input-suffix-group"><input type="number" value="0.5"/><span class="input-suffix">lb</span></span>
+            </label>
+          </div>
+          <div class="retro-box">
+            <h5 class="grease-flow-retro-head">Registro retroactivo</h5>
+            <label class="retro-toggle"><input type="checkbox"/><span>Registrar como engrase ATRASADO (con fecha anterior)</span></label>
+          </div>
+        </div>
+        <div class="grease-flow-card grease-flow-card-condicion">
           <h4 class="grease-flow-card-head">Condición del equipo</h4>
           <div class="form-grid">
             <label class="span-2">Condición encontrada<select><option>Normal</option></select></label>
           </div>
         </div>
-        <div class="grease-flow-card">
+        <div class="grease-flow-card grease-flow-card-evidencia">
           <h4 class="grease-flow-card-head">Evidencia</h4>
           <div class="form-grid">
             <label class="span-2">Observaciones<textarea rows="2"></textarea></label>
           </div>
         </div>
         <div class="grease-flow-final">
-          <div class="modal-actions">
-            <button type="button" class="btn">No se pudo ejecutar</button>
-            <button type="button" class="btn">Reportar anomalía</button>
+          <div class="modal-actions grease-flow-actions">
+            <div class="grease-flow-actions-secondary">
+              <button type="button" class="btn">No se pudo ejecutar</button>
+              <button type="button" class="btn">Reportar anomalía</button>
+            </div>
             <button type="submit" class="btn btn-accent btn-grease-submit">Finalizar engrase</button>
           </div>
         </div>
@@ -102,9 +116,14 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
 
   // Equipo no lleva .grease-flow-card-head (código/marca-modelo tienen su propio
   // tratamiento tipográfico) — las 5 que sí lo llevan son las cards con encabezado.
+  // Orden real de startGreaseFlow() (app.js): Horómetro, Puntos, Lubricante,
+  // Condición, Evidencia — el orden del DOM/móvil NO cambia con el rediseño
+  // de columnas de escritorio (§1/§12 del pedido "REDISEÑO UX FORMULARIO
+  // REGISTRAR ENGRASE", 2026-10-10): la reubicación a 2 columnas se hace
+  // solo con grid-column/grid-row (CSS), nunca reordenando el HTML.
   const cardHeads = await page.locator('.grease-flow-card-head').allTextContents();
   expect(cardHeads.map(s => s.trim())).toEqual([
-    'Horómetro', 'Lubricante utilizado', 'Puntos de engrase', 'Condición del equipo', 'Evidencia',
+    'Horómetro', 'Puntos de engrase', 'Lubricante utilizado', 'Condición del equipo', 'Evidencia',
   ]);
 
   // Cada card debe verse como bloque independiente: mismo fondo (var(--surface)),
@@ -145,10 +164,10 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
 
   if (width && width <= 412) {
     // Móvil: el contenedor usa todo el ancho de .lub-content (sin límite propio
-    // todavía), y Horómetro/Lubricante quedan APILADOS (1 columna).
+    // todavía), y TODAS las cards quedan apiladas (1 columna), en orden de fuente.
     const hmCard = await page.locator('.grease-flow-card').nth(1).boundingBox(); // 0=Equipo
-    const lubCard = await page.locator('.grease-flow-card').nth(2).boundingBox();
-    expect(lubCard.y, 'en móvil, Horómetro y Lubricante van apilados (1 columna)').toBeGreaterThan(hmCard.y + hmCard.height - 2);
+    const puntosCard = await page.locator('.grease-flow-card').nth(2).boundingBox();
+    expect(puntosCard.y, 'en móvil, Horómetro y Puntos van apilados (1 columna)').toBeGreaterThan(hmCard.y + hmCard.height - 2);
   }
 
   if (width === 768) {
@@ -162,15 +181,35 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     expect(panelBox.width).toBeGreaterThanOrEqual(900);
     expect(panelBox.width).toBeLessThanOrEqual(1050);
 
-    // Horómetro y Lubricante comparten fila de 2 columnas.
-    const hmCard = await page.locator('.grease-flow-card').nth(1).boundingBox();
-    const lubCard = await page.locator('.grease-flow-card').nth(2).boundingBox();
-    expect(Math.abs(hmCard.y - lubCard.y), 'en escritorio, Horómetro y Lubricante comparten fila').toBeLessThan(2);
-    expect(lubCard.x, 'Lubricante debe quedar a la derecha de Horómetro').toBeGreaterThan(hmCard.x);
+    // Fix 2026-10-10 (§1 del pedido): Horómetro/Lubricante/Condición en la
+    // columna IZQUIERDA (~34%), apilados cada uno con SU propia altura
+    // (nunca estirados); Puntos en la columna DERECHA (~66%), compartiendo
+    // la fila 1 con Horómetro — ya NO "Horómetro y Lubricante comparten fila".
+    const hmCard = await page.locator('.grease-flow-card-horometro').boundingBox();
+    const puntosCard = await page.locator('.grease-flow-card-puntos').boundingBox();
+    const lubCard = await page.locator('.grease-flow-card-lubricante').boundingBox();
+    const condCard = await page.locator('.grease-flow-card-condicion').boundingBox();
+    const evidCard = await page.locator('.grease-flow-card-evidencia').boundingBox();
 
-    // Puntos/Condición/Evidencia/Finalizar ocupan todo el ancho del contenedor.
-    const puntosCard = await page.locator('.grease-flow-card').nth(3).boundingBox();
-    expect(puntosCard.width).toBeGreaterThan(hmCard.width * 1.8);
+    expect(Math.abs(hmCard.y - puntosCard.y), 'Horómetro y Puntos comparten la fila 1').toBeLessThan(2);
+    expect(puntosCard.x, 'Puntos debe quedar a la derecha de Horómetro').toBeGreaterThan(hmCard.x);
+    expect(puntosCard.width, 'la columna derecha (Puntos) debe ser bastante más ancha que la izquierda').toBeGreaterThan(hmCard.width * 1.3);
+
+    // Lubricante/Condición quedan en la MISMA columna que Horómetro (mismo x),
+    // apilados DEBAJO de él — nunca al lado de Puntos.
+    expect(Math.abs(lubCard.x - hmCard.x), 'Lubricante queda en la misma columna que Horómetro').toBeLessThan(2);
+    expect(lubCard.y, 'Lubricante va debajo de Horómetro').toBeGreaterThan(hmCard.y + hmCard.height - 2);
+    expect(Math.abs(condCard.x - hmCard.x), 'Condición queda en la misma columna que Horómetro').toBeLessThan(2);
+    expect(condCard.y, 'Condición va debajo de Lubricante').toBeGreaterThan(lubCard.y + lubCard.height - 2);
+
+    // Fix real del bug reportado: Horómetro NUNCA se estira a la altura de
+    // Puntos — su altura real (Horómetro+checkbox) debe ser bastante menor
+    // que la de la card de Puntos.
+    expect(hmCard.height, 'Horómetro no debe estirarse a la altura de Puntos').toBeLessThan(puntosCard.height);
+
+    // Evidencia ocupa todo el ancho del contenedor (debajo de ambas columnas).
+    expect(evidCard.width, 'Evidencia ocupa todo el ancho, no solo una columna').toBeGreaterThan(hmCard.width * 1.8);
+    expect(evidCard.y, 'Evidencia va debajo de las 2 columnas').toBeGreaterThan(Math.max(condCard.y + condCard.height, puntosCard.y + puntosCard.height) - 2);
   }
 
   const submitBtn = page.locator('.btn-grease-submit');
@@ -188,9 +227,15 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
     const cancelBox = await page.locator('#grease-form .grease-flow-final .btn:not(.btn-accent)').first().boundingBox();
     expect(submitBox.width).toBeGreaterThanOrEqual(cancelBox.width);
 
-    // Pedido 2026-10-08 "botones al final del formulario": ya NUNCA sticky/
-    // fixed/flotante, en ningún ancho ni estado — flujo normal, se llega a
-    // él con scroll como a cualquier otro bloque.
+    // Fix 2026-10-10 (§9 del pedido "REDISEÑO UX FORMULARIO REGISTRAR
+    // ENGRASE"): se PROBÓ sticky/fixed y se encontró que, incluso
+    // implementado correctamente (position:fixed, evitando el bug real de
+    // sticky que se "pega" desde el primer pixel por ser .grease-flow-final
+    // el último hijo), en equipos con pocos puntos de engrase la barra
+    // flotante SÍ llegaba a tapar parcialmente el checklist — justo lo que
+    // el pedido pidió evitar. Con autorización explícita del usuario
+    // (AskUserQuestion) se mantiene static — mismo criterio que el pedido
+    // 2026-10-08 que lo había quitado por primera vez.
     const finalPosition = await page.locator('.grease-flow-final').evaluate(el => getComputedStyle(el).position);
     expect(finalPosition, 'el footer de acciones nunca debe ser sticky/fixed').toBe('static');
     const lastCardBox = await page.locator('.grease-flow-card').last().boundingBox();
@@ -201,11 +246,10 @@ test('Registrar engrase: layout responsive por ancho, lb correcto, sin scroll ho
   }
 });
 
-// Pedido 2026-10-08 "botones al final del formulario": el footer es SIEMPRE
-// static (con o sin teclado, en cualquier ancho) — lo único que sigue
-// cambiando con .keyboard-open es ocultar la barra inferior fija, que sí
-// compite por espacio con el teclado. Este test cubre SOLO el efecto CSS de
-// ".keyboard-open" (clase puesta a mano, sin pasar por
+// El footer es SIEMPRE static (con o sin teclado, en cualquier ancho) — lo
+// único que sigue cambiando con .keyboard-open es ocultar la barra inferior
+// fija, que sí compite por espacio con el teclado. Este test cubre SOLO el
+// efecto CSS de ".keyboard-open" (clase puesta a mano, sin pasar por
 // wireKeyboardOpenWatcher()) — el test de abajo ("focusin real en campos
 // reales…") cubre la detección real end-to-end.
 test('Registrar engrase — el footer nunca es sticky (con o sin .keyboard-open); la barra inferior sí se oculta con teclado (solo móvil)', async ({ page }, testInfo) => {
@@ -230,8 +274,6 @@ test('Registrar engrase — el footer nunca es sticky (con o sin .keyboard-open)
     expect(before.navDisplay, `antes de abrir teclado en ${testInfo.project.name}`).not.toBe('none');
     expect(after.navDisplay, `con teclado abierto en ${testInfo.project.name}, la barra inferior se oculta`).toBe('none');
   } else {
-    // Tablet/desktop: .keyboard-open está scopeada a ≤640px — no debe
-    // cambiar nada ahí (no romper desktop/tablet).
     expect(after.navDisplay, `${testInfo.project.name} no debe ocultar la barra inferior`).not.toBe('none');
   }
 });
@@ -259,7 +301,7 @@ for (const [label, selector] of [
 ]) {
   test(`Registrar engrase (móvil) — focus real en "${label}" abre el teclado-open; blur lo cierra`, async ({ page }, testInfo) => {
     const width = testInfo.project.use?.viewport?.width;
-    test.skip(!width || width > 640, 'Solo aplica en anchos móviles (≤640px) — el footer nunca es sticky en tablet/desktop.');
+    test.skip(!width || width > 640, 'Solo aplica en anchos móviles (≤640px).');
 
     await bootKeyboardWatcher(page);
     expect((await kbState(page)).open, 'antes de enfocar nada').toBe(false);
@@ -268,7 +310,7 @@ for (const [label, selector] of [
     const focused = await kbState(page);
     expect(focused.open, `focus en "${label}" debe activar .keyboard-open`).toBe(true);
     expect(focused.navDisplay, 'bottom-nav oculto con el teclado abierto').toBe('none');
-    expect(focused.footerPosition, 'el footer de acciones deja de flotar').toBe('static');
+    expect(focused.footerPosition, 'el footer de acciones sigue static').toBe('static');
 
     await page.locator(selector).blur();
     // Antes de que pase el debounce (200ms) debe seguir abierto — si no,
@@ -280,8 +322,8 @@ for (const [label, selector] of [
     const afterBlur = await kbState(page);
     expect(afterBlur.open, 'tras el debounce, sin nada enfocado, se cierra').toBe(false);
     expect(afterBlur.navDisplay, 'bottom-nav vuelve a aparecer').not.toBe('none');
-    // Pedido 2026-10-08: el footer nunca vuelve a ser sticky al cerrar el
-    // teclado — sigue static, igual que antes de abrirlo.
+    // El footer nunca vuelve a ser sticky al cerrar el teclado — sigue
+    // static, igual que antes de abrirlo.
     expect(afterBlur.footerPosition, 'el footer sigue static al cerrar el teclado').toBe('static');
   });
 }

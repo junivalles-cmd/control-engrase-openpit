@@ -69,9 +69,15 @@ describe('Contexto completo de la ocurrencia — Ubicación/Tipo de trabajo/Esta
   it('las 6 etiquetas del contexto están presentes, con datos reales (nunca texto fijo)', () => {
     expect(startGreaseFlowSrc).toContain('<dt>Ubicación</dt><dd>${esc(ubicacionReg ? ubicacionReg.name : \'—\')}</dd>');
     expect(startGreaseFlowSrc).toContain('<dt>Tipo de trabajo</dt><dd>${esc(tipoTrabajoLabelReg)}</dd>');
-    expect(startGreaseFlowSrc).toContain('<dt>Estado</dt><dd>${esc(ESTADO_PREVIO_LABELS[estadoPrevio] || estadoPrevio)}</dd>');
-    expect(startGreaseFlowSrc).toContain('<dt>Programado</dt><dd>${esc(programadoLabelReg)}</dd>');
-    expect(startGreaseFlowSrc).toContain('<dt>Turno actual</dt><dd>${shiftLabel(turnoActualReg)}</dd>');
+    // Fix 2026-10-10 ("REDISEÑO UX FORMULARIO REGISTRAR ENGRASE"): Estado
+    // ahora es un .status-chip semántico (mismo STATUS_COLOR de siempre,
+    // nunca una paleta nueva) y Programado ("Programación") se renderiza
+    // como chips por día cuando el plan es semanal — mismo dato real.
+    expect(startGreaseFlowSrc).toContain('<dt>Estado</dt><dd><span class="status-chip" style="--c:${STATUS_COLOR[estadoPrevio]');
+    expect(startGreaseFlowSrc).toContain('${esc(ESTADO_PREVIO_LABELS[estadoPrevio] || estadoPrevio)}</span></dd>');
+    expect(startGreaseFlowSrc).toContain('<dt>Programación</dt><dd>${plan && plan.controlType ===');
+    expect(startGreaseFlowSrc).toContain("plan.assignedDays.map(d => `<span class=\"grease-flow-daychip\">${esc(WEEKDAY_ABBR_DASH[d] || d)}</span>`).join('')");
+    expect(startGreaseFlowSrc).toContain('<dt>Turno actual</dt><dd><span class="grease-flow-daychip">${shiftLabel(turnoActualReg)}</span></dd>');
     expect(startGreaseFlowSrc).toContain('<dt>Último engrase</dt><dd>${esc(ultimoEngraseLabelReg)}</dd>');
   });
 
