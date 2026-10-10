@@ -42,7 +42,13 @@ async function values(page) {
     metrics['Conflictos de validación'] ||= '0';
     return { metrics,
       locations: Array.from(document.querySelectorAll('#dash-ubic-panel tbody tr')).map(row => row.textContent.replace(/\s+/g, ' ').trim()),
-      times: Array.from(document.querySelectorAll('.dash-exc-list .dash-exc-row')).map(row => row.textContent.replace(/\s+/g, ' ').trim()),
+      times: Array.from(document.querySelectorAll('.dash-exc-list .dash-exc-row')).map(row => ({
+        id: row.dataset.id,
+        code: row.querySelector('.dash-exc-code').textContent.trim(),
+        modelLocation: row.querySelector('.dash-exc-line2').textContent.trim(),
+        last: row.querySelector('.dash-exc-line3').textContent.replace(/^Último(?: engrase)?:\s*/, '').trim(),
+        days: row.querySelector('.dash-exc-days').textContent.trim(),
+      })),
       compliance: Array.from(document.querySelectorAll('.dash-compliance-card')).map(card => card.textContent.replace(/\s+/g, ' ').trim()),
       attention: Array.from(document.querySelectorAll('.dash-cola-row')).map(row => row.textContent.replace(/\s+/g, ' ').trim()),
     };
@@ -182,4 +188,45 @@ test('equipment row free space and keyboard open Ficha by id; inner actions fire
   expect(await page.evaluate(() => window.__startGreaseFlowCalls)).toEqual(['e1', 'e1']);
   expect(await page.evaluate(() => window.App.dashJumpEquipoId)).toBe('e1');
   await expect(page.locator('button button')).toHaveCount(0);
+});
+
+test('operational tables remain readable with long equipment and location names', async ({ page }) => {
+  await render(page, false, {
+    locations: [{ id: 'l1', name: 'Ubicación operativa extendida A' }, { id: 'l2', name: 'Ubicación operativa extendida B' }],
+    equipos: equipos.map(e => ({ ...e, brand: 'Marca ficticia', model: 'Modelo operativo extendido de fixture' })),
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator('#dash-ubic-panel thead th')).toHaveText(['Ubicación', 'Equipos', 'Al día', 'Próximos', 'Vencidos']);
+  const issues = await page.locator('#dash-ubic-panel table, #dash-tiempo-sin-engrase-panel .dash-exc-row').evaluateAll(nodes => nodes.flatMap(node => {
+    const bounds = node.getBoundingClientRect();
+    return Array.from(node.querySelectorAll('td, th, .dash-exc-line2, .dash-exc-line3, .dash-exc-hist-btn')).filter(child => {
+      const header = child.closest('thead');
+      if (header && getComputedStyle(header).position === 'absolute') return false; // Screen-reader headers in compact mobile representation.
+      const r = child.getBoundingClientRect();
+      return r.left < bounds.left - 1 || r.right > bounds.right + 1 || child.scrollWidth > child.clientWidth + 1;
+    }).map(child => child.textContent.trim());
+  }));
+  expect(issues).toEqual([]);
+  if (page.viewportSize().width <= 600) {
+    const labels = await page.locator('.operational-responsive-table td[data-label]').evaluateAll(cells => cells.map(cell => ({
+      wrapping: getComputedStyle(cell, '::before').whiteSpace,
+      rightMargin: getComputedStyle(cell, '::before').marginRight,
+    })));
+    expect(labels.every(label => label.wrapping === 'nowrap' && label.rightMargin === '0px')).toBe(true);
+  }
+  expect(await page.locator('.dash-exc-line3').first().evaluate(n => parseFloat(getComputedStyle(n).fontSize))).toBeGreaterThanOrEqual(14);
+});
+
+test('Top 5 and Ver todos keep their order and independent Historial action', async ({ page }) => {
+  await render(page);
+  const visible = await page.locator('#dash-tiempo-sin-engrase-panel .dash-exc-row').evaluateAll(nodes => nodes.map(n => n.dataset.id));
+  expect(visible).toHaveLength(5);
+  await page.locator('#dash-tiempo-ver-todos').click();
+  const all = await page.locator('.modal .dash-exc-row').evaluateAll(nodes => nodes.map(n => n.dataset.id));
+  expect(all.slice(0, 5)).toEqual(visible);
+  expect(all.length).toBeGreaterThan(5);
+  await page.evaluate(() => { window.__details = []; window.__routes = []; window.openEquipmentDetail = id => window.__details.push(id); window.navigate = route => window.__routes.push(route); });
+  await page.locator('.modal .dash-exc-hist-btn').first().click();
+  expect(await page.evaluate(() => window.__details)).toEqual([]);
+  expect(await page.evaluate(() => window.__routes)).toEqual(['historial']);
 });

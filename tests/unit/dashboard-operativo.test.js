@@ -211,7 +211,8 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
   it('la fila trae código (línea 1, negrita), modelo·ubicación (línea 2), "Último engrase: fecha" (línea 3) y los días como campo aparte (jerarquía visual, no dentro del texto)', () => {
     expect(rowSrc).toContain('class="dash-exc-code dash-code-link mono"');
     expect(rowSrc).toContain('class="dash-exc-line2"');
-    expect(rowSrc).toContain('Último engrase: ${last ? fmtDate(last) : \'Sin registro\'}');
+    expect(rowSrc).toContain('aria-label="Último engrase"');
+    expect(rowSrc).toContain("${last ? fmtDate(last) : 'Sin registro'}");
     expect(rowSrc).toContain('class="dash-exc-days${isMax ? \' is-max\' : \'\'}"');
   });
 

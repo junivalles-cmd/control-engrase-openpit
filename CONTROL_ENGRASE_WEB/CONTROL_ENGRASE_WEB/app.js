@@ -5383,15 +5383,15 @@ async function renderDashboard() {
     ${estadoPorUbicacion.length > 1 ? `
     <div class="panel" id="dash-ubic-panel">
       <div class="panel-head"><h3>Estado por ubicación</h3></div>
-      <div class="dash-ubic-breakdown">
-        <table class="data-table dash-operational-table">
+      <div class="dash-ubic-breakdown operational-table-shell">
+        <table class="data-table dash-operational-table operational-responsive-table">
           <thead class="operational-table-header"><tr><th scope="col">Ubicación</th><th scope="col">Equipos</th><th scope="col">Al día</th><th scope="col">Próximos</th><th scope="col">Vencidos</th></tr></thead>
           <tbody>${estadoPorUbicacion.map(u => `<tr class="operational-table-row">
             <td>${esc(u.location.name)}</td>
-            <td>${u.total}</td>
-            <td style="color:var(${u.verde ? '--green' : '--text-dim'})">${u.verde}</td>
-            <td style="color:var(${u.amarillo ? '--amber' : '--text-dim'})">${u.amarillo}</td>
-            <td style="color:var(${u.rojo ? '--red' : '--text-dim'})">${u.rojo}</td>
+            <td class="operational-number" data-label="Equipos">${u.total}</td>
+            <td class="operational-number operational-value" data-label="Al día" style="color:var(${u.verde ? '--green' : '--text-dim'})">${u.verde}</td>
+            <td class="operational-number operational-value" data-label="Próximos" style="color:var(${u.amarillo ? '--amber' : '--text-dim'})">${u.amarillo}</td>
+            <td class="operational-number operational-value" data-label="Vencidos" style="color:var(${u.rojo ? '--red' : '--text-dim'})">${u.rojo}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -5911,12 +5911,12 @@ function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
     <div class="dash-exc-main">
       <div class="dash-exc-line1"><button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
       <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
-      <div class="dash-exc-line3 dim">Último engrase: ${last ? fmtDate(last) : 'Sin registro'}</div>
+      <div class="dash-exc-line3 dim" aria-label="Último engrase"><span class="dash-exc-date-label">Último: </span>${last ? fmtDate(last) : 'Sin registro'}</div>
     </div>
     <div class="dash-exc-side">
       <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">
         <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? '—' : dias}</span>
-        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : 'días sin engrasar'}</span>
+        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : 'días'}</span>
       </div>
       <button type="button" class="btn btn-sm dash-exc-hist-btn" data-id="${e.id}">Historial</button>
     </div>
