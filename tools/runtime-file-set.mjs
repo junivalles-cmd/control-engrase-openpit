@@ -28,6 +28,10 @@ export const SRC_DIR = path.join(ROOT_DIR, 'CONTROL_ENGRASE_WEB', 'CONTROL_ENGRA
 //   - .nojekyll                    → necesario para que GitHub Pages no oculte .well-known
 //   - .well-known/assetlinks.json  → verificación de Android App Links (la lee el propio Android sobre HTTPS, no el WebView local; se sincroniza igual por paridad y porque así se definió en el análisis de Fase 1)
 //   - OneSignalSDKWorker.js        → convención de OneSignal Web Push, cargado directamente por su SDK, no referenciado en el HTML
+//   - control-engrase-openpit/index.html → compatibilidad QR legacy (lote
+//     "COMPATIBILIDAD QR LEGACY ANTES DE MIGRACIÓN PAGES", 2026-10-10):
+//     redirige /control-engrase-openpit/#eq=X a /#eq=X para QR físicos
+//     impresos antes del renombre de repo a junivalles-cmd.github.io.
 export const FIXED_CORE_FILES = [
   'index.html',
   'manifest.json',
@@ -35,6 +39,7 @@ export const FIXED_CORE_FILES = [
   'OneSignalSDKWorker.js',
   '.nojekyll',
   '.well-known/assetlinks.json',
+  'control-engrase-openpit/index.html',
 ];
 
 // Defensa adicional (denylist): aunque el cálculo del set runtime es un

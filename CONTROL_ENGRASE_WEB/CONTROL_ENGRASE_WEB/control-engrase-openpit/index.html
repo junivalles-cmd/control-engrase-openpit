@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>Control de Engrase</title>
+</head>
+<body>
+<p>Redirigiendo a <a id="dest" href="/">Control de Engrase</a>…</p>
+<script>
+  // Compatibilidad QR legacy (lote "COMPATIBILIDAD QR LEGACY ANTES DE
+  // MIGRACIÓN PAGES", 2026-10-10): este archivo existe SOLO porque QR
+  // físicos impresos antes del renombre del repo (control-engrase-openpit ->
+  // junivalles-cmd.github.io) pueden tener grabada la URL
+  // https://junivalles-cmd.github.io/control-engrase-openpit/#eq=<id> — la
+  // nueva URL canónica (qrValueForEquipment(), app.js) es la raíz del
+  // dominio. Nunca duplica la app ni agrega una dependencia: solo reenvía.
+  //
+  // Seguridad: el destino SIEMPRE es la misma raíz del mismo origen —
+  // location.search/location.hash de ESTA página se preservan como texto
+  // inerte (nunca se interpretan como una URL/destino), así que no hay
+  // forma de convertir esto en un redirect a un sitio externo manipulando
+  // el query string o el hash.
+  var destino = '/' + location.search + location.hash;
+  document.getElementById('dest').href = destino;
+  location.replace(destino);
+</script>
+</body>
+</html>
