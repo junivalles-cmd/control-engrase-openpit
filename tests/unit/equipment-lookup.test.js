@@ -15,7 +15,7 @@ import { APP_JS_PATH, loadAppLogic, loadOperationalScopeLogic } from '../helpers
 
 const appSource = readSource(APP_JS_PATH);
 const fakeApp = { currentUser: null, generalSettings: {} };
-const { qrValueForEquipment, parseEquipmentIdFromScan, equipoMatchesQuery, PERMISSIONS } = loadAppLogic(fakeApp);
+const { qrValueForEquipment, parseEquipmentIdFromScan, resolveEquipmentFromScan, equipoMatchesQuery, PERMISSIONS } = loadAppLogic(fakeApp);
 const { canRegisterOutOfPlan, canLubricadorExecuteEquipment, resolveOperationalScope } = loadOperationalScopeLogic();
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -44,6 +44,82 @@ describe('QR — el payload SOLO identifica el equipo (§4: nunca ubicación/est
 
   it('G) parseEquipmentIdFromScan(): cadena vacía -> cadena vacía, nunca lanza', () => {
     expect(() => parseEquipmentIdFromScan('   ')).not.toThrow();
+  });
+});
+
+// Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", §7-9/§13 del
+// pedido) — resolveEquipmentFromScan() resuelve por equipmentId/code/
+// shortCode, SIEMPRE devolviendo el mismo objeto equipo real (nunca
+// inventa ni navega). A-E del pedido.
+describe('§13 A-E — resolveEquipmentFromScan() resuelve por equipmentId, code O alternateCode, siempre al MISMO equipo', () => {
+  const EQUIPOS = [
+    { id: 'eq_a02', code: 'A-02', shortCode: '45-69', active: true },
+    { id: 'eq_b10', code: 'B-10', shortCode: '', active: true },
+  ];
+
+  it('A) coincide por equipmentId exacto (caso real de siempre: URL/ENGRASE-EQ: ya codifican el id)', () => {
+    const r = resolveEquipmentFromScan('eq_a02', EQUIPOS);
+    expect(r.id).toBe('eq_a02');
+  });
+
+  it('B) coincide por code (ej. "A-02") cuando no hay match directo por id', () => {
+    const r = resolveEquipmentFromScan('A-02', EQUIPOS);
+    expect(r.id).toBe('eq_a02');
+  });
+
+  it('C) coincide por alternateCode/shortCode (ej. "45-69") cuando no hay match por id ni code', () => {
+    const r = resolveEquipmentFromScan('45-69', EQUIPOS);
+    expect(r.id).toBe('eq_a02');
+  });
+
+  it('D) URL antigua con #eq=<id> -> resuelve por id (parseEquipmentIdFromScan + resolveEquipmentFromScan encadenados, nunca navega a esa URL)', () => {
+    const extraido = parseEquipmentIdFromScan('https://junivalles-cmd.github.io/control-engrase/#eq=eq_a02');
+    const r = resolveEquipmentFromScan(extraido, EQUIPOS);
+    expect(r.id).toBe('eq_a02');
+  });
+
+  it('E) "A-02" (code) y "45-69" (shortCode) resuelven al MISMO equipmentId — misma Ficha, nunca dos identidades distintas', () => {
+    const porCode = resolveEquipmentFromScan('A-02', EQUIPOS);
+    const porShortCode = resolveEquipmentFromScan('45-69', EQUIPOS);
+    expect(porCode.id).toBe(porShortCode.id);
+  });
+
+  it('comparación insensible a mayúsculas/minúsculas (un QR/código tipeado a mano no debe fallar solo por eso)', () => {
+    expect(resolveEquipmentFromScan('a-02', EQUIPOS).id).toBe('eq_a02');
+  });
+
+  it('G) sin match en ninguno de los 3 campos -> null (el caller muestra "QR no reconocido", nunca inventa)', () => {
+    expect(resolveEquipmentFromScan('NO-EXISTE', EQUIPOS)).toBeNull();
+  });
+
+  it('cadena vacía/nula -> null, nunca lanza', () => {
+    expect(resolveEquipmentFromScan('', EQUIPOS)).toBeNull();
+    expect(() => resolveEquipmentFromScan(null, EQUIPOS)).not.toThrow();
+  });
+});
+
+describe('§13 G/H — "QR no reconocido" nunca abre el navegador, y la resolución nunca toca scope/cuadrilla/ubicación', () => {
+  const handleQrDeepLinkSrc = extractDeclaration(appSource, 'handleQrDeepLink');
+  const handleScannedQRSrc2 = extractDeclaration(appSource, 'handleScannedQR');
+
+  it('H) ninguno de los 2 handlers de QR muta scope/cuadrilla/ubicación (mismo criterio que el test H de arriba, ahora también en el deep link)', () => {
+    for (const src of [handleQrDeepLinkSrc, handleScannedQRSrc2]) {
+      expect(src).not.toMatch(/setSelectedCrewId|\.role\s*=(?!=)|\.locationId\s*=(?!=)|\.cuadrillaId\s*=(?!=)/);
+    }
+  });
+
+  it('G) "QR no reconocido" es el mensaje real en AMBOS handlers — nunca window.open/location.href', () => {
+    for (const src of [handleQrDeepLinkSrc, handleScannedQRSrc2]) {
+      expect(src).toContain('QR no reconocido');
+      expect(src).not.toMatch(/window\.open|location\.href\s*=|location\.assign/);
+    }
+  });
+
+  it('F/offline) ambos resuelven vía resolveEquipmentFromScan() + DB.allActive (IndexedDB local) — nunca fetch()', () => {
+    for (const src of [handleQrDeepLinkSrc, handleScannedQRSrc2]) {
+      expect(src).toContain('resolveEquipmentFromScan(');
+      expect(src).not.toMatch(/\bfetch\(/);
+    }
   });
 });
 

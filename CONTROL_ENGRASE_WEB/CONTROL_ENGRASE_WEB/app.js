@@ -332,6 +332,32 @@ function parseEquipmentIdFromScan(text) {
   return raw;
 }
 
+// Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", Parte B del
+// pedido, §7-9) — resuelve el equipo real a partir de LO QUE SEA que
+// parseEquipmentIdFromScan() extrajo: primero por equipmentId (caso real
+// de siempre, URL/ENGRASE-EQ: ya codifican el id), y si no hay match,
+// como mejor esfuerzo por código (`e.code`, ej. "A-02") o código
+// alternativo (`e.shortCode`, ej. "45-69") — nunca inventa un equipo,
+// nunca navega a ninguna URL; si no hay match en NINGUNO de los 3, null
+// (el caller muestra "QR no reconocido", nunca abre el navegador). Pura:
+// recibe la lista de equipos activos ya cargada (DB.allActive('equipment'),
+// mismo patrón de siempre), nunca vuelve a consultar IndexedDB por su
+// cuenta — funciona 100% offline si el equipo ya está en este dispositivo.
+// Resolver "finalmente por equipmentId" (§9): sin importar cuál de los 3
+// campos hizo match, el resultado es el MISMO objeto equipo real — A-02 y
+// su código alternativo 45-69, si son el mismo equipo, SIEMPRE abren la
+// misma Ficha.
+function resolveEquipmentFromScan(rawValue, equipos) {
+  const candidate = (rawValue || '').trim();
+  if (!candidate) return null;
+  const porId = (equipos || []).find(e => e.id === candidate);
+  if (porId) return porId;
+  const candidateLower = candidate.toLowerCase();
+  const porCodigo = (equipos || []).find(e => (e.code || '').toLowerCase() === candidateLower);
+  if (porCodigo) return porCodigo;
+  return (equipos || []).find(e => (e.shortCode || '').toLowerCase() === candidateLower) || null;
+}
+
 async function printAllQRCodes(equipos) {
   if (!equipos.length) { alert('No hay equipos para imprimir.'); return; }
   if (typeof qrcode === 'undefined') { alert('No se pudo cargar el generador de QR (revisa tu conexión la primera vez que uses esta función).'); return; }
@@ -457,22 +483,26 @@ function captureQrDeepLink() {
 }
 
 async function handleQrDeepLink() {
-  const id = App.pendingQrEquipmentId;
-  if (!id) return;
+  const candidate = App.pendingQrEquipmentId;
+  if (!candidate) return;
   App.pendingQrEquipmentId = null; // se consume una sola vez
-  const equipment = await DB.get('equipment', id);
-  if (!equipment || equipment.active === false) {
-    alert('El código QR escaneado no corresponde a ningún equipo activo. Si el equipo es nuevo, revisa que este dispositivo ya haya sincronizado.');
+  // Fix 2026-10-09 ("QR INTERNO", §7-10 del pedido): resuelve por
+  // equipmentId/code/shortCode (resolveEquipmentFromScan, arriba) — sigue
+  // 100% local (DB.allActive ya lee de IndexedDB, nunca red), así que
+  // funciona sin conexión si el equipo ya está en este dispositivo.
+  const equipment = resolveEquipmentFromScan(candidate, await DB.allActive('equipment'));
+  if (!equipment) {
+    alert('QR no reconocido. Este código no corresponde a ningún equipo activo del sistema. Si el equipo es nuevo, revisa que este dispositivo ya haya sincronizado.');
     return;
   }
   await showEquipmentQrInfo(equipment.id);
 }
 
 async function handleScannedQR(text) {
-  const id = parseEquipmentIdFromScan(text);
-  const equipment = await DB.get('equipment', id);
-  if (!equipment || equipment.active === false) {
-    alert('Este código QR no corresponde a ningún equipo activo del sistema.');
+  const candidate = parseEquipmentIdFromScan(text);
+  const equipment = resolveEquipmentFromScan(candidate, await DB.allActive('equipment'));
+  if (!equipment) {
+    alert('QR no reconocido. Este código no corresponde a ningún equipo activo del sistema.');
     return;
   }
   if (App.currentUser.role === 'LUBRICADOR' && App.route !== 'turno') { App.route = 'turno'; }
