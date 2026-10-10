@@ -90,15 +90,15 @@ describe('D. cambio instantáneo (sin reload)', () => {
   });
 });
 
-describe('E. Amarillo Maquinaria (#FFCD11) usa un --on-accent OSCURO y legible (AA real, nunca blanco)', () => {
+describe('E. Amarillo Maquinaria (#C58A00) usa un --on-accent OSCURO y legible (AA real, nunca blanco)', () => {
   const amarillo = THEMES.find((t) => t.id === 'amarillo-cat');
   it('--accent es el hex EXACTO pedido', () => {
-    expect(amarillo.color.toUpperCase()).toBe('#FFCD11');
+    expect(amarillo.color.toUpperCase()).toBe('#C58A00');
   });
   it('onColor NO es blanco', () => {
     expect(amarillo.onColor.toLowerCase()).not.toBe('#ffffff');
   });
-  it('el contraste de onColor contra #FFCD11 pasa AA (>=4.5:1) — blanco fallaría (~1.5:1)', () => {
+  it('el contraste de onColor contra #C58A00 pasa AA (>=4.5:1) — blanco fallaría (~3:1)', () => {
     const ratio = contrastRatio(amarillo.onColor, amarillo.color);
     expect(ratio).toBeGreaterThanOrEqual(4.5);
     const ratioWhiteWouldFail = contrastRatio('#FFFFFF', amarillo.color);
@@ -182,5 +182,24 @@ describe('Claro — valores base EXACTOS pedidos (§12)', () => {
 describe('Exactamente 4 modos (Parte C) — ninguno nuevo, ninguno eliminado', () => {
   it('MODES tiene exactamente 4 entradas: light/dark/contrast/sun', () => {
     expect(MODES.map((m) => m.id).sort()).toEqual(['contrast', 'dark', 'light', 'sun'].sort());
+  });
+});
+
+describe('Industrial yellow contrast and isolated theme variants', () => {
+  it('base black text and hover white text meet AA against their actual tokens', () => {
+    const yellow = THEMES.find(t => t.id === 'amarillo-cat');
+    expect(yellow.colorDark).toBe('#8A5F00'); expect(yellow.onColor).toBe('#111111');
+    expect(contrastRatio(yellow.onColor, yellow.color)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio('#FFFFFF', yellow.colorDark)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(yellow.colorDark, '#EEF2F5')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(yellow.color, '#23282D')).toBeGreaterThanOrEqual(4.5);
+  });
+  it('the other seven preset colors and hover variants remain unchanged', () => {
+    expect(THEMES.filter(t => t.id !== 'amarillo-cat').map(t => [t.id, t.color, t.colorDark, t.onColor])).toEqual([
+      ['azul-corp', '#1F4E79', '#163A5C', '#FFFFFF'], ['azul-acero', '#365E7D', '#29485F', '#FFFFFF'],
+      ['petroleo-ejec', '#0F5B5D', '#0A4142', '#FFFFFF'], ['grafito', '#475569', '#334155', '#FFFFFF'],
+      ['verde-bosque', '#365E4A', '#274638', '#FFFFFF'], ['cobre-ejec', '#8A4F2D', '#663A21', '#FFFFFF'],
+      ['violeta-ejec', '#5B4A7A', '#43365B', '#FFFFFF'],
+    ]);
   });
 });

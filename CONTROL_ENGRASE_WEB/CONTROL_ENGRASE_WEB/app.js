@@ -1879,8 +1879,8 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
        --accent-dark/--on-accent, ver [data-theme="..."] en styles.css).
        --accent/--accent-dark son los hex EXACTOS pedidos; --on-accent se
        recalculó con la fórmula de luminancia relativa de WCAG contra el
-       --accent real de cada uno — "Amarillo Maquinaria" (#FFCD11) es el
-       ÚNICO que necesita texto oscuro (13.99:1 con negro vs 1.50:1 con
+       --accent real de cada uno — "Amarillo Maquinaria" (#C58A00) es el
+       ÚNICO que necesita texto oscuro (6.30:1 con #111111 vs 3:1 con
        blanco), nunca se asumió blanco por default. "azul-corp" es el
        nuevo default.
      - MODES (4): familia de fondo/superficie/texto (--bg/--surface/
@@ -1894,7 +1894,7 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
    su valor exacto por familia de fondo (clara/oscura), igual que antes. */
 const THEMES = [
   { id: 'azul-corp', label: 'Azul Corporativo', sub: 'Recomendado', color: '#1F4E79', colorDark: '#163A5C', onColor: '#FFFFFF' },
-  { id: 'amarillo-cat', label: 'Amarillo Maquinaria', color: '#FFCD11', colorDark: '#B88A00', onColor: '#1a1400' },
+  { id: 'amarillo-cat', label: 'Amarillo Maquinaria', color: '#C58A00', colorDark: '#8A5F00', onColor: '#111111' },
   { id: 'azul-acero', label: 'Azul Acero', color: '#365E7D', colorDark: '#29485F', onColor: '#FFFFFF' },
   { id: 'petroleo-ejec', label: 'Petróleo', color: '#0F5B5D', colorDark: '#0A4142', onColor: '#FFFFFF' },
   { id: 'grafito', label: 'Grafito', color: '#475569', colorDark: '#334155', onColor: '#FFFFFF' },

@@ -25,6 +25,7 @@
      `var(...)`, se recalculan solos con cada preset — nunca hace falta
      redeclararlos en cada [data-theme]/[data-mode] de abajo. */
   --focus: var(--accent);
+  --accent-ink: var(--accent);
   --muted: var(--text-dim);
   --background: var(--bg);
   --surface-alt: var(--surface-2);
@@ -70,8 +71,8 @@
    acentos del rediseño 2026-10-08): 8 acentos corporativos fijos, nunca
    un selector RGB libre. Cada --on-accent se recalculó con la fórmula de
    luminancia relativa de WCAG contra su propio --accent — "Amarillo
-   Maquinaria" es la ÚNICA de las 8 que necesita texto oscuro (13.99:1 con
-   negro puro vs 1.50:1 con blanco — nunca se asume blanco por default);
+   Maquinaria" es la ÚNICA de las 8 que necesita texto oscuro (6.30:1 con
+   #111111 vs 3:1 con blanco — nunca se asume blanco por default);
    las otras 7 dan 6.4-8.7:1 con blanco, todas AA (varias AAA). Los 8
    --accent-dark son los valores EXACTOS pedidos (variante "Oscuro" de
    cada color), no recalculados. "azul-corp" es el nuevo default (ver
@@ -82,7 +83,7 @@
    preferencias ya guardadas en localStorage — ninguno de los 12 se
    ofrece ya en el selector. */
 [data-theme="azul-corp"]    { --accent: #1F4E79; --accent-dark: #163A5C; --on-accent: #FFFFFF; } /* Azul Corporativo (default) */
-[data-theme="amarillo-cat"] { --accent: #FFCD11; --accent-dark: #B88A00; --on-accent: #1a1400; } /* Amarillo Maquinaria / Caterpillar */
+[data-theme="amarillo-cat"] { --accent: #C58A00; --accent-dark: #8A5F00; --on-accent: #111111; --on-accent-hover: #FFFFFF; } /* Amarillo Maquinaria / Caterpillar */
 [data-theme="azul-acero"]   { --accent: #365E7D; --accent-dark: #29485F; --on-accent: #FFFFFF; } /* Azul Acero */
 [data-theme="petroleo-ejec"] { --accent: #0F5B5D; --accent-dark: #0A4142; --on-accent: #FFFFFF; } /* Petróleo */
 [data-theme="grafito"]      { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; } /* Grafito */
@@ -224,6 +225,9 @@
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 
+/* Yellow text/focus need the darker variant on light surfaces; semantics stay separate. */
+[data-theme="amarillo-cat"]:is([data-mode="light"], [data-mode="sun"]) { --accent-ink: var(--accent-dark); --focus: var(--accent-dark); }
+[data-theme="amarillo-cat"][data-mode="contrast"] { --accent-ink: #000000; }
 /* Coverage controls wrap instead of cutting operational location names. */
 .crew-location-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .crew-location-filters .btn { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
@@ -396,7 +400,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; align-items: center; justify-content: center; font-size: 20px;
 }
 .login-user-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.login-role { font-size: 10px; letter-spacing: 0.1em; color: var(--accent); font-weight: 700; order: 2; }
+.login-role { font-size: 10px; letter-spacing: 0.1em; color: var(--accent-ink); font-weight: 700; order: 2; }
 .login-name { font-weight: 600; font-size: 15px; order: 1; }
 .login-chevron { color: var(--text-dim); font-size: 20px; flex: none; }
 .pin-area { display: flex; gap: 8px; margin-top: 16px; }
@@ -490,7 +494,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   font-size: 15px; font-weight: 500;
 }
 .menu-item:hover { background: var(--surface-2); color: var(--text); }
-.menu-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.menu-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-ink); }
 .menu-item.logout { margin-top: 8px; border-top: 1px solid var(--border); border-radius: 0; padding-top: 10px; }
 .menu-icon {
   width: 18px; height: 18px; flex: none; background: currentColor; opacity: 0.85;
@@ -568,7 +572,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
     flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
     background: none; border: none; color: var(--text-dim); font-size: 10px; padding: 6px 2px;
   }
-  .bottom-item.active { color: var(--accent); }
+  .bottom-item.active { color: var(--accent-ink); }
   .topbar-user { display: none; }
   .app-content { padding: 14px 12px 96px; }
   /* Topbar compacto: en escritorio hay espacio de sobra para el padding y
@@ -798,7 +802,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
    fila con más días (is-max) recibe un acento ámbar discreto (borde + fondo
    muy sutil en el bloque de días), nunca una tarjeta separada. */
 .link-btn {
-  background: none; border: none; padding: 4px; color: var(--accent); font-size: 12.5px; font-weight: 700;
+  background: none; border: none; padding: 4px; color: var(--accent-ink); font-size: 12.5px; font-weight: 700;
   cursor: pointer; text-decoration: underline; min-height: var(--tap, 44px);
 }
 /* "Ver todos" del header: mismo .link-btn de siempre, pero con más peso
@@ -819,7 +823,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   background: none; border: none; padding: 0; margin: 0; cursor: pointer; text-align: left;
   font: inherit; color: inherit;
 }
-.dash-code-link:hover, .dash-code-link:focus-visible { color: var(--accent); text-decoration: underline; }
+.dash-code-link:hover, .dash-code-link:focus-visible { color: var(--accent-ink); text-decoration: underline; }
 .dash-code-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 
 .dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
@@ -966,7 +970,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .config-tab:hover { color: var(--text); background: var(--surface-2); }
 /* Estado activo: 3 señales a la vez (fondo + borde + color/peso de texto),
    nunca solo color — ver §5 del lote (no depender únicamente del color). */
-.config-tab.active { color: var(--accent); font-weight: 700; background: var(--surface-2); border-left-color: var(--accent); }
+.config-tab.active { color: var(--accent-ink); font-weight: 700; background: var(--surface-2); border-left-color: var(--accent); }
 .config-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 .config-mobile-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -980,7 +984,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .config-mobile-chevron { color: var(--text-dim); font-size: 18px; }
 .config-mobile-back {
   display: inline-flex; align-items: center; gap: 6px; background: none; border: none;
-  color: var(--accent); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  color: var(--accent-ink); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
   padding: 10px 2px; margin-bottom: 10px; min-height: var(--tap);
 }
 
@@ -1167,7 +1171,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .btn:hover { border-color: var(--accent); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
 .btn-accent { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btn-accent:hover { background: var(--accent-dark); }
+.btn-accent:hover { background: var(--accent-dark); color: var(--on-accent-hover, var(--on-accent)); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
 @media (max-width: 640px) {
@@ -1408,7 +1412,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   padding: 6px 14px; font-size: 13px; font-family: var(--font-mono); color: var(--text);
   cursor: pointer; font-weight: 600;
 }
-.recents-chip:hover, .recents-chip:active { border-color: var(--accent); color: var(--accent); }
+.recents-chip:hover, .recents-chip:active { border-color: var(--accent); color: var(--accent-ink); }
 .recents-chip { min-height: var(--tap, 44px); }
 
 /* ---------------- Registrar Engrase — pantalla inicial (antes de elegir
@@ -1789,7 +1793,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
 .lub-welcome-name { font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: 0.01em; }
 .lub-welcome-role {
   display: inline-block; margin: 2px 0 6px; font-size: 10.5px; font-weight: 700;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-ink);
 }
 .lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 0; }
 .lub-context-chip {
@@ -1868,7 +1872,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   padding: 13px var(--sp-4); margin-bottom: 10px; cursor: pointer; text-align: left;
   min-height: var(--tap, 44px);
 }
-.lub-hero-action:active { background: var(--accent-dark); }
+.lub-hero-action:active { background: var(--accent-dark); color: var(--on-accent-hover, var(--on-accent)); }
 .lub-hero-action-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .lub-hero-action-title {
   display: flex; align-items: center; gap: 8px; font-family: var(--font-display);
@@ -1970,7 +1974,7 @@ details.dash-tier-3[open] > .dash-tier-summary::before { transform: rotate(90deg
   background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 6px 2px; cursor: pointer;
   min-height: var(--tap);
 }
-.lub-nav-item.active { color: var(--accent); }
+.lub-nav-item.active { color: var(--accent-ink); }
 /* UI-VIS-302: la barra se mantiene completa (fondo full-width, position:fixed
    sin cambios) pero desde 1024px los 4 ítems dejan de estirarse (flex:1) a lo
    ancho de todo el monitor — se limitan a un ancho cómodo y se centran. */
@@ -2673,7 +2677,7 @@ table.matriz thead tr:only-child th.is-today {
   background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); border-top: 2px solid var(--accent);
 }
 .matriz-hoy-tag {
-  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent);
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent-ink);
   margin-top: 1px;
 }
 table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent), inset -2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
@@ -2875,7 +2879,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   padding: 4px 11px; font-size: 12px; cursor: pointer;
 }
 .notif-rol input { width: 15px; height: 15px; flex: none; }
-.notif-rol:has(input:checked) { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.notif-rol:has(input:checked) { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .notif-extra {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
   flex-wrap: wrap; /* si no cabe en una línea, baja en vez de aplastar los campos */
@@ -2926,7 +2930,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 /* ---- 1. Foco visible al navegar con teclado ----
    Antes no existía: quien navega con Tab no veía dónde estaba parado. */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -3210,7 +3214,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   margin-bottom: -1px;
 }
 .hist-tab:hover { color: var(--text); }
-.hist-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.hist-tab.active { color: var(--accent-ink); border-bottom-color: var(--accent); }
 @media (max-width: 480px) { .hist-tab { flex: 1; text-align: center; padding: 12px 8px; font-size: 12px; } }
 /* CAUSA RAÍZ del reporte "el buscador no funciona": .panel trae
    overflow:hidden (y una regla posterior solo pisa overflow-x, dejando
@@ -3267,7 +3271,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   color: var(--text-dim); font-size: 12px; cursor: pointer; padding: 6px 4px; text-decoration: underline;
   align-self: flex-end; margin-bottom: 2px;
 }
-.hist-eq-clear-dates:hover { color: var(--accent); }
+.hist-eq-clear-dates:hover { color: var(--accent-ink); }
 #hist-area .hist-table th, #hist-area .hist-table td { padding: 11px 14px; }
 .hist-cond-badge { font-size: 13px; }
 /* Cumplimiento del plan (B): insignia discreta, nunca un bloque de color grande
@@ -3312,7 +3316,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .grease-validate-choice-actions { display: flex; gap: 8px; margin-top: 8px; }
 .grease-validate-choice-actions .btn { flex: 1; min-height: var(--tap, 44px); }
 .hist-cond-link {
-  display: block; background: none; border: none; color: var(--accent); font-size: 11px;
+  display: block; background: none; border: none; color: var(--accent-ink); font-size: 11px;
   font-weight: 600; cursor: pointer; padding: 2px 0 0; text-decoration: underline;
 }
 /* Eliminar como acción secundaria discreta (antes .btn-danger dominaba cada fila) —
@@ -3372,3 +3376,8 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 [data-mode="contrast"] input:focus, [data-mode="contrast"] select:focus,
 [data-mode="contrast"] textarea:focus, [data-mode="contrast"] button:focus-visible,
 [data-mode="contrast"] a:focus-visible { outline-width: 3px !important; outline-offset: 2px !important; }
+
+[data-theme="amarillo-cat"] .menu-item.active { box-shadow: inset 3px 0 0 var(--accent); }
+[data-theme="amarillo-cat"][data-mode="contrast"] .btn-accent:hover,
+[data-theme="amarillo-cat"][data-mode="contrast"] .lub-hero-action:active,
+[data-theme="amarillo-cat"][data-mode="contrast"] .crew-location-filters [aria-pressed="true"] { background: #000000; color: #FFFFFF; border-color: #000000; }
