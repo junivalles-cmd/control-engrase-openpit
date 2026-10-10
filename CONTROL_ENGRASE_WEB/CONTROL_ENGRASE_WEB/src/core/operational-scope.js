@@ -87,7 +87,12 @@ function canRegisterOutOfPlan(role) { return ROLES_CAN_REGISTER_OUT_OF_PLAN.incl
        assignment artificial primero. */
 const EXECUTION_TYPE = { PLANNED: 'PLANNED', ASSIGNED: 'ASSIGNED', OUT_OF_PLAN: 'OUT_OF_PLAN' };
 const EXECUTION_COMPLETENESS = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL' };
-const OUT_OF_PLAN_REASONS = ['PM', 'CORRECTIVO', 'OPORTUNIDAD', 'OTRO'];
+// Fix 2026-10-09 ("CROSS-LOCATION", §18 del pedido): "SUPPORT_OTHER_LOCATION"
+// agregado a la lista de motivos — valor de aplicación, nunca requiere
+// migración de schema (engrase_sync.payload es jsonb genérico, ver
+// schema.sql; confirmado antes de agregar esto). Mismo arreglo plano,
+// ninguna infraestructura nueva.
+const OUT_OF_PLAN_REASONS = ['PM', 'CORRECTIVO', 'OPORTUNIDAD', 'SUPPORT_OTHER_LOCATION', 'OTRO'];
 
 // Se calcula desde los puntos del checklist — nunca un checkbox manual
 // "engrase completo" (§8 del pedido). Sin puntos configurados: no hay nada

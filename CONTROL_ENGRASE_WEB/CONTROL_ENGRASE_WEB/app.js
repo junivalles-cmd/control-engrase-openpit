@@ -509,12 +509,20 @@ async function showEquipmentQrInfo(equipmentId) {
   // dentro de mi scope -> ofrece "Registrar fuera de plan" en vez del botón
   // normal, D) fuera de mi scope -> bloqueado (ya cubierto arriba/abajo).
   let ofreceFueraDePlan = false;
+  // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
+  // pedido): antes bloqueaba en silencio (solo outOfScopeMsg, sin botón)
+  // — ahora ofrece el mismo camino "fuera de plan con advertencia" que el
+  // picker de Mi Turno, reusando handleOutOfPlanEquipoSelected() (abajo)
+  // como ÚNICA fuente de verdad — nunca un segundo flujo que se salte la
+  // advertencia.
+  let ofreceCrossLocation = false;
   if (canRegisterRole && App.currentUser.role === 'LUBRICADOR') {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
     canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
     if (!canRegister) {
-      outOfScopeMsg = '<div class="qr-info-alert">Este equipo no pertenece a tu cuadrilla ni tiene una asignación activa para ti — no puedes registrar su engrase desde aquí.</div>';
+      outOfScopeMsg = '<div class="qr-info-alert">Este equipo pertenece a otra ubicación — puedes registrarlo como trabajo fuera de plan.</div>';
+      ofreceCrossLocation = true;
     } else {
       const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
       const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
@@ -545,6 +553,7 @@ async function showEquipmentQrInfo(equipmentId) {
       <div class="modal-actions" style="flex-wrap:wrap">
         ${canRegister && !ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
         ${ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-out-of-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
+        ${ofreceCrossLocation ? `<button class="btn btn-accent" id="qr-info-cross-location">${ic("plus")}Registrar fuera de plan</button>` : ''}
         <button class="btn" id="qr-info-detail">Ver ficha completa</button>
       </div>
     </div>
@@ -564,6 +573,13 @@ async function showEquipmentQrInfo(equipmentId) {
   $('#qr-info-out-of-plan')?.addEventListener('click', async () => {
     closeModal();
     await startLubricadorGreaseFlow(equipment.id, { outOfPlan: true });
+  });
+  // Nunca salta directo al formulario: handleOutOfPlanEquipoSelected()
+  // re-evalúa y muestra la advertencia real de cross-location (§17) —
+  // misma función, mismo criterio, que el picker de Mi Turno.
+  $('#qr-info-cross-location')?.addEventListener('click', async () => {
+    closeModal();
+    await handleOutOfPlanEquipoSelected(equipment.id);
   });
   $('#qr-info-detail')?.addEventListener('click', () => {
     closeModal();
@@ -4433,7 +4449,36 @@ async function handleOutOfPlanEquipoSelected(equipmentId) {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
     if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
-      alert('Este equipo no está asignado a su cuadrilla.');
+      // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
+      // pedido): canLubricadorExecuteEquipment() ya devuelve true si existe
+      // una assignment activa hacia esta cuadrilla (§16 "SI: usar ASSIGNED
+      // existente") — llegar aquí con `false` significa que NO la hay, el
+      // único caso real que falta es "NO: permitir OUT_OF_PLAN" con
+      // advertencia, nunca bloquear en silencio como antes. equipment.
+      // locationId/crew.locationId/crew principal NUNCA se tocan (§20) —
+      // esto solo decide si se puede CONTINUAR, nada más.
+      const locationsCross = await DB.allActive('locations');
+      const equipoLocName = (locationsCross.find(l => l.id === equipo.locationId) || {}).name || 'otra ubicación';
+      const crewLocName = (locationsCross.find(l => l.id === scope.crewLocationId) || {}).name || 'tu ubicación actual';
+      openModal('Equipo fuera de tu ubicación', `
+        <p>Este equipo pertenece a <b>${esc(equipoLocName)}</b> y tu cuadrilla activa está en <b>${esc(crewLocName)}</b>.</p>
+        <p class="dim">Puedes registrar el engrase como trabajo fuera de plan.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="oop-cross-cancel">Cancelar</button>
+          <button type="button" class="btn btn-accent" id="oop-cross-continue">Continuar fuera de plan</button>
+        </div>
+      `);
+      $('#oop-cross-cancel').addEventListener('click', closeModal);
+      $('#oop-cross-continue').addEventListener('click', () => {
+        closeModal();
+        // Nunca pasa por findExistingWorkForEquipment() de abajo: ese
+        // detector asume trabajo de ESTA cuadrilla (plan/assignment
+        // propios) — un equipo ajeno sin assignment nunca es "normal" para
+        // mí, así que va DIRECTO a fuera de plan (§19: el motivo real
+        // "Apoyo a otra ubicación" lo elige la persona en el selector ya
+        // existente del formulario, mismo mecanismo, sin migración).
+        startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
+      });
       return;
     }
   }
@@ -7953,7 +7998,7 @@ async function startGreaseFlow(equipmentId, target, options) {
     : (plan.assignedDays || []).length ? `${plan.assignedDays.map(d => WEEKDAY_ABBR_DASH[d] || d).join(' · ')} · ${shiftLabel(plan.shiftId || turnoActualReg)}` : '—';
   const ultimoEngraseLabelReg = ultimoEngraseReg ? `${fmtDate(ultimoEngraseReg.date)} · ${fmt(ultimoEngraseReg.hourmeter)} h` : 'Nunca registrado';
 
-  const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const OUT_OF_PLAN_REASON_LABELS = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', SUPPORT_OTHER_LOCATION: 'Apoyo a otra ubicación', OTRO: 'Otro' };
   const html = `
     <div class="grease-flow-panel">
       <div class="grease-flow-card grease-flow-equipo-card">
@@ -9499,7 +9544,7 @@ async function drawHistory(equipmentId) {
   // PLANIFICADO/ASIGNADO/FUERA DE PLAN — para FUERA DE PLAN se agrega motivo
   // + completo/parcial en el título (tooltip), sin ensuciar la tabla con más
   // columnas de las necesarias.
-  const OOP_REASON_LABELS_HIST = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const OOP_REASON_LABELS_HIST = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', SUPPORT_OTHER_LOCATION: 'Apoyo a otra ubicación', OTRO: 'Otro' };
   const tipoRecordHTML = (r) => {
     const { value: tipo } = resolveRecordExecutionType(r);
     if (tipo === 'OUT_OF_PLAN') {
@@ -11267,7 +11312,7 @@ async function openGreaseRecordDetailModal(record, equipo) {
   const completeness = resolveRecordCompleteness(record);
   // Mismas etiquetas EXACTAS que tipoRecordHTML()/completeness de
   // renderHistorial() (escritorio) — nunca un texto nuevo para lo mismo.
-  const OOP_REASON_LABELS_DET = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', OTRO: 'Otro' };
+  const OOP_REASON_LABELS_DET = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', SUPPORT_OTHER_LOCATION: 'Apoyo a otra ubicación', OTRO: 'Otro' };
   const tipoLabel = tipo === 'OUT_OF_PLAN'
     ? `Fuera de plan${resolveRecordOutOfPlanReason(record) ? ' — ' + (OOP_REASON_LABELS_DET[resolveRecordOutOfPlanReason(record)] || resolveRecordOutOfPlanReason(record)) : ''}`
     : tipo === 'ASSIGNED' ? 'Asignado' : 'Planificado';

@@ -115,10 +115,14 @@ async function bootPage(page, { role } = {}) {
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18 },
         route: 'equipos',
       };
-      window.__calls = { startGreaseFlow: [], startLubricadorGreaseFlow: [], openEquipmentDetail: [] };
+      window.__calls = { startGreaseFlow: [], startLubricadorGreaseFlow: [], openEquipmentDetail: [], handleOutOfPlanEquipoSelected: [] };
       window.startGreaseFlow = (...args) => { window.__calls.startGreaseFlow.push(args); };
       window.startLubricadorGreaseFlow = (...args) => { window.__calls.startLubricadorGreaseFlow.push(args); };
       window.openEquipmentDetail = (...args) => { window.__calls.openEquipmentDetail.push(args); };
+      // Fix 2026-10-09 ("CROSS-LOCATION", §17 del pedido): espía — su
+      // propio comportamiento real (advertencia de cross-location) se
+      // prueba aparte, en tests/ui/lubricador-mi-turno-real-execution.spec.js.
+      window.handleOutOfPlanEquipoSelected = (...args) => { window.__calls.handleOutOfPlanEquipoSelected.push(args); };
       window.showInAppToast = () => {};
 
       // Comodidad de sesión (corrección arquitectónica 2026-10-02): sin
@@ -184,16 +188,29 @@ test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)'
     expect(calls).toHaveLength(1);
   });
 
-  test('E — Lubricador FUERA de su cuadrilla/ubicación y sin assignment: bloqueado, sin botón de registrar', async ({ page }) => {
+  // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
+  // pedido): antes bloqueaba en silencio — ahora ofrece "Registrar fuera
+  // de plan" (nunca "Registrar engrase ahora" directo, eso saltaría la
+  // advertencia de cross-location), que reusa handleOutOfPlanEquipoSelected()
+  // como ÚNICA fuente de verdad para la advertencia real.
+  test('E — Lubricador FUERA de su cuadrilla/ubicación y sin assignment: nunca "Registrar engrase ahora" directo, ofrece "Registrar fuera de plan" con advertencia', async ({ page }) => {
     await bootPage(page, { role: 'LUBRICADOR' });
     // eq_out_of_scope: otra ubicación (loc_taller) y SIN ninguna assignment
-    // hacia crew_volcan -> canLubricadorExecuteEquipment() debe bloquear.
+    // hacia crew_volcan -> canLubricadorExecuteEquipment() sigue siendo
+    // false, pero ya NO bloquea sin salida.
     await abrirQr(page, 'eq_out_of_scope');
     await expect(page.locator('#qr-info-register')).toHaveCount(0);
     await expect(page.locator('#qr-info-out-of-plan')).toHaveCount(0);
-    await expect(page.locator('.qr-info-alert', { hasText: 'no pertenece a tu cuadrilla' })).toBeVisible();
-    const calls = await page.evaluate(() => window.__calls.startLubricadorGreaseFlow);
-    expect(calls).toHaveLength(0);
+    await expect(page.locator('.qr-info-alert', { hasText: 'pertenece a otra ubicación' })).toBeVisible();
+    const botonCross = page.locator('#qr-info-cross-location');
+    await expect(botonCross).toBeVisible();
+    await expect(botonCross).toContainText('Registrar fuera de plan');
+    await botonCross.click();
+    // Nunca llama directo a startLubricadorGreaseFlow — pasa SIEMPRE por
+    // handleOutOfPlanEquipoSelected() (la advertencia real).
+    expect(await page.evaluate(() => window.__calls.startLubricadorGreaseFlow)).toHaveLength(0);
+    const calls = await page.evaluate(() => window.__calls.handleOutOfPlanEquipoSelected);
+    expect(calls).toEqual([['eq_out_of_scope']]);
   });
 });
 
