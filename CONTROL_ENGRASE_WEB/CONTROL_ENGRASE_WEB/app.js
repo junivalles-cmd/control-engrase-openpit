@@ -6119,7 +6119,6 @@ async function openEquipmentDetail(id) {
   const locationsDet = await DB.allActive('locations');
   const ubicacionActualDet = e.locationId ? (locationsDet.find(l => l.id === e.locationId) || null) : null;
   const planDet = s.plan || null;
-  const pointsDet = planDet ? (await DB.allActive('lubrication_points')).filter(p => p.planId === planDet.id) : [];
   const ultimoRecordDet = ultimos[0] || null;
   const cuadrillasDet = await DB.allActive('cuadrillas');
   const crewUltimoId = ultimoRecordDet ? resolveRecordCrewId(ultimoRecordDet).value : null;
@@ -6171,6 +6170,64 @@ async function openEquipmentDetail(id) {
   const fechaCortaFor = fmtDateOnly;
   const turnoLabelFor = (shiftId) => shiftId === 'shift_dia' ? 'Día' : 'Noche';
 
+  // "Semana actual" de la Ficha (§A3-A7 del pedido "REDISEÑO DE
+  // PROGRAMACIÓN EN FICHA", 2026-10-10): SOLO para planes "Día y turno de
+  // la semana" — reusa estadoCelda() (weekly-matrix.js), la MISMA función
+  // pura que ya usa renderMatrizSemanal() para cada celda, con el MISMO
+  // rango lunes-domingo (sin offset: semana operativa actual, §A6 — nunca
+  // histórico). Cero cálculo de estado nuevo aquí — si Matrix cambia de
+  // criterio, la Ficha cambia automáticamente con ella, nunca puede
+  // divergir (una sola fuente funcional, §A5).
+  const hoyFicha = new Date(); hoyFicha.setHours(0, 0, 0, 0);
+  const lunesFicha = new Date(hoyFicha);
+  lunesFicha.setDate(lunesFicha.getDate() - ((lunesFicha.getDay() + 6) % 7));
+  const diasSemanaFicha = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(lunesFicha); d.setDate(lunesFicha.getDate() + i); diasSemanaFicha.push(d); }
+  // Mismos colores EXACTOS que ya usa la Matriz para cada `tipo` de
+  // estadoCelda() (.celda-hecho/.celda-hecho-atrasado/.celda-hecho-
+  // adelantado/.celda-no-realizado/.celda-pendiente, styles.css) — nunca
+  // una paleta nueva. vacio/futuro/pausado comparten un mismo tono neutro
+  // (nada que hacer todavía / no corresponde), la diferencia queda en el
+  // tooltip, no en el color.
+  const DIA_FICHA_COLOR = {
+    hecho: 'var(--green)', hecho_atrasado: '#8A5A00', hecho_adelantado: '#5B7FBF',
+    no_realizado: 'var(--red)', pendiente: 'var(--amber)',
+    pausado: 'var(--gray-status)', futuro: 'var(--gray-status)', vacio: 'var(--gray-status)',
+  };
+  const DIA_FICHA_RELLENO = new Set(['hecho', 'hecho_atrasado', 'hecho_adelantado', 'no_realizado', 'pendiente']);
+  const tituloDiaFicha = (estado, dia) => {
+    const nombreDia = WEEKDAY_NAMES[dia.getDay()];
+    const fechaCorta = `${String(dia.getDate()).padStart(2, '0')}/${String(dia.getMonth() + 1).padStart(2, '0')}`;
+    const turnoSufijo = planDet && planDet.shiftId ? ' · ' + turnoLabelFor(planDet.shiftId) : '';
+    if (estado.tipo === 'hecho') return `${nombreDia} ${fechaCorta} — Realizado por ${estado.por}`;
+    if (estado.tipo === 'hecho_atrasado') return `${nombreDia} ${fechaCorta} — Realizado atrasado (otro turno) por ${estado.por}`;
+    if (estado.tipo === 'hecho_adelantado') return `${nombreDia} ${fechaCorta} — Realizado adelantado por ${estado.por}`;
+    if (estado.tipo === 'no_realizado') return `${nombreDia} ${fechaCorta} — No realizado`;
+    if (estado.tipo === 'pendiente') return `${nombreDia} ${fechaCorta} — Programado hoy${turnoSufijo}, aún pendiente`;
+    if (estado.tipo === 'pausado') return `${nombreDia} ${fechaCorta} — Equipo ${estado.status}`;
+    if (estado.tipo === 'futuro') return `${nombreDia} ${fechaCorta} — Programado${turnoSufijo}`;
+    return `${nombreDia} ${fechaCorta} — No programado`;
+  };
+  const semanaFichaHTML = (planDet && planDet.controlType === 'Día y turno de la semana' && (planDet.assignedDays || []).length) ? `
+    <div class="ficha-semana">
+      <div class="ficha-semana-titulo">Semana actual</div>
+      <div class="ficha-week-grid">
+        ${diasSemanaFicha.map(d => {
+          const estado = estadoCelda(e, d, [planDet], todosRecordsDet, hoyFicha);
+          const color = DIA_FICHA_COLOR[estado.tipo] || 'var(--gray-status)';
+          const relleno = DIA_FICHA_RELLENO.has(estado.tipo);
+          const titulo = tituloDiaFicha(estado, d);
+          return `<div class="ficha-dia${relleno ? ' ficha-dia-relleno' : ''}" style="--c:${color}" title="${esc(titulo)}" aria-label="${esc(titulo)}">${esc((WEEKDAY_ABBR_DASH[WEEKDAY_NAMES[d.getDay()]] || '').toUpperCase())}</div>`;
+        }).join('')}
+      </div>
+      <div class="ficha-week-legend">
+        <span><span class="dot" style="background:var(--green)"></span>Realizado</span>
+        <span><span class="dot" style="background:#5B7FBF"></span>Adelantado</span>
+        <span><span class="dot" style="background:var(--amber)"></span>Pendiente</span>
+        <span><span class="dot" style="background:var(--red)"></span>No realizado</span>
+      </div>
+    </div>` : '';
+
   openModal(esc(e.code), `
     <div class="ficha-header">
       <div>
@@ -6184,20 +6241,18 @@ async function openEquipmentDetail(id) {
     <div class="detail-grid">
       <div><b>Ubicación actual</b><div>${ubicacionActualDet ? esc(ubicacionActualDet.name) : 'Sin ubicación'}</div></div>
       <div><b>Horómetro</b><div class="mono">${fmt(e.hourmeter)} h</div></div>
-      <div><b>Turno programado</b><div>${planDet && planDet.controlType === 'Día y turno de la semana' ? turnoLabelFor(planDet.shiftId) : '—'}</div></div>
       <div><b>Estado de engrase</b><div><span class="dot" style="background:${STATUS_COLOR[s.code] || 'var(--text-dim)'}"></span> ${esc(s.label)}</div></div>
     </div>
 
     <div class="ficha-bloque">
-      <h4>${ic("list")}Plan</h4>
+      <h4>${ic("list")}Programación</h4>
       <div class="detail-grid">
         <div><b>Tipo</b><div>${planDet ? esc(TIPO_PLAN_LABELS_DET[planDet.controlType] || planDet.controlType) : 'Sin plan'}</div></div>
-        ${planDet && planDet.controlType === 'Día y turno de la semana' ? `<div><b>Turno</b><div>${turnoLabelFor(planDet.shiftId)}</div></div>` : ''}
+        ${planDet && planDet.shiftId ? `<div><b>Turno programado</b><div>${turnoLabelFor(planDet.shiftId)}</div></div>` : ''}
         ${planDet && planDet.controlType === 'Horas de operación' ? `<div><b>Frecuencia</b><div class="mono">Cada ${fmt(planDet.frequency || 0)} h</div></div>` : ''}
-        <div><b>Puntos</b><div>${pointsDet.length || '—'}</div></div>
         ${planDet && planDet.greaseType ? `<div><b>Lubricante</b><div>${esc((lubricantes.find(l => l.id === planDet.greaseType) || {}).name || '—')}</div></div>` : ''}
       </div>
-      ${pointsDet.length ? `<div class="dim" style="margin-top:8px;font-size:12px">${pointsDet.slice(0, 6).map(p => esc(p.point)).join(', ')}${pointsDet.length > 6 ? ` y ${pointsDet.length - 6} más…` : ''}</div>` : ''}
+      ${semanaFichaHTML}
       ${assignmentActivoDet ? `<div class="qr-info-alert" style="background:var(--surface-2); color:var(--text)">📌 Asignación activa a <b>${crewAsignadaDet ? esc(crewAsignadaDet.name) : 'otra cuadrilla'}</b> para el engrase pendiente de hoy.</div>` : ''}
       ${carryoverHoyDet ? `<div class="qr-info-alert">⚠ El turno ${turnoLabelFor(carryoverHoyDet.shiftId)} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carryoverHoyDet.reason] || carryoverHoyDet.reason)}.</div>`
         : (ultimoSkipDet ? `<div class="dim">Último no ejecutado: ${fmtDate(ultimoSkipDet.date)} · ${esc(NO_EXECUTION_REASON_LABELS[ultimoSkipDet.reason] || ultimoSkipDet.reason)}</div>` : '')}

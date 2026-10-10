@@ -2995,6 +2995,34 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .ficha-code { font-family: var(--font-display); font-size: 21px; font-weight: 800; letter-spacing: 0.01em; line-height: 1.15; }
 .ficha-brand { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
 
+/* "Semana actual" (Ficha → Programación, 2026-10-10): 7 indicadores de solo
+   lectura, nunca botones (ver .ficha-dia abajo — sin cursor:pointer/role).
+   Mismos colores EXACTOS que la Matriz Semanal (.celda-hecho/.celda-no-
+   realizado/etc, --c vía inline style, mismo patrón que .status-chip/.dot
+   del resto de la Ficha) — una sola fuente de verdad, nunca una paleta
+   nueva. Grid de 7 columnas fijas: a 360px con el padding del modal/bloque
+   ya restado siguen cabiendo sin scroll horizontal ni carrusel (§A11). */
+.ficha-semana { margin-top: 12px; }
+.ficha-semana-titulo {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); margin-bottom: 6px;
+}
+.ficha-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.ficha-dia {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 30px; border-radius: 6px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.01em; color: var(--text-dim); background: var(--surface);
+  border: 1px solid var(--border);
+}
+.ficha-dia-relleno { background: var(--c); color: #fff; border-color: transparent; }
+.ficha-week-legend {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;
+  font-size: 11px; color: var(--text-dim);
+}
+@media (max-width: 400px) {
+  .ficha-dia { font-size: 9px; min-height: 26px; }
+}
+
 /* Filas de "Últimos engrases" rediseñadas: apiladas (fecha/hora, lubricador,
    horómetro+cantidad, badges) en vez de una sola línea de texto corrido —
    mismos datos de siempre, solo mejor jerarquía (§7 del pedido). */
