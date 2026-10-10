@@ -25,7 +25,7 @@ const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal',
   'validationBadgeHTML', 'openValidationDetailModal', 'openValidationConflictModal', 'resolveEvidenceSrc', 'evidenceValueAttr',
-  'renderLubricadorHistorial', 'irAMisEngrasesTrasRegistrar',
+  'photosOf', 'photoIndicatorHTML', 'renderLubricadorHistorial', 'irAMisEngrasesTrasRegistrar',
 ];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
