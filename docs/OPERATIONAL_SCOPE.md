@@ -304,16 +304,21 @@ Planificador cree una assignment artificial primero).
   antes de dejar abrir el flujo fuera de plan — nunca duplica),
   `computeExecutionCompleteness()` (desde el checklist, nunca un checkbox
   manual), `findNextApplicableOccurrence()`/`resolveOutOfPlanSatisfaction()`
-  (única ocurrencia próxima sin completar en una ventana de 7 días; ambigua
-  o inexistente → `null`, nunca se inventa un cumplimiento).
+  (única ocurrencia próxima sin completar en una ventana de **1 día**
+  calendario de adelanto — hoy o mañana, nunca más lejos; cambio
+  deliberado 2026-10-09, "REALIZADO ADELANTADO" §21-23: antes la ventana
+  era de 7 días, se acotó a propósito para que un engrase con 2+ días de
+  anticipación NUNCA satisfaga la ocurrencia futura automáticamente —
+  ambigua o inexistente → `null`, nunca se inventa un cumplimiento).
 - **Plan por horas**: un OUT_OF_PLAN COMPLETO avanza `plan.lastGreaseHour`
   igual que cualquier registro más reciente (lógica YA existente, sin
   cambios) — `satisfiedOccurrenceKey` solo certifica cuál ciclo quedó
   satisfecho, nunca reinicia el ciclo si es PARTIAL.
 - **Plan día/turno**: un OUT_OF_PLAN COMPLETO puede satisfacer por
-  adelantado la ÚNICA ocurrencia futura sin completar en los próximos 7
-  días — el plan maestro (`assignedDays`/`frequency`/etc.) **nunca se
-  toca**. La Matriz Semanal (`estadoCelda()`) muestra esa celda como
+  adelantado la ÚNICA ocurrencia futura sin completar dentro del día
+  siguiente (ventana de 1 día, ver arriba) — el plan maestro
+  (`assignedDays`/`frequency`/etc.) **nunca se toca**. La Matriz Semanal
+  (`estadoCelda()`) muestra esa celda como
   `hecho_adelantado` cuando algún registro trae
   `operationalSnapshot.satisfiedOccurrenceKey` igual a la clave de esa
   celda — el registro real queda en su propia fecha, nunca se reescribe.

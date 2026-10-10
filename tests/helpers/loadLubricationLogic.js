@@ -39,6 +39,12 @@ export const NOTIFICATION_ROUTING_JS_PATH = path.join(SRC_ROOT, 'src/core/notifi
 const APP_LOGIC_SOURCES = [
   [SHIFTS_JS_PATH, ['currentShiftId', 'dentroDeSuTurno']],
   [HOURMETER_JS_PATH, ['validateHourmeterChange']],
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO"): weekdayStatusFor() ahora usa
+  // computeOccurrenceKey()/toISODateUTCLocal() (operational-scope.js) para
+  // detectar un COMPLETE que satisfizo esta ocurrencia por adelantado —
+  // mismo patrón ya establecido por WEEKLY_MATRIX_SOURCES más abajo con
+  // estadoCelda().
+  [OPERATIONAL_SCOPE_JS_PATH, ['computeOccurrenceKey', 'toISODateUTCLocal']],
   [LUBRICATION_STATUS_JS_PATH, [
     'fmt',
     'WEEKDAY_NAMES',

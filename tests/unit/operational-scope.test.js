@@ -464,9 +464,15 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
     expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY })).toBeNull();
   });
 
-  it('CASO D2 — ambiguo (2+ días programados pendientes en la ventana de 7 días): NUNCA se inventa cuál satisface, null', () => {
-    const plan = { id: 'plan_multi', controlType: 'Día y turno de la semana', assignedDays: ['Lunes', 'Miércoles'] };
-    // Hoy es lunes: el propio lunes (hoy) y el miércoles que viene son ambos candidatos sin completar
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO"): assignedDays actualizado a
+  // propósito ['Lunes','Martes'] — con la ventana ya acotada a 1 día de
+  // adelanto (§21-23 del pedido), 'Miércoles' (a 2 días) quedaría FUERA de
+  // la ventana y dejaría de ser ambiguo por sí solo (ver CASO N, cambio
+  // deliberado). 'Martes' sigue siendo mañana (dentro de la ventana), así
+  // que la ambigüedad real (hoy Y mañana, ambos candidatos) se preserva.
+  it('CASO D2 — ambiguo (2+ días programados pendientes dentro de la ventana de 1 día: hoy Y mañana): NUNCA se inventa cuál satisface, null', () => {
+    const plan = { id: 'plan_multi', controlType: 'Día y turno de la semana', assignedDays: ['Lunes', 'Martes'] };
+    // Hoy es lunes: el propio lunes (hoy) y el martes (mañana) son ambos candidatos sin completar
     const key = findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords: [], todayDate: HOY });
     expect(key).toBeNull();
   });
@@ -521,10 +527,38 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
     expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY })).toBeNull();
   });
 
-  it('CASO N — COMPLETE sí satisface la ocurrencia correcta (la única candidata, no una arbitraria)', () => {
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO", Parte F del pedido): CASO N
+  // actualizado A PROPÓSITO — la ventana bajó de 7 a 1 día de adelanto
+  // (ver findNextApplicableOccurrenceForWeekdayPlan()). HOY es lunes
+  // 2026-09-28; el jueves de esa semana (2026-10-01) queda a 3 días, fuera
+  // de la nueva ventana — por eso YA NO satisface (antes sí, con la
+  // ventana vieja de 7 días). §23 del pedido, literal: "+2 días NUNCA
+  // satisface automáticamente".
+  it('CASO N — COMPLETE a +3 días (fuera de la ventana de 1 día) NO satisface automáticamente — queda OUT_OF_PLAN, la ocurrencia futura permanece', () => {
     const plan = { id: 'plan_n', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'] };
     const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
-    expect(key).toBe('plan_n:2026-10-01'); // jueves de esa semana
+    expect(key).toBeNull();
+  });
+
+  // §21/§24 del pedido: "PROGRAMADO MAÑANA + COMPLETE HOY = satisface la
+  // ocurrencia de mañana" — el ÚNICO caso real de "adelantado". HOY aquí
+  // es miércoles 2026-09-30; jueves 2026-10-01 es exactamente 1 día
+  // después (mañana).
+  it('§21 — COMPLETE a 1 día de adelanto (programado MAÑANA) SÍ satisface esa ocurrencia — único caso válido de "realizado adelantado"', () => {
+    const HOY_MIERCOLES = new Date('2026-09-30T10:00:00');
+    const plan = { id: 'plan_n2', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'] };
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY_MIERCOLES });
+    expect(key).toBe('plan_n2:2026-10-01'); // jueves, exactamente mañana
+  });
+
+  // §27 del pedido: la ventana de adelanto NUNCA aplica a planes por horas
+  // — siguen dependiendo solo de hourmeter/lastGreaseHour/COMPLETE, sin
+  // cambios (findNextApplicableOccurrence() despacha por controlType desde
+  // antes de este lote; esto solo confirma que sigue siendo así).
+  it('§27 — un plan "Horas de operación" nunca usa la ventana de días (findNextApplicableOccurrence despacha por controlType, sin cambios)', () => {
+    const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100 };
+    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    expect(key).toBe(computeOccurrenceKey(plan, {})); // por ciclo de horómetro, nunca por fecha
   });
 
   it('resolveRecordExecutionType()/resolveRecordOutOfPlanReason()/resolveRecordCompleteness(): con snapshot devuelven el dato real; sin snapshot, PLANNED por defecto (nunca se presenta como fuera de plan sin poder probarlo)', () => {

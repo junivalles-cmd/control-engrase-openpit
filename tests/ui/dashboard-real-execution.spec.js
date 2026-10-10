@@ -38,7 +38,7 @@ const scopeNames = [
   // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release
   // 2026-10-08) — MISMAS funciones reales ya usadas por renderLubricadorHome().
   'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveDefaultCrewForLocation',
-  'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey',
+  'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey', 'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [
@@ -149,7 +149,13 @@ test('REGRESIÓN real (ver tests/unit/dashboard-carryover.test.js) — con un ca
   // con "Identifier already declared").
   const turnoDeAhora = new Function('App', `${shiftsSrc}\nreturn currentShiftId();`)({ generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } });
   const turnoAnterior = turnoDeAhora === 'shift_dia' ? 'shift_noche' : 'shift_dia';
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  // Fix 2026-10-09 (flake preexistente detectado, no causado por este lote):
+  // toISOString() es UTC — en cualquier zona con offset negativo (ej. HAC,
+  // UTC-6), la tarde/noche local ya es "mañana" en UTC, así que esta fecha
+  // nunca coincidía con `todayDateISO()` real (LOCAL, app.js) y el carryover
+  // dejaba de encontrarse. Mismo criterio LOCAL que el real, nunca UTC.
+  const hoyLocal = new Date();
+  const hoyISO = `${hoyLocal.getFullYear()}-${String(hoyLocal.getMonth() + 1).padStart(2, '0')}-${String(hoyLocal.getDate()).padStart(2, '0')}`;
 
   await bootPage(page, {
     skips: [{ id: 'skip1', equipmentId: 'e1', date: `${hoyISO}T05:00:00`, shiftId: turnoAnterior, motivo: 'SIN_TIEMPO', active: true, createdAt: `${hoyISO}T05:00:00` }],

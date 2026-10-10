@@ -114,13 +114,24 @@ function toISODateUTCLocal(d) {
    Ambiguo (0 o 2+ candidatas en la ventana) -> null, NUNCA se inventa un
    cumplimiento (§13: "para LUBRICADOR, registrar OUT_OF_PLAN sin satisfacer
    occurrence" en ese caso). Usa el global WEEKDAY_NAMES (lubrication-status.js),
-   mismo patrón que estadoCelda() en weekly-matrix.js. */
+   mismo patrón que estadoCelda() en weekly-matrix.js.
+
+   Fix 2026-10-09 ("REALIZADO ADELANTADO", Parte F/§21-23 del pedido,
+   cambio DELIBERADO de comportamiento — nunca colateral): la ventana era
+   de 7 días (documentado en docs/OPERATIONAL_SCOPE.md, probado en CASO N)
+   — el pedido nuevo exige un máximo de 1 día calendario de adelanto
+   ("PROGRAMADO MAÑANA + COMPLETE HOY = satisface mañana"; "+2 días NUNCA
+   satisface automáticamente, queda como OUT_OF_PLAN"). `i < 2` cubre hoy
+   (i=0, mismo día programado) y mañana (i=1, el único caso de "adelanto"
+   real) — nunca más lejos. CASO N (tests/unit/operational-scope.test.js)
+   y docs/OPERATIONAL_SCOPE.md se actualizaron a propósito junto con este
+   cambio, no quedaron rotos por accidente. */
 function findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate }) {
   if (!plan || plan.controlType !== 'Día y turno de la semana') return null;
   const dias = plan.assignedDays || [];
   if (!dias.length) return null;
   const candidatas = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 2; i++) {
     const d = new Date(todayDate);
     d.setDate(d.getDate() + i);
     const nombreDia = WEEKDAY_NAMES[d.getDay()];

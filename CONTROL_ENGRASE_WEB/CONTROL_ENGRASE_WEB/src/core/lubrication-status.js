@@ -62,6 +62,31 @@ async function weekdayStatusFor(equipment, plan, recordsList) {
     new Date(r.date) >= lastDue && new Date(r.date).getTime() <= ahora);
   const isToday = lastDue.toDateString() === new Date().toDateString();
   if (done) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: lastDue };
+
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO", §9/§10/§35/§36 del pedido):
+  // ningún record cae DESPUÉS de lastDue (el `done` de arriba), pero puede
+  // existir uno de HASTA 1 día antes cuyo
+  // operationalSnapshot.satisfiedOccurrenceKey ya certificó esta MISMA
+  // ocurrencia (resolveOutOfPlanSatisfaction(), operational-scope.js, al
+  // guardar un OUT_OF_PLAN COMPLETO — ventana de 1 día, nunca más lejos).
+  // La Matriz (estadoCelda()) ya lo detecta así por su cuenta, con el
+  // MISMO criterio — esto es lo que le faltaba a este cálculo (Dashboard/
+  // Mi Turno/KPIs) para dejar de mostrarlo como pendiente. Reusa VERDE
+  // (ya es la regla de satisfacción real para Matriz/Cumplimiento, nunca
+  // una segunda regla) + `adelantado:true` para que Mi Turno lo separe en
+  // su propia sección informativa en vez de mezclarlo con "AL DÍA".
+  if (plan.id) {
+    const key = computeOccurrenceKey(plan, { dateISO: toISODateUTCLocal(lastDue) });
+    const satisfactorio = records.find(r => r.equipmentId === equipment.id &&
+      r.operationalSnapshot && r.operationalSnapshot.satisfiedOccurrenceKey === key);
+    if (satisfactorio) {
+      return {
+        code: 'VERDE', label: 'REALIZADO ADELANTADO', remaining: null, plan, scheduleDate: lastDue,
+        adelantado: true, satisfactorio,
+      };
+    }
+  }
+
   if (isToday) return { code: 'AMARILLO', label: 'PROGRAMADO HOY', remaining: null, plan, scheduleDate: lastDue };
   return { code: 'ROJO', label: 'VENCIDO', remaining: null, plan, scheduleDate: lastDue };
 }

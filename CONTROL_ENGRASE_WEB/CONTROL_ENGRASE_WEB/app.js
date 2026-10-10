@@ -3753,6 +3753,13 @@ async function renderLubricadorHome() {
   // VENCIDOS", §2: "el KPI debe contar el estado real, no el origen").
   const statusesNormalYAsignados = [...statusesNormal, ...statusesAssigned.filter(({ e }) => !normalIds.has(e.id))];
 
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO", §37 del pedido): equipos cuya
+  // ocurrencia de HOY ya quedó satisfecha por un COMPLETE de hasta 1 día
+  // antes (weekdayStatusFor() ya lo marca con `adelantado:true`, mismo
+  // criterio que la Matriz) — sección informativa separada, nunca
+  // mezclada con "Realizados hoy" (esa es SOLO records de HOY).
+  const realizadosAdelantadosList = statusesNormalYAsignados.filter(({ s }) => s.adelantado);
+
   // "Turno anterior": MISMO mecanismo exacto que pendientesTurnoAnterior del
   // Dashboard admin (renderDashboard()), solo que acotado a `normal` en vez
   // de a los equipos filtrados por Ubicación/Familia — nunca una segunda
@@ -4125,6 +4132,36 @@ async function renderLubricadorHome() {
       </div>`;
   };
 
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO", §37/§32 del pedido) — sección
+  // SECUNDARIA/informativa (§38: nunca un 5to KPI grande): `s.satisfactorio`
+  // ya viene resuelto por weekdayStatusFor() (lubrication-status.js, cero
+  // cálculo nuevo aquí) — el registro real que certificó la ocurrencia de
+  // HOY un día antes. Crew/ubicación ejecutora salen de su propio
+  // operationalSnapshot (ya existente, buildExecutionSnapshot()) — nunca
+  // mueve equipment.locationId ni la cuadrilla principal del equipo.
+  const adelantadoRowHTML = ({ e, s }) => {
+    const rec = s.satisfactorio;
+    const snap = rec.operationalSnapshot || {};
+    const crew = cuadrillas.find(c => c.id === snap.crewId);
+    const crewLoc = locations.find(l => l.id === snap.crewLocationIdAtExecution);
+    const diasAtras = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(rec.date).setHours(0, 0, 0, 0)) / 86400000);
+    return `
+      <div class="lub-arrastrado-card tone-adelantado">
+        <div class="lub-eq-top"><span class="lub-eq-code">${esc(e.code)}</span>
+          <span class="status-chip" style="--c:#5B7FBF">REALIZADO ADELANTADO</span>
+        </div>
+        <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+        <div class="lub-record-meta dim">
+          <span>Programado hoy</span>
+          <span>Ejecutado ${diasAtras === 1 ? 'ayer' : diasAtras > 1 ? `hace ${diasAtras} días` : 'hoy'}</span>
+        </div>
+        <div class="dim" style="font-size:11.5px">Por: ${esc(rec.userName)}${crew ? ' · ' + esc(crew.name) : ''}${crewLoc ? ' · ' + esc(crewLoc.name) : ''}</div>
+        <div class="lub-arrastrado-actions">
+          <button type="button" class="btn lub-adelantado-ver" data-id="${e.id}">Ver ficha</button>
+        </div>
+      </div>`;
+  };
+
   // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
   // el render (no-op fuera de Android, ver isNative() en
   // updateLubricadorWidgetSnapshot()). Mismos 3 contadores y la misma
@@ -4187,6 +4224,11 @@ async function renderLubricadorHome() {
     <div class="lub-eq-list">${realizadosHoyList.map(realizadoRowHTML).join('')}</div>
     ` : ''}
 
+    ${realizadosAdelantadosList.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosList.length})</span></div>
+    <div class="lub-eq-list">${realizadosAdelantadosList.map(adelantadoRowHTML).join('')}</div>
+    ` : ''}
+
     ${alertasTiempoSinEngrase.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasTiempoSinEngrase.length})</span></div>
     <div class="lub-eq-list">${alertasTiempoSinEngrase.map(alertaRowHTML).join('')}</div>
@@ -4233,6 +4275,7 @@ async function renderLubricadorHome() {
     if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
   }));
   $$('.lub-alerta-code', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-adelantado-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-quick-qr').addEventListener('click', () => openQrScanner());
   // "Registrar engrase" (acción rápida, sin equipo preelegido): mismo

@@ -37,6 +37,7 @@ const scopeNames = [
   'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
   'resolveDefaultCrewForLocation', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
+  'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [
@@ -65,6 +66,14 @@ function isoDaysAgo(n) {
 }
 function weekdayNDaysAgo(n) {
   const d = new Date(); d.setDate(d.getDate() - n); return weekdayName(d);
+}
+// Mismo formato EXACTO que computeOccurrenceKey() real para planes "Día y
+// turno de la semana" (`${planId}:${YYYY-MM-DD}`, operational-scope.js) —
+// reconstruido aquí solo para armar el fixture (satisfiedOccurrenceKey),
+// nunca para calcular el estado real (eso lo hace weekdayStatusFor() real).
+function isoDateOnly(n) {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [], validations = [] } = {}) {
@@ -831,4 +840,95 @@ test('G — 0 pendientes del turno actual: el KPI "Pendientes hoy" es 0 y la sec
   expect(errors).toEqual([]);
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
   expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
+});
+
+// ============================================================
+// Pedido "...REALIZADO ADELANTADO" (2026-10-09), Parte O. Causa raíz
+// confirmada en código (nunca asumida): weekdayStatusFor()
+// (lubrication-status.js) ahora lee operationalSnapshot.satisfiedOccurrenceKey
+// (resolveOutOfPlanSatisfaction(), operational-scope.js, ventana de 1 día
+// — nunca 7) — la MISMA señal que ya usa la Matriz (estadoCelda()). Esta
+// suite confirma el efecto end-to-end sobre renderLubricadorHome() real:
+// la ocurrencia de HOY, satisfecha AYER, nunca vuelve a aparecer como
+// pendiente/atrasada, nunca se cuenta en "Realizados hoy" (esa es SOLO
+// records de HOY) y aparece en su propia sección informativa.
+// ============================================================
+
+test('O-A — plan programado HOY + COMPLETE fuera de plan AYER que satisfizo esta ocurrencia: aparece en "REALIZADOS ADELANTADOS", nunca en Pendientes hoy/Atrasados/Mi Turno/Realizados hoy', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: '20-5530', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'plan_x', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r1', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 2.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'PM', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: `plan_x:${isoDateOnly(0)}`, crewId: 'crew1', crewLocationIdAtExecution: 'l1' },
+  }];
+
+  await bootPage(page, { equipos, plans, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS')).toContainText('20-5530');
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS')).toContainText('Jose Guerrero');
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS')).toContainText('Cuadrilla A');
+
+  // H/I/J/K del pedido: nunca pendiente/atrasado/realizado-hoy a la vez.
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
+  await expect(kpiValue(page, 'Arrastrados')).toHaveText('0');
+  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0'); // la ejecución real fue AYER, no hoy
+  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
+  expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS (")').count()).toBe(0); // "Realizados hoy" (no adelantados) oculta, nunca una tarjeta en 0
+  // Q del pedido: sin duplicados — '20-5530' aparece UNA sola vez en toda
+  // la pantalla (solo en Realizados Adelantados). "REALIZADOS" (substring
+  // de "REALIZADOS ADELANTADOS") hace ambiguo enCuantasSeccionesDeTrabajo()
+  // aquí, por eso se cuenta directo sobre toda la pantalla.
+  expect(await page.locator('.lub-eq-code', { hasText: '20-5530' }).count()).toBe(1);
+});
+
+test('O-B/P — PARTIAL ayer NUNCA satisface hoy: sigue pendiente en MI TURNO, nunca en "Realizados Adelantados"', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: '20-5531', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'plan_y', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r2', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 1.0, shiftId: 'shift_dia',
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'PM', executionCompleteness: 'PARTIAL', satisfiedOccurrenceKey: null },
+  }];
+
+  await bootPage(page, { equipos, plans, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
+  await expect(seccion(page, 'MI TURNO')).toContainText('20-5531');
+  await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
+});
+
+test('O-D — COMPLETE a +3 días (fuera de la ventana de 1 día) NUNCA satisface automáticamente: sigue pendiente, nunca "Realizados Adelantados"', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e));
+
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: '20-5532', brand: 'Caterpillar', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'plan_z', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+  const records = [{
+    id: 'r3', equipmentId: 'e1', date: isoDaysAgo(3), createdAt: isoDaysAgo(3), userName: 'Jose Guerrero', qty: 2.0, shiftId: 'shift_dia',
+    // Fuera de la ventana real de 1 día -> resolveOutOfPlanSatisfaction()
+    // real ya habría devuelto null al guardar esto (ver operational-scope
+    // .test.js, CASO N actualizado) — se simula ese resultado real.
+    operationalSnapshot: { executionType: 'OUT_OF_PLAN', outOfPlanReason: 'OTRO', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: null },
+  }];
+
+  await bootPage(page, { equipos, plans, records });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
+  await expect(seccion(page, 'MI TURNO')).toContainText('20-5532');
 });
