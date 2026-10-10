@@ -12,7 +12,11 @@
 import fs from 'node:fs';
 
 export function readSource(filePath) {
-  return fs.readFileSync(filePath, 'utf8');
+  // Normaliza CRLF/CR -> LF: estos helpers solo comparan contenido de código
+  // fuente de forma literal (toContain de fragmentos con \n), nunca el tipo
+  // de newline en sí — un checkout Windows (core.autocrlf) no debe cambiar
+  // el resultado de ninguna prueba.
+  return fs.readFileSync(filePath, 'utf8').replace(/\r\n?/g, '\n');
 }
 
 /**
