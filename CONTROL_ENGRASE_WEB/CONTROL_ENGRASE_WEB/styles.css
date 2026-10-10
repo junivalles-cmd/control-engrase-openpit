@@ -2945,6 +2945,29 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 }
 .ficha-fila:last-child { border-bottom: none; }
 
+/* "Pulida profunda — Ficha del equipo" (2026-10-09): header con jerarquía
+   real (código grande / marca-modelo debajo / badge de estado), nunca una
+   sola línea larga con todo mezclado. Reusa .status-chip (ya existente, sin
+   paleta nueva). */
+.modal-ficha-equipo { max-width: 860px; }
+.ficha-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.ficha-code { font-family: var(--font-display); font-size: 21px; font-weight: 800; letter-spacing: 0.01em; line-height: 1.15; }
+.ficha-brand { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+
+/* Filas de "Últimos engrases" rediseñadas: apiladas (fecha/hora, lubricador,
+   horómetro+cantidad, badges) en vez de una sola línea de texto corrido —
+   mismos datos de siempre, solo mejor jerarquía (§7 del pedido). */
+.ficha-record-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 0; font-size: 12.5px; border-bottom: 1px solid var(--border);
+}
+.ficha-record-card:last-child { border-bottom: none; }
+.ficha-record-top { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.ficha-record-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
 /* ---------------- Buscador rápido de la barra superior ---------------- */
 .quick-find { position: relative; display: flex; align-items: center; }
 .quick-find-toggle { display: none; }

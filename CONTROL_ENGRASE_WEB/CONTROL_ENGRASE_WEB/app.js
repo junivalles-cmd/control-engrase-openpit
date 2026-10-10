@@ -6062,10 +6062,10 @@ async function openEquipmentDetail(id) {
 
   // Últimos engrases y anomalías abiertas, para no tener que ir a Historial y filtrar
   const lubricantes = await DB.allActive('lubricants');
-  const ultimos = (await DB.allActive('lubrication_records'))
+  const todosRecordsDet = (await DB.allActive('lubrication_records'))
     .filter(r => r.equipmentId === id)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 3);
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const ultimos = todosRecordsDet.slice(0, 3);
   const anomaliasAbiertas = (await DB.allActive('anomalies'))
     .filter(a => a.equipmentId === id && a.status !== 'Cerrada')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -6089,34 +6089,111 @@ async function openEquipmentDetail(id) {
   const validationsDet = await DB.allActive('grease_validations');
   const valStatusUltimoDet = ultimoRecordDet ? validationStatusForRecord(ultimoRecordDet, validationsDet, new Date(), App.generalSettings) : null;
   const TIPO_PLAN_LABELS_DET = { 'Horas de operación': 'Por horas de operación', 'Día y turno de la semana': 'Día y turno de la semana' };
+  // Fix 2026-10-09 ("PULIDA PROFUNDA — FICHA DEL EQUIPO"): mismas etiquetas
+  // EXACTAS que openGreaseRecordDetailModal()/renderHistorial() para
+  // Tipo/Estado de ejecución — nunca un texto nuevo para lo mismo (ya hay 3
+  // copias de este mapa en el archivo, mismo patrón que las otras).
+  const OOP_REASON_LABELS_FICHA = { PM: 'PM / Mantenimiento preventivo', CORRECTIVO: 'Mantenimiento correctivo', OPORTUNIDAD: 'Oportunidad operativa', SUPPORT_OTHER_LOCATION: 'Apoyo a otra ubicación', OTRO: 'Otro' };
+  const tipoLabelFor = (r) => {
+    const { value: tipo } = resolveRecordExecutionType(r);
+    return tipo === 'OUT_OF_PLAN'
+      ? `Fuera de plan${resolveRecordOutOfPlanReason(r) ? ' — ' + (OOP_REASON_LABELS_FICHA[resolveRecordOutOfPlanReason(r)] || resolveRecordOutOfPlanReason(r)) : ''}`
+      : tipo === 'ASSIGNED' ? 'Asignado' : 'Planificado';
+  };
+  const estadoLabelFor = (r) => {
+    const comp = resolveRecordCompleteness(r);
+    return comp === 'PARTIAL' ? 'Parcial' : comp === 'COMPLETE' ? 'Completo' : '—';
+  };
+  // Ubicación DESDE la que se ejecutó el último engrase (operationalSnapshot
+  // ya existente, buildExecutionSnapshot() — nunca mueve equipment.locationId
+  // ni la cuadrilla principal del equipo, solo lo muestra). Registros
+  // anteriores a esta trazabilidad (sin operationalSnapshot) caen al
+  // locationId ACTUAL de la cuadrilla como mejor esfuerzo.
+  const snapUltimoDet = ultimoRecordDet ? (ultimoRecordDet.operationalSnapshot || null) : null;
+  const ubicEjecucionIdDet = snapUltimoDet ? snapUltimoDet.crewLocationIdAtExecution : (crewUltimoDet ? crewUltimoDet.locationId : null);
+  const ubicEjecucionDet = ubicEjecucionIdDet ? (locationsDet.find(l => l.id === ubicEjecucionIdDet) || null) : null;
+  const esCrossLocationDet = !!(ubicEjecucionDet && ubicacionActualDet && ubicEjecucionDet.id !== ubicacionActualDet.id);
+  // Tarjeta "REALIZADO ADELANTADO" (§5 del pedido): s.satisfactorio ya viene
+  // resuelto por weekdayStatusFor() (lubrication-status.js, cero cálculo
+  // nuevo aquí) — mismo criterio/datos que adelantadoRowHTML() de Mi Turno.
+  const adelantadoRecDet = s.adelantado ? s.satisfactorio : null;
+  const adelantadoSnapDet = adelantadoRecDet ? (adelantadoRecDet.operationalSnapshot || {}) : {};
+  const adelantadoCrewDet = adelantadoSnapDet.crewId ? (cuadrillasDet.find(c => c.id === adelantadoSnapDet.crewId) || null) : null;
+  const adelantadoCrewLocDet = adelantadoSnapDet.crewLocationIdAtExecution ? (locationsDet.find(l => l.id === adelantadoSnapDet.crewLocationIdAtExecution) || null) : null;
+  const horaFmt = (iso) => new Date(iso).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' });
+  // fmtDate() (global) ya incluye hora — para una sola línea "fecha · hora"
+  // (tarjetas/filas compactas) se necesita la fecha SOLA, nunca duplicar la
+  // hora dos veces.
+  const fechaCortaFor = (iso) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const turnoLabelFor = (shiftId) => shiftId === 'shift_dia' ? 'Día' : 'Noche';
 
-  openModal(`${esc(e.code)}${e.shortCode ? ' · ' + e.shortCode : ''} · ${esc(e.brand)} ${esc(e.model)}`, `
+  openModal(esc(e.code), `
+    <div class="ficha-header">
+      <div>
+        <div class="ficha-code">${esc(e.code)}</div>
+        <div class="ficha-brand">${esc(e.brand)} ${esc(e.model)}</div>
+        ${e.shortCode ? `<div class="dim" style="font-size:12px;margin-top:2px">Código alternativo: <span class="mono">${esc(e.shortCode)}</span></div>` : ''}
+      </div>
+      <span class="status-chip" style="--c:${STATUS_COLOR[s.code] || 'var(--text-dim)'}">${esc(s.label)}</span>
+    </div>
+
     <div class="detail-grid">
-      <div><b>Código</b><div class="mono">${esc(e.code)}</div></div>
-      <div><b>Código ahorrativo</b><div class="mono">${e.shortCode || '—'}</div></div>
-      <div><b>Categoría</b><div>${(types.find(t => t.id === e.typeId) || {}).name || '—'}</div></div>
-      <div><b>Serie</b><div>${e.serial || '—'}</div></div>
       <div><b>Ubicación actual</b><div>${ubicacionActualDet ? esc(ubicacionActualDet.name) : 'Sin ubicación'}</div></div>
-      <div><b>Estado</b><div>${esc(e.status)}</div></div>
       <div><b>Horómetro</b><div class="mono">${fmt(e.hourmeter)} h</div></div>
-      <div><b>Estado de engrase</b><div><span class="dot" style="background:${STATUS_COLOR[s.code]}"></span> ${s.label}</div></div>
-      ${s.nextHour !== undefined ? `<div><b>Próximo engrase</b><div class="mono">${fmt(s.nextHour)} h</div></div>` : ''}
+      <div><b>Turno programado</b><div>${planDet && planDet.controlType === 'Día y turno de la semana' ? turnoLabelFor(planDet.shiftId) : '—'}</div></div>
+      <div><b>Estado de engrase</b><div><span class="dot" style="background:${STATUS_COLOR[s.code] || 'var(--text-dim)'}"></span> ${esc(s.label)}</div></div>
     </div>
 
     <div class="ficha-bloque">
-      <h4>${ic("list")}Plan y ejecución</h4>
+      <h4>${ic("list")}Plan</h4>
       <div class="detail-grid">
-        <div><b>Tipo de plan</b><div>${planDet ? esc(TIPO_PLAN_LABELS_DET[planDet.controlType] || planDet.controlType) : 'Sin plan'}</div></div>
-        ${planDet && planDet.controlType === 'Día y turno de la semana' ? `<div><b>Turno programado</b><div>${planDet.shiftId === 'shift_dia' ? 'Día' : 'Noche'}</div></div>` : ''}
-        ${ultimoRecordDet ? `<div><b>Último consumo</b><div class="mono">${fmt(ultimoRecordDet.qty, 1)} ${GREASE_UNIT}</div></div>` : ''}
-        ${crewUltimoDet ? `<div><b>Cuadrilla (último engrase)</b><div>${esc(crewUltimoDet.name)}</div></div>` : ''}
+        <div><b>Tipo</b><div>${planDet ? esc(TIPO_PLAN_LABELS_DET[planDet.controlType] || planDet.controlType) : 'Sin plan'}</div></div>
+        ${planDet && planDet.controlType === 'Día y turno de la semana' ? `<div><b>Turno</b><div>${turnoLabelFor(planDet.shiftId)}</div></div>` : ''}
+        ${planDet && planDet.controlType === 'Horas de operación' ? `<div><b>Frecuencia</b><div class="mono">Cada ${fmt(planDet.frequency || 0)} h</div></div>` : ''}
+        <div><b>Puntos</b><div>${pointsDet.length || '—'}</div></div>
+        ${planDet && planDet.greaseType ? `<div><b>Lubricante</b><div>${esc((lubricantes.find(l => l.id === planDet.greaseType) || {}).name || '—')}</div></div>` : ''}
+      </div>
+      ${pointsDet.length ? `<div class="dim" style="margin-top:8px;font-size:12px">${pointsDet.slice(0, 6).map(p => esc(p.point)).join(', ')}${pointsDet.length > 6 ? ` y ${pointsDet.length - 6} más…` : ''}</div>` : ''}
+      ${assignmentActivoDet ? `<div class="qr-info-alert" style="background:var(--surface-2); color:var(--text)">📌 Asignación activa a <b>${crewAsignadaDet ? esc(crewAsignadaDet.name) : 'otra cuadrilla'}</b> para el engrase pendiente de hoy.</div>` : ''}
+      ${carryoverHoyDet ? `<div class="qr-info-alert">⚠ El turno ${turnoLabelFor(carryoverHoyDet.shiftId)} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carryoverHoyDet.reason] || carryoverHoyDet.reason)}.</div>`
+        : (ultimoSkipDet ? `<div class="dim">Último no ejecutado: ${fmtDate(ultimoSkipDet.date)} · ${esc(NO_EXECUTION_REASON_LABELS[ultimoSkipDet.reason] || ultimoSkipDet.reason)}</div>` : '')}
+    </div>
+
+    ${ultimoRecordDet ? `
+    <div class="ficha-bloque">
+      <h4>${ic("check")}Última ejecución</h4>
+      <div class="detail-grid">
+        <div><b>Fecha</b><div class="mono">${fmtDate(ultimoRecordDet.date)}</div></div>
+        <div><b>Hora</b><div class="mono">${horaFmt(ultimoRecordDet.date)}</div></div>
+        <div><b>Lubricador</b><div>${esc(ultimoRecordDet.userName)}${ultimoRecordDet.retroactivo ? ' <span class="retro-tag">atrasado</span>' : ''}</div></div>
+        <div><b>Cuadrilla</b><div>${crewUltimoDet ? esc(crewUltimoDet.name) : '—'}</div></div>
+        <div><b>Ubicación de ejecución</b><div>${ubicEjecucionDet ? esc(ubicEjecucionDet.name) : '—'}</div></div>
+        <div><b>Cantidad</b><div class="mono">${fmt(ultimoRecordDet.qty, 1)} ${GREASE_UNIT}</div></div>
+        <div><b>Tipo</b><div>${esc(tipoLabelFor(ultimoRecordDet))}</div></div>
+        <div><b>Estado</b><div>${esc(estadoLabelFor(ultimoRecordDet))}</div></div>
         ${valStatusUltimoDet ? `<div><b>Validación</b><div>${validationBadgeHTML(valStatusUltimoDet)}</div></div>` : ''}
       </div>
-      ${assignmentActivoDet ? `<div class="qr-info-alert" style="background:var(--surface-2); color:var(--text)">📌 Asignación activa a <b>${crewAsignadaDet ? esc(crewAsignadaDet.name) : 'otra cuadrilla'}</b> para el engrase pendiente de hoy.</div>` : ''}
-      ${carryoverHoyDet ? `<div class="qr-info-alert">⚠ El turno ${carryoverHoyDet.shiftId === 'shift_dia' ? 'Día' : 'Noche'} no pudo ejecutar este engrase hoy — motivo: ${esc(NO_EXECUTION_REASON_LABELS[carryoverHoyDet.reason] || carryoverHoyDet.reason)}.</div>`
-        : (ultimoSkipDet ? `<div class="dim">Último no ejecutado: ${fmtDate(ultimoSkipDet.date)} · ${esc(NO_EXECUTION_REASON_LABELS[ultimoSkipDet.reason] || ultimoSkipDet.reason)}</div>` : '')}
-      ${pointsDet.length ? `<div class="dim" style="margin-top:6px">Puntos de engrase (${pointsDet.length}): ${pointsDet.slice(0, 6).map(p => esc(p.point)).join(', ')}${pointsDet.length > 6 ? ` y ${pointsDet.length - 6} más…` : ''}</div>` : ''}
     </div>
+    ${esCrossLocationDet ? `
+    <div class="ficha-bloque">
+      <h4>📍 Trazabilidad entre ubicaciones</h4>
+      <div class="detail-grid">
+        <div><b>Equipo pertenece a</b><div>${esc(ubicacionActualDet.name)}</div></div>
+        <div><b>Ejecutado desde</b><div>${esc(ubicEjecucionDet.name)}</div></div>
+      </div>
+    </div>` : ''}` : ''}
+
+    ${adelantadoRecDet ? `
+    <div class="lub-arrastrado-card tone-adelantado" style="margin-top:14px">
+      <div class="lub-eq-top"><span class="dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Programación</span></div>
+      <div class="detail-grid" style="margin-top:6px">
+        <div><b>Programado</b><div>${fechaCortaFor(s.scheduleDate)} · ${planDet && planDet.controlType === 'Día y turno de la semana' ? turnoLabelFor(planDet.shiftId) : '—'}</div></div>
+        <div><b>Ejecutado</b><div>${fechaCortaFor(adelantadoRecDet.date)} · ${horaFmt(adelantadoRecDet.date)}</div></div>
+        <div><b>Resultado</b><div><span class="status-chip" style="--c:#5B7FBF">${esc(s.label)}</span></div></div>
+        <div><b>Ejecutado por</b><div>${esc(adelantadoRecDet.userName)}</div></div>
+        <div><b>Cuadrilla</b><div>${adelantadoCrewDet ? esc(adelantadoCrewDet.name) : '—'}${adelantadoCrewLocDet ? ' · ' + esc(adelantadoCrewLocDet.name) : ''}</div></div>
+      </div>
+    </div>` : ''}
 
     ${anomaliasAbiertas.length ? `
       <div class="ficha-bloque ficha-alerta">
@@ -6133,23 +6210,30 @@ async function openEquipmentDetail(id) {
     <div class="ficha-bloque">
       <h4>${ic("history")}Últimos engrases</h4>
       ${ultimos.length ? ultimos.map(r => {
-        const lub = lubricantes.find(l => l.id === r.greaseType);
+        const comp = resolveRecordCompleteness(r);
         const pend = (r.details || []).filter(d => !d.done).length;
-        return `<div class="ficha-fila">
-          <span class="mono">${fmtDate(r.date)}</span>
-          <span>${esc(r.userName)}${r.retroactivo ? ' <span class="retro-tag">atrasado</span>' : ''}</span>
-          <span class="mono dim">${fmt(r.hourmeter)} h</span>
-          <span class="dim">${lub ? esc(lub.name) : '—'}</span>
-          ${pend ? `<span class="motivo-tag">${pend} punto(s) sin engrasar</span>` : ''}
-          ${photoIndicatorHTML(r)}
+        return `<div class="ficha-record-card">
+          <div class="ficha-record-top">
+            <span class="mono">${fechaCortaFor(r.date)} · ${horaFmt(r.date)}</span>
+            ${r.retroactivo ? '<span class="retro-tag">atrasado</span>' : ''}
+          </div>
+          <div class="dim">${esc(r.userName)}</div>
+          <div class="mono dim" style="font-size:12px">${fmt(r.hourmeter)} h · ${fmt(r.qty, 1)} ${GREASE_UNIT}</div>
+          <div class="ficha-record-badges">
+            ${comp ? `<span class="status-chip" style="--c:${comp === 'PARTIAL' ? STATUS_COLOR.AMARILLO : STATUS_COLOR.VERDE}">${comp === 'PARTIAL' ? 'PARCIAL' : 'COMPLETE'}</span>` : ''}
+            <span class="status-chip chip-origen" style="--c:var(--text-dim)">${esc(tipoLabelFor(r).split(' — ')[0].toUpperCase())}</span>
+            ${pend ? `<span class="motivo-tag">${pend} sin engrasar</span>` : ''}
+            ${photoIndicatorHTML(r)}
+          </div>
         </div>`;
       }).join('') : '<div class="dim" style="padding:6px 0">Este equipo todavía no tiene engrases registrados.</div>'}
+      ${todosRecordsDet.length > ultimos.length ? `<button type="button" class="btn btn-sm" id="btn-view-hist-link" style="margin-top:8px">Ver historial completo</button>` : ''}
     </div>
 
     <div class="modal-actions">
-      ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
-      ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
+      ${canRegisterOutOfPlan(App.currentUser.role) ? `<button class="btn btn-accent" id="btn-fuera-de-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
       <button class="btn" id="btn-view-qr">${ic("qr")}Código QR</button>
+      <button class="btn" id="btn-view-hist">Ver historial</button>
       ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) ? `
         <button class="btn" id="btn-pausar-avisos">${ic("clock")}${avisosPausados(e) ? 'Reanudar avisos' : 'Pausar avisos'}</button>` : ''}
       ${['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(App.currentUser.role) && s.plan && s.plan.controlType === 'Día y turno de la semana' ? `
@@ -6158,11 +6242,11 @@ async function openEquipmentDetail(id) {
         <button class="btn" id="btn-asignar-cuadrilla">${ic("clock")}Asignar a cuadrilla</button>` : ''}
       ${canMoveEquipment(App.currentUser.role) ? `
         <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
-      ${canRegisterOutOfPlan(App.currentUser.role) ? `
-        <button class="btn" id="btn-fuera-de-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
-      <button class="btn" id="btn-view-hist">Ver historial</button>
+      ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
+      ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
     </div>
-  `);
+  `, 'modal-ficha-equipo');
+  $('#btn-view-hist-link')?.addEventListener('click', () => $('#btn-view-hist').click());
   $('#btn-edit-eq')?.addEventListener('click', async () => {
     closeModal();
     const locations = await DB.allActive('locations');
