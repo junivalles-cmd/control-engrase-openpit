@@ -67,8 +67,11 @@ async function weekdayStatusFor(equipment, plan, recordsList) {
   // ningún record cae DESPUÉS de lastDue (el `done` de arriba), pero puede
   // existir uno de HASTA 1 día antes cuyo
   // operationalSnapshot.satisfiedOccurrenceKey ya certificó esta MISMA
-  // ocurrencia (resolveOutOfPlanSatisfaction(), operational-scope.js, al
-  // guardar un OUT_OF_PLAN COMPLETO — ventana de 1 día, nunca más lejos).
+  // ocurrencia (resolveEarlyOccurrenceSatisfaction(), operational-scope.js,
+  // al guardar un COMPLETE — PLANNED, ASSIGNED u OUT_OF_PLAN, da igual
+  // cómo se ejecutó — ventana de 1 día, nunca más lejos. Fix 2026-10-09
+  // "FIX REALIZADO ADELANTADO + QR INTERNO": antes solo contaba si
+  // executionType era OUT_OF_PLAN).
   // La Matriz (estadoCelda()) ya lo detecta así por su cuenta, con el
   // MISMO criterio — esto es lo que le faltaba a este cálculo (Dashboard/
   // Mi Turno/KPIs) para dejar de mostrarlo como pendiente. Reusa VERDE

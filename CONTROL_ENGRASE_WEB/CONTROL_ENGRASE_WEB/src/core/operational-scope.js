@@ -154,10 +154,26 @@ function findNextApplicableOccurrence({ plan, existingRecords, todayDate }) {
   return { occurrenceKey: computeOccurrenceKey(plan, {}), dateISO: null };
 }
 
-// ¿Qué ocurrencia satisface (si alguna) un engrase FUERA DE PLAN al
-// guardarse? Solo COMPLETE puede satisfacer (§9/§25: PARTIAL nunca reinicia
-// ciclo ni cancela un recordatorio pendiente).
-function resolveOutOfPlanSatisfaction({ plan, completeness, existingRecords, todayDate }) {
+// Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", §1 del pedido)
+// — renombrada de resolveOutOfPlanSatisfaction(): el nombre viejo ya no
+// describía su función real. executionType (PLANNED/ASSIGNED/OUT_OF_PLAN)
+// describe CÓMO se ejecutó un engrase — nunca debe decidir si TÉCNICAMENTE
+// satisface una ocurrencia futura por adelantado; eso lo decide solo:
+// mismo equipo, COMPLETE, matching de fecha sin ambigüedad (ver
+// findNextApplicableOccurrence(), sin cambios). Por eso el caller (app.js,
+// guardado del formulario) ya NO filtra por executionType === 'OUT_OF_PLAN'
+// antes de llamar a esto — se intenta SIEMPRE. Solo COMPLETE puede
+// satisfacer (§9/§25: PARTIAL nunca reinicia ciclo ni cancela un
+// recordatorio pendiente) — sin cambios de comportamiento para SKIP
+// (nunca llega aquí, no es un record) ni para +2 días/AMBIGUOUS/NONE (ya
+// cubiertos por findNextApplicableOccurrence, sin cambios). Planes "Horas
+// de operación": su propio resultado no-ambiguo de
+// findNextApplicableOccurrence() es inerte en la práctica — ni
+// weekdayStatusFor() ni estadoCelda() (Matriz) ni
+// findMatchingGreaseRecordForOccurrence() leen satisfiedOccurrenceKey para
+// ese controlType (los 3 descartan el plan ANTES de llegar a leerlo) —
+// confirmado leyendo esos 3 call sites, nunca asumido.
+function resolveEarlyOccurrenceSatisfaction({ plan, completeness, existingRecords, todayDate }) {
   if (completeness !== EXECUTION_COMPLETENESS.COMPLETE) return null;
   const found = findNextApplicableOccurrence({ plan, existingRecords, todayDate });
   return found ? found.occurrenceKey : null;
@@ -167,8 +183,8 @@ function resolveOutOfPlanSatisfaction({ plan, completeness, existingRecords, tod
 // de un plan "Horas de operación"? Esa fecha/hora es la base de
 // computeOccurrenceKey() para ese controlType (ver comentario arriba) —
 // avanzarla equivale a "reiniciar el ciclo". Un PARTIAL (puntos pendientes)
-// NUNCA debe reiniciarlo, igual que resolveOutOfPlanSatisfaction() ya exige
-// COMPLETE para satisfacer una ocurrencia OUT_OF_PLAN. "Día y turno de la
+// NUNCA debe reiniciarlo, igual que resolveEarlyOccurrenceSatisfaction() ya
+// exige COMPLETE para satisfacer una ocurrencia por adelantado. "Día y turno de la
 // semana" (o cualquier otro controlType) no usa lastGreaseHour para su
 // ciclo — esos casos siempre pueden avanzarlo, sin cambio de comportamiento.
 function canAdvanceHourCycle({ controlType, completeness }) {
@@ -637,7 +653,7 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
   // cuya propia satisfiedOccurrenceKey YA apunta exactamente a esta
   // ocurrencia — §9: nunca "cualquier OUT_OF_PLAN de esa fecha" cuenta
   // solo por coincidir de fecha, tiene que venir certificado por
-  // resolveOutOfPlanSatisfaction() en el momento en que se guardó).
+  // resolveEarlyOccurrenceSatisfaction() en el momento en que se guardó).
   const candidatos = (records || []).filter(r => {
     if (r.equipmentId !== plan.equipmentId) return false;
     if (yaVinculados.has(r.id)) return false;

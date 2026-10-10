@@ -8646,17 +8646,28 @@ async function startGreaseFlow(equipmentId, target, options) {
         ? 'ASSIGNED'
         : (outOfPlan ? 'OUT_OF_PLAN' : 'PLANNED');
       const completenessDeEsteEngrase = computeExecutionCompleteness(details);
-      // Solo un engrase fuera de plan puede "satisfacer por adelantado" una
-      // ocurrencia futura (§9/§10/§13/§14) — trabajo PLANNED/ASSIGNED ya
-      // tiene su propio mecanismo (completeGreaseAssignmentForOccurrence()/
-      // avance normal de plan.lastGreaseHour más abajo).
-      const satisfiedOccurrenceKeyDeEsteEngrase = executionTypeDeEsteEngrase === 'OUT_OF_PLAN'
-        ? resolveOutOfPlanSatisfaction({
-            plan, completeness: completenessDeEsteEngrase,
-            existingRecords: await DB.allActive('lubrication_records'),
-            todayDate: esRetro ? new Date(fechaRegistro) : new Date()
-          })
-        : null;
+      // Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", Parte A del
+      // pedido): executionType describe CÓMO se ejecutó (manual/asignado/
+      // fuera de plan) — NUNCA debe decidir si TÉCNICAMENTE satisface una
+      // ocurrencia futura por adelantado. Antes solo entraba aquí
+      // executionType === 'OUT_OF_PLAN' (la función tenía otro nombre,
+      // más restrictivo) — un COMPLETE ASSIGNED/PLANNED
+      // registrado 1 día antes (p. ej. el botón normal "Registrar engrase"
+      // sobre una tarjeta ya asignada) nunca calculaba satisfiedOccurrenceKey
+      // y se quedaba pendiente al día siguiente sin motivo real (bug
+      // confirmado, diagnóstico "A-02 sigue en Mi Turno"). Ahora se intenta
+      // SIEMPRE, sin importar executionType — PLANNED/ASSIGNED de HOY para
+      // su propia ocurrencia de HOY siguen resolviendo esa misma ocurrencia
+      // sin efecto real (weekdayStatusFor() ya la marca "AL DÍA" por el
+      // check `done`, que corre ANTES y nunca llega a leer este valor en
+      // ese caso). completeGreaseAssignmentForOccurrence()/el avance normal
+      // de plan.lastGreaseHour (más abajo) siguen sin cambios — esto solo
+      // certifica una ocurrencia DISTINTA (la de mañana), nunca la de hoy.
+      const satisfiedOccurrenceKeyDeEsteEngrase = resolveEarlyOccurrenceSatisfaction({
+        plan, completeness: completenessDeEsteEngrase,
+        existingRecords: await DB.allActive('lubrication_records'),
+        todayDate: esRetro ? new Date(fechaRegistro) : new Date()
+      });
 
       const operationalSnapshot = buildExecutionSnapshot({
         equipmentLocationId: equipment.locationId,
@@ -8722,8 +8733,9 @@ async function startGreaseFlow(equipmentId, target, options) {
           // F-01: plan.lastGreaseHour es la base de computeOccurrenceKey() para
           // "Horas de operación" (operational-scope.js) — avanzarla "reinicia el
           // ciclo". canAdvanceHourCycle() exige COMPLETE para ese controlType,
-          // igual que resolveOutOfPlanSatisfaction() ya exige COMPLETE para
-          // OUT_OF_PLAN; otros controlType no usan lastGreaseHour para su ciclo.
+          // igual que resolveEarlyOccurrenceSatisfaction() ya exige COMPLETE
+          // para satisfacer por adelantado; otros controlType no usan
+          // lastGreaseHour para su ciclo.
           if (plan && canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })) {
             plan.lastGreaseHour = newHourmeter;
             await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));

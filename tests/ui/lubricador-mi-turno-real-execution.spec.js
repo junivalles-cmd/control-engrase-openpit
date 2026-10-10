@@ -1050,41 +1050,49 @@ test('ASIGNADO-D — una occurrence ya satisfecha (adelantado) nunca vuelve a ap
   await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
 });
 
-// Documenta el MECANISMO REAL más probable detrás de "A-02 sigue en Mi
-// Turno" (diagnóstico 2026-10-09): resolveOutOfPlanSatisfaction() SOLO se
-// llama cuando executionType === 'OUT_OF_PLAN' (ver app.js, guardado del
-// formulario) — un ASSIGNED/PLANNED nunca calcula satisfiedOccurrenceKey,
-// sin importar qué tan cerca esté de la ocurrencia de hoy. Esto es DISEÑO
-// documentado ("Solo un engrase fuera de plan puede satisfacer por
-// adelantado"), no un bug de merge/dedup (ya descartado en ASIGNADO-A/D) —
-// pero es EXACTAMENTE lo que produce el síntoma reportado si el engrase de
-// ayer se registró como ASSIGNED/PLANNED (botón normal "Registrar
-// engrase") en vez de "Registrar fuera de plan".
-test('ASIGNADO-E (diagnóstico) — COMPLETE ASSIGNED (no OUT_OF_PLAN) 1 día antes NUNCA calcula satisfiedOccurrenceKey → sigue pendiente, aunque la diferencia sea de 1 día', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e));
+// Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", Parte A del
+// pedido) — CIERRA el diagnóstico anterior ("A-02 sigue en Mi Turno"):
+// resolveEarlyOccurrenceSatisfaction() (renombrada de
+// resolveOutOfPlanSatisfaction()) ahora se llama SIEMPRE al guardar,
+// nunca solo para executionType === 'OUT_OF_PLAN' — executionType describe
+// CÓMO se ejecutó, nunca si satisface técnicamente la ocurrencia. A/B/C del
+// pedido: PLANNED/ASSIGNED/OUT_OF_PLAN COMPLETE 1 día antes satisfacen por
+// igual — mismo satisfiedOccurrenceKey, mismo resultado.
+for (const tipo of ['PLANNED', 'ASSIGNED', 'OUT_OF_PLAN']) {
+  test(`A/B/C — COMPLETE ${tipo} 1 día antes SÍ satisface la ocurrencia de hoy (executionType nunca decide, solo describe) → Realizado Adelantado`, async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e));
 
-  const hoyWeekday = weekdayName(new Date());
-  const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l2' }];
-  const plans = [{ id: 'plan_asig_e', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
-  const records = [{
-    id: 'r_asig_e', equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
-    // Mismo resultado real que produce app.js al guardar: executionType
-    // ASSIGNED/PLANNED NUNCA llama resolveOutOfPlanSatisfaction() -> queda null.
-    operationalSnapshot: { executionType: 'ASSIGNED', executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: null, crewId: 'crew1', crewLocationIdAtExecution: 'l1', assignmentId: 'asg5' },
-  }];
-  const assignments = [{
-    id: 'asg5', active: true, status: 'PENDING', occurrenceKey: `plan_asig_e:${isoDateOnly(0)}`,
-    equipmentId: 'e1', planId: 'plan_asig_e', assignedCrewId: 'crew1',
-  }];
+    const hoyWeekday = weekdayName(new Date());
+    // l1: misma ubicación que la cuadrilla del fixture (Cuadrilla A) — para
+    // ASSIGNED se agrega además una assignment (redundante con "normal",
+    // igual que ya prueba ASIGNADO-D) sin cambiar la ubicación del equipo.
+    const equipos = [{ id: 'e1', code: 'A-02', brand: 'Caterpillar', model: '740B', status: 'Operativo', locationId: 'l1' }];
+    const plans = [{ id: 'plan_tipo_' + tipo, equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+    const occKey = `plan_tipo_${tipo}:${isoDateOnly(0)}`;
+    const records = [{
+      id: 'r_tipo_' + tipo, equipmentId: 'e1', date: isoDaysAgo(1), createdAt: isoDaysAgo(1), userName: 'Jose Guerrero', qty: 6.0, shiftId: 'shift_dia',
+      // Mismo resultado real que produce app.js al guardar DESPUÉS del fix:
+      // resolveEarlyOccurrenceSatisfaction() se llama sin importar
+      // executionType -> satisfiedOccurrenceKey queda resuelto igual.
+      operationalSnapshot: { executionType: tipo, executionCompleteness: 'COMPLETE', satisfiedOccurrenceKey: occKey, crewId: 'crew1', crewLocationIdAtExecution: 'l1', assignmentId: tipo === 'ASSIGNED' ? 'asg_tipo' : null },
+    }];
+    const assignments = tipo === 'ASSIGNED' ? [{
+      id: 'asg_tipo', active: true, status: 'PENDING', occurrenceKey: occKey,
+      equipmentId: 'e1', planId: 'plan_tipo_' + tipo, assignedCrewId: 'crew1',
+    }] : [];
 
-  await bootPage(page, { equipos, plans, records, assignments });
-  await page.evaluate(() => window.renderLubricadorHome());
+    await bootPage(page, { equipos, plans, records, assignments });
+    await page.evaluate(() => window.renderLubricadorHome());
 
-  expect(errors).toEqual([]);
-  expect(await page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")').count()).toBe(0);
-  await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
-});
+    expect(errors).toEqual([]);
+    expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
+    expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
+    expect(await page.locator('.lub-eq-code', { hasText: 'A-02' }).count()).toBe(1); // una sola vez, solo en Realizados Adelantados
+    await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
+    await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
+  });
+}
 
 // Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK/MI TURNO", Parte 0B del
 // pedido) — la tarjeta de "Mi Turno" (.lub-eq-btn) es un <div> CONTENEDOR,

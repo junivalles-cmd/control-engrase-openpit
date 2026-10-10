@@ -181,4 +181,21 @@ describe('estadoCelda() — Matriz Semanal, celda equipo x día', () => {
     expect(() => estadoCelda(equipo, HOY, plans, [], HOY)).not.toThrow();
     expect(estadoCelda(equipo, HOY, plans, [], HOY)).toEqual({ tipo: 'pendiente' });
   });
+
+  // 17-18: Fix 2026-10-09 ("FIX REALIZADO ADELANTADO + QR INTERNO", §5 del
+  // pedido) — estadoCelda() NUNCA filtró por executionType (solo lee
+  // satisfiedOccurrenceKey), confirmado explícitamente con PLANNED/ASSIGNED
+  // — mismo resultado que OUT_OF_PLAN (test 14, arriba).
+  for (const tipo of ['PLANNED', 'ASSIGNED']) {
+    it(`17/18. hecho_adelantado con executionType=${tipo}: Matrix no distingue cómo se ejecutó, solo si satisfiedOccurrenceKey coincide`, () => {
+      const miercoles = fecha(2026, 0, 14);
+      const plan = { id: 'plan_tipo', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Miércoles'] };
+      const registroMartes = {
+        equipmentId: 'e1', date: fecha(2026, 0, 13).toISOString(), userName: 'Ana',
+        operationalSnapshot: { executionType: tipo, satisfiedOccurrenceKey: 'plan_tipo:2026-01-14' },
+      };
+      const r = estadoCelda(equipo, miercoles, [plan], [registroMartes], HOY);
+      expect(r).toEqual({ tipo: 'hecho_adelantado', por: 'Ana', fecha: registroMartes.date });
+    });
+  }
 });

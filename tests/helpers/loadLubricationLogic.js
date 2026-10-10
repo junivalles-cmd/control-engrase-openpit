@@ -67,6 +67,7 @@ const APP_LOGIC_SOURCES = [
     'PERMISSIONS',
     'qrValueForEquipment',
     'parseEquipmentIdFromScan',
+    'resolveEquipmentFromScan',
     'equipoMatchesQuery',
   ]],
 ];
@@ -262,7 +263,7 @@ const OPERATIONAL_SCOPE_SOURCES = [
     'EXECUTION_TYPE', 'EXECUTION_COMPLETENESS', 'OUT_OF_PLAN_REASONS',
     'toISODateUTCLocal',
     'computeExecutionCompleteness', 'findNextApplicableOccurrenceForWeekdayPlan',
-    'findNextApplicableOccurrence', 'resolveOutOfPlanSatisfaction', 'canAdvanceHourCycle', 'findExistingWorkForEquipment',
+    'findNextApplicableOccurrence', 'resolveEarlyOccurrenceSatisfaction', 'canAdvanceHourCycle', 'findExistingWorkForEquipment',
     'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason', 'resolveRecordCompleteness',
     'NO_EXECUTION_REASONS', 'validateNoExecutionInput', 'buildNoExecutionRecord', 'findCarriedOverSkipForToday',
     'GREASE_MATCH_STATUS', 'findMatchingGreaseRecordForOccurrence',

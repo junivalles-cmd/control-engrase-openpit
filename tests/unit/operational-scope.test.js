@@ -21,7 +21,7 @@ const {
   resolveRecordCrewId, resolveRecordCrewLocationId,
   EXECUTION_TYPE, EXECUTION_COMPLETENESS, OUT_OF_PLAN_REASONS,
   computeExecutionCompleteness, findNextApplicableOccurrenceForWeekdayPlan,
-  findNextApplicableOccurrence, resolveOutOfPlanSatisfaction, canAdvanceHourCycle, findExistingWorkForEquipment,
+  findNextApplicableOccurrence, resolveEarlyOccurrenceSatisfaction, canAdvanceHourCycle, findExistingWorkForEquipment,
   resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
   NO_EXECUTION_REASONS, validateNoExecutionInput, buildNoExecutionRecord, findCarriedOverSkipForToday,
   GREASE_MATCH_STATUS, findMatchingGreaseRecordForOccurrence,
@@ -438,7 +438,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
 
   it('CASO A — OUT_OF_PLAN + PM + COMPLETE, plan por horas: satisface el ciclo vigente (nunca ambiguo)', () => {
     const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 4800 };
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
     expect(key).toBe(computeOccurrenceKey(plan, {}));
     expect(key).toBe('plan_horas:h:4800');
     // El avance real (4800 -> 5000, próximo 5250) lo hace app.js igual que
@@ -448,20 +448,20 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
 
   it('CASO B — OUT_OF_PLAN + PM + PARTIAL, plan por horas: NO satisface nada (nunca reinicia el ciclo a medias)', () => {
     const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 4800 };
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY });
     expect(key).toBeNull();
   });
 
   it('CASO C — OUT_OF_PLAN día/turno: PM el martes satisface por adelantado el miércoles (única ocurrencia pendiente en la ventana)', () => {
     const plan = { id: 'plan_dt', controlType: 'Día y turno de la semana', assignedDays: ['Miércoles'] };
     const martes = new Date('2026-09-29T09:00:00'); // martes de esa semana
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: martes });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: martes });
     expect(key).toBe('plan_dt:2026-09-30'); // miércoles siguiente
   });
 
   it('CASO D — OUT_OF_PLAN sin ocurrencia aplicable (plan sin días asignados): no satisface nada, nunca lanza', () => {
     const plan = { id: 'plan_sin_dias', controlType: 'Día y turno de la semana', assignedDays: [] };
-    expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY })).toBeNull();
+    expect(resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY })).toBeNull();
   });
 
   // Fix 2026-10-09 ("REALIZADO ADELANTADO"): assignedDays actualizado a
@@ -489,7 +489,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
   it('CASO F — mismo día: OUT_OF_PLAN completo el día programado satisface ESA misma ocurrencia (nunca queda PLANNED pendiente + OUT_OF_PLAN aparte)', () => {
     const plan = { id: 'plan_dt3', controlType: 'Día y turno de la semana', assignedDays: ['Lunes'] };
     const existing = findExistingWorkForEquipment({ plan, assignments: [], statusCode: 'AMARILLO', todayDate: HOY });
-    const satisfecha = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    const satisfecha = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
     expect(existing.kind).toBe('PLANNED');
     expect(satisfecha).toBe(existing.occurrenceKey); // misma clave -> una sola ocurrencia, no dos
   });
@@ -524,7 +524,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
 
   it('CASO M — PARTIAL nunca satisface (no cancela un recordatorio de ocurrencia pendiente válida)', () => {
     const plan = { id: 'plan_m', controlType: 'Día y turno de la semana', assignedDays: ['Martes'] };
-    expect(resolveOutOfPlanSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY })).toBeNull();
+    expect(resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'PARTIAL', existingRecords: [], todayDate: HOY })).toBeNull();
   });
 
   // Fix 2026-10-09 ("REALIZADO ADELANTADO", Parte F del pedido): CASO N
@@ -536,7 +536,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
   // satisface automáticamente".
   it('CASO N — COMPLETE a +3 días (fuera de la ventana de 1 día) NO satisface automáticamente — queda OUT_OF_PLAN, la ocurrencia futura permanece', () => {
     const plan = { id: 'plan_n', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'] };
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
     expect(key).toBeNull();
   });
 
@@ -547,7 +547,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
   it('§21 — COMPLETE a 1 día de adelanto (programado MAÑANA) SÍ satisface esa ocurrencia — único caso válido de "realizado adelantado"', () => {
     const HOY_MIERCOLES = new Date('2026-09-30T10:00:00');
     const plan = { id: 'plan_n2', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'] };
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY_MIERCOLES });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY_MIERCOLES });
     expect(key).toBe('plan_n2:2026-10-01'); // jueves, exactamente mañana
   });
 
@@ -557,7 +557,7 @@ describe('Engrase fuera de plan — CASO A-N del pedido', () => {
   // antes de este lote; esto solo confirma que sigue siendo así).
   it('§27 — un plan "Horas de operación" nunca usa la ventana de días (findNextApplicableOccurrence despacha por controlType, sin cambios)', () => {
     const plan = { id: 'plan_horas', controlType: 'Horas de operación', frequency: 250, lastGreaseHour: 100 };
-    const key = resolveOutOfPlanSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
+    const key = resolveEarlyOccurrenceSatisfaction({ plan, completeness: 'COMPLETE', existingRecords: [], todayDate: HOY });
     expect(key).toBe(computeOccurrenceKey(plan, {})); // por ciclo de horómetro, nunca por fecha
   });
 
@@ -579,7 +579,7 @@ describe('canAdvanceHourCycle() — F-01 (auditoría pre-release): PARTIAL no re
     expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: 'COMPLETE' })).toBe(true);
   });
 
-  it('B) plan por horas + PARTIAL: NO puede avanzar (el ciclo sigue abierto, igual que resolveOutOfPlanSatisfaction exige COMPLETE)', () => {
+  it('B) plan por horas + PARTIAL: NO puede avanzar (el ciclo sigue abierto, igual que resolveEarlyOccurrenceSatisfaction exige COMPLETE)', () => {
     expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: 'PARTIAL' })).toBe(false);
   });
 
@@ -587,7 +587,7 @@ describe('canAdvanceHourCycle() — F-01 (auditoría pre-release): PARTIAL no re
     // El caller (app.js) pasa el mismo completenessDeEsteEngrase sin importar
     // si executionTypeDeEsteEngrase es PLANNED/ASSIGNED/OUT_OF_PLAN — un
     // PARTIAL siempre deja el ciclo abierto, consistente con CASO B de
-    // resolveOutOfPlanSatisfaction() arriba (OUT_OF_PLAN + PARTIAL -> null).
+    // resolveEarlyOccurrenceSatisfaction() arriba (OUT_OF_PLAN + PARTIAL -> null).
     expect(canAdvanceHourCycle({ controlType: 'Horas de operación', completeness: EXECUTION_COMPLETENESS.PARTIAL })).toBe(false);
   });
 

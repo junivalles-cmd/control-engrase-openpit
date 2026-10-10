@@ -53,12 +53,15 @@ function estadoCelda(eq, fecha, plans, records, hoy) {
     return { tipo: 'hecho', por: hecho.userName, fecha: hecho.date };
   }
 
-  // Engrase FUERA DE PLAN que satisfizo ESTA ocurrencia por adelantado (lote
-  // "engrase fuera de plan" §10/§19): el registro real quedó en OTRO día
-  // (antes), pero operational-scope.js ya certificó que esta celda concreta
-  // quedó cubierta — ver resolveOutOfPlanSatisfaction()/satisfiedOccurrenceKey
-  // en operationalSnapshot. El plan maestro NUNCA se toca (sigue siendo el
-  // mismo día la semana siguiente, ver §11) — esto es solo una lectura.
+  // Engrase que satisfizo ESTA ocurrencia por adelantado (lote "engrase
+  // fuera de plan" §10/§19, generalizado 2026-10-09 "FIX REALIZADO
+  // ADELANTADO + QR INTERNO" a CUALQUIER executionType — PLANNED/ASSIGNED/
+  // OUT_OF_PLAN, da igual cómo se ejecutó): el registro real quedó en OTRO
+  // día (antes), pero operational-scope.js ya certificó que esta celda
+  // concreta quedó cubierta — ver resolveEarlyOccurrenceSatisfaction()/
+  // satisfiedOccurrenceKey en operationalSnapshot. El plan maestro NUNCA se
+  // toca (sigue siendo el mismo día la semana siguiente, ver §11) — esto
+  // es solo una lectura.
   if (plan.id) {
     const cellKey = computeOccurrenceKey(plan, { dateISO: `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}` });
     const adelantado = records.find(r => r.equipmentId === eq.id &&
