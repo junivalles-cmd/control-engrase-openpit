@@ -97,6 +97,7 @@ describe('Chart.js (Reportes) respeta prefers-reduced-motion (CSS no alcanza <ca
 
   it('el gráfico de Consumo apaga su animación cuando corresponde', () => {
     const src = extractDeclaration(appSource, 'renderReportes');
-    expect(sliceFrom(src, 'charts.consumo = new Chart(', 500)).toContain('...(prefersReducedMotion() ? { animation: false } : {})');
+    const consumo = extractDeclaration(src.replace(/^  /gm, ''), 'dibujarConsumoTab');
+    expect(consumo).toContain('...(prefersReducedMotion() ? { animation: false } : {})');
   });
 });

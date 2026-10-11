@@ -21,7 +21,7 @@ function reportesFixture() {
   <div class="app-shell">
     <aside class="sidebar" id="sidebar"><nav class="menu"></nav></aside>
     <div class="main"><header class="topbar"><div class="topbar-title">Reportes</div></header>
-      <main class="app-content">
+      <main class="app-content"><div class="rep-page layout-wide">
         <div class="panel">
           <div class="panel-head"><h3>Filtros del informe</h3></div>
           <div class="toolbar rep-filters-row" id="rep-filters-probe" style="padding:0 14px 14px">
@@ -156,7 +156,7 @@ function reportesFixture() {
             </div>
           </details>
         </div>
-      </main>
+      </div></main>
     </div>
   </div>`;
 }
@@ -164,7 +164,12 @@ function reportesFixture() {
 async function bootFixture(page, width) {
   await page.setViewportSize({ width, height: 900 });
   await page.setContent(reportesFixture());
+  await page.route('https://**/*', route => route.fulfill({ body: '', contentType: 'text/css' }));
   await page.addStyleTag({ path: STYLES_PATH });
+  await page.evaluate(() => document.querySelectorAll('table').forEach(table => {
+    const labels = [...table.querySelectorAll('thead th')].map(el => el.textContent);
+    table.querySelectorAll('tbody tr').forEach(row => [...row.children].forEach((cell, i) => cell.dataset.label = labels[i] || ''));
+  }));
   await page.addScriptTag({
     content: `
       document.getElementById('rep-photo-toggle').addEventListener('click', () => {
@@ -270,12 +275,14 @@ test('Gráfico de Tendencia: altura compacta (~230-250px), no ocupa media pantal
   expect(alto).toBeLessThanOrEqual(260);
 });
 
-test('Tendencia y Cumplimiento por turno tienen la misma altura en desktop (sin hueco vacío)', async ({ page }) => {
+test('Tendencia y Cumplimiento por turno alinean arriba sin estirar el panel compacto de turno', async ({ page }) => {
   await bootFixture(page, 1366);
   const panels = page.locator('#rep-tendencia-turno-probe > .panel');
   const altoTendencia = await panels.nth(0).evaluate(el => el.getBoundingClientRect().height);
   const altoTurno = await panels.nth(1).evaluate(el => el.getBoundingClientRect().height);
-  expect(Math.abs(altoTendencia - altoTurno)).toBeLessThanOrEqual(1);
+  expect(altoTurno).toBeLessThan(altoTendencia);
+  const tops = await panels.evaluateAll(els => els.map(el => el.getBoundingClientRect().top));
+  expect(Math.abs(tops[0] - tops[1])).toBeLessThanOrEqual(1);
 });
 
 test('Cumplimiento por turno: % es la cifra PRINCIPAL (más grande) y trae barra de progreso', async ({ page }) => {

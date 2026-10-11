@@ -10773,13 +10773,31 @@ async function renderReportes() {
     // (Dashboard), no una métrica del período histórico filtrado.
     area.innerHTML = `<div class="dim rep-periodo-line">${periodoTxt}</div>
       <div class="rep-resumen-grid">
-        <div class="kpi-card tone-${tone}"><div class="kpi-value">${pct === null ? '—' : pct + '%'}</div><div class="kpi-label">Cumplimiento del período</div></div>
+        <div class="kpi-card tone-${tone}"><div class="kpi-value">${pct === null ? '—' : pct + '%'}</div><div class="kpi-label">Cumplimiento del período</div><div class="progress-track rep-summary-progress" aria-hidden="true"><div class="progress-fill" style="width:${pct === null ? 0 : pct}%;background:${tone === 'neutral' ? 'var(--text-dim)' : `var(--${tone})`}"></div></div></div>
         ${kpiCard('Programados', programados, 'neutral')}
         ${kpiCard('Realizados', realizados, 'green')}
         ${kpiCard('No realizados', noRealizados, noRealizados > 0 ? 'amber' : 'neutral')}
         ${consumoCard}
       </div>
       <div class="dim rep-resumen-note">Cumplimiento basado en planes Día/Turno evaluables.</div>`;
+  }
+
+  // Opciones exclusivamente visuales, compartidas por los dos gráficos.
+  function reportChartPresentation() {
+    const style = getComputedStyle($('#app-content'));
+    const token = name => style.getPropertyValue(name).trim();
+    const text = token('--text');
+    const muted = token('--text-dim');
+    const accent = token('--accent-ink');
+    const grid = token('--border');
+    const font = { family: style.fontFamily, size: 12 };
+    return {
+      accent, grid, text, muted, font,
+      tooltip: { backgroundColor: token('--surface'), titleColor: text, bodyColor: text,
+        borderColor: grid, borderWidth: 1, padding: 12, cornerRadius: 6,
+        titleFont: { ...font, weight: '600' }, bodyFont: font, displayColors: false },
+      ticks: { color: muted, font },
+    };
   }
 
   function drawTendencia(records, dias, equiposDT, turnoSel) {
@@ -10806,18 +10824,19 @@ async function renderReportes() {
         ? `Cumplimiento por período: ${conDato.map(p => `${p.label} ${p.pct}%`).join(', ')}.`
         : 'Sin datos de cumplimiento en el período seleccionado.';
     }
+    const paint = reportChartPresentation();
     charts.tendencia = new Chart($('#chart-tendencia'), {
       type: 'line',
-      data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: '#F2A900', backgroundColor: 'rgba(242,169,0,0.10)', fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },
+      data: { labels, datasets: [{ label: 'Cumplimiento %', data, borderColor: paint.accent, backgroundColor: `color-mix(in srgb, ${paint.accent} 8%, transparent)`, fill: true, tension: 0.3, spanGaps: false, borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3 }] },
       options: {
-        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: paint.tooltip },
         ...(prefersReducedMotion() ? { animation: false } : {}),
         scales: {
-          y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
+          y: { beginAtZero: true, max: 100, grid: { color: paint.grid }, border: { display: false }, ticks: { ...paint.ticks, callback: v => v + '%' } },
           // Todos los datos siguen ahí (no se recorta ningún punto) — solo se
           // reduce cuántas ETIQUETAS del eje X se dibujan, para que no se
           // amontonen cuando el rango es amplio.
-          x: { ticks: { autoSkip: true, maxTicksLimit: 8 } }
+          x: { grid: { display: false }, border: { display: false }, ticks: { ...paint.ticks, autoSkip: true, maxTicksLimit: 8, maxRotation: 0 } }
         }
       }
     });
@@ -10913,10 +10932,23 @@ async function renderReportes() {
     if (summaryEl) {
       summaryEl.textContent = `Consumo de grasa: ${entries.map(([k, v]) => `${k} ${Math.round(v * 10) / 10}`).join(', ')}.`;
     }
+    const paint = reportChartPresentation();
     charts.consumo = new Chart($('#chart-consumo'), {
       type: 'bar',
-      data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: '#E8A33D' }] },
-      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, ...(prefersReducedMotion() ? { animation: false } : {}), scales: { x: { beginAtZero: true } } }
+      data: { labels: entries.map(([k]) => k), datasets: [{ data: entries.map(([, v]) => Math.round(v * 10) / 10), backgroundColor: entries.map((_, i) => i === 0 ? paint.accent : `color-mix(in srgb, ${paint.accent} 55%, ${getComputedStyle($('#app-content')).getPropertyValue('--surface').trim()})`), borderRadius: 4, maxBarThickness: 18 }] },
+      plugins: [{ id: 'reportConsumptionValues', afterDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.font = `600 12px ${paint.font.family}`;
+        ctx.fillStyle = paint.text;
+        ctx.textBaseline = 'middle';
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+          const label = `${chart.data.datasets[0].data[i]} ${GREASE_UNIT}`;
+          if (bar.x + 8 + ctx.measureText(label).width <= chartArea.right) ctx.fillText(label, bar.x + 8, bar.y);
+        });
+        ctx.restore();
+      } }],
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { ...paint.tooltip, callbacks: { label: context => `${context.parsed.x} ${GREASE_UNIT}` } } }, ...(prefersReducedMotion() ? { animation: false } : {}), scales: { x: { beginAtZero: true, grid: { color: paint.grid }, border: { display: false }, ticks: paint.ticks }, y: { grid: { display: false }, border: { display: false }, ticks: paint.ticks } } }
     });
   }
 
@@ -10936,10 +10968,9 @@ async function renderReportes() {
 
     paretoArea.innerHTML = !filas.length
       ? '<div class="empty-state">Sin puntos pendientes en este periodo — todos los engrases se completaron.</div>'
-      : `<div class="skipped-summary">
+      : `<div class="rep-pending-total">${filas.length} punto(s) pendiente(s)</div><div class="skipped-summary">
           ${resumen.map(([motivo, n]) => `<span class="skipped-chip">${esc(motivo)}: <b>${n}</b> (${Math.round(n / filas.length * 100)}%)</span>`).join('')}
-        </div>
-        <div class="dim" style="padding:6px 14px 0">${filas.length} punto(s) pendiente(s)</div>`;
+        </div>`;
 
     detalleArea.innerHTML = !filas.length
       ? '<div class="empty-state">Sin puntos pendientes en este periodo.</div>'
@@ -10981,13 +11012,13 @@ async function renderReportes() {
     area.innerHTML = `<div class="kpi-grid">
         ${kpiCard('Detectadas', anomaliasF.length, 'neutral')}
         ${kpiCard('Abiertas', abiertas, abiertas > 0 ? 'red' : 'neutral')}
-        ${kpiCard('Cerradas', cerradas, 'green')}
+        ${kpiCard('Cerradas', cerradas, cerradas > 0 ? 'green' : 'neutral')}
       </div>
       ${anomaliasF.length ? `
-      <div class="rep-subhead" style="padding:0 14px">Por estado (real)</div>
-      <div class="skipped-summary">${estadosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
       <div class="rep-two-col">
         <div>
+          <div class="rep-subhead">Por estado (real)</div>
+          <div class="skipped-summary">${estadosOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
           <div class="rep-subhead">Principales tipos</div>
           <div class="skipped-summary">${tiposOrdenados.map(([k, n]) => `<span class="skipped-chip">${esc(k)}: <b>${n}</b> (${Math.round(n / anomaliasF.length * 100)}%)</span>`).join('')}</div>
         </div>
@@ -11036,7 +11067,7 @@ async function renderReportes() {
           <div class="rep-subhead">Equipos con más "no ejecutados"</div>
           ${equiposOrdenados.map(([k, n]) => `<div class="rep-consumo-row"><span class="mono">${esc(k)}</span><span>${n}</span></div>`).join('')}
         </div>
-      </div>` : '<div class="empty-state">Sin "no se pudo ejecutar" en este período.</div>'}`;
+      </div>` : '<div class="empty-state rep-clear-state">✓ Sin “No se pudo ejecutar” en este período.</div>'}`;
   }
 
   function drawValidacionSeccion(records) {
@@ -11069,12 +11100,13 @@ async function renderReportes() {
       else pendientes++;
     });
     const pctValidado = Math.round(validados / sujetos.length * 100);
-    area.innerHTML = `<div class="kpi-grid">
+    area.innerHTML = `<div class="rep-subhead rep-validation-heading">Resumen</div><div class="kpi-grid rep-validation-summary">
         ${kpiCard('Sujetos a validación', sujetos.length, 'neutral')}
-        ${kpiCard('Validados', validados, 'green')}
+        ${kpiCard('Validados', validados, validados > 0 ? 'green' : 'neutral')}
         ${kpiCard('Pendientes', pendientes, pendientes > 0 ? 'amber' : 'neutral')}
         ${kpiCard('Vencidos', vencidos, vencidos > 0 ? 'red' : 'neutral')}
         ${kpiCard('Conflictos', conflictos, conflictos > 0 ? 'red' : 'neutral')}
+      </div><div class="rep-subhead rep-validation-heading">Desglose</div><div class="kpi-grid rep-validation-breakdown">
         ${kpiCard('Por Operador', porOperador, 'neutral')}
         ${kpiCard('Por Encargado', porEncargado, 'neutral')}
       </div>

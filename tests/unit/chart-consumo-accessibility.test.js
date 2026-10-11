@@ -8,7 +8,7 @@
 // visualmente nada, nunca toca Chart.js ni el cálculo.
 
 import { describe, it, expect } from 'vitest';
-import { readSource } from '../helpers/extractFromSource.js';
+import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 // dibujarConsumoTab() vive ANIDADA dentro de renderReportes() (no es una
@@ -19,7 +19,7 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 const appSource = readSource(APP_JS_PATH);
 const anchorIdx = appSource.indexOf('function dibujarConsumoTab(tab)');
 if (anchorIdx === -1) throw new Error('dibujarConsumoTab(tab) no se encontró en app.js — ¿se renombró?');
-const src = appSource.slice(anchorIdx, anchorIdx + 2200);
+const src = extractDeclaration(appSource.replace(/^  /gm, ''), 'dibujarConsumoTab');
 
 describe('dibujarConsumoTab() — alternativa textual accesible (mismo patrón que Tendencia)', () => {
   it('el <canvas> declara role="img" + aria-label + aria-describedby', () => {
@@ -36,7 +36,7 @@ describe('dibujarConsumoTab() — alternativa textual accesible (mismo patrón q
     expect(src).toMatch(/entries\.map\(\(\[k, v\]\)/);
   });
 
-  it('no se tocó la construcción del Chart.js en sí (type/data/options siguen igual)', () => {
+  it('conserva el tipo de barras horizontales con sus opciones visuales', () => {
     expect(src).toContain("type: 'bar'");
     expect(src).toContain("indexAxis: 'y'");
   });
