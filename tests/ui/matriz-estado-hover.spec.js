@@ -173,20 +173,15 @@ test('Q) la leyenda incluye "Realizado atrasado" con el MISMO color exacto que l
   expect(appSource).toContain("fill: { fgColor: { rgb: '8A5A00' } }");
 });
 
-test('R) el tooltip (title nativo) de "REALIZADO ATRASADO" sigue disponible con la misma información', async ({ page }) => {
-  await setup(page);
-  const cell = page.locator('.celda-hecho-atrasado');
-  await expect(cell).toHaveAttribute('title', /Realizado atrasado \(turno distinto al planificado\)/);
-  // El <td> no es nativamente enfocable (igual que el resto de celdas de la
-  // matriz, nunca eran botones) — el tooltip funciona con mouse (title
-  // nativo), tal como antes del lote; este test documenta ese estado real,
-  // no inventa un comportamiento de foco nuevo fuera de lo pedido.
-  const tabIndex = await cell.evaluate(el => el.tabIndex);
-  expect(tabIndex).toBe(-1);
+test('R) tooltip largo sustituido por detalle accesible (interacción real en matrix-occurrence-detail)', async () => {
+  const source = readSource(APP_JS_PATH);
+  expect(source).toContain("cell.removeAttribute('title')");
+  expect(source).toContain("cell.setAttribute('aria-haspopup', 'dialog')");
+  expect(source).toContain("event.key === 'Enter' || event.key === ' '");
 });
 
 test('S) no se cambió la lógica del estado — la clase/condición de "hecho_atrasado" en el template es idéntica a antes del lote', async () => {
   const appSource = readSource(APP_JS_PATH);
-  expect(appSource).toContain(`if (s.tipo === 'hecho_atrasado') return \`<td class="celda-hecho-atrasado\${hoyCls}" title="Realizado atrasado (turno distinto al planificado) por \${esc(s.por)} · \${fmtDate(s.fecha)}">REALIZADO ATRASADO</td>\`;`);
+  expect(appSource).toContain(`if (s.tipo === 'hecho_atrasado') return \`<td class="celda-hecho-atrasado\${hoyCls}">REALIZADO ATRASADO</td>\`;`);
   expect(appSource).toContain("const TIPOS_HECHO = ['hecho', 'hecho_atrasado', 'hecho_adelantado'];");
 });

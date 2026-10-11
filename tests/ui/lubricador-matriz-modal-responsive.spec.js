@@ -27,7 +27,7 @@ const weeklyMatrixSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/
 const lubStatusSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/lubrication-status.js');
 const operationalScopeSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/operational-scope.js');
 
-const APP_NAMES = ['$', '$$', 'esc', 'openModal', 'closeModal', 'wireMatrizScrollHint', 'openLubricadorMatrizModal'];
+const APP_NAMES = ['$', '$$', 'esc', 'openModal', 'closeModal', 'wireMatrixOccurrenceDetails', 'wireMatrizScrollHint', 'openLubricadorMatrizModal'];
 const appRealSrc = APP_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n\n');
 
 const hoyWeekday = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][new Date().getDay()];

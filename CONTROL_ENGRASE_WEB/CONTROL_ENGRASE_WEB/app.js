@@ -4578,7 +4578,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName, cove
   `;
   openModal('Matriz semanal', html, 'modal-lub-matriz');
   wireLocationTabs();
-  $$('.matriz-wrap').forEach(wireMatrizScrollHint);
+  $$('.matriz-wrap').forEach(wrap => wireMatrizScrollHint(wrap, { equipos, plans, records, dias, hoy }));
   const reopen = (newOffset) => openLubricadorMatrizModal({ equipos, plans, records, locationName, coverage }, newOffset, selectedLocationId);
   $('#lubmtz-prev').addEventListener('click', () => reopen(offset - 1));
   $('#lubmtz-next').addEventListener('click', () => reopen(offset + 1));
@@ -7682,7 +7682,7 @@ function openPointForm(planId, pointId, lubricants) {
 // Nunca toca el layout de la tabla ni intercepta touch (ver pointer-events
 // en la regla .matriz-scroll-hint). Usada tanto por la Matriz Semanal de
 // escritorio como por el modal de solo-lectura del Lubricador.
-function wireMatrizScrollHint(wrap) {
+function wireMatrizScrollHint(wrap, context) {
   if (!wrap || wrap.dataset.scrollHintWired) return;
   wrap.dataset.scrollHintWired = '1';
   const update = () => {
@@ -7702,6 +7702,113 @@ function wireMatrizScrollHint(wrap) {
   // real, sin depender de un disconnect() explícito en ningún otro punto.
   new ResizeObserver(update).observe(wrap);
   update();
+  if (context?.dias) wireMatrixOccurrenceDetails(wrap, context);
+}
+
+// Presentation only: the state and its execution date come from estadoCelda.
+// No occurrence matching, writes or scheduling decisions live in this card.
+function wireMatrixOccurrenceDetails(wrap, { equipos, plans, records, dias, hoy }) {
+  $$('tbody tr', wrap).forEach(row => {
+    const code = row.cells[0].textContent.trim().split(' / ')[0];
+    const equipment = equipos.find(e => e.code === code);
+    if (!equipment) return;
+    Array.from(row.cells).slice(1).forEach((cell, index) => {
+      const date = dias[index];
+      const state = estadoCelda(equipment, date, plans, records, hoy);
+      cell.removeAttribute('title');
+      if (state.tipo === 'vacio' || (state.tipo === 'pausado' && !state.status)) return;
+      const labels = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE HOY', futuro: 'PROGRAMADO MÁS ADELANTE', pausado: 'PAUSADO' };
+      cell.classList.add('matrix-occurrence-cell');
+      cell.tabIndex = 0;
+      cell.setAttribute('role', 'button');
+      cell.setAttribute('aria-haspopup', 'dialog');
+      cell.setAttribute('aria-label', `Ver detalle de ${equipment.code}, ${date.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}, ${labels[state.tipo]}`);
+      const show = () => openMatrixOccurrenceCard(cell, { equipment, date, state, plans, records });
+      cell.addEventListener('click', show);
+      cell.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); show(); }
+      });
+    });
+  });
+}
+
+async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans, records }) {
+  document.querySelector('.matrix-occurrence-overlay')?._close?.();
+  const overlay = document.createElement('div');
+  overlay.className = 'matrix-occurrence-overlay';
+  overlay.innerHTML = '<section id="matrix-occurrence-card" class="matrix-occurrence-card" role="dialog" aria-modal="true" aria-label="Detalle de ocurrencia" tabindex="-1"><p role="status">Cargando detalle…</p></section>';
+  document.body.append(overlay);
+  const card = overlay.firstElementChild;
+  let observer, onResize;
+  const close = () => { observer?.disconnect(); if (onResize) window.removeEventListener('resize', onResize); overlay.remove(); if (anchor.isConnected) anchor.focus({ preventScroll: true }); };
+  overlay._close = close;
+  const position = () => {
+    if (innerWidth < 768) { card.style.left = ''; card.style.top = ''; return; }
+    const rect = anchor.getBoundingClientRect();
+    const width = card.offsetWidth, height = card.offsetHeight;
+    card.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px`;
+    card.style.top = `${Math.max(8, Math.min(rect.bottom + height + 14 <= innerHeight ? rect.bottom + 6 : rect.top - height - 6, innerHeight - height - 8))}px`;
+  };
+  overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+  overlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+    if (event.key === 'Tab') {
+      const controls = [...card.querySelectorAll('button')];
+      const first = controls[0], last = controls.at(-1);
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === card)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+  card.focus(); position();
+  try {
+    const [locations, crews, validations, skips] = await Promise.all(['locations', 'cuadrillas', 'grease_validations', 'lubrication_skips'].map(store => DB.allActive(store)));
+    if (!overlay.isConnected) return;
+    const plan = plans.find(p => p.equipmentId === equipment.id);
+    // Exact pointer supplied by estadoCelda, including early satisfaction.
+    const record = state.fecha ? records.find(r => r.equipmentId === equipment.id && r.date === state.fecha) : null;
+    const locationName = id => locations.find(l => l.id === id)?.name || '—';
+    const shiftName = id => id === 'shift_dia' ? 'Día' : id === 'shift_noche' ? 'Noche' : '—';
+    const field = (label, value) => `<div><dt>${esc(label)}</dt><dd>${esc(value ?? '—')}</dd></div>`;
+    const labels = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE HOY', futuro: 'PROGRAMADO MÁS ADELANTE', pausado: 'PAUSADO' };
+    const scheduledISO = toISODateUTCLocal(date);
+    const key = plan ? computeOccurrenceKey(plan, { dateISO: scheduledISO }) : null;
+    const skip = key ? skips.find(s => s.equipmentId === equipment.id && s.occurrenceKey === key) : null;
+    const status = record ? validationStatusForRecord(record, validations, new Date(), App.generalSettings) : null;
+    const activeSignatures = record ? findActiveValidations(record.id, validations) : [];
+    const canViewConflict = status === VALIDATION_STATUS.CONFLICTO && (PERMISSIONS[App.currentUser.role] || []).includes('historial');
+    let canRegister = !record && ['pendiente', 'no_realizado'].includes(state.tipo) && ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+    if (canRegister && App.currentUser.role === 'LUBRICADOR') {
+      const scope = await getCurrentOperationalScope();
+      const { assignments } = await loadAssignmentContext();
+      canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
+    }
+    const sources = record ? await resolvePhotoThumbSrcs(record) : [];
+    if (!overlay.isConnected) return;
+    const executionLocation = record ? resolveRecordCrewLocationId(record).value : null;
+    const crewId = record ? resolveRecordCrewId(record).value : null;
+    card.innerHTML = `<header><div><h3 class="matrix-occurrence-title">${esc(equipment.code)}</h3><p>${esc(equipment.brand)} ${esc(equipment.model)}</p><span class="matrix-state ${anchor.className.split(' ').find(c => c.startsWith('celda-')) || ''}">${labels[state.tipo]}</span></div><button type="button" class="icon-btn" data-action="close" aria-label="Cerrar detalle">✕</button></header>
+      <div class="matrix-occurrence-content"><h4>PROGRAMACIÓN</h4><dl>${field('Fecha programada', fmtDateOnly(date))}${field('Día', WEEKDAY_NAMES[date.getDay()])}${field('Turno programado', shiftName(plan?.shiftId || equipment.shiftId))}${field('Tipo de plan', plan?.controlType)}${field('Ubicación maestra', locationName(equipment.locationId))}</dl>
+      ${record ? `<h4>EJECUCIÓN</h4><dl>${field('Fecha real', fmtDateOnly(record.date))}${field('Hora', fmtTime(record.date))}${field('Turno ejecutado', shiftName(record.shiftId))}${field('Lubricador', record.userName)}${field('Cuadrilla', crews.find(c => c.id === crewId)?.name)}${field('Ubicación de ejecución', locationName(executionLocation))}${field('Tipo de ejecución', resolveRecordExecutionType(record).value)}${field('Resultado', resolveRecordCompleteness(record))}${field('Cantidad de grasa', `${fmt(record.qty, 1)} ${GREASE_UNIT}`)}</dl><h4>VALIDACIÓN</h4>${validationBadgeHTML(status)}${canViewConflict ? '<button type="button" class="btn" data-action="conflict">Ver conflicto</button>' : ''}` : ''}
+      ${state.tipo === 'pausado' ? `<p>Equipo ${esc(state.status)}</p>` : ''}
+      ${skip ? `<h4>NO EJECUTADO</h4><p>${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</p>${skip.observation ? `<p>${esc(skip.observation)}</p>` : ''}` : ''}
+      ${record?.notes ? `<h4>OBSERVACIONES</h4><p>${esc(record.notes)}</p>` : ''}
+      ${sources.length ? `<h4>EVIDENCIA · ${sources.length} fotos</h4><div class="matrix-evidence">${sources.slice(0, 3).map((src, i) => `<button type="button" data-photo="${i}" aria-label="Ver foto ${i + 1}">${photoThumbHTML(src, equipment.code, photosOf(record)[i])}</button>`).join('')}</div>` : ''}</div>
+      <footer><button type="button" class="btn" data-action="equipment">Ver ficha</button><button type="button" class="btn" data-action="history">Ver historial</button>${canRegister ? '<button type="button" class="btn btn-accent" data-action="register">Registrar engrase</button>' : ''}</footer>`;
+    const leave = () => { close(); closeModal(); };
+    card.querySelector('[data-action="close"]').onclick = close;
+    card.querySelector('[data-action="equipment"]').onclick = () => { leave(); openEquipmentDetail(equipment.id); };
+    card.querySelector('[data-action="history"]').onclick = () => { leave(); App.dashJumpEquipoId = equipment.id; navigate('historial'); };
+    card.querySelector('[data-action="register"]')?.addEventListener('click', () => { leave(); App.currentUser.role === 'LUBRICADOR' ? startLubricadorGreaseFlow(equipment.id) : startGreaseFlow(equipment.id); });
+    card.querySelector('[data-action="conflict"]')?.addEventListener('click', () => { leave(); openValidationConflictModal(activeSignatures, equipment, record.date); });
+    card.querySelectorAll('[data-photo]').forEach(button => button.onclick = () => { const src = sources[Number(button.dataset.photo)]; leave(); openPhotoLightbox(src, equipment.code); });
+    position(); card.focus();
+    observer = new ResizeObserver(position); observer.observe(card);
+    onResize = () => position(); window.addEventListener('resize', onResize);
+
+  } catch (error) {
+    if (overlay.isConnected) { card.innerHTML = '<p role="alert">No se pudo cargar el detalle.</p><button class="btn" type="button">Cerrar</button>'; card.querySelector('button').onclick = close; position(); }
+  }
 }
 
 /* ============================================================
@@ -7811,18 +7918,18 @@ async function renderMatrizSemanal() {
                   const esHoy = d.toDateString() === hoy.toDateString();
                   const hoyCls = esHoy ? ' is-today' : '';
                   const s = estadoCelda(eq, d, plans, records, hoy);
-                  if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}" title="Realizado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO</td>`;
+                  if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}">REALIZADO</td>`;
                   // Corrección real (lote occurrences/carryover): estas dos celdas
                   // NUNCA se habían wireado aquí — caían al <td> en blanco del
                   // final, sin etiqueta ni color, aunque estadoCelda() ya las
                   // distinguía desde antes (hecho_adelantado) o recién ahora
                   // (hecho_atrasado).
-                  if (s.tipo === 'hecho_atrasado') return `<td class="celda-hecho-atrasado${hoyCls}" title="Realizado atrasado (turno distinto al planificado) por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ATRASADO</td>`;
-                  if (s.tipo === 'hecho_adelantado') return `<td class="celda-hecho-adelantado${hoyCls}" title="Satisfecho por adelantado por ${esc(s.por)} · ${fmtDate(s.fecha)}">REALIZADO ADELANTADO</td>`;
-                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}" title="Le tocaba hace ${s.diasAtras} día(s) y no se registró">NO REALIZADO</td>`;
-                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}" title="Le toca HOY, aún sin registrar">PENDIENTE HOY</td>`;
-                  if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}" title="Equipo ${esc(s.status)} — no se proyecta mientras no esté operativo">PAUSADO</td>`;
-                  if (s.tipo === 'futuro') return `<td class="celda-futuro${hoyCls}" title="Programado para este día"></td>`;
+                  if (s.tipo === 'hecho_atrasado') return `<td class="celda-hecho-atrasado${hoyCls}">REALIZADO ATRASADO</td>`;
+                  if (s.tipo === 'hecho_adelantado') return `<td class="celda-hecho-adelantado${hoyCls}">REALIZADO ADELANTADO</td>`;
+                  if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}">NO REALIZADO</td>`;
+                  if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}">PENDIENTE HOY</td>`;
+                  if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}">PAUSADO</td>`;
+                  if (s.tipo === 'futuro') return `<td class="celda-futuro${hoyCls}"></td>`;
                   return `<td class="${hoyCls.trim()}"></td>`;
                 }).join('')}
               </tr>`).join('')}
@@ -7939,7 +8046,7 @@ async function renderMatrizSemanal() {
   // deslizar a ciegas para encontrarla. Nunca toca el layout de la tabla
   // (sigue siendo tabla, sigue siendo scroll horizontal).
   $$('.matriz-wrap').forEach((wrap) => {
-    wireMatrizScrollHint(wrap);
+    wireMatrizScrollHint(wrap, { equipos, plans, records, dias, hoy });
     const hoyTh = wrap.querySelector('th.is-today');
     if (hoyTh) hoyTh.scrollIntoView({ block: 'nearest', inline: 'center' });
   });

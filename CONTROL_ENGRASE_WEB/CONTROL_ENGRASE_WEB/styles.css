@@ -3519,3 +3519,25 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   #app-content .dash-admin-dashboard .dash-exc-days-label { white-space: normal; }
   #app-content .dash-admin-dashboard .dash-exc-date-label { display: none; }
 }
+/* Occurrence detail: contextual panel on desktop, field sheet on phones. */
+.matrix-occurrence-cell { cursor: pointer; touch-action: manipulation; }
+.matrix-occurrence-cell:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.matrix-occurrence-overlay { position: fixed; inset: 0; z-index: 1200; background: rgb(0 0 0 / 12%); }
+#matrix-occurrence-card { position: absolute; width: min(440px, calc(100vw - 16px)); max-height: 75dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
+#matrix-occurrence-card header { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--border); }
+#matrix-occurrence-card .matrix-occurrence-title, #matrix-occurrence-card p { margin: 0 0 6px; overflow-wrap: anywhere; }
+#matrix-occurrence-card h4 { margin: 12px 0 8px; font-size: 12px; }
+.matrix-state { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.matrix-occurrence-content { overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
+#matrix-occurrence-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; }
+#matrix-occurrence-card dt { font-size: 11px; color: var(--muted); }
+#matrix-occurrence-card dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+#matrix-occurrence-card footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+#matrix-occurrence-card button { min-height: 44px; min-width: 44px; }
+.matrix-evidence { display: flex; gap: 8px; }
+#matrix-occurrence-card .matrix-evidence button { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+#matrix-occurrence-card .matrix-evidence .photo-thumb { width: 72px; height: 64px; object-fit: cover; margin: 0; }
+@media (max-width: 767px) {
+  .matrix-occurrence-overlay { background: rgb(0 0 0 / 40%); }
+  #matrix-occurrence-card { bottom: 0; left: 8px; width: calc(100% - 16px); max-height: 80dvh; border-radius: 12px 12px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+}
