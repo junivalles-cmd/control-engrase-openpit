@@ -26,7 +26,7 @@ const statusSource = readSource(LUBRICATION_STATUS_JS_PATH);
 const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'openModal', 'closeModal', 'validationBadgeHTML', 'resolveEvidenceSrc', 'evidenceValueAttr', 'openValidationDetailModal', 'openValidationConflictModal'];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
-const validationRealSrc = ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'statusForSignerRole'].map(n => extractDeclaration(validationSource, n)).join('\n\n');
+const validationRealSrc = ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'statusForSignerRole', 'findActiveValidations', 'findActiveValidation'].map(n => extractDeclaration(validationSource, n)).join('\n\n');
 
 const EQUIPMENT = { id: 'e1', code: '45-77', brand: 'Caterpillar', model: '740B' };
 const CFG = { url: 'https://fake.supabase.co', anonKey: 'anon-test' };
