@@ -5442,14 +5442,16 @@ async function renderDashboard() {
     <div class="panel" id="dash-tiempo-sin-engrase-panel">
       <div class="panel-head dash-exc-head">
         <h3>Mayor tiempo sin engrasar</h3>
+        <div class="dash-exc-head-actions">
+        ${tiempoSinEngraseMaxDias !== null ? `<span class="dash-exc-summary">Máximo: ${tiempoSinEngraseMaxDias} d · <span class="mono">${esc(tiempoSinEngraseMaxCode)}</span></span>` : ''}
         ${tiempoSinEngrase.length > 1 ? `<button type="button" class="link-btn" id="dash-tiempo-ver-todos">Ver todos</button>` : ''}
+        </div>
       </div>
       <div class="dash-exc-sub">
         <span class="dim">Equipos ordenados por días desde el último engrase.</span>
-        ${tiempoSinEngraseMaxDias !== null ? `<span class="dash-exc-summary">Máximo: ${tiempoSinEngraseMaxDias} d · <span class="mono">${esc(tiempoSinEngraseMaxCode)}</span></span>` : ''}
       </div>
       ${tiempoSinEngrase.length === 0 ? `<div class="empty-state">Sin equipos para mostrar.</div>` : `
-      <div class="dash-exc-table-head operational-table-header" aria-hidden="true"><span>Equipo</span><span>Modelo / ubicación</span><span>Último engrase</span><span>Días sin engrasar</span><span>Acción</span></div>
+      <div class="dash-exc-table-head operational-table-header" aria-hidden="true"><span>Equipo</span><span>Modelo / ubicación</span><span>Último engrase</span><span>Días / acción</span></div>
       <div class="dash-exc-list dash-operational-table">
         ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0, idx + 1)).join('')}
       </div>
@@ -5901,10 +5903,18 @@ function pendienteValidacionRowHTML(r, eq) {
 // Ranking visual según el orden existente, sin umbrales nuevos. El código
 // abre la Ficha y Historial conserva su acción independiente. El panel pasa
 // la posición; "Ver todos" conserva la presentación sin ranking ni fecha dividida.
+function getLubricationAgeSeverity(days) {
+  if (!Number.isFinite(days)) return { key: 'unknown', label: 'Sin registro', tone: 'neutral' };
+  if (days >= 4) return { key: 'critical', label: 'Crítico', tone: 'red' };
+  if (days >= 2) return { key: 'attention', label: 'Atención', tone: 'amber' };
+  return { key: 'follow-up', label: 'Seguimiento', tone: 'neutral' };
+}
+
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax, rank = null) {
-  return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}"${rank === null ? '' : ` data-rank="${rank}"`}>
+  const severity = rank === null ? null : getLubricationAgeSeverity(dias);
+  return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}"${rank === null ? '' : ` data-rank="${rank}" data-age-severity="${severity.key}"`}>
     <div class="dash-exc-main">
-      <div class="dash-exc-line1">${rank === null ? '' : `<span class="dash-exc-rank" aria-label="Posición ${rank}">#${rank}</span>`}<button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button>${rank === null ? '' : `<span class="dash-exc-priority">${rank === 1 ? 'Mayor tiempo' : rank === 2 ? 'Atención' : 'Seguimiento'}</span>`}</div>
+      <div class="dash-exc-line1">${rank === null ? '' : `<span class="dash-exc-rank" aria-label="Posición ${rank}">#${rank}</span>`}<button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button>${rank === null ? '' : `<span class="dash-exc-priority">${severity.label}</span>`}</div>
       <div class="dash-exc-line2">${rank === null ? `${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}` : `<span class="dash-exc-model">${esc(e.brand)} ${esc(e.model)}</span> · <span class="dash-exc-location">${esc((locPorId[e.locationId] || {}).name || '—')}</span>`}</div>
       <div class="dash-exc-line3 dim" aria-label="Último engrase"><span class="dash-exc-date-label">Último: </span>${last ? (rank === null ? fmtDate(last) : `<time datetime="${esc(last)}"><span class="dash-exc-date">${fmtDateOnly(last)}</span><span class="dash-exc-time">${fmtTime(last)}</span></time>`) : 'Sin registro'}</div>
     </div>

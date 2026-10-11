@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { bootDashboard } from '../helpers/dashboardFixture.js';
 
-const baseline = execFileSync('git', ['show', '997203a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' });
-const baselineCSS = execFileSync('git', ['show', '997203a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css'], { encoding: 'utf8' });
+const baseline = execFileSync('git', ['show', 'fbabc2a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' });
+const baselineCSS = execFileSync('git', ['show', 'fbabc2a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css'], { encoding: 'utf8' });
 const equipos = Array.from({ length: 8 }, (_, i) => ({ id: `fixture-${i}`, code: `TEST-${100 + i}`, brand: 'Komatsu', model: 'PC500LC-10M0', status: 'Operativo', typeId: 't1', locationId: i % 2 ? 'l2' : 'l1' }));
 const records = equipos.map((e, i) => ({ id: `record-${i}`, equipmentId: e.id, date: `2026-10-${String(i + 1).padStart(2, '0')}T08:39:00`, shiftId: 'shift_dia', userName: 'Fixture' }));
 const fixture = { equipos, records, locations: [{ id: 'l1', name: 'Volcán' }, { id: 'l2', name: 'Mojón' }] };
@@ -30,7 +30,7 @@ test('same equipment, order, last timestamp, days, maximum and Top 5 before/afte
   expect((await values(page)).rows).toHaveLength(5);
   expect((await values(page)).max).toBe('Máximo: 9 d · TEST-100');
   await expect(page.locator('.dash-exc-rank')).toHaveText(['#1', '#2', '#3', '#4', '#5']);
-  await expect(page.locator('.dash-exc-priority')).toHaveText(['Mayor tiempo', 'Atención', 'Seguimiento', 'Seguimiento', 'Seguimiento']);
+  await expect(page.locator('.dash-exc-priority')).toHaveText(['Crítico', 'Crítico', 'Crítico', 'Crítico', 'Crítico']);
   for (const location of ['l1', 'l2', '']) {
     await old.locator('#dash-ubic').selectOption(location);
     await page.locator('#dash-ubic').selectOption(location);
@@ -41,8 +41,10 @@ test('same equipment, order, last timestamp, days, maximum and Top 5 before/afte
   await old.close();
 });
 test('seven viewport layouts, four themes, contrast and touch targets', async ({ page }, testInfo) => {
-  await render(page);
+  const dates = [5, 7, 8, 9, 9, 10, 10, 10];
+  await render(page, false, { records: records.map((r, i) => ({ ...r, date: `2026-10-${String(dates[i]).padStart(2, '0')}T08:39:00` })) });
   const panel = page.locator('#dash-tiempo-sin-engrase-panel');
+  await expect(panel.locator('.dash-exc-priority')).toHaveText(['Crítico', 'Atención', 'Atención', 'Seguimiento', 'Seguimiento']);
   for (const mode of ['light', 'dark', 'sun', 'contrast']) {
     await page.evaluate(mode => { document.documentElement.dataset.mode = mode; }, mode);
     const result = await panel.evaluate(panel => {
@@ -72,6 +74,10 @@ test('seven viewport layouts, four themes, contrast and touch targets', async ({
   }
   await page.evaluate(() => { document.documentElement.dataset.mode = 'light'; });
   await panel.screenshot({ path: testInfo.outputPath('longest-ranking.png') });
+  if (page.viewportSize().width >= 768) {
+    const heights = await panel.locator('.dash-exc-row').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
+    expect(heights.every(h => h >= 56 && h <= 64)).toBe(true);
+  }
 });
 test('no record and empty fleet retain their honest states', async ({ page, context }) => {
   const old = await context.newPage();
@@ -89,7 +95,7 @@ test('one day uses singular without changing relative ranking semantics', async 
   const panel = page.locator('#dash-tiempo-sin-engrase-panel');
   await expect(panel.locator('.dash-exc-days')).toHaveText('1');
   await expect(panel.locator('.dash-exc-days-label')).toHaveText('día');
-  await expect(panel.locator('.dash-exc-priority')).toHaveText('Mayor tiempo');
+  await expect(panel.locator('.dash-exc-priority')).toHaveText('Seguimiento');
 });
 test('Ficha, independent history, Ver todos and keyboard keep existing actions', async ({ page }) => {
   await render(page);

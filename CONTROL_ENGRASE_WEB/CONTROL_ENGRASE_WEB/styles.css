@@ -3538,34 +3538,40 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 /* Longest unlubricated: presentation only; ranking follows the existing order. */
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 0 12px 10px; }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-summary { margin-left: auto; font-size: 12px; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { --dash-priority: var(--text-dim); --dash-priority-ink: color-mix(in srgb, var(--dash-priority) 80%, var(--text)); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 8px; border-left: 4px solid transparent; background: transparent; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-rank="1"] { --dash-priority: var(--red); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 6%, var(--surface)); }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-rank="2"] { --dash-priority: var(--amber); border-left-color: color-mix(in srgb, var(--amber) 50%, var(--border)); }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row:hover { background: color-mix(in srgb, var(--dash-priority) 10%, var(--surface)); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-head { flex-wrap: wrap; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-head-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { --dash-priority: var(--text); --dash-priority-ink: color-mix(in srgb, var(--dash-priority) 80%, var(--text)); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 6px 8px; border-left: 3px solid var(--border); background: transparent; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-age-severity="critical"] { --dash-priority: var(--red); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 2%, var(--surface)); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-age-severity="attention"] { --dash-priority: var(--amber); border-left-color: var(--amber); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row:hover { background: color-mix(in srgb, var(--text) 3%, var(--surface)); }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-main { display: flex; flex-direction: column; align-items: stretch; gap: 4px; text-align: left; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-line1 { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 0 6px; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-rank { display: grid; place-items: center; grid-row: 1 / 3; min-height: 28px; border: 1px solid color-mix(in srgb, var(--dash-priority) 35%, var(--border)); border-radius: 5px; background: color-mix(in srgb, var(--dash-priority) 8%, var(--surface)); color: var(--dash-priority-ink); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-priority { grid-column: 2; justify-self: start; padding: 2px 4px; border-radius: 3px; background: color-mix(in srgb, var(--dash-priority) 8%, var(--surface)); color: var(--dash-priority-ink); font-size: 11px; font-weight: 700; line-height: 1.4; text-transform: uppercase; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-code { color: var(--text); font-size: 15px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-line1 { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 0 6px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-rank { padding-top: 6px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-priority { grid-column: 2; grid-row: 2; justify-self: start; align-self: end; color: var(--dash-priority-ink); font-size: 10px; font-weight: 700; line-height: 1.4; text-transform: uppercase; pointer-events: none; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-code { grid-column: 2; grid-row: 1 / 3; display: flex; align-items: flex-start; padding: 4px 0; color: var(--text); font-size: 15px; font-weight: 700; text-decoration: none; white-space: nowrap; }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line2 { color: var(--text-dim); font-size: 12px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-model { color: var(--text); }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-location { padding: 1px 4px; border-radius: 3px; background: var(--surface-2); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-location { color: var(--text-dim); }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line3 { font-size: 14px; line-height: 1.5; white-space: normal; }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-date-label { display: block; font-size: 11px; }
 #app-content #dash-tiempo-sin-engrase-panel time { display: flex; flex-wrap: wrap; gap: 0 8px; color: var(--text); font-variant-numeric: tabular-nums; }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-time { color: var(--text-dim); }
 #app-content #dash-tiempo-sin-engrase-panel .dash-exc-side { display: flex; flex-direction: column; justify-content: space-between; align-items: center; flex-basis: auto; gap: 6px; margin: 0; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-wrap { min-width: 64px; padding: 6px; border: 1px solid color-mix(in srgb, var(--dash-priority) 35%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--dash-priority) 8%, var(--surface)); }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days { color: var(--dash-priority-ink); font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-label { color: var(--dash-priority-ink); font-size: 10px; line-height: 1.4; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-wrap { display: flex; flex-direction: row; align-items: baseline; gap: 4px; min-width: 44px; padding: 0; background: transparent; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days { color: var(--dash-priority-ink); font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-label { color: var(--text-dim); font-size: 10px; line-height: 1.4; }
 #app-content #dash-tiempo-sin-engrase-panel button { min-height: 44px; min-width: 44px; }
 #app-content #dash-tiempo-sin-engrase-panel button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 767px) {
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-head-actions { flex-basis: 100%; justify-content: space-between; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-summary { margin-left: 0; }
+}
 @media (min-width: 768px) {
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-table-head,
-  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { display: grid; grid-template-columns: minmax(144px, 1fr) minmax(0, 1.6fr) minmax(112px, 1fr) 76px 84px; gap: 10px; align-items: center; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.7fr) minmax(112px, 1fr) 148px; gap: 10px; align-items: center; }
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-table-head { margin: 0 12px; padding: 10px 8px; color: var(--text-dim); border-bottom: 1px solid var(--border); font-size: 10px; }
-  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-main,
-  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-side { display: contents; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-main { display: contents; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-side { flex-direction: row; justify-content: flex-end; gap: 10px; }
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line1,
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line2,
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line3 { grid-column: auto; grid-row: auto; }

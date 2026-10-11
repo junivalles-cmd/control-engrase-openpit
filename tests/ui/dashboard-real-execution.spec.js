@@ -52,7 +52,7 @@ const validationSrc = validationNames.map(n => extractDeclaration(validationSour
 const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
-  'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'getLubricationAgeSeverity', 'tiempoExcepcionRowHTML', 'renderDashboard',
   'wireDashboardEquipmentRows',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
