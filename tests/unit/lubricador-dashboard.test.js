@@ -117,7 +117,7 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
     const block = src.slice(iRow, iEnd);
     expect(block).toContain("kpiTile('Vencidos por horas', vencidosHorometroVisibles.length");
     expect(block).toContain("kpiTile('Pendientes hoy', miTurnoVisible.length");
-    expect(block).toContain("kpiTile('Arrastrados', arrastradosVisibles.length");
+    expect(block).toContain("kpiTile('Pendientes del turno anterior', arrastradosVisibles.length");
     expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyVisibles.length");
   });
 
@@ -133,14 +133,14 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
     const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
     const block = src.slice(iRow, iEnd);
     expect(block).not.toContain('pendientesHoyList.length');
-    expect(block).not.toMatch(/kpiTile\('Arrastrados', arrastrados\.length/);
+    expect(block).not.toMatch(/kpiTile\('Pendientes del turno anterior', arrastrados\.length/);
     expect(block).not.toContain("kpiTile('Realizados hoy', realizadosHoy,");
   });
 });
 
 describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas), nunca una tarjeta en 0 (hardening UI 2026-10-08, "simplificar Mi Turno")', () => {
   it('"Atrasados" solo se renderiza si hay filas visibles en el filtro', () => {
-    expect(src).toContain('${otherOverdueVisible.length ? `');
+    expect(src).toContain('${previousTurnVisible.length ? `');
   });
 
   it('"Mi Turno" solo se renderiza si hay filas visibles en el filtro', () => {
@@ -201,7 +201,7 @@ describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro
 describe('Seguimiento por antigüedad es independiente del estado formal del plan', () => {
   it('usa la proyección scoped compartida y excluye pendientes reales anteriores', () => {
     expect(src).toContain('const followUpRows = buildCrewLubricationFollowUp({');
-    expect(src).toContain('equipos, records, scope, excludedEquipmentIds: pendientesTurnoAnterior.map(e => e.id)');
+    expect(src).toContain('equipos, records, scope, excludedEquipmentIds: arrastradosTotal.map(row => row.e.id)');
   });
   it('filtra ubicación y muestra primeros cinco más Ver todos, sin recortar el dataset', () => {
     expect(src).toContain('const followUpVisible = filterLocationRows(followUpRows)');

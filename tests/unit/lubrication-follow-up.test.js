@@ -43,7 +43,19 @@ it('all formal-work calculations and partial/carryover/assignment classification
   const before = extractDeclaration(baseline, 'renderLubricadorHome');
   const after = extractDeclaration(source, 'renderLubricadorHome');
   const normalize = s => s.replace(/\r\n/g, '\n').trim();
-  expect(normalize(after.slice(0, after.indexOf('  // Read-only age follow-up')))).toBe(normalize(before.slice(0, before.indexOf('  // "4. ALERTAS'))));
+  // Visual row/context markup can change; compare the actual classification blocks.
+  for (const [start, end] of [
+    ['  const records =', '  const arrastradoRowHTML'],
+    ['  const realizadosHoyList', '  const realizadoRowHTML'],
+  ]) {
+    expect(normalize(after.slice(after.indexOf(start), after.indexOf(end)))).toBe(normalize(before.slice(before.indexOf(start), before.indexOf(end))));
+  }
+});
+
+it('excludes all pending IDs and normalized codes, deduplicates informational rows only', () => {
+  const duplicates = [{ ...equipos[0], code: '20-5530' }, { ...equipos[1], code: ' 20-5530 ' }, { ...equipos[2], locationId: 'M', code: '05-0870' }];
+  expect(build({ ...input, equipos: duplicates, excludedEquipmentCodes: ['20-5530'] }).map(r => r.e.code)).toEqual(['05-0870']);
+  expect(build({ ...input, equipos: [...duplicates, duplicates[2]] }).map(r => r.e.id)).toEqual(['E1', 'E3']);
 });
 it.each(['handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'startGreaseFlow', 'openLubricadorMatrizModal', 'getCurrentOperationalScope', 'loadAssignmentContext'])('%s unchanged', name => {
   expect(extractDeclaration(source, name)).toBe(extractDeclaration(baseline, name));

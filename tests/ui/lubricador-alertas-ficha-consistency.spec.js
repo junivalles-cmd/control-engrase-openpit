@@ -2,7 +2,7 @@ import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpF
 // tests/ui/lubricador-alertas-ficha-consistency.spec.js
 //
 // Bug real (2026-10-09): un equipo (ejemplo real reportado: "A11") aparecía
-// en REQUIEREN SEGUIMIENTO ("1 día sin engrasar") mientras su Ficha mostraba ESTADO DE
+// en REQUIEREN SEGUIMIENTO ("1 día") mientras su Ficha mostraba ESTADO DE
 // ENGRASE: AL DÍA, con un engrase COMPLETE reciente. Causa raíz real
 // (trazada ANTES de tocar nada, ver comentarios en renderLubricadorHome()/
 // app.js): el filtro de Alertas solo excluía un COMPLETE de HOY
@@ -136,7 +136,7 @@ test('A. registro de ayer conserva Ficha AL DÍA y aparece solo como seguimiento
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
   expect(await alertasCodes(page)).toContain('A11');
-  await expect(page.locator('#lub-follow-up')).toContainText('1 día sin engrasar');
+  await expect(page.locator('#lub-follow-up')).toContainText('1 día');
 });
 
 test('B. cinco días: seguimiento crítico sin cambiar el estado VERDE de la Ficha', async ({ page }) => {
@@ -158,7 +158,7 @@ test('B. cinco días: seguimiento crítico sin cambiar el estado VERDE de la Fic
   await expect(page.locator('.lub-follow-up-priority')).toHaveText('Crítico');
 });
 
-test('C. vencido (ROJO) → aparece en seguimiento', async ({ page }) => {
+test('C. vencido programado → pendiente real, excluido del seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -172,7 +172,8 @@ test('C. vencido (ROJO) → aparece en seguimiento', async ({ page }) => {
 
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  expect(await alertasCodes(page)).toContain('ROJO-01');
+  await expect(page.locator('.lub-pending-card .lub-eq-code', { hasText: 'ROJO-01' })).toHaveCount(1);
+  expect(await alertasCodes(page)).not.toContain('ROJO-01');
 });
 
 test('D. próximo (AMARILLO, "PROGRAMADO HOY") → comportamiento según el helper real (puede aparecer)', async ({ page }) => {
@@ -208,7 +209,7 @@ test('E. COMPLETE local (de HOY) → sale del seguimiento de inmediato, aparece 
   await expect(page.locator('.lub-section-head:has-text("REALIZADOS") + .lub-eq-list')).toContainText('HOY-01');
 });
 
-test('F. PARTIAL (satisface la ocurrencia a medias) → mantiene seguimiento por antigüedad aunque el estado real sea VERDE', async ({ page }) => {
+test('F. PARTIAL → pendiente real conservado, excluido del seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -226,10 +227,11 @@ test('F. PARTIAL (satisface la ocurrencia a medias) → mantiene seguimiento por
 
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  expect(await alertasCodes(page)).toContain('PARTIAL-01'); // el PARTIAL mantiene la atención real
+  await expect(page.locator('.lub-pending-card .lub-eq-code', { hasText: 'PARTIAL-01' })).toHaveCount(1);
+  expect(await alertasCodes(page)).not.toContain('PARTIAL-01'); // el PARTIAL mantiene la atención real
 });
 
-test('G. SKIP ("no se pudo ejecutar") sin ningún record → el equipo sigue ROJO/AMARILLO por sí solo y aparece en seguimiento', async ({ page }) => {
+test('G. SKIP no satisface: conserva pendiente real sin duplicar seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -244,10 +246,11 @@ test('G. SKIP ("no se pudo ejecutar") sin ningún record → el equipo sigue ROJ
 
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  expect(await alertasCodes(page)).toContain('SKIP-01');
+  await expect(page.locator('.lub-pending-card .lub-eq-code', { hasText: 'SKIP-01' })).toHaveCount(1);
+  expect(await alertasCodes(page)).not.toContain('SKIP-01');
 });
 
-test('H. primeros cinco por antigüedad; Ver todos conserva equipos al día en el plan', async ({ page }) => {
+test('H. siete pendientes reales excluidos; dos equipos al día conservan seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -275,13 +278,8 @@ test('H. primeros cinco por antigüedad; Ver todos conserva equipos al día en e
   expect(errors).toEqual([]);
 
   const codes = await alertasCodes(page);
-  expect(codes.length).toBe(5);
-  for (const c of codes) {
-    expect(c.startsWith('ROJO-')).toBe(true); // sin registro precede a un día
-  }
-  await page.locator('#lub-follow-up summary').click();
-  await expect(page.locator('#lub-follow-up .lub-follow-up-row:visible')).toHaveCount(9);
-  await expect(alertasSeccion(page)).toContainText('VERDE-0');
+  expect(codes).toEqual(['VERDE-0', 'VERDE-1']);
+  await expect(page.locator('.lub-pending-card')).toHaveCount(7);
 });
 
 test('I. seguimiento por antigüedad conserva todos los estados reales de la Ficha', async ({ page }) => {
@@ -313,9 +311,11 @@ test('I. seguimiento por antigüedad conserva todos los estados reales de la Fic
   expect(errors).toEqual([]);
 
   const codes = await alertasCodes(page);
-  expect(codes).toContain('MIX-ROJO');
+  await expect(page.locator('.lub-pending-card .lub-eq-code', { hasText: 'MIX-ROJO' })).toHaveCount(1);
+  expect(codes).not.toContain('MIX-ROJO');
   expect(codes).toContain('MIX-AMARILLO');
-  expect(codes).toContain('MIX-PARTIAL');
+  await expect(page.locator('.lub-pending-card .lub-eq-code', { hasText: 'MIX-PARTIAL' })).toHaveCount(1);
+  expect(codes).not.toContain('MIX-PARTIAL');
   expect(codes).toContain('MIX-VERDE'); // informational age does not change the plan state
 
   for (const code of codes) {

@@ -162,7 +162,7 @@ test('los cuatro KPI y secciones usan filas del filtro, conservando clasificaci√
     }
     await renderLubricadorHome();
   });
-  const labels = ['Vencidos por horas', 'Pendientes hoy', 'Arrastrados', 'Realizados hoy'];
+  const labels = ['Vencidos por horas', 'Pendientes hoy', 'Pendientes del turno anterior', 'Realizados hoy'];
   for (const [location, counts] of [['', [2, 3, 2, 2]], ['volcan', [1, 2, 1, 1]], ['mojon', [1, 1, 1, 1]]]) {
     await page.locator(`.crew-location-filter[data-location-id="${location}"]`).click();
     for (const [i, label] of labels.entries()) await expect(page.locator('.lub-kpi-card', { hasText: label }).locator('.lub-kpi-value')).toHaveText(String(counts[i]));

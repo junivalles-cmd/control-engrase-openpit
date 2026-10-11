@@ -3977,13 +3977,20 @@ async function renderLubricadorHome() {
   const arrastradoRowHTML = ({ e, origen, tone, asignado }) => {
     const skip = lastSkipByEquipoId[e.id];
     const loc = (locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación';
+    const scheduled = statusesNormalYAsignados.find(row => row.e.id === e.id)?.s.scheduleDate;
+    const plan = plansByEquipoId[e.id];
+    const pendingShift = turnoAnteriorIds.has(e.id)
+      ? findCarriedOverSkipForToday(skipsHoyScope, { equipmentId: e.id, dateISO: todayISODash })?.shiftId
+      : plan?.shiftId;
+    const pendingContext = [scheduled ? fmtOrigenFecha(scheduled) : '', pendingShift === 'shift_dia' ? 'Turno Día' : pendingShift === 'shift_noche' ? 'Turno Noche' : '', origen].filter(Boolean).join(' · ');
     return `
-      <div class="lub-arrastrado-card tone-${tone}">
-        <span class="lub-arrastrado-origen tone-${tone}">${esc(origen)}</span>
+      <div class="lub-arrastrado-card lub-pending-card tone-${tone}" data-equipment-id="${esc(e.id)}">
+        <span class="lub-arrastrado-origen tone-${tone}">PENDIENTE DEL TURNO ANTERIOR</span>
         ${asignado ? asignadoBadgeHTML : ''}
         <div class="lub-eq-top"><span class="lub-eq-code">${esc(e.code)}</span></div>
         <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
         <div class="lub-eq-location">📍 ${esc(loc)}</div>
+        <div class="lub-pending-context dim">${esc(pendingContext)}</div>
         ${skip ? `<div class="lub-arrastrado-motivo">Motivo: ${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</div>` : ''}
         <div class="lub-arrastrado-actions">
           <button type="button" class="btn btn-accent lub-arr-reg" data-id="${e.id}">${ic("check")}Registrar engrase</button>
@@ -4028,6 +4035,7 @@ async function renderLubricadorHome() {
   // existe (scope/myCrew/lastSyncState, este último global y ya mantenido
   // por updateConnBadge()).
   const syncChip = (() => {
+    if ($('#conn-badge')) return ''; // The global topbar uses the same lastSyncState.
     const st = lastSyncState.status;
     if (st === 'ok') return `<span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>`;
     if (st === 'syncing') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Sincronizando…</span>`;
@@ -4194,9 +4202,10 @@ async function renderLubricadorHome() {
   };
 
   // Read-only age follow-up uses master location coverage, including APOYO.
-  // Previous-turn carryover retains its exact definition and has precedence.
+  // Every existing formal pending row has precedence; classification is unchanged.
   const followUpRows = buildCrewLubricationFollowUp({
-    equipos, records, scope, excludedEquipmentIds: pendientesTurnoAnterior.map(e => e.id),
+    equipos, records, scope, excludedEquipmentIds: arrastradosTotal.map(row => row.e.id),
+    excludedEquipmentCodes: arrastradosTotal.map(row => row.e.code),
   });
   // Fix 2026-10-09 ("REALIZADO ADELANTADO", §37/§32 del pedido) — sección
   // SECUNDARIA/informativa (§38: nunca un 5to KPI grande): `s.satisfactorio`
@@ -4246,8 +4255,7 @@ async function renderLubricadorHome() {
   const vencidosHorometroVisibles = filterLocationRows(vencidosHorometro);
   const realizadosAdelantadosVisibles = filterLocationRows(realizadosAdelantadosList);
   const followUpVisible = filterLocationRows(followUpRows);
-  const previousTurnVisible = arrastradosVisibles.filter(row => turnoAnteriorIds.has(row.e.id));
-  const otherOverdueVisible = arrastradosVisibles.filter(row => !turnoAnteriorIds.has(row.e.id));
+  const previousTurnVisible = arrastradosVisibles;
 
   // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
   // el render (no-op fuera de Android, ver isNative() en
@@ -4292,7 +4300,7 @@ async function renderLubricadorHome() {
     <div class="lub-kpi-row">
       ${kpiTile('Vencidos por horas', vencidosHorometroVisibles.length, vencidosHorometroVisibles.length ? 'red' : 'neutral')}
       ${kpiTile('Pendientes hoy', miTurnoVisible.length, miTurnoVisible.length ? 'amber' : 'neutral')}
-      ${kpiTile('Arrastrados', arrastradosVisibles.length, arrastradosVisibles.length ? 'amber' : 'neutral')}
+      ${kpiTile('Pendientes del turno anterior', arrastradosVisibles.length, arrastradosVisibles.length ? 'amber' : 'neutral')}
       ${kpiTile('Realizados hoy', realizadosHoyVisibles.length, 'green')}
     </div>
 
@@ -4303,14 +4311,9 @@ async function renderLubricadorHome() {
     <section id="lub-pending-follow-up" aria-label="Pendientes y seguimiento">
       <h2 class="lub-section-head">PENDIENTES Y SEGUIMIENTO</h2>
       ${previousTurnVisible.length ? `<h3 class="lub-section-head">PENDIENTES DEL TURNO ANTERIOR (${previousTurnVisible.length})</h3><div class="lub-eq-list">${locationRowsHTML(previousTurnVisible, arrastradoRowHTML)}</div>` : ''}
-      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO (${followUpVisible.length})</h3><p class="field-hint">Recomendación por tiempo desde el último registro; no es programación ni asignación.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary>${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}</details>` : ''}</div></section>` : ''}
+      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · ${followUpVisible.length}</h3><p class="field-hint">Sugeridos por tiempo desde el último engrase. No forman parte de la programación del turno.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary><div class="lub-follow-up-expanded">${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}</div></details>` : ''}</div></section>` : ''}
       ${!previousTurnVisible.length && !followUpVisible.length ? '<p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p>' : ''}
     </section>
-
-    ${otherOverdueVisible.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${otherOverdueVisible.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(otherOverdueVisible, arrastradoRowHTML)}</div>
-    ` : ''}
 
     ${miTurnoVisible.length ? `
     <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoVisible.length})</span></div>
@@ -4336,7 +4339,7 @@ async function renderLubricadorHome() {
          principal. "Registrar engrase" genérico confundía esta acción con
          los botones "Registrar engrase" de las tarjetas de Atrasados/Mi
          Turno (esos sí abren directo la ocurrencia programada). -->
-    <button type="button" class="lub-hero-action" id="lub-quick-registrar">
+    <button type="button" class="btn lub-global-register" id="lub-quick-registrar">
       <span class="lub-hero-action-text">
         <span class="lub-hero-action-title">${ic("plus")}Registrar fuera de plan</span>
         <span class="lub-hero-action-sub">Engrasar otro equipo</span>
@@ -5851,16 +5854,26 @@ function getLubricationAgeSeverity(days) {
 }
 
 // Informational local projection. It never changes work, occurrences or KPIs.
-function buildCrewLubricationFollowUp({ equipos, records, scope, excludedEquipmentIds = [], now = new Date() }) {
+function buildCrewLubricationFollowUp({ equipos, records, scope, excludedEquipmentIds = [], excludedEquipmentCodes = [], now = new Date() }) {
   if (scope.kind !== 'CREW_SCOPED') return [];
   const authorized = new Set(scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean));
   const excluded = new Set(excludedEquipmentIds);
+  const codeKey = code => String(code || '').trim().toUpperCase();
+  const excludedCodes = new Set(excludedEquipmentCodes.map(codeKey).filter(Boolean));
+  const seenIds = new Set();
+  const seenCodes = new Set();
   const latest = new Map();
   records.filter(r => r.active !== false && Number.isFinite(new Date(r.date).getTime())).forEach(r => {
     if (!latest.has(r.equipmentId) || new Date(r.date) > new Date(latest.get(r.equipmentId))) latest.set(r.equipmentId, r.date);
   });
   const today = new Date(now).setHours(0, 0, 0, 0);
-  return equipos.filter(e => e.active !== false && authorized.has(e.locationId) && !excluded.has(e.id)).map(e => {
+  return equipos.filter(e => {
+    const code = codeKey(e.code);
+    if (e.active === false || !authorized.has(e.locationId) || excluded.has(e.id) || (code && excludedCodes.has(code)) || seenIds.has(e.id) || (code && seenCodes.has(code))) return false;
+    seenIds.add(e.id);
+    if (code) seenCodes.add(code);
+    return true;
+  }).map(e => {
     const last = latest.get(e.id) || null;
     const days = last === null ? null : Math.floor((today - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
     return { e, last, days, severity: getLubricationAgeSeverity(days) };
@@ -5871,11 +5884,12 @@ function buildCrewLubricationFollowUp({ equipos, records, scope, excludedEquipme
 function lubricationFollowUpRowHTML({ e, last, days, severity }, locations) {
   const location = locations.find(l => l.id === e.locationId)?.name || 'Sin ubicación';
   return `<div class="lub-follow-up-row" data-equipment-id="${esc(e.id)}" data-age-severity="${severity.key}">
-    <div class="lub-follow-up-heading"><span class="lub-eq-code">${esc(e.code)}</span><span class="lub-follow-up-age">${days === null ? 'Sin registro' : `${days} ${days === 1 ? 'día' : 'días'} sin engrasar`}</span></div>
-    <div class="lub-follow-up-priority">${severity.label}</div>
-    <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)} · ${esc(location)}</div>
-    ${last ? `<div class="lub-follow-up-date dim">Último: ${fmtDateOnly(last)} · ${fmtTime(last)}</div>` : ''}
-    <div class="lub-arrastrado-actions"><button type="button" class="btn lub-follow-up-ver" data-id="${esc(e.id)}">Ver ficha</button><button type="button" class="btn lub-follow-up-reg" data-id="${esc(e.id)}">Registrar fuera de plan</button></div>
+    <div class="lub-follow-up-heading"><span class="lub-follow-up-priority">${severity.label}</span><span class="lub-follow-up-age">${days === null ? 'Sin registro' : `<strong>${days}</strong> ${days === 1 ? 'día' : 'días'}`}</span></div>
+    <div class="lub-eq-code">${esc(e.code)}</div>
+    <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
+    <div class="lub-follow-up-location dim">${esc(location)}</div>
+    ${last ? `<div class="lub-follow-up-date"><span class="dim">Último engrase</span> <time datetime="${esc(last)}">${fmtDateOnly(last)} · ${fmtTime(last)}</time></div>` : ''}
+    <div class="lub-arrastrado-actions"><button type="button" class="btn lub-follow-up-ver" data-id="${esc(e.id)}">Ver ficha</button><button type="button" class="btn btn-accent lub-follow-up-reg" data-id="${esc(e.id)}">Registrar engrase <span aria-hidden="true">→</span></button></div>
   </div>`;
 }
 
