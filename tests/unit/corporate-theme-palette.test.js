@@ -60,7 +60,7 @@ describe('A. exactamente 8 presets de acento disponibles (THEMES)', () => {
   });
 });
 
-describe('B. Azul Corporativo es el DEFAULT', () => {
+describe('B. Azul es el DEFAULT', () => {
   it('es el primero en THEMES (orden de aparición en el selector)', () => {
     expect(THEMES[0].id).toBe('azul-corp');
   });
@@ -68,10 +68,10 @@ describe('B. Azul Corporativo es el DEFAULT', () => {
     const getThemeSrc = extractDeclaration(appSource, 'getTheme');
     expect(getThemeSrc).toContain("accent: 'azul-corp'");
   });
-  it('--accent de "azul-corp" es el hex EXACTO pedido (#1F4E79, oscuro #163A5C)', () => {
+  it('--accent de "azul-corp" es el hex EXACTO pedido (#185ABD, oscuro #123E82)', () => {
     const block = dataThemeBlock('azul-corp');
-    expect(block).toMatch(/--accent:\s*#1F4E79/i);
-    expect(block).toMatch(/--accent-dark:\s*#163A5C/i);
+    expect(block).toMatch(/--accent:\s*#185ABD/i);
+    expect(block).toMatch(/--accent-dark:\s*#123E82/i);
   });
 });
 
@@ -90,19 +90,14 @@ describe('D. cambio instantáneo (sin reload)', () => {
   });
 });
 
-describe('E. Amarillo Maquinaria (#C58A00) usa un --on-accent OSCURO y legible (AA real, nunca blanco)', () => {
-  const amarillo = THEMES.find((t) => t.id === 'amarillo-cat');
-  it('--accent es el hex EXACTO pedido', () => {
-    expect(amarillo.color.toUpperCase()).toBe('#C58A00');
+describe('E. Burdeos conserva el ID antiguo y pasa AA con blanco', () => {
+  const access = THEMES.find(t => t.id === 'amarillo-cat');
+  it('publica nombre y tokens nuevos sin romper el ID', () => {
+    expect(access.label).toBe('Burdeos'); expect(access.color).toBe('#A4373A'); expect(access.onColor).toBe('#FFFFFF');
   });
-  it('onColor NO es blanco', () => {
-    expect(amarillo.onColor.toLowerCase()).not.toBe('#ffffff');
-  });
-  it('el contraste de onColor contra #C58A00 pasa AA (>=4.5:1) — blanco fallaría (~3:1)', () => {
-    const ratio = contrastRatio(amarillo.onColor, amarillo.color);
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
-    const ratioWhiteWouldFail = contrastRatio('#FFFFFF', amarillo.color);
-    expect(ratioWhiteWouldFail).toBeLessThan(4.5);
+  it('el texto blanco pasa AA sobre accent y accent-dark', () => {
+    expect(contrastRatio(access.onColor, access.color)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(access.onColor, access.colorDark)).toBeGreaterThanOrEqual(4.5);
   });
 });
 
@@ -116,41 +111,21 @@ describe('F. los semánticos (--green/--amber/--red/--gray-status) NO cambian en
 describe('G. Modo Sol conserva el acento corporativo completo (nunca lo oculta/fuerza a negro)', () => {
   it('[data-mode="sun"] no redefine --accent/--accent-dark/--on-accent', () => {
     const block = dataModeBlock('sun');
-    expect(block).not.toMatch(/--accent\b|--accent-dark|--on-accent/);
+    expect(block).not.toMatch(/--accent\s*:|--accent-dark\s*:|--on-accent\s*:/);
   });
   it('.btn-accent NO está forzado a negro bajo Modo Sol (a diferencia de Alto Contraste)', () => {
     expect(stylesSource).not.toMatch(/\[data-mode="sun"\][^{]*\.btn-accent\s*\{[^}]*background:\s*#000000/);
   });
 });
 
-describe('H. Alto Contraste es ESTRUCTURALMENTE distinto de Modo Sol (nunca una variante del mismo modo)', () => {
-  it('Alto Contraste colapsa --text-dim a pure black (igual a --text) — Modo Sol mantiene --text-dim distinto', () => {
-    const contrastBlock = dataModeBlock('contrast');
-    const sunBlock = dataModeBlock('sun');
-    const contrastText = contrastBlock.match(/--text:\s*(#[0-9A-Fa-f]{6})/)[1];
-    const contrastTextDim = contrastBlock.match(/--text-dim:\s*(#[0-9A-Fa-f]{6})/)[1];
-    const sunText = sunBlock.match(/--text:\s*(#[0-9A-Fa-f]{6})/)[1];
-    const sunTextDim = sunBlock.match(/--text-dim:\s*(#[0-9A-Fa-f]{6})/)[1];
-    expect(contrastTextDim.toLowerCase()).toBe(contrastText.toLowerCase());
-    expect(sunTextDim.toLowerCase()).not.toBe(sunText.toLowerCase());
+describe('H. Alto Contraste se retira del selector y queda como alias del modo Sol', () => {
+  it('solo hay tres modos visibles', () => expect(MODES.map(m => m.id)).toEqual(['light', 'dark', 'sun']));
+  it('el CSS legacy comparte el bloque de Sol', () => expect(stylesSource).toMatch(/\[data-mode="contrast"\], \[data-mode="high-contrast"\], \[data-mode="sun"\] \{/));
+  it('no quedan botones productivos forzados a negro por el modo retirado', () => {
+    expect(stylesSource).not.toMatch(/\[data-mode="contrast"\]\s*\.btn-accent\s*\{/);
+    expect(stylesSource).not.toMatch(/\[data-mode="contrast"\]\s*\.lub-hero-action\s*\{/);
   });
-
-  it('Alto Contraste fuerza .btn-accent/.lub-hero-action a negro puro — Modo Sol nunca lo hace', () => {
-    expect(stylesSource).toMatch(/\[data-mode="contrast"\]\s*\.btn-accent\s*\{\s*background:\s*#000000/);
-    expect(stylesSource).toMatch(/\[data-mode="contrast"\]\s*\.lub-hero-action\s*\{\s*background:\s*#000000/);
-  });
-
-  it('Alto Contraste tiene un outline-width propio más fuerte (3px) que el genérico de Modo Sol', () => {
-    expect(stylesSource).toMatch(/\[data-mode="contrast"\][^{]*\{[^}]*outline-width:\s*3px/);
-  });
-
-  it('los colores semánticos de Alto Contraste son su propia variante (distinta de la de Modo Sol, que reusa Claro)', () => {
-    const contrastBlock = dataModeBlock('contrast');
-    const sunBlock = dataModeBlock('sun');
-    const cGreen = contrastBlock.match(/--green:\s*(#[0-9A-Fa-f]{6})/)[1];
-    const sGreen = sunBlock.match(/--green:\s*(#[0-9A-Fa-f]{6})/)[1];
-    expect(cGreen.toLowerCase()).not.toBe(sGreen.toLowerCase());
-  });
+  it('Modo Sol conserva foco reforzado', () => expect(stylesSource).toContain('outline: 3px solid var(--focus)'));
 });
 
 describe('I. los 8 acentos pasan la regla de contraste AA (on-accent vs accent) — especial atención a Verde Bosque/Cobre Ejecutivo/Violeta Ejecutivo', () => {
@@ -179,27 +154,22 @@ describe('Claro — valores base EXACTOS pedidos (§12)', () => {
   });
 });
 
-describe('Exactamente 4 modos (Parte C) — ninguno nuevo, ninguno eliminado', () => {
-  it('MODES tiene exactamente 4 entradas: light/dark/contrast/sun', () => {
-    expect(MODES.map((m) => m.id).sort()).toEqual(['contrast', 'dark', 'light', 'sun'].sort());
-  });
-});
-
-describe('Industrial yellow contrast and isolated theme variants', () => {
-  it('base black text and hover white text meet AA against their actual tokens', () => {
-    const yellow = THEMES.find(t => t.id === 'amarillo-cat');
-    expect(yellow.colorDark).toBe('#8A5F00'); expect(yellow.onColor).toBe('#111111');
-    expect(contrastRatio(yellow.onColor, yellow.color)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio('#FFFFFF', yellow.colorDark)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(yellow.colorDark, '#EEF2F5')).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(yellow.color, '#23282D')).toBeGreaterThanOrEqual(4.5);
-  });
-  it('the other seven preset colors and hover variants remain unchanged', () => {
-    expect(THEMES.filter(t => t.id !== 'amarillo-cat').map(t => [t.id, t.color, t.colorDark, t.onColor])).toEqual([
-      ['azul-corp', '#1F4E79', '#163A5C', '#FFFFFF'], ['azul-acero', '#365E7D', '#29485F', '#FFFFFF'],
-      ['petroleo-ejec', '#0F5B5D', '#0A4142', '#FFFFFF'], ['grafito', '#475569', '#334155', '#FFFFFF'],
-      ['verde-bosque', '#365E4A', '#274638', '#FFFFFF'], ['cobre-ejec', '#8A4F2D', '#663A21', '#FFFFFF'],
-      ['violeta-ejec', '#5B4A7A', '#43365B', '#FFFFFF'],
-    ]);
+describe('Paleta Office: valores completos sincronizados con CSS', () => {
+  const expected = [
+    ['azul-corp','Azul','#185ABD','#123E82','#EAF2FD'],
+    ['verde-bosque','Verde','#217346','#185233','#EAF6EF'],
+    ['cobre-ejec','Naranja','#D14726','#9E341A','#FBEDE8'],
+    ['azul-acero','Azul ejecutivo','#1F4E79','#163A5C','#E9F2FB'],
+    ['violeta-ejec','Morado','#80397B','#5E295A','#F4ECF4'],
+    ['petroleo-ejec','Índigo','#6264A7','#464775','#EEEEF8'],
+    ['amarillo-cat','Burdeos','#A4373A','#742629','#F8ECEC'],
+    ['grafito','Grafito','#5E6A71','#3F494F','#EFF2F4'],
+  ];
+  it.each(expected)('%s: label, accent, dark, soft y AA de ambas variantes', (id,label,color,dark,soft) => {
+    const theme=THEMES.find(t=>t.id===id), block=dataThemeBlock(id);
+    expect([theme.label,theme.color,theme.colorDark,theme.colorSoft,theme.onColor]).toEqual([label,color,dark,soft,'#FFFFFF']);
+    for (const value of [color,dark,soft]) expect(block.toUpperCase()).toContain(value);
+    expect(contrastRatio('#FFFFFF',color)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio('#FFFFFF',dark)).toBeGreaterThanOrEqual(4.5);
   });
 });

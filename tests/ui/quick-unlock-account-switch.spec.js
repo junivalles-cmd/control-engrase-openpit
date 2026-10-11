@@ -24,12 +24,13 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { THEME_PREFERENCE_DECLARATIONS } from '../helpers/themeFixture.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
-  'themeButtonHTML', 'openThemePicker', 'getTheme', 'applyTheme', 'saveTheme', 'THEMES', 'MODES', 'THEME_COLOR_BY_MODE',
+  'themeButtonHTML', 'openThemePicker', ...THEME_PREFERENCE_DECLARATIONS,
   'confirmChangeUser',
   'renderQuickUnlockScreen', 'renderSupabaseLoginForm',
 ];
@@ -283,11 +284,11 @@ test('§0.4 — "Entrar con otra cuenta" se ve como botón secundario real (anch
   expect(style.width).toBeGreaterThan(style.cardWidth * 0.8);
 });
 
-test('§0.14 — Alto Contraste: "<-", Desbloquear y "Entrar con otra cuenta" siguen visibles con color real distinto del fondo', async ({ page }) => {
+test('§0.14 — Modo Sol: "<-", Desbloquear y "Entrar con otra cuenta" siguen visibles con color real distinto del fondo', async ({ page }) => {
   await bootQuickUnlock(page);
   await page.locator('#btn-theme').click();
-  await page.locator('.theme-preview-card[data-mode="contrast"]').click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-mode'))).toBe('contrast');
+  await page.locator('.theme-preview-card[data-mode="sun"]').click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-mode'))).toBe('sun');
   await page.locator('#modal-close').click();
   for (const sel of ['#quick-unlock-back', '#quick-unlock-submit', '#quick-unlock-change-user']) {
     await expect(page.locator(sel)).toBeVisible();

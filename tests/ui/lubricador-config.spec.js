@@ -19,6 +19,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { THEME_PREFERENCE_DECLARATIONS } from '../helpers/themeFixture.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 const appSource = readSource(APP_JS_PATH);
@@ -27,8 +28,7 @@ const APP_NAMES = [
   'quickUnlockConfigureModal', // se re-asigna a un espía después de extraerla
   'confirmChangeUser', // real: solo abre un modal de confirmación
   'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
-  'getTheme', 'applyTheme', 'saveTheme', 'openThemePicker',
-  'THEMES', 'MODES', 'THEME_COLOR_BY_MODE',
+  ...THEME_PREFERENCE_DECLARATIONS, 'openThemePicker',
   // Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN"): reales — se
   // prueba que renderLubricadorConfig() los invoca de verdad, nunca una
   // reimplementación. renderLubricadorHome() en sí NO se extrae (es la
@@ -172,17 +172,17 @@ test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmedi
   test('muestra el tema y modo ACTUALES (getTheme() real) con un preview de color, antes del botón', async ({ page }) => {
     await bootConfig(page);
     const panel = page.locator('.panel-head:has-text("Apariencia")').locator('..');
-    await expect(panel).toContainText('Azul Corporativo'); // default real de getTheme()
+    await expect(panel).toContainText('Azul'); // default real de getTheme()
     await expect(panel).toContainText('Claro');
     await expect(panel.locator('.lub-theme-swatch')).toHaveCount(1);
     await expect(panel.locator('#lub-config-theme')).toContainText('Personalizar apariencia');
   });
 
-  test('el botón "Personalizar apariencia" abre el picker REAL con los 8 acentos y 4 modos', async ({ page }) => {
+  test('el botón "Personalizar apariencia" abre el picker REAL con los 8 acentos y 3 modos', async ({ page }) => {
     await bootConfig(page);
     await page.locator('#lub-config-theme').click();
     await expect(page.locator('.theme-preview-card[data-accent]')).toHaveCount(8);
-    await expect(page.locator('.theme-preview-card[data-mode]')).toHaveCount(4);
+    await expect(page.locator('.theme-preview-card[data-mode]')).toHaveCount(3);
   });
 
   test('cambiar acento aplica data-theme de inmediato (sin reload) y persiste en localStorage', async ({ page }) => {
@@ -203,7 +203,7 @@ test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmedi
     expect(stored.mode).toBe('sun');
   });
 
-  test('los 8 acentos corporativos y 4 modos son EXACTAMENTE los pedidos (azul corporativo, amarillo maquinaria, azul acero, petróleo, grafito, verde bosque, cobre ejecutivo, violeta ejecutivo · claro, oscuro, alto contraste, modo sol)', async ({ page }) => {
+  test('conserva ocho IDs de acento y ofrece exactamente tres modos finales', async ({ page }) => {
     await bootConfig(page);
     const { accentIds, modeIds } = await page.evaluate(() => ({
       accentIds: window.THEMES.map((t) => t.id),
@@ -213,15 +213,16 @@ test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmedi
     expect(accentIds.sort()).toEqual([
       'azul-corp', 'amarillo-cat', 'azul-acero', 'petroleo-ejec', 'grafito', 'verde-bosque', 'cobre-ejec', 'violeta-ejec',
     ].sort());
-    expect(modeIds.sort()).toEqual(['contrast', 'dark', 'light', 'sun'].sort());
+    expect(modeIds.sort()).toEqual(['dark', 'light', 'sun'].sort());
   });
 
-  test('"azul-corp" (Azul Corporativo) es el default y el on-accent de "amarillo-cat" es oscuro (nunca blanco)', async ({ page }) => {
+  test('Azul sigue siendo default; el ID amarillo-cat ahora ofrece Burdeos con texto blanco AA', async ({ page }) => {
     await bootConfig(page);
     const theme = await page.evaluate(() => window.THEMES);
     expect(theme[0].id).toBe('azul-corp');
     const amarillo = theme.find((t) => t.id === 'amarillo-cat');
-    expect(amarillo.onColor.toLowerCase()).not.toBe('#ffffff');
+    expect(amarillo.label).toBe('Burdeos');
+    expect(amarillo.onColor.toUpperCase()).toBe('#FFFFFF');
   });
 });
 

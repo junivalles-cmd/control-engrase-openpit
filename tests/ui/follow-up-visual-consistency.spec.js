@@ -72,9 +72,14 @@ test('shared card structure, aligned rails/actions and AA contrast in all four m
   expect(errors).toEqual([]);
 });
 
-test('app logic and handlers remain identical apart from requested visual labels', () => {
-  const initial = execFileSync('git', ['show', 'f7d0d3a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
-  expect(readSource(APP_JS_PATH)).toBe(initial
-    .replace('<span class="dim">Accesos rápidos</span>', '<span class="dim">Acciones rápidas</span>')
-    .replace('class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>', 'class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Nueva anomalía</button>'));
+test('app outside theme settings remains identical to the release baseline', () => {
+  const initial = execFileSync('git', ['show', '301bc41:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  const withoutThemeSettings = source => {
+    const start = source.lastIndexOf('/*', source.indexOf('const THEMES ='));
+    const end = source.indexOf('/* ---------- arranque ---------- */', start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(0, start) + source.slice(end);
+  };
+  expect(withoutThemeSettings(readSource(APP_JS_PATH))).toBe(withoutThemeSettings(initial));
 });

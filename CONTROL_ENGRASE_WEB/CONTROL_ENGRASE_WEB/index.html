@@ -16,9 +16,14 @@
 (function () {
   try {
     var t = Object.assign({ accent: 'azul-corp', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {});
+    var aliases = { blue: 'azul-corp', green: 'verde-bosque', red: 'amarillo-cat', teal: 'petroleo-ejec', amber: 'cobre-ejec', petroleo: 'petroleo-ejec', purpura: 'violeta-ejec', ladrillo: 'amarillo-cat', cobre: 'cobre-ejec', graphite: 'grafito', acero: 'azul-acero', cian: 'azul-acero' };
+    t.accent = aliases[t.accent] || t.accent;
+    if (['azul-corp','verde-bosque','cobre-ejec','azul-acero','violeta-ejec','petroleo-ejec','amarillo-cat','grafito'].indexOf(t.accent) < 0) t.accent = 'azul-corp';
+    if (['contrast','high-contrast','high_contrast'].indexOf(t.mode) >= 0) t.mode = 'sun';
+    if (['light','dark','sun'].indexOf(t.mode) < 0) t.mode = 'light';
     document.documentElement.setAttribute('data-theme', t.accent);
     document.documentElement.setAttribute('data-mode', t.mode);
-    var bg = t.mode === 'light' ? '#F4F6F8' : (t.mode === 'contrast' || t.mode === 'sun') ? '#FFFFFF' : '#14171A';
+    var bg = t.mode === 'light' ? '#F4F6F8' : t.mode === 'sun' ? '#FFFFFF' : '#14171A';
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', bg);
   } catch (e) {}

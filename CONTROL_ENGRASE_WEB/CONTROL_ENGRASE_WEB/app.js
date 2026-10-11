@@ -1894,61 +1894,54 @@ function colorPorCumplimiento(pct, meta = App.generalSettings.complianceTarget) 
   return REPORT_COLORS.rojo;
 }
 
-/* ---------- tema visual: PALETA CORPORATIVA FINAL (2026-10-09) ----------
-   Reemplaza la biblioteca de 9 acentos del rediseño 2026-10-08 (ver
-   styles.css, los 9 + blue/green/red quedan como [data-theme] "legado",
-   solo por compatibilidad con localStorage ya guardado — nunca se migran
-   ni se pierden, nunca se vuelven a ofrecer en el selector).
-   2 grupos independientes, cada uno con su propia lista CONTROLADA (nunca
-   un selector RGB libre):
-     - THEMES (8, EXACTOS — "eliminar/reemplazar las opciones actuales que
-       no pertenecen a la selección final"): color de ACENTO (--accent/
-       --accent-dark/--on-accent, ver [data-theme="..."] en styles.css).
-       --accent/--accent-dark son los hex EXACTOS pedidos; --on-accent se
-       recalculó con la fórmula de luminancia relativa de WCAG contra el
-       --accent real de cada uno — "Amarillo Maquinaria" (#C58A00) es el
-       ÚNICO que necesita texto oscuro (6.30:1 con #111111 vs 3:1 con
-       blanco), nunca se asumió blanco por default. "azul-corp" es el
-       nuevo default.
-     - MODES (4): familia de fondo/superficie/texto (--bg/--surface/
-       --surface-2/--border/--text/--text-dim, ver [data-mode="..."]).
-       "Modo Sol" (claro reforzado para exterior, SÍ permite color) y
-       "Alto contraste" (blanco/negro extremo, el color corporativo pierde
-       protagonismo) son estructuralmente distintos a propósito — ver el
-       comentario comparativo en styles.css, [data-mode="sun"].
-   Ninguno de los 8+4 presets toca el SIGNIFICADO de --green/--amber/--red/
-   --gray-status (VENCIDO/PENDIENTE/REALIZADO/PAUSADO) — solo re-calibran
-   su valor exacto por familia de fondo (clara/oscura), igual que antes. */
+/* Paleta Office con IDs estables. Tres modos visibles; preferencias antiguas
+   se normalizan localmente. Los estados operativos conservan su semántica. */
 const THEMES = [
-  { id: 'azul-corp', label: 'Azul Corporativo', sub: 'Recomendado', color: '#1F4E79', colorDark: '#163A5C', onColor: '#FFFFFF' },
-  { id: 'amarillo-cat', label: 'Amarillo Maquinaria', color: '#C58A00', colorDark: '#8A5F00', onColor: '#111111' },
-  { id: 'azul-acero', label: 'Azul Acero', color: '#365E7D', colorDark: '#29485F', onColor: '#FFFFFF' },
-  { id: 'petroleo-ejec', label: 'Petróleo', color: '#0F5B5D', colorDark: '#0A4142', onColor: '#FFFFFF' },
-  { id: 'grafito', label: 'Grafito', color: '#475569', colorDark: '#334155', onColor: '#FFFFFF' },
-  { id: 'verde-bosque', label: 'Verde Bosque', color: '#365E4A', colorDark: '#274638', onColor: '#FFFFFF' },
-  { id: 'cobre-ejec', label: 'Cobre Ejecutivo', color: '#8A4F2D', colorDark: '#663A21', onColor: '#FFFFFF' },
-  { id: 'violeta-ejec', label: 'Violeta Ejecutivo', color: '#5B4A7A', colorDark: '#43365B', onColor: '#FFFFFF' },
+  { id: 'azul-corp', label: 'Azul', sub: 'Recomendado', color: '#185ABD', colorDark: '#123E82', colorSoft: '#EAF2FD', onColor: '#FFFFFF' },
+  { id: 'verde-bosque', label: 'Verde', color: '#217346', colorDark: '#185233', colorSoft: '#EAF6EF', onColor: '#FFFFFF' },
+  { id: 'cobre-ejec', label: 'Naranja', color: '#D14726', colorDark: '#9E341A', colorSoft: '#FBEDE8', onColor: '#FFFFFF' },
+  { id: 'azul-acero', label: 'Azul ejecutivo', color: '#1F4E79', colorDark: '#163A5C', colorSoft: '#E9F2FB', onColor: '#FFFFFF' },
+  { id: 'violeta-ejec', label: 'Morado', color: '#80397B', colorDark: '#5E295A', colorSoft: '#F4ECF4', onColor: '#FFFFFF' },
+  { id: 'petroleo-ejec', label: 'Índigo', color: '#6264A7', colorDark: '#464775', colorSoft: '#EEEEF8', onColor: '#FFFFFF' },
+  { id: 'amarillo-cat', label: 'Burdeos', color: '#A4373A', colorDark: '#742629', colorSoft: '#F8ECEC', onColor: '#FFFFFF' },
+  { id: 'grafito', label: 'Grafito', color: '#5E6A71', colorDark: '#3F494F', colorSoft: '#EFF2F4', onColor: '#FFFFFF' },
 ];
 const MODES = [
   { id: 'light', label: 'Claro', icon: '☀', bg: '#F4F6F8', surface: '#FFFFFF', border: '#CBD5E1', text: '#111827' },
   { id: 'dark', label: 'Oscuro', icon: '🌙', bg: '#14171A', surface: '#1B1F23', border: '#333A40', text: '#E9E7E1' },
-  { id: 'contrast', label: 'Alto Contraste', icon: '◐', bg: '#FFFFFF', surface: '#FFFFFF', border: '#000000', text: '#000000' },
   { id: 'sun', label: 'Modo Sol / Alta luz', icon: '🔆', bg: '#FFFFFF', surface: '#FFFFFF', border: '#15181C', text: '#0B0D0F' },
 ];
-const THEME_COLOR_BY_MODE = { light: '#F4F6F8', dark: '#14171A', contrast: '#FFFFFF', sun: '#FFFFFF' };
+const THEME_COLOR_BY_MODE = { light: '#F4F6F8', dark: '#14171A', sun: '#FFFFFF' };
+const LEGACY_THEME_ALIASES = { blue: 'azul-corp', green: 'verde-bosque', red: 'amarillo-cat', teal: 'petroleo-ejec', amber: 'cobre-ejec', petroleo: 'petroleo-ejec', purpura: 'violeta-ejec', ladrillo: 'amarillo-cat', cobre: 'cobre-ejec', graphite: 'grafito', acero: 'azul-acero', cian: 'azul-acero' };
+
+function normalizeThemePreference(theme) {
+  const preference = { ...theme };
+  preference.accent = LEGACY_THEME_ALIASES[preference.accent] || preference.accent;
+  if (!THEMES.some(t => t.id === preference.accent)) preference.accent = 'azul-corp';
+  if (['contrast', 'high-contrast', 'high_contrast'].includes(preference.mode)) preference.mode = 'sun';
+  if (!MODES.some(m => m.id === preference.mode)) preference.mode = 'light';
+  return preference;
+}
 
 // Instalación nueva (sin preferencia guardada todavía) arranca en modo
 // CLARO y acento "azul-corp" (Azul Corporativo, DEFAULT pedido). Si el
 // usuario ya guardó una preferencia (JSON.parse(...) no vacío), esa gana
 // siempre — Object.assign la sobrescribe sobre este valor por defecto.
-// Preferencias de antes de esta paleta (cualquiera de los 9+3 acentos
-// "legado") siguen siendo ids válidos (CSS intacto) — nunca se migran ni
-// se pierden.
+// Los ocho IDs actuales se conservan. Los aliases de acentos antiguos
+// se normalizan a sus equivalentes y Alto Contraste migra a Modo Sol.
 function getTheme() {
-  try { return Object.assign({ accent: 'azul-corp', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {}); }
+  try {
+    const stored = Object.assign({ accent: 'azul-corp', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {});
+    const theme = normalizeThemePreference(stored);
+    if (theme.accent !== stored.accent || theme.mode !== stored.mode) {
+      try { localStorage.setItem('engrase_theme', JSON.stringify(theme)); } catch { /* Preferencia válida también si el almacenamiento es de solo lectura. */ }
+    }
+    return theme;
+  }
   catch { return { accent: 'azul-corp', mode: 'light' }; }
 }
 function applyTheme(theme) {
+  theme = normalizeThemePreference(theme);
   document.documentElement.setAttribute('data-theme', theme.accent);
   document.documentElement.setAttribute('data-mode', theme.mode);
   // Mismo mapeo que el script anti-flash de index.html (auditoría UI/UX
@@ -1958,7 +1951,7 @@ function applyTheme(theme) {
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR_BY_MODE[theme.mode] || '#14171A');
 }
-function saveTheme(theme) { localStorage.setItem('engrase_theme', JSON.stringify(theme)); applyTheme(theme); }
+function saveTheme(theme) { theme = normalizeThemePreference(theme); localStorage.setItem('engrase_theme', JSON.stringify(theme)); applyTheme(theme); }
 
 // Aplicar de inmediato (antes de pintar la interfaz) para evitar parpadeo de color
 applyTheme(getTheme());
@@ -1970,11 +1963,11 @@ function themeButtonHTML(extraClass = '') {
 function openThemePicker() {
   const t = getTheme();
   openModal('Personalizar colores', `
-    <p class="dim">Elige el color de acento y la familia de fondo/contraste de la app. Cambia al instante y se guarda en este dispositivo.</p>
+    <p class="dim">Elige el color de acento y el modo de visualización de la app. Los cambios se aplican al instante y se guardan en este dispositivo.</p>
     <div class="theme-preview-group-label">Color de acento</div>
     <div class="theme-preview-grid">
       ${THEMES.map(th => `
-        <button type="button" class="theme-preview-card ${th.id === t.accent ? 'selected' : ''}" data-accent="${th.id}" style="--pv-ring:${th.color}">
+        <button type="button" class="theme-preview-card ${th.id === t.accent ? 'selected' : ''}" aria-pressed="${th.id === t.accent}" data-accent="${th.id}">
           <span class="theme-preview-swatches">
             <span class="theme-preview-dot" style="background:${th.color}"></span>
             <span class="theme-preview-dot" style="background:${th.colorDark}"></span>
@@ -1984,10 +1977,10 @@ function openThemePicker() {
           <span class="theme-preview-check" aria-hidden="true">✓</span>
         </button>`).join('')}
     </div>
-    <div class="theme-preview-group-label">Fondo y contraste</div>
-    <div class="theme-preview-grid">
+    <div class="theme-preview-group-label">Fondo y visualización</div>
+    <div class="theme-preview-grid theme-mode-grid">
       ${MODES.map(m => `
-        <button type="button" class="theme-preview-card ${m.id === t.mode ? 'selected' : ''}" data-mode="${m.id}">
+        <button type="button" class="theme-preview-card ${m.id === t.mode ? 'selected' : ''}" aria-pressed="${m.id === t.mode}" data-mode="${m.id}">
           <span class="theme-preview-mode-swatch" style="background:${m.bg};border-color:${m.border}">
             <span class="theme-preview-mode-surface" style="background:${m.surface};border-color:${m.border}"></span>
             <span class="theme-preview-mode-text" style="color:${m.text}">Aa</span>
@@ -1996,17 +1989,19 @@ function openThemePicker() {
           <span class="theme-preview-check" aria-hidden="true">✓</span>
         </button>`).join('')}
     </div>
-    <p class="dim" style="margin-top:10px">"Alto contraste" usa blanco y negro puro. "Modo Sol" permite color sólido pero con bordes gruesos y sin sombras — ambos pensados para leer bajo sol directo en campo.</p>
+    <p class="dim" style="margin-top:10px">Modo Sol mejora la lectura bajo luz intensa con bordes definidos y sombras reducidas.</p>
   `);
   $$('.theme-preview-card[data-accent]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.accent = b.dataset.accent; saveTheme(cur);
-    $$('.theme-preview-card[data-accent]').forEach(x => x.classList.remove('selected'));
+    $$('.theme-preview-card[data-accent]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
     b.classList.add('selected');
+    b.setAttribute('aria-pressed', 'true');
   }));
   $$('.theme-preview-card[data-mode]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.mode = b.dataset.mode; saveTheme(cur);
-    $$('.theme-preview-card[data-mode]').forEach(x => x.classList.remove('selected'));
+    $$('.theme-preview-card[data-mode]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
     b.classList.add('selected');
+    b.setAttribute('aria-pressed', 'true');
   }));
 }
 

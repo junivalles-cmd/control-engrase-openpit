@@ -78,14 +78,29 @@ for (const height of HEIGHTS) {
     expect(fontSize).toBeLessThanOrEqual(16);
   });
 
-  test(`activo se resalta en amarillo/acento @ alto ${height}`, async ({ page }) => {
+  test(`activo usa el acento vigente con contraste AA @ alto ${height}`, async ({ page }) => {
     await page.setViewportSize({ width: 1366, height });
     await page.setContent(sidebarFixture());
     await page.addStyleTag({ path: STYLES_PATH });
     await page.locator('.menu-item[data-route="equipos"]').evaluate(el => el.classList.add('active'));
-    const color = await page.locator('.menu-item[data-route="equipos"]').evaluate(el => getComputedStyle(el).color);
-    // var(--accent) = #F2A900 → rgb(242, 169, 0)
-    expect(color).toBe('rgb(242, 169, 0)');
+    const colors = await page.locator('.menu-item[data-route="equipos"]').evaluate(el => {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const pixel = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data]; };
+      const probe = document.createElement('span'); probe.style.color = 'var(--accent-ink)'; el.append(probe);
+      const active = pixel(getComputedStyle(el).color), accent = pixel(getComputedStyle(probe).color);
+      probe.remove();
+      const inactive = pixel(getComputedStyle(document.querySelector('.menu-item:not(.active)')).color);
+      let bg = [255, 255, 255]; const parents = [];
+      for (let p = el; p; p = p.parentElement) parents.unshift(p);
+      parents.forEach(p => { const c = pixel(getComputedStyle(p).backgroundColor), a = c[3] / 255; bg = bg.map((v, i) => c[i] * a + v * (1 - a)); });
+      const lum = rgb => rgb.slice(0, 3).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      const a = lum(active), b = lum(bg);
+      return { active, accent, inactive, contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+    });
+    expect(colors.active).toEqual(colors.accent);
+    expect(colors.active).not.toEqual(colors.inactive);
+    expect(colors.contrast).toBeGreaterThanOrEqual(4.5);
   });
 }
 

@@ -7,15 +7,16 @@
   --border: #333A40;
   --text: #E9E7E1;
   --text-dim: #9BA3AA;
-  --accent: #F2A900;
-  --accent-dark: #C98A00;
+  --accent: #185ABD;
+  --accent-dark: #123E82;
+  --accent-soft: #EAF2FD;
   /* Color de texto/ícono SOBRE var(--accent) (botones .btn-accent, tabs
      activos, chips activos) — depende de si el acento es claro u oscuro.
      Default = el mismo café-oscuro ya usado para el ámbar (contraste
      9:1+); cada preset de acento (ver más abajo) lo sobreescribe cuando
      su color es oscuro, porque el café fallaría WCAG AA sobre un fondo
      oscuro. */
-  --on-accent: #1a1400;
+  --on-accent: #FFFFFF;
   /* Biblioteca de temas (rediseño visual 2026-10-08, "ampliar opciones de
      color"): --focus/--muted/--background/--surface-alt son ALIAS vivos de
      tokens ya existentes (--accent/--text-dim/--bg/--surface-2) — se
@@ -24,8 +25,8 @@
      originales en este archivo (cero riesgo de regresión). Al ser
      `var(...)`, se recalculan solos con cada preset — nunca hace falta
      redeclararlos en cada [data-theme]/[data-mode] de abajo. */
-  --focus: var(--accent);
-  --accent-ink: var(--accent);
+  --focus: var(--accent-ink);
+  --accent-ink: color-mix(in srgb, var(--accent) 45%, #FFFFFF);
   --muted: var(--text-dim);
   --background: var(--bg);
   --surface-alt: var(--surface-2);
@@ -66,30 +67,15 @@
   --tap: 44px;
 }
 
-/* ---------------- Paletas de color de acento (elegibles por el usuario) ----------------
-   PALETA CORPORATIVA FINAL (2026-10-09, reemplaza la biblioteca de 9
-   acentos del rediseño 2026-10-08): 8 acentos corporativos fijos, nunca
-   un selector RGB libre. Cada --on-accent se recalculó con la fórmula de
-   luminancia relativa de WCAG contra su propio --accent — "Amarillo
-   Maquinaria" es la ÚNICA de las 8 que necesita texto oscuro (6.30:1 con
-   #111111 vs 3:1 con blanco — nunca se asume blanco por default);
-   las otras 7 dan 6.4-8.7:1 con blanco, todas AA (varias AAA). Los 8
-   --accent-dark son los valores EXACTOS pedidos (variante "Oscuro" de
-   cada color), no recalculados. "azul-corp" es el nuevo default (ver
-   getTheme() en app.js / script anti-flash en index.html).
-   Los 9 acentos del rediseño anterior (teal/amber/petroleo/purpura/
-   ladrillo/cobre/graphite/acero/cian) y los 3 legado de antes de eso
-   (blue/green/red) se MANTIENEN sin tocar, solo por compatibilidad con
-   preferencias ya guardadas en localStorage — ninguno de los 12 se
-   ofrece ya en el selector. */
-[data-theme="azul-corp"]    { --accent: #1F4E79; --accent-dark: #163A5C; --on-accent: #FFFFFF; } /* Azul Corporativo (default) */
-[data-theme="amarillo-cat"] { --accent: #C58A00; --accent-dark: #8A5F00; --on-accent: #111111; --on-accent-hover: #FFFFFF; } /* Amarillo Maquinaria / Caterpillar */
-[data-theme="azul-acero"]   { --accent: #365E7D; --accent-dark: #29485F; --on-accent: #FFFFFF; } /* Azul Acero */
-[data-theme="petroleo-ejec"] { --accent: #0F5B5D; --accent-dark: #0A4142; --on-accent: #FFFFFF; } /* Petróleo */
-[data-theme="grafito"]      { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; } /* Grafito */
-[data-theme="verde-bosque"] { --accent: #365E4A; --accent-dark: #274638; --on-accent: #FFFFFF; } /* Verde Bosque */
-[data-theme="cobre-ejec"]   { --accent: #8A4F2D; --accent-dark: #663A21; --on-accent: #FFFFFF; } /* Cobre Ejecutivo */
-[data-theme="violeta-ejec"] { --accent: #5B4A7A; --accent-dark: #43365B; --on-accent: #FFFFFF; } /* Violeta Ejecutivo */
+/* Acentos Office: ocho IDs persistidos conservados; estados operativos independientes. */
+[data-theme="azul-corp"] { --accent: #185ABD; --accent-dark: #123E82; --accent-soft: #EAF2FD; --on-accent: #FFFFFF; } /* Azul Word */
+[data-theme="verde-bosque"] { --accent: #217346; --accent-dark: #185233; --accent-soft: #EAF6EF; --on-accent: #FFFFFF; } /* Verde Excel */
+[data-theme="cobre-ejec"] { --accent: #D14726; --accent-dark: #9E341A; --accent-soft: #FBEDE8; --on-accent: #FFFFFF; } /* Naranja PowerPoint */
+[data-theme="azul-acero"] { --accent: #1F4E79; --accent-dark: #163A5C; --accent-soft: #E9F2FB; --on-accent: #FFFFFF; } /* Azul Outlook */
+[data-theme="violeta-ejec"] { --accent: #80397B; --accent-dark: #5E295A; --accent-soft: #F4ECF4; --on-accent: #FFFFFF; } /* Morado OneNote */
+[data-theme="petroleo-ejec"] { --accent: #6264A7; --accent-dark: #464775; --accent-soft: #EEEEF8; --on-accent: #FFFFFF; } /* Índigo Teams */
+[data-theme="amarillo-cat"] { --accent: #A4373A; --accent-dark: #742629; --accent-soft: #F8ECEC; --on-accent: #FFFFFF; } /* Burdeos Access */
+[data-theme="grafito"] { --accent: #5E6A71; --accent-dark: #3F494F; --accent-soft: #EFF2F4; --on-accent: #FFFFFF; } /* Grafito Office */
 
 /* ---- Legado (ya NO listados en el selector) — solo compatibilidad con localStorage ya guardado ---- */
 [data-theme="teal"]        { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; }
@@ -112,6 +98,7 @@
    clara), así que los semánticos ajustados abajo (verificados contra
    fondo blanco, el peor caso) siguen pasando AA sin recalcular. */
 [data-mode="light"] {
+  --accent-ink: var(--accent-dark);
   --bg: #F4F6F8;
   --surface: #FFFFFF;
   --surface-2: #EEF2F5;
@@ -147,59 +134,11 @@
 [data-mode="light"] .lub-topbar,
 [data-mode="light"] .lub-record-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 
-/* ---------------- Alto Contraste (accesibilidad máxima) ----------------
-   Objetivo explícito: MUCHO más extremo que Modo Sol, nunca una variante
-   del mismo modo (ver comparación en el comentario de [data-mode="sun"]
-   más abajo). Blanco/negro puro dominante, --text-dim IGUAL a --text
-   (sin jerarquía de grises intermedios — a propósito, Modo Sol SÍ
-   mantiene esa jerarquía), semánticos en su variante más oscura/extrema,
-   y el color corporativo pierde protagonismo en los controles primarios
-   (.btn-accent/.lub-hero-action forzados a negro, ver abajo). */
-[data-mode="contrast"] {
-  --bg: #FFFFFF;
-  --surface: #FFFFFF;
-  --surface-2: #FFFFFF;
-  --border: #000000;
-  --text: #000000;
-  --text-dim: #000000;
-  --green: #006400;
-  --amber: #8A5A00;
-  --red: #B30000;
-  --gray-status: #333333;
-}
-[data-mode="contrast"] { --focus: #000000; }
-[data-mode="contrast"] * { border-width: 2px !important; }
-[data-mode="contrast"] .panel, [data-mode="contrast"] .eq-card, [data-mode="contrast"] .kpi-card,
-[data-mode="contrast"] .lub-eq-btn, [data-mode="contrast"] .modal, [data-mode="contrast"] .login-card,
-[data-mode="contrast"] .lub-welcome-card, [data-mode="contrast"] .lub-topbar {
-  border-color: #000000 !important; box-shadow: none !important;
-}
-[data-mode="contrast"] .status-chip { outline: 2px solid #000000; }
-[data-mode="contrast"] .btn-accent { background: #000000; color: #FFFFFF; border-color: #000000; }
-/* .lub-hero-action (Mi Turno, "Registrar engrase") pinta su propio
-   background: var(--accent) en vez de usar la clase .btn-accent — bajo
-   Alto contraste (blanco y negro puro, CERO color) necesita el mismo
-   forzado a negro, si no se cuela el color de acento activo. */
-[data-mode="contrast"] .lub-hero-action { background: #000000; color: #FFFFFF; }
 [data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
 
-/* ---------------- Modo Sol / Alta luz ("claro reforzado para exterior")
-   — tajo/taller exterior, mucha luz solar. Distinto de Alto Contraste a
-   propósito, en 3 ejes concretos:
-     1. SÍ se permite color: el acento corporativo se ve COMPLETO aquí
-        (botones .btn-accent pintan var(--accent) normal, nunca forzados
-        a negro como en Contraste) — sigue pareciendo una app empresarial
-        normal, nunca blanco/negro puro.
-     2. --text-dim queda DISTINTO de --text (jerarquía de grises real,
-        aunque oscura) — Contraste los colapsa a los dos en el mismo
-        negro puro.
-     3. Los 3 semánticos reusan LITERAL los del modo Claro (ya auditados
-        AA) — Contraste usa su propia variante más oscura/extrema.
-   Fondo blanco puro, texto casi negro (más oscuro que Claro), bordes
-   gruesos (misma técnica que Contraste), sin sombras (no se agrega la
-   regla de box-shadow sutil que sí tiene Claro) — nunca un valor
-   semántico nuevo, "no modificar significado semántico". ---------------- */
-[data-mode="sun"] {
+/* Modo Sol / Alta luz. Los IDs antiguos son aliases CSS de compatibilidad. */
+[data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"] {
+  --accent-ink: var(--accent-dark);
   --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-2: #F5F5F4;
@@ -212,9 +151,9 @@
   --red: #C0262B;
   --gray-status: #5C6268;
 }
-[data-mode="sun"] * { border-width: 2px !important; }
-[data-mode="sun"] .panel, [data-mode="sun"] .eq-card, [data-mode="sun"] .kpi-card,
-[data-mode="sun"] .lub-eq-btn, [data-mode="sun"] .modal, [data-mode="sun"] .login-card {
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) * { border-width: 2px !important; }
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .panel, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .eq-card, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .kpi-card,
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .lub-eq-btn, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .modal, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .login-card {
   box-shadow: none !important;
 }
 
@@ -225,9 +164,6 @@
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 
-/* Yellow text/focus need the darker variant on light surfaces; semantics stay separate. */
-[data-theme="amarillo-cat"]:is([data-mode="light"], [data-mode="sun"]) { --accent-ink: var(--accent-dark); --focus: var(--accent-dark); }
-[data-theme="amarillo-cat"][data-mode="contrast"] { --accent-ink: #000000; }
 /* Coverage controls wrap instead of cutting operational location names. */
 .crew-location-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .crew-location-filters .btn { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
@@ -441,20 +377,24 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    tarjeta con muestra de color real (nunca un selector RGB libre) +
    nombre claro — reemplaza los botones de solo-texto/punto anteriores. */
 .theme-btn { font-size: 17px; line-height: 1; }
+.theme-preview-grid.theme-mode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .theme-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+@media (max-width: 600px) {
+  .theme-preview-grid.theme-mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .theme-preview-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px;
   border-radius: 10px; border: 2px solid var(--border); background: var(--surface-2); color: var(--text);
   cursor: pointer; font-size: 12px; font-weight: 600; text-align: left; min-height: var(--tap, 44px); width: 100%;
   position: relative;
 }
-.theme-preview-card.selected { border-color: var(--pv-ring, var(--accent)); box-shadow: 0 0 0 2px var(--pv-ring, var(--accent)) inset; }
+.theme-preview-card.selected { border-color: var(--accent-ink); box-shadow: 0 0 0 2px var(--accent-ink) inset; }
 /* "✓" de seleccionado (§11 del pedido: "[ ● ● ] Nombre tema ✓") — visto
    SOLO en la tarjeta activa, nunca un elemento nuevo que insertar/quitar
    del DOM en cada clic (ya existe siempre, solo cambia de visibilidad). */
 .theme-preview-check {
   position: absolute; top: 8px; right: 10px; font-size: 14px; font-weight: 800;
-  color: var(--pv-ring, var(--accent)); opacity: 0;
+  color: var(--accent-ink); opacity: 0;
 }
 .theme-preview-card.selected .theme-preview-check { opacity: 1; }
 .theme-preview-swatches { display: flex; align-items: center; gap: 6px; }
@@ -3018,11 +2958,8 @@ input[type="checkbox"], input[type="radio"] {
 [data-mode="light"] .data-table tbody tr:nth-child(even) { background: rgba(0, 0, 0, 0.015); }
 [data-mode="light"] .data-table tbody tr:hover { background: rgba(0, 0, 0, 0.035); }
 
-/* ---- 8. Modo alto contraste: foco aún más marcado ---- */
-[data-mode="contrast"] :where(button, a, input, select, textarea):focus-visible {
-  outline: 4px solid #000;
-  outline-offset: 3px;
-}
+/* Modo Sol y aliases antiguos: foco fuerte para lectura en campo. */
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) :where(button, a, input, select, textarea):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 /* Celda de la matriz: le tocaba engrase ese día y no se registró (día ya pasado) */
 .celda-no-realizado {
@@ -3368,21 +3305,6 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .mtz-sin-plan-note:hover { border-color: var(--accent); color: var(--text); }
 .mtz-sin-plan-note .btn-icon { width: 14px; height: 14px; flex: none; }
 
-/* ---------------- Alto Contraste — focus ring propio (paleta corporativa
-   final, 2026-10-09) ----------------
-   Al final del archivo a propósito (orden de especificidad ascendente que
-   ya sigue este archivo, ver no-descending-specificity): más fuerte (3px)
-   que el genérico de 2px (var(--focus)) que usa cualquier otro modo —
-   parte de ser "mucho más extremo" que Modo Sol (§15 del pedido). */
-[data-mode="contrast"] input:focus, [data-mode="contrast"] select:focus,
-[data-mode="contrast"] textarea:focus, [data-mode="contrast"] button:focus-visible,
-[data-mode="contrast"] a:focus-visible { outline-width: 3px !important; outline-offset: 2px !important; }
-
-[data-theme="amarillo-cat"] .menu-item.active { box-shadow: inset 3px 0 0 var(--accent); }
-[data-theme="amarillo-cat"][data-mode="contrast"] .btn-accent:hover,
-[data-theme="amarillo-cat"][data-mode="contrast"] .lub-hero-action:active,
-[data-theme="amarillo-cat"][data-mode="contrast"] .crew-location-filters [aria-pressed="true"] { background: #000000; color: #FFFFFF; border-color: #000000; }
-
 /* Compact operational dashboard: layout only, established semantic tokens. */
 #app-content .dash-admin-dashboard { display: grid; gap: 12px; min-width: 0; }
 #app-content .dash-admin-dashboard .dash-section { margin: 0; min-width: 0; }
@@ -3515,7 +3437,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 }
 /* Occurrence detail: contextual panel on desktop, field sheet on phones. */
 .matrix-occurrence-cell { cursor: pointer; touch-action: manipulation; }
-.matrix-occurrence-cell:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.matrix-occurrence-cell:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; }
 .matrix-occurrence-overlay { position: fixed; inset: 0; z-index: 1200; background: rgb(0 0 0 / 12%); }
 #matrix-occurrence-card { position: absolute; width: min(440px, calc(100vw - 16px)); max-height: 75dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
 #matrix-occurrence-card header { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--border); }
@@ -3617,9 +3539,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 /* Scope primary/secondary hierarchy so unrelated buttons cannot wash out the CTA. */
 #app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 #app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-reg:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent-hover, var(--on-accent)); }
-[data-mode="sun"] #app-content #lub-follow-up .lub-follow-up-row,
-[data-mode="contrast"] #app-content #lub-follow-up .lub-follow-up-row { border-left-width: 4px !important; }
-[data-mode="contrast"] #app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-reg { background: var(--text); border-color: var(--text); color: var(--surface); }
+:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-follow-up .lub-follow-up-row { border-left-width: 4px !important; }
 
 /* Mi Turno operational actions: existing palette, scoped visual identity only. */
 #app-content .lub-quick-actions { --lub-action-qr: #0E7490; --lub-action-search: #1F4E79; --lub-action-matrix: #5B4A7A; }
@@ -3657,9 +3577,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content #lub-pending-follow-up .lub-arr-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 #app-content:has(#lub-pending-follow-up) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; box-shadow: none; }
 #app-content:has(#lub-pending-follow-up) button:focus:not(:focus-visible) { outline: none; }
-[data-mode="sun"] #app-content #lub-pending-follow-up .lub-pending-card,
-[data-mode="contrast"] #app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px !important; }
-[data-mode="contrast"] #app-content #lub-pending-follow-up .lub-arr-reg { background: var(--text); border-color: var(--text); color: var(--surface); }
+:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px !important; }
 @media (min-width: 768px) {
   #app-content.lub-content:has(#lub-pending-follow-up) { max-width: none; }
   #app-content #lub-pending-follow-up > .lub-eq-list { align-items: stretch; }

@@ -36,10 +36,11 @@ describe('getTheme() — modo por defecto', () => {
     expect(catchBlock).not.toContain("mode: 'dark'");
   });
 
-  it('el selector de modo oscuro/claro/contraste sigue existiendo (no se eliminó) — biblioteca de presets: MODES genera el atributo/los labels dinámicamente, nunca un literal "data-mode=\\"dark\\"" hardcodeado en el HTML', () => {
+  it('el selector conserva Claro/Oscuro/Sol y retira Alto Contraste', () => {
     expect(appSource).toMatch(/\{\s*id:\s*'light',\s*label:\s*'Claro'/);
     expect(appSource).toMatch(/\{\s*id:\s*'dark',\s*label:\s*'Oscuro'/);
-    expect(appSource).toMatch(/\{\s*id:\s*'contrast',\s*label:\s*'Alto Contraste'/);
+    expect(appSource).toMatch(/\{\s*id:\s*'sun',\s*label:\s*'Modo Sol \/ Alta luz'/);
+    expect(appSource).not.toMatch(/\{\s*id:\s*'contrast',\s*label:/);
     expect(appSource).toContain('data-mode="${m.id}"');
   });
 });
