@@ -26,7 +26,7 @@ export async function bootLubricadorFollowUp(page, { source = appSource, equipos
   await page.clock.install({ time: new Date('2026-10-10T15:00:00') });
   await page.addStyleTag({ path: path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css') });
   const extras = LUBRICATION_FOLLOW_UP_APP_NAMES.filter(n => source.includes(`function ${n}(`) || source.includes(`const ${n} =`));
-  const app = declarations(source, ['$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS', 'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome', 'handleOutOfPlanEquipoSelected', 'openModal', 'closeModal', ...extras]);
+  const app = declarations(source, ['$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS', 'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome', 'handleOutOfPlanEquipoSelected', 'openModal', 'closeModal', ...extras]);
   await page.addScriptTag({ content: `
     let _db = null;
     window.App = { route: 'turno', currentUser: { id: 'U1', name: 'Usuario ficticio', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };

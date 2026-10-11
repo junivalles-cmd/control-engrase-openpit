@@ -72,6 +72,9 @@ test('shared card structure, aligned rails/actions and AA contrast in all four m
   expect(errors).toEqual([]);
 });
 
-test('all app logic and handlers remain byte-for-byte unchanged', () => {
-  expect(readSource(APP_JS_PATH)).toBe(execFileSync('git', ['show', 'fb3f60f:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' }).replace(/\r\n/g, '\n'));
+test('app logic and handlers remain identical apart from requested visual labels', () => {
+  const initial = execFileSync('git', ['show', 'f7d0d3a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  expect(readSource(APP_JS_PATH)).toBe(initial
+    .replace('<span class="dim">Accesos rápidos</span>', '<span class="dim">Acciones rápidas</span>')
+    .replace('class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>', 'class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Nueva anomalía</button>'));
 });

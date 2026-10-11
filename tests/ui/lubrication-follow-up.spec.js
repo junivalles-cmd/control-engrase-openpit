@@ -116,7 +116,7 @@ test('one global sync indicator remains; compact global registration keeps its a
   expect(errors).toEqual([]);
 });
 
-for (const count of [0, 1, 5]) test(`${count} recommendations, four themes, compact actions and maximum two columns`, async ({ page }, testInfo) => {
+for (const count of [0, 1, 2, 3, 5]) test(`${count} recommendations, four themes, compact actions and responsive columns`, async ({ page }, testInfo) => {
   const equipment = Array.from({ length: count }, (_, i) => ({ ...equipos[0], id: `visual-${i}`, code: `VIS-${i}` }));
   const dates = ['2026-10-05', '2026-10-08', '2026-10-09'];
   const localRecords = equipment.map((e, i) => ({ id: `r:${e.id}`, equipmentId: e.id, date: `${dates[i % 3]}T08:39:00`, active: true }));
@@ -131,7 +131,7 @@ for (const count of [0, 1, 5]) test(`${count} recommendations, four themes, comp
       columns: new Set([...panel.querySelectorAll('.lub-follow-up-row')].map(n => Math.round(n.getBoundingClientRect().left))).size,
     }));
     expect(geometry.overflow, mode).toBe(false); expect(geometry.small, mode).toBe(false);
-    expect(geometry.rowHeight, mode).toBeLessThanOrEqual(185); expect(geometry.columns, mode).toBeLessThanOrEqual(2);
+    expect(geometry.rowHeight, mode).toBeLessThanOrEqual(185); expect(geometry.columns, mode).toBeLessThanOrEqual(testInfo.project.use.viewport.width >= 1200 ? 3 : 2);
     if (count) {
       await expect(page.locator('.lub-follow-up-reg').first()).toContainText('Registrar engrase');
       await expect(page.locator('.lub-follow-up-reg').first()).toHaveClass(/btn-accent/);

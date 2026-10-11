@@ -4347,12 +4347,12 @@ async function renderLubricadorHome() {
       <span class="lub-hero-action-arrow" aria-hidden="true">→</span>
     </button>
 
-    <div class="lub-section-head"><span class="dim">Accesos rápidos</span></div>
+    <div class="lub-section-head"><span class="dim">Acciones rápidas</span></div>
     <div class="lub-quick-actions">
       <button type="button" class="btn lub-quick-action" id="lub-quick-qr">${ic("qr")}Escanear QR</button>
       <button type="button" class="btn lub-quick-action" id="lub-quick-buscar">${ic("search")}Buscar equipo</button>
       <button type="button" class="btn lub-quick-action" id="lub-quick-matriz">${ic("matrix")}Matriz semanal</button>
-      <button type="button" class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Reportar anomalía</button>
+      <button type="button" class="btn lub-quick-action" id="lub-fab-anomaly">${ic("alert")}Nueva anomalía</button>
     </div>
     ${colorLegendHTML()}
   `;

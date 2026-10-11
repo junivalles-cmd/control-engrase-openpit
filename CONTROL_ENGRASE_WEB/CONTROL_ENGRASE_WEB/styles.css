@@ -3606,7 +3606,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content #lub-follow-up .lub-arrastrado-actions .btn:focus-visible, #app-content #lub-follow-up summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px; }
 #app-content #lub-pending-follow-up .lub-pending-context { font-size: 12px; line-height: 1.4; margin-top: 4px; }
-#app-content .lub-global-register { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 560px; min-height: 64px; gap: 12px; margin-top: 12px; padding: 10px 14px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); box-shadow: none; }
+#app-content .lub-global-register { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 440px; min-height: 56px; gap: 12px; margin-top: 10px; padding: 8px 12px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); box-shadow: none; }
 #app-content .lub-global-register .lub-hero-action-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; text-align: left; }
 #app-content .lub-global-register .lub-hero-action-title { font-size: 14px; line-height: 1.35; }
 #app-content .lub-global-register .lub-hero-action-sub { font-size: 12px; line-height: 1.4; opacity: 1; color: var(--text-dim); }
@@ -3638,3 +3638,33 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content .lub-quick-actions .lub-quick-action:focus-visible, #app-content .lub-global-register:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 #app-content .lub-quick-actions .lub-quick-action:disabled, #app-content .lub-global-register:disabled { opacity: 1; cursor: not-allowed; color: var(--text-dim); background: var(--surface-2); border-color: var(--border); box-shadow: none; }
 #app-content .lub-quick-actions .lub-quick-action:disabled .btn-icon { color: var(--text-dim); background: currentColor; }
+
+/* Final shift workspace polish: presentation only, scoped to Mi Turno. */
+#app-content.lub-content:has(#lub-pending-follow-up) { margin-inline: auto; width: 100%; }
+#app-content:has(#lub-pending-follow-up) .lub-welcome-card { padding: 10px 12px; margin-bottom: 10px; }
+#app-content:has(#lub-pending-follow-up) .lub-section-head { margin-top: 12px; margin-bottom: 6px; }
+#app-content:has(#lub-pending-follow-up) .lub-kpi-card { min-height: 84px; padding: 10px; display: flex; flex-direction: column; justify-content: center; }
+#app-content:has(#lub-pending-follow-up) .lub-kpi-label { min-height: 28px; line-height: 14px; }
+#app-content #lub-pending-follow-up > .lub-eq-list .lub-pending-card { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
+#app-content #lub-pending-follow-up .lub-pending-card.tone-red { background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
+#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-origen { font-size: 12px; line-height: 18px; color: color-mix(in srgb, var(--amber) 65%, var(--text)); }
+#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-origen.tone-red { color: color-mix(in srgb, var(--red) 65%, var(--text)); }
+#app-content #lub-pending-follow-up .lub-pending-card .lub-eq-code { font-size: 17px; }
+#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-actions { margin-top: auto; padding-top: 8px; flex-wrap: nowrap; justify-content: space-between; }
+#app-content #lub-pending-follow-up > .lub-eq-list .lub-pending-card .btn { flex: none; min-height: 44px; padding: 6px 10px; font-size: 12px; }
+#app-content #lub-pending-follow-up .lub-arr-ver { order: -1; background: transparent; border-color: var(--border); color: var(--text); }
+#app-content #lub-pending-follow-up .lub-arr-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#app-content:has(#lub-pending-follow-up) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; box-shadow: none; }
+#app-content:has(#lub-pending-follow-up) button:focus:not(:focus-visible) { outline: none; }
+[data-mode="sun"] #app-content #lub-pending-follow-up .lub-pending-card,
+[data-mode="contrast"] #app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px !important; }
+[data-mode="contrast"] #app-content #lub-pending-follow-up .lub-arr-reg { background: var(--text); border-color: var(--text); color: var(--surface); }
+@media (min-width: 768px) {
+  #app-content.lub-content:has(#lub-pending-follow-up) { max-width: none; }
+  #app-content #lub-pending-follow-up > .lub-eq-list { align-items: stretch; }
+}
+@media (min-width: 1200px) {
+  #app-content.lub-content:has(#lub-pending-follow-up) { max-width: 1220px; }
+  #app-content #lub-follow-up .lub-eq-list:has(> .lub-follow-up-row:nth-child(3)),
+  #app-content #lub-follow-up .lub-follow-up-expanded:has(> .lub-follow-up-row:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
