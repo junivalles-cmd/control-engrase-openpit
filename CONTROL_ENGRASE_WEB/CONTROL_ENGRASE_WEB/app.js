@@ -5451,7 +5451,7 @@ async function renderDashboard() {
       ${tiempoSinEngrase.length === 0 ? `<div class="empty-state">Sin equipos para mostrar.</div>` : `
       <div class="dash-exc-table-head operational-table-header" aria-hidden="true"><span>Equipo</span><span>Modelo / ubicación</span><span>Último engrase</span><span>Días sin engrasar</span><span>Acción</span></div>
       <div class="dash-exc-list dash-operational-table">
-        ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0)).join('')}
+        ${tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0, idx + 1)).join('')}
       </div>
       `}
     </div>
@@ -5898,20 +5898,15 @@ function pendienteValidacionRowHTML(r, eq) {
   </div>`;
 }
 
-// Lista/ranking operativo compacto (estilo Fiix/UpKeep/Fracttal: KPI/resumen
-// → lista → drill-down), NO ranking con números #1/#2/#3 ni tarjetas. El dato
-// clave (días) se presenta como bloque destacado (número + etiqueta corta),
-// no un texto aislado — con "Historial" como acción PRINCIPAL visible (antes
-// solo la fila entera era clickable, sin ningún control visible). isMax (el
-// más urgente, ya viene primero por el sort de tiempoSinEngrase) recibe un
-// acento ámbar discreto vía CSS (borde + número), nunca una tarjeta aparte.
-// Reutilizada también en "Ver todos" (mismo patrón visual, nunca otra tabla).
-function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax) {
+// Ranking visual según el orden existente, sin umbrales nuevos. El código
+// abre la Ficha y Historial conserva su acción independiente. El panel pasa
+// la posición; "Ver todos" conserva la presentación sin ranking ni fecha dividida.
+function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax, rank = null) {
   return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
     <div class="dash-exc-main">
-      <div class="dash-exc-line1"><button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
+      <div class="dash-exc-line1">${rank === null ? '' : `<span class="dash-exc-rank" aria-label="Posición ${rank}">${rank}</span>`}<button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
       <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
-      <div class="dash-exc-line3 dim" aria-label="Último engrase"><span class="dash-exc-date-label">Último: </span>${last ? fmtDate(last) : 'Sin registro'}</div>
+      <div class="dash-exc-line3 dim" aria-label="Último engrase"><span class="dash-exc-date-label">Último: </span>${last ? (rank === null ? fmtDate(last) : `<time datetime="${esc(last)}"><span class="dash-exc-date">${fmtDateOnly(last)}</span><span class="dash-exc-time">${fmtTime(last)}</span></time>`) : 'Sin registro'}</div>
     </div>
     <div class="dash-exc-side">
       <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">

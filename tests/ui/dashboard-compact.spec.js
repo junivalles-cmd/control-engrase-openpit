@@ -46,7 +46,7 @@ async function values(page) {
         id: row.dataset.id,
         code: row.querySelector('.dash-exc-code').textContent.trim(),
         modelLocation: row.querySelector('.dash-exc-line2').textContent.trim(),
-        last: row.querySelector('.dash-exc-line3').textContent.replace(/^Último(?: engrase)?:\s*/, '').trim(),
+        last: row.querySelector('time') ? fmtDate(row.querySelector('time').getAttribute('datetime')) : row.querySelector('.dash-exc-line3').textContent.replace(/^Último(?: engrase)?:\s*/, '').trim(),
         days: row.querySelector('.dash-exc-days').textContent.trim(),
       })),
       compliance: Array.from(document.querySelectorAll('.dash-compliance-card')).map(card => card.textContent.replace(/\s+/g, ' ').trim()),

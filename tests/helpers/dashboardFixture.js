@@ -60,7 +60,8 @@ export async function bootDashboard(page, {
 } = {}) {
   await page.setContent('<main class="app-content" id="app-content"></main>');
   await page.addStyleTag(css ? { content: css } : { path: STYLES_PATH });
-  const injectedAppSrc = appNames.filter(n => n !== 'wireDashboardEquipmentRows' || source.includes('function wireDashboardEquipmentRows(')).map(n => extractDeclaration(source, n)).join("\n\n");
+  const dateHelpers = ['fmtDateOnly', 'fmtTime'].filter(n => source.includes(`const ${n} =`));
+  const injectedAppSrc = [...appNames, ...dateHelpers].filter(n => n !== 'wireDashboardEquipmentRows' || source.includes('function wireDashboardEquipmentRows(')).map(n => extractDeclaration(source, n)).join("\n\n");
   await page.addScriptTag({
     content: `
       window.App = {

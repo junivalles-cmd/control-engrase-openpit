@@ -50,7 +50,7 @@ const validationNames = [
 ];
 const validationSrc = validationNames.map(n => extractDeclaration(validationSource, n)).join('\n\n');
 const appNames = [
-  '$', '$$', 'esc', 'fmtDate', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
+  '$', '$$', 'esc', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
   'wireDashboardEquipmentRows',

@@ -69,7 +69,7 @@ describe('"Mayor tiempo sin engrasar" — días de calendario, nunca vencimiento
   });
   it('equipo sin registro muestra el texto "Sin registro" en vez de una fecha inventada (ahora en tiempoExcepcionRowHTML)', () => {
     const rowSrc = extractDeclaration(appSource, 'tiempoExcepcionRowHTML');
-    expect(rowSrc).toContain("last ? fmtDate(last) : 'Sin registro'");
+    expect(rowSrc).toContain("`) : 'Sin registro'}");
   });
   it('la columna de días es independiente de counts.ROJO/AMARILLO (vencimiento por horómetro) — usa daysSinceLastGrease(), no s.remaining/s.code', () => {
     // Rediseño §H: el panel ahora va DESPUÉS de "Requieren atención" (movido
@@ -184,13 +184,13 @@ describe('CORRECCIÓN CENTRAL — indicadores secundarios ya NO tienen su propia
   });
 });
 
-describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPACTA de excepciones (Fiix/UpKeep/Fracttal), NUNCA ranking #1/#2/#3 ni cards', () => {
+describe('Mayor tiempo sin engrasar — ranking operativo compacto y acciones existentes', () => {
   const rowSrc = extractDeclaration(appSource, 'tiempoExcepcionRowHTML');
 
-  it('NO hay número de ranking (#1/#2/#3) en ningún lado — ni en la fila ni en el src', () => {
-    expect(rowSrc).not.toMatch(/#\$\{idx/);
-    expect(rowSrc).not.toContain('dash-tiempo-rank');
-    expect(src).not.toContain('dash-tiempo-rank');
+  it('ranking discreto sigue el índice del Top 5 sin cambiar su orden', () => {
+    expect(rowSrc).toContain('class="dash-exc-rank"');
+    expect(rowSrc).toContain('aria-label="Posición ${rank}"');
+    expect(src).toContain('locPorId, idx === 0, idx + 1)');
   });
 
   it('header con título + "Ver todos" (sin contador feo pegado al texto) + resumen en vivo "Máximo: X d · CÓDIGO", nunca hardcodeado', () => {
@@ -205,14 +205,16 @@ describe('Rediseño DEFINITIVO — "Mayor tiempo sin engrasar" como LISTA COMPAC
   it('el panel arma la lista con la MISMA fila (tiempoExcepcionRowHTML) para las 5 posiciones — sin bloque KPI aparte', () => {
     expect(src).not.toContain('data-kpi-action="tiempo-sin-engrase"');
     expect(src).toContain('class="dash-exc-list"');
-    expect(src).toContain('tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0))');
+    expect(src).toContain('tiempoSinEngrase.slice(0, 5).map((e, idx) => tiempoExcepcionRowHTML(e, lastRecordByEquipo[e.id], daysSinceLastGrease(e.id), locPorId, idx === 0, idx + 1))');
   });
 
   it('la fila trae código (línea 1, negrita), modelo·ubicación (línea 2), "Último engrase: fecha" (línea 3) y los días como campo aparte (jerarquía visual, no dentro del texto)', () => {
     expect(rowSrc).toContain('class="dash-exc-code dash-code-link mono"');
     expect(rowSrc).toContain('class="dash-exc-line2"');
     expect(rowSrc).toContain('aria-label="Último engrase"');
-    expect(rowSrc).toContain("${last ? fmtDate(last) : 'Sin registro'}");
+    expect(rowSrc).toContain('fmtDateOnly(last)');
+    expect(rowSrc).toContain('fmtTime(last)');
+    expect(rowSrc).toContain('datetime="${esc(last)}"');
     expect(rowSrc).toContain('class="dash-exc-days${isMax ? \' is-max\' : \'\'}"');
   });
 
