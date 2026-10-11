@@ -1,3 +1,4 @@
+import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpFixture.js';
 // tests/ui/lubricador-widget-snapshot.spec.js
 //
 // Pedido "WIDGET ANDROID + PALETA CORPORATIVA FINAL + MODO SOL"
@@ -52,7 +53,7 @@ const validationSrc = validationNames.map((n) => extractDeclaration(validationSo
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome',
   'isNative', 'updateLubricadorWidgetSnapshot', 'clearLubricadorWidgetSnapshot', 'logout',
 ];
 const appSrc = appNames.map((n) => extractDeclaration(appSource, n)).join('\n\n');

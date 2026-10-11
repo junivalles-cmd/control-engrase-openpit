@@ -140,7 +140,7 @@ describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
 
 describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas), nunca una tarjeta en 0 (hardening UI 2026-10-08, "simplificar Mi Turno")', () => {
   it('"Atrasados" solo se renderiza si hay filas visibles en el filtro', () => {
-    expect(src).toContain('${arrastradosVisibles.length ? `');
+    expect(src).toContain('${otherOverdueVisible.length ? `');
   });
 
   it('"Mi Turno" solo se renderiza si hay filas visibles en el filtro', () => {
@@ -152,8 +152,8 @@ describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas
   });
 
   it('"Alertas" (fix 2026-10-09, §7 del pedido) SIEMPRE muestra el encabezado — con lista si hay alertas, o "Sin alertas de engrase" si no hay ninguna (nunca desaparece en silencio, a diferencia de Atrasados/Mi Turno/Realizados)', () => {
-    expect(src).toContain('${alertasVisibles.length ? `');
-    expect(src).toContain('Sin alertas de engrase.');
+    expect(src).toContain('${followUpVisible.length ? `');
+    expect(src).toContain('Sin pendientes ni equipos que requieran seguimiento.');
   });
 });
 
@@ -198,51 +198,25 @@ describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro
   });
 });
 
-describe('"Alertas — Mayor tiempo sin engrasar" (fix 2026-10-09: bug real "equipo AL DÍA en la Ficha pero en Alertas") — una sola fuente de verdad con la Ficha (statusFor()/computeAllStatuses()), acotada al scope del Lubricador', () => {
-  it('calcula el estado real PRIMERO (statusByIdLub, de statusesNormal — el MISMO computeAllStatuses() que usa la Ficha) y filtra por él ANTES de ordenar/recortar — nunca "todos → ordenar → slice(0,5)"', () => {
-    expect(src).toContain('const statusByIdLub = new Map(statusesNormal.map(({ e, s }) => [e.id, s]));');
-    const idx = src.indexOf('const requiereAtencionPorTiempo');
-    expect(idx).toBeGreaterThan(-1);
-    const idxAlertas = src.indexOf('const alertasTiempoSinEngrase', idx);
-    expect(idxAlertas).toBeGreaterThan(idx); // el filtro por estado viene ANTES del sort/slice
+describe('Seguimiento por antigüedad es independiente del estado formal del plan', () => {
+  it('usa la proyección scoped compartida y excluye pendientes reales anteriores', () => {
+    expect(src).toContain('const followUpRows = buildCrewLubricationFollowUp({');
+    expect(src).toContain('equipos, records, scope, excludedEquipmentIds: pendientesTurnoAnterior.map(e => e.id)');
   });
-
-  it('allowlist por s.code (§6 del pedido): ROJO/AMARILLO sí; VERDE real no (igual que la Ficha); VERDE-por-PARTIAL (partialPendienteIds) sí', () => {
-    const idx = src.indexOf('const requiereAtencionPorTiempo');
-    const block = src.slice(idx, idx + 700);
-    expect(block).toContain("if (s.code === 'ROJO' || s.code === 'AMARILLO') return true;");
-    expect(block).toContain("if (s.code === 'VERDE' && partialPendienteIds.has(e.id)) return true;");
-    expect(block).toContain('return false;');
+  it('filtra ubicación y muestra primeros cinco más Ver todos, sin recortar el dataset', () => {
+    expect(src).toContain('const followUpVisible = filterLocationRows(followUpRows)');
+    expect(src).toContain('followUpVisible.slice(0, 5)');
+    expect(src).toContain('followUpVisible.slice(5)');
   });
-
-  it('`partialPendienteIds` es el MISMO Set que reclasifica Mi Turno/Atrasados por un PARTIAL (una sola fuente de verdad, §8 del pedido — nunca una condición paralela)', () => {
+  it('un PARTIAL mantiene su clasificación de trabajo formal', () => {
     expect(src).toContain('const partialPendienteIds = new Set();');
     expect(src).toContain('partialPendienteIds.add(e.id);');
   });
-
-  it('acotada a `normal` (nunca equipos.length sin filtrar) y máximo 5, DESPUÉS del filtro de atención', () => {
-    expect(src).toContain('const alertasTiempoSinEngrase = requiereAtencionPorTiempo.sort((a, b) => {');
-    expect(src).toContain('.slice(0, 5)');
-  });
-
-  it('un COMPLETE de HOY sale de inmediato (realizadosHoyIds, mismo Set que Realizados) — primera condición del filtro', () => {
-    const idx = src.indexOf('const requiereAtencionPorTiempo');
-    const block = src.slice(idx, idx + 200);
-    expect(block).toContain('if (realizadosHoyIds.has(e.id)) return false;');
-  });
-
-  it('último engrase (para el texto "N días sin engrasar") ignora PARTIAL (reutiliza resolveRecordCompleteness(), cero fórmula nueva)', () => {
-    expect(src).toContain("const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);");
-    const idx = src.indexOf('const lastRecordByEquipoLub');
-    const block = src.slice(idx, idx + 300);
-    expect(block).toContain('recordsNoParciales.forEach(r => {');
-  });
-
-  it('el código de equipo abre la Ficha real (openEquipmentDetail), nunca una ficha nueva', () => {
-    expect(src).toContain("$$('.lub-alerta-code', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
+  it('Ficha y registro usan los flujos existentes', () => {
+    expect(src).toContain("$$('.lub-follow-up-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
+    expect(src).toContain("$$('.lub-follow-up-reg', c).forEach(b => b.addEventListener('click', () => handleOutOfPlanEquipoSelected(b.dataset.id)));");
   });
 });
-
 describe('§8/§9 — nunca se muestra cumplimiento global, otras ubicaciones, ni estado de flota completa', () => {
   it('no hay ningún DB.allActive("equipment") SIN pasar por classifyEquipmentWork/scope dentro de esta función', () => {
     // Única llamada a equipos "crudos" es la de arriba de todo (antes de

@@ -1,3 +1,4 @@
+import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpFixture.js';
 // tests/ui/lubricador-shell-boot-regression.spec.js
 //
 // Fix 2026-10-09 ("BLOCKER SOLO EN PERFIL LUBRICADOR") — bug real reportado:
@@ -54,7 +55,7 @@ const validationSrc = validationNames.map((n) => extractDeclaration(validationSo
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome',
   // El shell real — esto es lo que se rompió. openModal/closeModal reales
   // (nunca un stub no-op) para que el modal de "Mi cuenta" sea verificable.
   'openModal', 'closeModal', 'updateConnBadge', 'wireShiftTimer', 'wireQuickFind', 'openLubAccountMenu', 'bootLubricador',

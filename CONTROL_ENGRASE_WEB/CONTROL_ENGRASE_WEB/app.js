@@ -4193,74 +4193,11 @@ async function renderLubricadorHome() {
       </div>`;
   };
 
-  // "4. ALERTAS — Mayor tiempo sin engrasar": acotada a `normal` (equipos
-  // de la cuadrilla/ubicación autorizada del Lubricador, nunca flota
-  // global). Puede repetir un equipo que también esté en Atrasados/Mi
-  // Turno a propósito (es información de riesgo, no otra tarea — pedido
-  // explícito).
-  //
-  // Fix 2026-10-09 (bug real: equipo "AL DÍA" en la Ficha apareciendo en
-  // Alertas) — causa raíz real trazada ANTES de tocar nada (§5/§8 del
-  // pedido): el filtro anterior (`!realizadosHoyIds.has(e.id)`) solo
-  // excluía un COMPLETE de HOY — un equipo con un COMPLETE de AYER (o
-  // antes) que YA satisface su ocurrencia (statusFor()/weekdayStatusFor(),
-  // la MISMA función que usa openEquipmentDetail() — nunca una segunda
-  // definición de estado) seguía entrando a "Alertas" por tiempo, aunque
-  // la Ficha ya dijera "AL DÍA". El orden correcto (§7 del pedido) es
-  // CALCULAR el estado real primero, FILTRAR por los que de verdad
-  // requieren atención, y solo DESPUÉS ordenar/recortar a 5 — nunca
-  // "todos → ordenar → slice(0,5) → llamarlos Alertas".
-  //
-  // Regla (§6 del pedido), un allowlist por el código real de estado —
-  // nunca una redefinición paralela:
-  //   - ROJO (vencido) / AMARILLO (próximo, programado hoy) → sí.
-  //   - VERDE (AL DÍA real, por un COMPLETE) → no (igual que la Ficha).
-  //   - VERDE-por-PARTIAL (`partialPendienteIds`, calculado arriba, MISMO
-  //     criterio que reclasifica Mi Turno/Atrasados) → sí, sigue
-  //     requiriendo atención.
-  //   - GRIS (DETENIDO/PAUSADO, SIN PLAN, SIN DÍAS ASIGNADOS, DATOS
-  //     INCONSISTENTES, PLAN MAL CONFIGURADO) → no: ninguno de estos es
-  //     una alerta POR TIEMPO sin engrasar.
-  //   - Un SKIP ("no se pudo ejecutar") nunca crea un record ni cambia el
-  //     estado — un equipo con skips sigue ROJO/AMARILLO por sí solo, sin
-  //     necesitar código especial aquí.
-  const recordsNoParciales = records.filter(r => resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL);
-  const lastRecordByEquipoLub = {};
-  recordsNoParciales.forEach(r => {
-    if (!lastRecordByEquipoLub[r.equipmentId] || new Date(r.date) > new Date(lastRecordByEquipoLub[r.equipmentId])) {
-      lastRecordByEquipoLub[r.equipmentId] = r.date;
-    }
+  // Read-only age follow-up uses master location coverage, including APOYO.
+  // Previous-turn carryover retains its exact definition and has precedence.
+  const followUpRows = buildCrewLubricationFollowUp({
+    equipos, records, scope, excludedEquipmentIds: pendientesTurnoAnterior.map(e => e.id),
   });
-  function daysSinceLastGreaseLub(equipmentId) {
-    const last = lastRecordByEquipoLub[equipmentId];
-    if (!last) return null;
-    return Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
-  }
-  const statusByIdLub = new Map(statusesNormal.map(({ e, s }) => [e.id, s]));
-  const requiereAtencionPorTiempo = normal.filter(e => {
-    if (realizadosHoyIds.has(e.id)) return false; // COMPLETE de HOY: sin urgencia, sale de inmediato (§6/§E)
-    const s = statusByIdLub.get(e.id);
-    if (!s) return false; // sin estado calculable — nunca se afirma una alerta sin poder sustentarla
-    if (s.code === 'ROJO' || s.code === 'AMARILLO') return true;
-    if (s.code === 'VERDE' && partialPendienteIds.has(e.id)) return true; // PARTIAL: sigue requiriendo atención
-    return false; // VERDE real (igual que la Ficha) o GRIS (pausado/sin plan/datos inconsistentes)
-  });
-  const alertasTiempoSinEngrase = requiereAtencionPorTiempo.sort((a, b) => {
-    const dA = daysSinceLastGreaseLub(a.id), dB = daysSinceLastGreaseLub(b.id);
-    return (dB === null ? Infinity : dB) - (dA === null ? Infinity : dA);
-  }).slice(0, 5);
-  const alertaRowHTML = (e) => {
-    const dias = daysSinceLastGreaseLub(e.id);
-    return `
-      <div class="lub-arrastrado-card tone-amber">
-        <div class="lub-eq-top">
-          <button type="button" class="lub-eq-code dash-code-link lub-alerta-code" data-id="${e.id}">${esc(e.code)}</button>
-          <span class="dim">${dias === null ? 'Sin registro' : dias + ' días sin engrasar'}</span>
-        </div>
-        <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-      </div>`;
-  };
-
   // Fix 2026-10-09 ("REALIZADO ADELANTADO", §37/§32 del pedido) — sección
   // SECUNDARIA/informativa (§38: nunca un 5to KPI grande): `s.satisfactorio`
   // ya viene resuelto por weekdayStatusFor() (lubrication-status.js, cero
@@ -4295,6 +4232,7 @@ async function renderLubricadorHome() {
   // status classification. Sections and all four KPIs share these exact rows.
   const recordEquipment = row => equipos.find(e => e.id === row.equipmentId);
   const participatingLocations = new Set([
+    ...followUpRows.map(row => row.e.locationId),
     ...arrastradosTotal.map(row => row.e.locationId),
     ...miTurnoTotal.map(row => row.e.locationId),
     ...realizadosHoyList.map(row => recordEquipment(row)?.locationId),
@@ -4307,7 +4245,9 @@ async function renderLubricadorHome() {
   const realizadosHoyVisibles = filterLocationRows(realizadosHoyList, recordEquipment);
   const vencidosHorometroVisibles = filterLocationRows(vencidosHorometro);
   const realizadosAdelantadosVisibles = filterLocationRows(realizadosAdelantadosList);
-  const alertasVisibles = filterLocationRows(alertasTiempoSinEngrase, row => row);
+  const followUpVisible = filterLocationRows(followUpRows);
+  const previousTurnVisible = arrastradosVisibles.filter(row => turnoAnteriorIds.has(row.e.id));
+  const otherOverdueVisible = arrastradosVisibles.filter(row => !turnoAnteriorIds.has(row.e.id));
 
   // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
   // el render (no-op fuera de Android, ver isNative() en
@@ -4360,9 +4300,16 @@ async function renderLubricadorHome() {
       ${['', ...filterLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${filterLocationRows([...arrastradosTotal, ...miTurnoTotal], undefined, id).length})</button>`).join('')}
     </div><p class="field-hint crew-location-filter-hint">Los KPI corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
 
-    ${arrastradosVisibles.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${arrastradosVisibles.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(arrastradosVisibles, arrastradoRowHTML)}</div>
+    <section id="lub-pending-follow-up" aria-label="Pendientes y seguimiento">
+      <h2 class="lub-section-head">PENDIENTES Y SEGUIMIENTO</h2>
+      ${previousTurnVisible.length ? `<h3 class="lub-section-head">PENDIENTES DEL TURNO ANTERIOR (${previousTurnVisible.length})</h3><div class="lub-eq-list">${locationRowsHTML(previousTurnVisible, arrastradoRowHTML)}</div>` : ''}
+      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO (${followUpVisible.length})</h3><p class="field-hint">Recomendación por tiempo desde el último registro; no es programación ni asignación.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary>${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}</details>` : ''}</div></section>` : ''}
+      ${!previousTurnVisible.length && !followUpVisible.length ? '<p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p>' : ''}
+    </section>
+
+    ${otherOverdueVisible.length ? `
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.ROJO}">ATRASADOS (${otherOverdueVisible.length})</span></div>
+    <div class="lub-eq-list">${locationRowsHTML(otherOverdueVisible, arrastradoRowHTML)}</div>
     ` : ''}
 
     ${miTurnoVisible.length ? `
@@ -4379,14 +4326,6 @@ async function renderLubricadorHome() {
     <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosVisibles.length})</span></div>
     <div class="lub-eq-list">${locationRowsHTML(realizadosAdelantadosVisibles, adelantadoRowHTML)}</div>
     ` : ''}
-
-    ${alertasVisibles.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.AMARILLO}">ALERTAS (${alertasVisibles.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(alertasVisibles, alertaRowHTML, row => row)}</div>
-    ` : `
-    <div class="lub-section-head"><span class="dim">ALERTAS</span></div>
-    <p class="dim" style="padding:0 2px 10px">Sin alertas de engrase.</p>
-    `}
 
     <!-- Fix 2026-10-09 (§10 del pedido): renombrado, NUNCA cambiada su
          lógica (sigue abriendo openOutOfPlanEquipmentPicker(), sin tocar).
@@ -4429,7 +4368,8 @@ async function renderLubricadorHome() {
     const eq = equipos.find(x => x.id === b.dataset.eq);
     if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
   }));
-  $$('.lub-alerta-code', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-follow-up-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  $$('.lub-follow-up-reg', c).forEach(b => b.addEventListener('click', () => handleOutOfPlanEquipoSelected(b.dataset.id)));
   $$('.lub-adelantado-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-quick-qr').addEventListener('click', () => openQrScanner());
@@ -5908,6 +5848,35 @@ function getLubricationAgeSeverity(days) {
   if (days >= 4) return { key: 'critical', label: 'Crítico', tone: 'red' };
   if (days >= 2) return { key: 'attention', label: 'Atención', tone: 'amber' };
   return { key: 'follow-up', label: 'Seguimiento', tone: 'neutral' };
+}
+
+// Informational local projection. It never changes work, occurrences or KPIs.
+function buildCrewLubricationFollowUp({ equipos, records, scope, excludedEquipmentIds = [], now = new Date() }) {
+  if (scope.kind !== 'CREW_SCOPED') return [];
+  const authorized = new Set(scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean));
+  const excluded = new Set(excludedEquipmentIds);
+  const latest = new Map();
+  records.filter(r => r.active !== false && Number.isFinite(new Date(r.date).getTime())).forEach(r => {
+    if (!latest.has(r.equipmentId) || new Date(r.date) > new Date(latest.get(r.equipmentId))) latest.set(r.equipmentId, r.date);
+  });
+  const today = new Date(now).setHours(0, 0, 0, 0);
+  return equipos.filter(e => e.active !== false && authorized.has(e.locationId) && !excluded.has(e.id)).map(e => {
+    const last = latest.get(e.id) || null;
+    const days = last === null ? null : Math.floor((today - new Date(last).setHours(0, 0, 0, 0)) / 86400000);
+    return { e, last, days, severity: getLubricationAgeSeverity(days) };
+  }).filter(row => row.days === null || row.days > 0)
+    .sort((a, b) => (b.days === null ? Infinity : b.days) - (a.days === null ? Infinity : a.days));
+}
+
+function lubricationFollowUpRowHTML({ e, last, days, severity }, locations) {
+  const location = locations.find(l => l.id === e.locationId)?.name || 'Sin ubicación';
+  return `<div class="lub-follow-up-row" data-equipment-id="${esc(e.id)}" data-age-severity="${severity.key}">
+    <div class="lub-follow-up-heading"><span class="lub-eq-code">${esc(e.code)}</span><span class="lub-follow-up-age">${days === null ? 'Sin registro' : `${days} ${days === 1 ? 'día' : 'días'} sin engrasar`}</span></div>
+    <div class="lub-follow-up-priority">${severity.label}</div>
+    <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)} · ${esc(location)}</div>
+    ${last ? `<div class="lub-follow-up-date dim">Último: ${fmtDateOnly(last)} · ${fmtTime(last)}</div>` : ''}
+    <div class="lub-arrastrado-actions"><button type="button" class="btn lub-follow-up-ver" data-id="${esc(e.id)}">Ver ficha</button><button type="button" class="btn lub-follow-up-reg" data-id="${esc(e.id)}">Registrar fuera de plan</button></div>
+  </div>`;
 }
 
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax, rank = null) {

@@ -3578,3 +3578,18 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   #app-content #dash-tiempo-sin-engrase-panel .dash-exc-date-label { display: none; }
   #app-content #dash-tiempo-sin-engrase-panel time { flex-direction: column; }
 }
+
+/* Local follow-up is informative; formal work keeps its existing styling. */
+#app-content #lub-pending-follow-up h2 { font-size: 14px; font-weight: 700; }
+#app-content #lub-pending-follow-up h3 { font-size: 12px; font-weight: 600; }
+#app-content #lub-follow-up .lub-follow-up-row { --age-tone: var(--text); --age-ink: color-mix(in srgb, var(--age-tone) 80%, var(--text)); padding: 8px 10px; border-left: 3px solid var(--border); border-bottom: 1px solid var(--border); min-width: 0; }
+#app-content #lub-follow-up [data-age-severity="critical"] { --age-tone: var(--red); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 2%, var(--surface)); }
+#app-content #lub-follow-up [data-age-severity="attention"] { --age-tone: var(--amber); border-left-color: var(--amber); }
+#app-content #lub-follow-up .lub-follow-up-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+#app-content #lub-follow-up .lub-follow-up-age, #app-content #lub-follow-up .lub-follow-up-priority { color: var(--age-ink); }
+#app-content #lub-follow-up .lub-follow-up-priority { margin: 4px 0; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+#app-content #lub-follow-up .lub-eq-model, #app-content #lub-follow-up .lub-follow-up-date { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+#app-content #lub-follow-up .lub-arrastrado-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+#app-content #lub-follow-up .lub-arrastrado-actions .btn, #app-content #lub-follow-up summary { min-width: 44px; min-height: 44px; }
+#app-content #lub-follow-up summary { display: flex; align-items: center; cursor: pointer; font-weight: 600; padding: 0 10px; }
+#app-content #lub-follow-up .lub-arrastrado-actions .btn:focus-visible, #app-content #lub-follow-up summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

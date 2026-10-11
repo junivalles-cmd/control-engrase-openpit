@@ -1,3 +1,4 @@
+import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpFixture.js';
 // tests/ui/lubricador-mi-turno-real-execution.spec.js
 //
 // Fix 2026-10-08 ("alinear estado y trabajo realizado") — bug real reportado
@@ -51,7 +52,7 @@ const validationSrc = validationNames.map(n => extractDeclaration(validationSour
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -143,6 +144,8 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
 // encabezado — null si la sección está oculta (sin trabajo que mostrar),
 // igual que hace la pantalla real.
 function seccion(page, textoEncabezado) {
+  if (textoEncabezado === 'REQUIEREN SEGUIMIENTO') return page.locator('#lub-follow-up > .lub-eq-list');
+  if (textoEncabezado === 'ATRASADOS') return page.locator('.lub-section-head:has-text("ATRASADOS") + .lub-eq-list, .lub-section-head:has-text("PENDIENTES DEL TURNO ANTERIOR") + .lub-eq-list');
   return page.locator(`.lub-section-head:has-text("${textoEncabezado}") + .lub-eq-list`);
 }
 
@@ -265,7 +268,7 @@ test('un equipo asignado (ASIGNADO) con un registro COMPLETE de hoy también sal
 
 // ============================================================
 // Fix 2026-10-08 ("refrescar alertas tras engrasar") — bug real: un equipo
-// en ALERTAS/REQUIERE ATENCIÓN seguía ahí después de un COMPLETE. Causa
+// en REQUIEREN SEGUIMIENTO/REQUIERE ATENCIÓN seguía ahí después de un COMPLETE. Causa
 // raíz encontrada trazando el flujo real (nunca asumida):
 //   1. lastRecordByEquipoLub contaba CUALQUIER record (incluido PARTIAL)
 //      como "último engrase" — violaba el punto 2 del pedido.
@@ -278,7 +281,7 @@ test('un equipo asignado (ASIGNADO) con un registro COMPLETE de hoy también sal
 // a mano, igual que al volver a "Mi Turno" después de guardar.
 // ============================================================
 
-test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localmente) sale de la alerta en el siguiente render, sin reload/logout/sync', async ({ page }) => {
+test('A/F/G — equipo en REQUIEREN SEGUIMIENTO con un COMPLETE nuevo (guardado solo localmente) sale de la alerta en el siguiente render, sin reload/logout/sync', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -293,7 +296,7 @@ test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localment
   await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-40'); // antes del engrase: en la alerta
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-40'); // antes del engrase: en la alerta
 
   // Simula el DB.put() real de un engrase COMPLETE — SOLO local, sin tocar
   // red/sync (punto F) — y vuelve a renderizar (punto G: "al rerender
@@ -306,12 +309,12 @@ test('A/F/G — equipo en ALERTAS con un COMPLETE nuevo (guardado solo localment
     return window.renderLubricadorHome();
   });
 
-  // El encabezado "ALERTAS" SIEMPRE se muestra (fix 2026-10-09, §7 del
+  // El encabezado "REQUIEREN SEGUIMIENTO" SIEMPRE se muestra (fix 2026-10-09, §7 del
   // pedido) — ya sin urgencia real, muestra "Sin alertas de engrase" en vez
   // de desaparecer en silencio.
-  await expect(page.locator('.lub-section-head:has-text("ALERTAS")')).toBeVisible();
-  await expect(page.locator('#app-content')).toContainText('Sin alertas de engrase.');
-  expect(await page.locator('.lub-section-head:has-text("ALERTAS") + .lub-eq-list .lub-eq-code', { hasText: 'T-40' }).count()).toBe(0);
+  await expect(page.locator('#lub-pending-follow-up')).toBeVisible();
+  await expect(page.locator('#app-content')).toContainText('Sin pendientes ni equipos que requieran seguimiento.');
+  expect(await page.locator('.lub-section-head:has-text("REQUIEREN SEGUIMIENTO") + .lub-eq-list .lub-eq-code', { hasText: 'T-40' }).count()).toBe(0);
 });
 
 test('B — un registro COMPLETE se usa como el "último engrase" real (ignora un PARTIAL más viejo), nunca una fecha vieja', async ({ page }) => {
@@ -335,8 +338,8 @@ test('B — un registro COMPLETE se usa como el "último engrase" real (ignora u
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-41');
-  await expect(seccion(page, 'ALERTAS')).toContainText('1 días sin engrasar'); // refleja el COMPLETE de ayer, no el PARTIAL de hace 20 días
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-41');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('1 día sin engrasar'); // refleja el COMPLETE de ayer, no el PARTIAL de hace 20 días
 });
 
 test('C — un equipo con SOLO un registro PARTIAL permanece en Alertas (un PARTIAL nunca limpia la alerta)', async ({ page }) => {
@@ -356,7 +359,7 @@ test('C — un equipo con SOLO un registro PARTIAL permanece en Alertas (un PART
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-42');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-42');
 });
 
 test('D — un equipo con un skip ("no se pudo ejecutar") y ningún record permanece en Alertas (un skip nunca crea un record ni limpia la alerta)', async ({ page }) => {
@@ -371,10 +374,11 @@ test('D — un equipo con un skip ("no se pudo ejecutar") y ningún record perma
   const skips = [{ id: 's1', equipmentId: 'e1', date: isoDaysAgo(0), createdAt: isoDaysAgo(0), reason: 'SIN_TIEMPO', active: true, userName: 'Pedro L.' }];
 
   await bootPage(page, { equipos, plans, skips });
+  await page.evaluate(() => { window.__mockData.lubrication_skips[0].shiftId = currentShiftId(); });
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-43');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-43');
 });
 
 test('E — un equipo con COMPLETE de hoy nunca aparece a la vez en Realizados y en Alertas (sin duplicados)', async ({ page }) => {
@@ -391,9 +395,9 @@ test('E — un equipo con COMPLETE de hoy nunca aparece a la vez en Realizados y
 
   expect(errors).toEqual([]);
   await expect(seccion(page, 'REALIZADOS')).toContainText('T-44');
-  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  const enAlertas = await page.locator('.lub-section-head:has-text("REQUIEREN SEGUIMIENTO")').count();
   if (enAlertas) {
-    const alertCodes = await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents();
+    const alertCodes = await seccion(page, 'REQUIEREN SEGUIMIENTO').locator('.lub-eq-code').allTextContents();
     expect(alertCodes).not.toContain('T-44');
   }
 });
@@ -424,7 +428,7 @@ test('A/B/C — COMPLETE local (sin red) sale de Alertas, sale de Mi Turno y ent
   expect(errors).toEqual([]);
   // Antes del engrase: pendiente en Mi Turno y, sin registro, también en Alertas.
   await expect(seccion(page, 'MI TURNO')).toContainText('T-50');
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-50');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-50');
 
   // Guarda SOLO local (igual que DB.put() real del flujo de registrar) —
   // sin tocar lastSyncState/red — y vuelve a renderizar, igual que el
@@ -439,9 +443,9 @@ test('A/B/C — COMPLETE local (sin red) sale de Alertas, sale de Mi Turno y ent
 
   expect(await enCuantasSeccionesDeTrabajo(page, 'T-50')).toBe(1);
   await expect(seccion(page, 'REALIZADOS')).toContainText('T-50'); // C: entra a Realizados
-  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  const enAlertas = await page.locator('.lub-section-head:has-text("REQUIEREN SEGUIMIENTO")').count();
   if (enAlertas) {
-    expect(await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents()).not.toContain('T-50'); // A: sale de Alertas
+    expect(await seccion(page, 'REQUIEREN SEGUIMIENTO').locator('.lub-eq-code').allTextContents()).not.toContain('T-50'); // A: sale de Alertas
   }
   // B: sale de Mi Turno — ya cubierto por enCuantasSeccionesDeTrabajo === 1 (solo Realizados).
 });
@@ -477,13 +481,13 @@ test('D — si la sincronización remota falla DESPUÉS de guardar localmente, e
   // vuelta en Mi Turno/Atrasados/Alertas.
   expect(await enCuantasSeccionesDeTrabajo(page, 'T-51')).toBe(1);
   await expect(seccion(page, 'REALIZADOS')).toContainText('T-51');
-  const enAlertas = await page.locator('.lub-section-head:has-text("ALERTAS")').count();
+  const enAlertas = await page.locator('.lub-section-head:has-text("REQUIEREN SEGUIMIENTO")').count();
   if (enAlertas) {
-    expect(await seccion(page, 'ALERTAS').locator('.lub-eq-code').allTextContents()).not.toContain('T-51');
+    expect(await seccion(page, 'REQUIEREN SEGUIMIENTO').locator('.lub-eq-code').allTextContents()).not.toContain('T-51');
   }
 });
 
-test('E — un PARTIAL guardado localmente (sin red) permanece en Alertas y nunca entra a Realizados tras el rerender', async ({ page }) => {
+test('E — un PARTIAL guardado localmente conserva el trabajo formal y nunca entra a Realizados tras el rerender', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -499,7 +503,7 @@ test('E — un PARTIAL guardado localmente (sin red) permanece en Alertas y nunc
   await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-52');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-52');
 
   await page.evaluate(() => {
     window.__mockData.lubrication_records.push({
@@ -510,7 +514,8 @@ test('E — un PARTIAL guardado localmente (sin red) permanece en Alertas y nunc
     return window.renderLubricadorHome();
   });
 
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-52'); // un PARTIAL nunca limpia la alerta
+  await expect(page.locator('#lub-follow-up .lub-eq-code', { hasText: 'T-52' })).toHaveCount(0); // last record is today; age matches Admin
+  await expect(seccion(page, 'ATRASADOS')).toContainText('T-52'); // formal PARTIAL work is preserved
   const enRealizados = await page.locator('.lub-section-head:has-text("REALIZADOS")').count();
   if (enRealizados) {
     expect(await seccion(page, 'REALIZADOS').locator('.lub-eq-code').allTextContents()).not.toContain('T-52');
@@ -530,17 +535,17 @@ test('F — un skip ("no se pudo ejecutar") guardado localmente (sin red) perman
   await bootPage(page, { equipos, plans });
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-53');
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-53');
 
   await page.evaluate(() => {
     window.__mockData.lubrication_skips.push({
       id: 's-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
-      reason: 'SIN_TIEMPO', active: true, userName: 'Lubricador de prueba',
+      reason: 'SIN_TIEMPO', active: true, userName: 'Lubricador de prueba', shiftId: currentShiftId(),
     });
     return window.renderLubricadorHome();
   });
 
-  await expect(seccion(page, 'ALERTAS')).toContainText('T-53'); // un skip nunca crea un record ni limpia la alerta
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-53'); // un skip nunca crea un record ni limpia la alerta
   const enRealizados = await page.locator('.lub-section-head:has-text("REALIZADOS")').count();
   if (enRealizados) {
     expect(await seccion(page, 'REALIZADOS').locator('.lub-eq-code').allTextContents()).not.toContain('T-53');
@@ -890,10 +895,9 @@ test('O-A — plan programado HOY + COMPLETE fuera de plan AYER que satisfizo es
   expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
   expect(await page.locator('.lub-section-head:has-text("REALIZADOS (")').count()).toBe(0); // "Realizados hoy" (no adelantados) oculta, nunca una tarjeta en 0
   // Q del pedido: sin duplicados — '20-5530' aparece UNA sola vez en toda
-  // la pantalla (solo en Realizados Adelantados). "REALIZADOS" (substring
-  // de "REALIZADOS ADELANTADOS") hace ambiguo enCuantasSeccionesDeTrabajo()
-  // aquí, por eso se cuenta directo sobre toda la pantalla.
-  expect(await page.locator('.lub-eq-code', { hasText: '20-5530' }).count()).toBe(1);
+  // las secciones formales. El seguimiento informativo por antigüedad puede coexistir.
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: '20-5530' })).toHaveCount(1);
+  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('20-5530');
 });
 
 test('O-B/P — PARTIAL ayer NUNCA satisface hoy: sigue pendiente en MI TURNO, nunca en "Realizados Adelantados"', async ({ page }) => {
@@ -1053,7 +1057,8 @@ test('ASIGNADO-D — una occurrence ya satisfecha (adelantado) nunca vuelve a ap
   expect(errors).toEqual([]);
   expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
   expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
-  expect(await page.locator('.lub-eq-code', { hasText: 'A-02' }).count()).toBe(1); // una sola vez, solo en Realizados Adelantados
+  await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: 'A-02' })).toHaveCount(1);
+    await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('A-02');
   await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
 });
 
@@ -1095,7 +1100,8 @@ for (const tipo of ['PLANNED', 'ASSIGNED', 'OUT_OF_PLAN']) {
     expect(errors).toEqual([]);
     expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
     expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
-    expect(await page.locator('.lub-eq-code', { hasText: 'A-02' }).count()).toBe(1); // una sola vez, solo en Realizados Adelantados
+    await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: 'A-02' })).toHaveCount(1);
+    await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('A-02');
     await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
     await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
   });

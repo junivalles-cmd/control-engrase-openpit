@@ -1,7 +1,8 @@
+import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpFixture.js';
 // tests/ui/lubricador-alertas-ficha-consistency.spec.js
 //
 // Bug real (2026-10-09): un equipo (ejemplo real reportado: "A11") aparecía
-// en ALERTAS ("1 día sin engrasar") mientras su Ficha mostraba ESTADO DE
+// en REQUIEREN SEGUIMIENTO ("1 día sin engrasar") mientras su Ficha mostraba ESTADO DE
 // ENGRASE: AL DÍA, con un engrase COMPLETE reciente. Causa raíz real
 // (trazada ANTES de tocar nada, ver comentarios en renderLubricadorHome()/
 // app.js): el filtro de Alertas solo excluía un COMPLETE de HOY
@@ -52,7 +53,7 @@ const validationSrc = validationNames.map((n) => extractDeclaration(validationSo
 const appNames = [
   '$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
   'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId',
-  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome',
+  'getCurrentOperationalScope', 'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome',
 ];
 const appSrc = appNames.map((n) => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -111,13 +112,13 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
 
 // Localiza la lista de Alertas (igual patrón que lubricador-mi-turno-real-execution.spec.js).
 function alertasSeccion(page) {
-  return page.locator('.lub-section-head:has-text("ALERTAS") + .lub-eq-list');
+  return page.locator('#lub-follow-up > .lub-eq-list');
 }
 async function alertasCodes(page) {
-  return alertasSeccion(page).locator('.lub-eq-code').allTextContents();
+  return alertasSeccion(page).locator('.lub-eq-code:visible').allTextContents();
 }
 
-test('A. COMPLETE reciente (ayer, no hoy) que ya satisface la ocurrencia + Ficha "AL DÍA" → NO aparece en Alertas (bug real reportado, "A11")', async ({ page }) => {
+test('A. registro de ayer conserva Ficha AL DÍA y aparece solo como seguimiento informativo', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -134,11 +135,11 @@ test('A. COMPLETE reciente (ayer, no hoy) que ya satisface la ocurrencia + Ficha
 
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  expect(await alertasCodes(page)).not.toContain('A11');
-  await expect(page.locator('#app-content')).toContainText('Sin alertas de engrase.');
+  expect(await alertasCodes(page)).toContain('A11');
+  await expect(page.locator('#lub-follow-up')).toContainText('1 día sin engrasar');
 });
 
-test('B. VERDE/AL DÍA (ciclo semanal maduro, varios días desde el último engrase) → NUNCA en Alertas, sin importar cuántos "días sin engrasar" pasaron', async ({ page }) => {
+test('B. cinco días: seguimiento crítico sin cambiar el estado VERDE de la Ficha', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -153,10 +154,11 @@ test('B. VERDE/AL DÍA (ciclo semanal maduro, varios días desde el último engr
 
   await page.evaluate(() => window.renderLubricadorHome());
   expect(errors).toEqual([]);
-  expect(await alertasCodes(page)).not.toContain('VERDE-01');
+  expect(await alertasCodes(page)).toContain('VERDE-01');
+  await expect(page.locator('.lub-follow-up-priority')).toHaveText('Crítico');
 });
 
-test('C. vencido (ROJO) → aparece en Alertas', async ({ page }) => {
+test('C. vencido (ROJO) → aparece en seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -190,7 +192,7 @@ test('D. próximo (AMARILLO, "PROGRAMADO HOY") → comportamiento según el help
   expect(await alertasCodes(page)).toContain('AMARILLO-01');
 });
 
-test('E. COMPLETE local (de HOY) → sale de Alertas de inmediato, aparece en Realizados', async ({ page }) => {
+test('E. COMPLETE local (de HOY) → sale del seguimiento de inmediato, aparece en Realizados', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -206,7 +208,7 @@ test('E. COMPLETE local (de HOY) → sale de Alertas de inmediato, aparece en Re
   await expect(page.locator('.lub-section-head:has-text("REALIZADOS") + .lub-eq-list')).toContainText('HOY-01');
 });
 
-test('F. PARTIAL (satisface la ocurrencia a medias) → mantiene atención en Alertas aunque el estado real sea VERDE', async ({ page }) => {
+test('F. PARTIAL (satisface la ocurrencia a medias) → mantiene seguimiento por antigüedad aunque el estado real sea VERDE', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -227,7 +229,7 @@ test('F. PARTIAL (satisface la ocurrencia a medias) → mantiene atención en Al
   expect(await alertasCodes(page)).toContain('PARTIAL-01'); // el PARTIAL mantiene la atención real
 });
 
-test('G. SKIP ("no se pudo ejecutar") sin ningún record → el equipo sigue ROJO/AMARILLO por sí solo y aparece en Alertas', async ({ page }) => {
+test('G. SKIP ("no se pudo ejecutar") sin ningún record → el equipo sigue ROJO/AMARILLO por sí solo y aparece en seguimiento', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -245,7 +247,7 @@ test('G. SKIP ("no se pudo ejecutar") sin ningún record → el equipo sigue ROJ
   expect(await alertasCodes(page)).toContain('SKIP-01');
 });
 
-test('H. máximo 5 DESPUÉS del filtro — nunca un VERDE real ocupa un cupo aunque haya menos de 5 equipos ROJO/AMARILLO que "ganarían" por slice(0,5) sin filtrar primero', async ({ page }) => {
+test('H. primeros cinco por antigüedad; Ver todos conserva equipos al día en el plan', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -257,8 +259,8 @@ test('H. máximo 5 DESPUÉS del filtro — nunca un VERDE real ocupa un cupo aun
     equipos.push({ id: `rojo${i}`, code: `ROJO-${i}`, brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' });
     plans.push({ id: `pr${i}`, equipmentId: `rojo${i}`, controlType: 'Día y turno de la semana', assignedDays: [diaReciente] });
   }
-  // 2 equipos VERDE real (AL DÍA, COMPLETE de ayer que satisface) — NUNCA deben
-  // ocupar uno de los 5 cupos, ni siquiera por casualidad de orden/slice.
+  // 2 equipos VERDE real con un día desde el último engrase también requieren seguimiento.
+  // Los equipos sin registro se muestran primero; Ver todos conserva ambos.
   const diaAyer = weekdayNDaysAgo(1);
   for (let i = 0; i < 2; i++) {
     equipos.push({ id: `verde${i}`, code: `VERDE-${i}`, brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' });
@@ -275,11 +277,14 @@ test('H. máximo 5 DESPUÉS del filtro — nunca un VERDE real ocupa un cupo aun
   const codes = await alertasCodes(page);
   expect(codes.length).toBe(5);
   for (const c of codes) {
-    expect(c.startsWith('ROJO-')).toBe(true); // nunca un VERDE-* entre los 5
+    expect(c.startsWith('ROJO-')).toBe(true); // sin registro precede a un día
   }
+  await page.locator('#lub-follow-up summary').click();
+  await expect(page.locator('#lub-follow-up .lub-follow-up-row:visible')).toHaveCount(9);
+  await expect(alertasSeccion(page)).toContainText('VERDE-0');
 });
 
-test('I. Ficha y Alertas son consistentes: TODO equipo que aparece en Alertas tiene, vía statusFor() real, ROJO/AMARILLO o VERDE-por-PARTIAL — nunca un VERDE real', async ({ page }) => {
+test('I. seguimiento por antigüedad conserva todos los estados reales de la Ficha', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
 
@@ -311,12 +316,11 @@ test('I. Ficha y Alertas son consistentes: TODO equipo que aparece en Alertas ti
   expect(codes).toContain('MIX-ROJO');
   expect(codes).toContain('MIX-AMARILLO');
   expect(codes).toContain('MIX-PARTIAL');
-  expect(codes).not.toContain('MIX-VERDE'); // VERDE real — igual que diría la Ficha
+  expect(codes).toContain('MIX-VERDE'); // informational age does not change the plan state
 
   for (const code of codes) {
     const equipo = equipos.find((e) => e.code === code);
     const s = await page.evaluate((e) => window.statusFor(e), equipo);
-    const esPartialConocido = code === 'MIX-PARTIAL';
-    expect(s.code === 'ROJO' || s.code === 'AMARILLO' || (s.code === 'VERDE' && esPartialConocido)).toBe(true);
+    expect(['ROJO', 'AMARILLO', 'VERDE']).toContain(s.code);
   }
 });

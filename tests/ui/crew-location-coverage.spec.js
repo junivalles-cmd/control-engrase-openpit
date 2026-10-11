@@ -1,3 +1,4 @@
+import { LUBRICATION_FOLLOW_UP_APP_NAMES } from '../helpers/lubricationFollowUpFixture.js';
 // Production scope/render/matrix and real IndexedDB; local fixtures only.
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -11,7 +12,7 @@ const source = [
   ...[SHIFTS_JS_PATH, LUBRICATION_STATUS_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH, WEEKLY_MATRIX_JS_PATH].map(readSource),
   declarations(APP_JS_PATH, ['$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
     'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
-    'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', 'renderLubricadorHome', 'openModal', 'closeModal', 'wireMatrixOccurrenceDetails', 'wireMatrizScrollHint',
+    'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome', 'openModal', 'closeModal', 'wireMatrixOccurrenceDetails', 'wireMatrizScrollHint',
     'openLubricadorMatrizModal', 'handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'cuadrillasPanelHTML', 'wireCuadrillasPanel']),
 ].join('\n');
 const crew = { id: '76-08', name: '76-08 Camión Lubrico', locationId: 'volcan', isDefault: true, memberUserIds: ['lub'], active: true };
@@ -105,7 +106,7 @@ test('Scenario B: principales reciben planes, APOYO solo assignment y no genera 
   const errors = await boot(page, scenarioOptions);
   await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText(['E1', 'E3']);
   await expect(kpi(page)).toHaveText('2');
-  await expect(page.locator('.crew-location-filter[data-location-id="fixture-mojon"]')).toHaveCount(0);
+  await expect(page.locator('.crew-location-filter[data-location-id="fixture-mojon"]')).toHaveCount(1); // APOYO is visible for informational follow-up, without normal programming
   await page.evaluate(async () => {
     await DB.put('lubrication_assignments', { id: 'asg:E2', equipmentId: 'E2', assignedCrewId: 'C1', occurrenceKey: `plan:E2:${todayDateISO()}`, status: 'PENDING', active: true });
     await renderLubricadorHome();
