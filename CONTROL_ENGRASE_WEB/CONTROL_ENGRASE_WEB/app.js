@@ -5902,16 +5902,16 @@ function pendienteValidacionRowHTML(r, eq) {
 // abre la Ficha y Historial conserva su acción independiente. El panel pasa
 // la posición; "Ver todos" conserva la presentación sin ranking ni fecha dividida.
 function tiempoExcepcionRowHTML(e, last, dias, locPorId, isMax, rank = null) {
-  return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}">
+  return `<div class="dash-exc-row operational-table-row${isMax ? ' is-max' : ''}" data-id="${e.id}"${rank === null ? '' : ` data-rank="${rank}"`}>
     <div class="dash-exc-main">
-      <div class="dash-exc-line1">${rank === null ? '' : `<span class="dash-exc-rank" aria-label="Posición ${rank}">${rank}</span>`}<button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button></div>
-      <div class="dash-exc-line2">${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}</div>
+      <div class="dash-exc-line1">${rank === null ? '' : `<span class="dash-exc-rank" aria-label="Posición ${rank}">#${rank}</span>`}<button type="button" class="dash-exc-code dash-code-link mono" data-id="${e.id}">${esc(e.code)}</button>${rank === null ? '' : `<span class="dash-exc-priority">${rank === 1 ? 'Mayor tiempo' : rank === 2 ? 'Atención' : 'Seguimiento'}</span>`}</div>
+      <div class="dash-exc-line2">${rank === null ? `${esc(e.brand)} ${esc(e.model)} · ${esc((locPorId[e.locationId] || {}).name || '—')}` : `<span class="dash-exc-model">${esc(e.brand)} ${esc(e.model)}</span> · <span class="dash-exc-location">${esc((locPorId[e.locationId] || {}).name || '—')}</span>`}</div>
       <div class="dash-exc-line3 dim" aria-label="Último engrase"><span class="dash-exc-date-label">Último: </span>${last ? (rank === null ? fmtDate(last) : `<time datetime="${esc(last)}"><span class="dash-exc-date">${fmtDateOnly(last)}</span><span class="dash-exc-time">${fmtTime(last)}</span></time>`) : 'Sin registro'}</div>
     </div>
     <div class="dash-exc-side">
       <div class="dash-exc-days-wrap${isMax ? ' is-max' : ''}">
         <span class="dash-exc-days${isMax ? ' is-max' : ''}">${dias === null ? '—' : dias}</span>
-        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : 'días'}</span>
+        <span class="dash-exc-days-label dim">${dias === null ? 'Sin registro' : dias === 1 ? 'día' : 'días'}</span>
       </div>
       <button type="button" class="btn btn-sm dash-exc-hist-btn" data-id="${e.id}">Historial</button>
     </div>
