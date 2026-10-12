@@ -39,7 +39,7 @@ function makeFakeDB() {
   };
 }
 
-function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FAKE-USER-JWT', role = 'LUBRICADOR' } = {}) {
+function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FAKE-USER-JWT', role = 'ADMINISTRADOR' } = {}) {
   return {
     getMode() { return mode; },
     isSupabaseMode() { return mode === 'supabase'; },
@@ -82,6 +82,7 @@ describe('Pre-cutover: session changes during transport', () => {
     const auth = {
       isSupabaseMode: () => true, isAuthenticated: () => valid,
       getSession: () => ({ accessToken: token, refreshToken: 'REFRESH' }),
+      getProfile: () => ({ appUserId: 'u1', role: 'ADMINISTRADOR' }),
       restoreSession: vi.fn(async () => { valid = true; token = 'RENEWED-JWT'; }),
     };
     await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
@@ -106,6 +107,7 @@ describe('Pre-cutover: session changes during transport', () => {
     const auth = {
       isSupabaseMode: () => true, isAuthenticated: () => valid,
       getSession: () => ({ accessToken: 'JWT', refreshToken: 'REFRESH' }),
+      getProfile: () => ({ appUserId: 'u1', role: 'ADMINISTRADOR' }),
       restoreSession: async () => { throw new Error('refresh rejected'); },
     };
     await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
@@ -119,7 +121,7 @@ describe('Pre-cutover: session changes during transport', () => {
 
   it('logout during a request prevents subsequent requests and keeps the queue', async () => {
     await db.setAuthTokens({ accessToken:'JWT', refreshToken:'REFRESH', expiresAt:Date.now()+60000 });
-    await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'LUBRICADOR',active:true });
+    await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'ADMINISTRADOR',active:true });
     const { Auth } = loadAuthLogic(db);
     await Auth.restoreSession();
     await db.put('equipment', { id:'e',active:true,updatedAt:T0 });
@@ -514,47 +516,33 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
 });
 
 describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUTH_FORBIDDEN', () => {
-  it('INSERT rechazado: authErrorDetails tiene store/operación/HTTP/mensaje/rol/hora, nunca el payload ni la sesión', async () => {
+  it('Lubricador no intenta INSERT genérico de equipment; conserva el estado local', async () => {
     await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 }); // sin _pushedVersion -> POST
     const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, accessToken: 'REAL-USER-JWT-XYZ', role: 'LUBRICADOR' });
     const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: false, status: 403,
-      json: async () => ({ code: '42501', message: 'new row violates row-level security policy for table "engrase_sync"' }),
-    })));
+    vi.stubGlobal('fetch', vi.fn());
 
     const res = await Sync.pushAll();
-    expect(res.authErrors).toBe(1);
-    expect(res.authErrorDetails).toHaveLength(1);
-    const d = res.authErrorDetails[0];
-    expect(d.store).toBe('equipment');
-    expect(d.id).toBe('eqNew');
-    expect(d.operation).toBe('INSERT');
-    expect(d.status).toBe(403);
-    expect(d.role).toBe('LUBRICADOR');
-    expect(d.message).toContain('row-level security policy');
-    expect(d.at).toBeTruthy();
-
-    // NUNCA el JWT, el apikey ni la sesión en el detalle.
-    const dump = JSON.stringify(d);
-    expect(dump).not.toContain('REAL-USER-JWT-XYZ');
-    expect(dump.toLowerCase()).not.toContain('apikey');
+    expect(res.errors).toContain('CATALOG_LEGACY_BLOCKED:equipment');
+    expect(res.authErrors).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await db.get('equipment', 'eqNew')).toMatchObject({ code: 'NUEVO', updatedAt: T0 });
   });
 
-  it('UPDATE rechazado: mismo detalle, operación "UPDATE"', async () => {
+  it('Supervisor no intenta PATCH genérico de equipment; conserva el estado local', async () => {
     await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0, _pushedVersion: T0 });
     const localA = await db.get('equipment', 'eq1');
     localA.code = 'EDITADO'; localA.updatedAt = T1;
     await db.put('equipment', localA);
     const fakeAuth = makeFakeAuth({ mode: 'supabase', authenticated: true, role: 'SUPERVISOR' });
     const { Sync } = loadSyncLogic(db, STORES_TEST, fakeAuth);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ message: 'permission denied' }) })));
+    vi.stubGlobal('fetch', vi.fn());
 
     const res = await Sync.pushAll();
-    expect(res.authErrorDetails).toHaveLength(1);
-    expect(res.authErrorDetails[0].operation).toBe('UPDATE');
-    expect(res.authErrorDetails[0].role).toBe('SUPERVISOR');
-    expect(res.authErrorDetails[0].message).toBe('permission denied');
+    expect(res.errors).toContain('CATALOG_LEGACY_BLOCKED:equipment');
+    expect(res.authErrors).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await db.get('equipment', 'eq1')).toMatchObject({ code: 'EDITADO', updatedAt: T1 });
   });
 
   it('cuerpo de error no-JSON o vacío: nunca lanza, message queda vacío', async () => {
@@ -577,21 +565,22 @@ describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUT
     expect(res.authErrorDetails[0].message.length).toBe(200);
   });
 
-  it('AUTH_MODE legacy (sin Auth real): nunca puede producir un authErrorDetail (el gate ni intenta la red con 403 simulado -> no aplica aquí, pero role queda null si Auth no define getProfile)', async () => {
+  it('sin perfil de rol tampoco se permite PATCH genérico de equipment', async () => {
     await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
     const bareAuth = { getMode() { return 'supabase'; }, isSupabaseMode() { return true; }, isAuthenticated() { return true; }, getSession() { return { accessToken: 'T' }; } }; // sin getProfile()
     const { Sync } = loadSyncLogic(db, STORES_TEST, bareAuth);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) })));
+    vi.stubGlobal('fetch', vi.fn());
 
     const res = await Sync.pushAll();
-    expect(res.authErrorDetails[0].role).toBeNull();
+    expect(res.errors).toContain('CATALOG_LEGACY_BLOCKED:equipment');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('fullSync() propaga authErrorDetails hasta notify() cuando el push falla con 403', async () => {
     await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
     await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // no es primera vez
     await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
-    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'LUBRICADOR', active: true });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'ADMINISTRADOR', active: true });
     const { Auth } = loadAuthLogic(db);
     Auth.isSupabaseMode = () => true;
     const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
@@ -609,6 +598,6 @@ describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUT
 
     expect(notified.status).toBe('AUTH_FORBIDDEN');
     expect(notified.authErrorDetails).toHaveLength(1);
-    expect(notified.authErrorDetails[0]).toMatchObject({ store: 'equipment', operation: 'INSERT', status: 403, role: 'LUBRICADOR' });
+    expect(notified.authErrorDetails[0]).toMatchObject({ store: 'equipment', operation: 'INSERT', status: 403, role: 'ADMINISTRADOR' });
   });
 });

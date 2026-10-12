@@ -974,12 +974,17 @@ async function completeGreaseAssignmentForOccurrence(equipo, occurrenceKey, reco
 async function moverEquipoDeUbicacion(equipo, newLocationId, locations) {
   const anterior = locations.find(l => l.id === equipo.locationId);
   const nueva = locations.find(l => l.id === newLocationId);
-  equipo.locationId = newLocationId;
-  await DB.put('equipment', stamp(equipo, App.currentUser.name));
-  await logAudit('EQUIPMENT_LOCATION_CHANGED',
-    `${esc(equipo.code)}: ${esc(anterior ? anterior.name : 'sin ubicación')} → ${esc(nueva ? nueva.name : newLocationId)}`,
-    App.currentUser.name);
+  try {
+    await DB.queueCatalogOperation('MOVE', equipo, { locationId: newLocationId });
+  } catch (error) {
+    alert(error.message === 'CATALOG_SYNC_REQUIRED'
+      ? 'Sincroniza los cambios pendientes del equipo antes de moverlo.'
+      : 'No se pudo preparar el cambio de ubicación. Intenta sincronizar y volver a guardar.');
+    return false;
+  }
+  showInAppToast(`✓ ${equipo.code}: ${anterior?.name || 'sin ubicación'} → ${nueva?.name || newLocationId}`);
   Sync.fullSync();
+  return true;
 }
 
 // Snapshot del scope de la CUADRILLA AUTORIZADA DEL USUARIO (reemplaza el
@@ -6506,19 +6511,29 @@ async function openEquipmentDetail(id) {
       const f = $('#repro-fecha').value;
       const motivo = $('#repro-motivo').value;
       if (!f) { alert('Elige una fecha.'); return; }
-      plan.reprogramadoHasta = new Date(f + 'T12:00:00').toISOString();
-      plan.reprogramadoMotivo = motivo;
-      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
-      await logAudit('ENGRASE_REPROGRAMADO', `${e.code} al ${f} · ${motivo}`, App.currentUser.name);
-      showInAppToast(`✓ ${e.code} reprogramado al ${fmtDate(plan.reprogramadoHasta)}`);
+      const scope = App.currentUser.role === 'SUPERVISOR' ? await getCurrentOperationalScope() : null;
+      try {
+        await DB.queueCatalogOperation('REPROGRAM', plan, { crewId: scope?.crewId || null, until: f, reason: motivo });
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Sincroniza los cambios pendientes del plan antes de reprogramarlo.'
+          : 'No se pudo preparar la reprogramación. Verifica tu cuadrilla y vuelve a intentar.');
+        return;
+      }
+      showInAppToast(`✓ ${e.code} reprogramado al ${fmtDate(new Date(f + 'T12:00:00').toISOString())}`);
       Sync.fullSync();
       closeModal();
     });
     $('#repro-cancelar')?.addEventListener('click', async () => {
-      plan.reprogramadoHasta = null;
-      plan.reprogramadoMotivo = null;
-      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
-      await logAudit('REPROGRAMACION_CANCELADA', e.code, App.currentUser.name);
+      const scope = App.currentUser.role === 'SUPERVISOR' ? await getCurrentOperationalScope() : null;
+      try {
+        await DB.queueCatalogOperation('REPROGRAM', plan, { crewId: scope?.crewId || null, until: null, reason: null });
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Sincroniza los cambios pendientes del plan antes de quitar la reprogramación.'
+          : 'No se pudo preparar el cambio. Verifica tu cuadrilla y vuelve a intentar.');
+        return;
+      }
       showInAppToast('✓ Vuelve a su día habitual');
       Sync.fullSync();
       closeModal();
@@ -6529,10 +6544,17 @@ async function openEquipmentDetail(id) {
   // de vencido todos los días sin que nadie pueda hacer nada.
   $('#btn-pausar-avisos')?.addEventListener('click', async () => {
     if (avisosPausados(e)) {
-      e.avisosPausadosHasta = null;
-      await DB.put('equipment', stamp(e, App.currentUser.name));
-      await logAudit('AVISOS_REANUDADOS', e.code, App.currentUser.name);
+      const scope = App.currentUser.role === 'SUPERVISOR' ? await getCurrentOperationalScope() : null;
+      try {
+        await DB.queueCatalogOperation('PAUSE', e, { crewId: scope?.crewId || null, until: null, reason: null });
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Sincroniza los cambios pendientes del equipo antes de reanudar los avisos.'
+          : 'No se pudo preparar el cambio. Verifica tu cuadrilla y vuelve a intentar.');
+        return;
+      }
       showInAppToast(`✓ Avisos reanudados para ${e.code}`);
+      Sync.fullSync();
       closeModal();
       return;
     }
@@ -6556,11 +6578,17 @@ async function openEquipmentDetail(id) {
       const hasta = $('#pausa-hasta').value;
       const motivo = $('#pausa-motivo').value;
       if (!hasta) { alert('Elige hasta qué fecha.'); return; }
-      e.avisosPausadosHasta = new Date(hasta + 'T23:59:59').toISOString();
-      e.avisosPausaMotivo = motivo;
-      await DB.put('equipment', stamp(e, App.currentUser.name));
-      await logAudit('AVISOS_PAUSADOS', `${e.code} hasta ${hasta} · ${motivo}`, App.currentUser.name);
+      const scope = App.currentUser.role === 'SUPERVISOR' ? await getCurrentOperationalScope() : null;
+      try {
+        await DB.queueCatalogOperation('PAUSE', e, { crewId: scope?.crewId || null, until: hasta, reason: motivo });
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Sincroniza los cambios pendientes del equipo antes de pausar los avisos.'
+          : 'No se pudo preparar el cambio. Verifica tu cuadrilla y vuelve a intentar.');
+        return;
+      }
       showInAppToast(`✓ Avisos de ${e.code} pausados hasta ${hasta}`);
+      Sync.fullSync();
       closeModal();
     });
   });
@@ -6663,8 +6691,7 @@ async function openMoveEquipmentLocationModal(equipo) {
     if (activeAssignment && fd.get('cancelAssignment')) {
       await cancelGreaseAssignment(activeAssignment, equipo);
     }
-    await moverEquipoDeUbicacion(equipo, locationId, locations);
-    showInAppToast(`✓ ${esc(equipo.code)} movido de ubicación`);
+    if (!await moverEquipoDeUbicacion(equipo, locationId, locations)) return;
     closeModal();
     navigate(App.route);
   });
@@ -7192,8 +7219,13 @@ function openBulkPlanForm(equipmentIds) {
         obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
         obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
         if (equipment.shiftId !== shiftId) {
-          equipment.shiftId = shiftId;
-          await DB.put('equipment', stamp(equipment, App.currentUser.name));
+          try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId }); }
+          catch (error) {
+            alert(error.message === 'CATALOG_SYNC_REQUIRED'
+              ? 'Sincroniza los cambios pendientes del equipo antes de cambiar su turno.'
+              : 'No se pudo preparar el cambio de turno. Intenta sincronizar y volver a guardar.');
+            return;
+          }
         }
       } else {
         obj.frequency = frequency;
@@ -7372,8 +7404,13 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
       obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
       if (equipment.shiftId !== obj.shiftId) {
-        equipment.shiftId = obj.shiftId;
-        await DB.put('equipment', stamp(equipment, App.currentUser.name));
+        try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId: obj.shiftId }); }
+        catch (error) {
+          alert(error.message === 'CATALOG_SYNC_REQUIRED'
+            ? 'Sincroniza los cambios pendientes del equipo antes de cambiar su turno.'
+            : 'No se pudo preparar el cambio de turno. Intenta sincronizar y volver a guardar.');
+          return;
+        }
       }
     } else {
       obj.frequency = parseFloat(fd.get('frequency'));
@@ -9153,9 +9190,14 @@ async function renderHorometros() {
       const newVal = parseFloat(row.querySelector('.hm-input').value);
       if (isNaN(newVal)) return;
       if (!confirmHourmeterChange(eq.hourmeter, newVal)) return;
-      eq.hourmeter = newVal;
-      await DB.put('equipment', stamp(eq, App.currentUser.name));
-      await logAudit('HOROMETRO_ACTUALIZADO', `${esc(eq.code)} → ${fmt(newVal)} h`, App.currentUser.name);
+      try {
+        await DB.queueCatalogOperation('HOURMETER', eq, { hourmeter: newVal, confirmLargeJump: newVal - eq.hourmeter > 500 });
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Sincroniza los cambios pendientes del equipo antes de actualizar el horómetro.'
+          : 'No se pudo preparar la lectura. Verifica el dato y vuelve a intentar.');
+        return;
+      }
       showInAppToast(`✓ Horómetro de ${esc(eq.code)} actualizado`);
       Sync.fullSync(); // sube el cambio ya, en vez de esperar el siguiente ciclo del timer
       renderHorometros();
@@ -9194,9 +9236,11 @@ async function handleHourmeterExcelImport(file, equipos) {
   }
   if (!preview.length) { alert('No se encontraron filas válidas con "Código" y "Horómetro".'); return; }
   const withIssues = preview.filter(p => p.issue).length;
+  const retrogressions = preview.filter(p => p.found && p.after < p.before).length;
+  const largeJumps = preview.filter(p => p.found && p.after - p.before > 500).length;
 
   openModal(`Importar horómetros (${preview.length} filas)`, `
-    ${withIssues ? `<p style="color:var(--amber); font-size:13px">⚠ ${withIssues} fila(s) tienen un horómetro menor al actual o un salto muy grande — revísalas antes de confirmar (marcadas en rojo/amarillo). Se aplicarán igual si continúas, pero verifica que no sean errores de digitación en tu Excel.</p>` : ''}
+    ${withIssues ? `<p style="color:var(--amber); font-size:13px">⚠ ${withIssues} fila(s) requieren revisión. ${retrogressions ? `${retrogressions} retroceso(s) se omitirán automáticamente. ` : ''}${largeJumps ? `${largeJumps} salto(s) mayor(es) a 500 h requieren confirmación explícita para aplicarse. ` : ''}Verifica los valores antes de continuar.</p>` : ''}
     <div style="max-height:40vh; overflow:auto; border:1px solid var(--border); border-radius:8px">
       <table class="data-table">
         <thead><tr><th>Código</th><th>Anterior</th><th>Nuevo</th><th>Estado</th></tr></thead>
@@ -9215,16 +9259,23 @@ async function handleHourmeterExcelImport(file, equipos) {
   // nunca la alcanza. openModal() es síncrona, así que la tabla ya existe en el DOM aquí.
   makeTablesResponsive($('.modal-body'));
   $('#btn-confirm-hm').addEventListener('click', async () => {
-    let applied = 0;
+    let applied = 0, skipped = 0;
     for (const p of preview) {
       if (!p.found) continue;
       const eq = await DB.get('equipment', p.id);
-      eq.hourmeter = p.after;
-      await DB.put('equipment', stamp(eq, App.currentUser.name));
-      applied++;
+      if (!eq) { skipped++; continue; }
+      if (p.after < eq.hourmeter) { skipped++; continue; }
+      try {
+        await DB.queueCatalogOperation('HOURMETER', eq, { hourmeter: p.after, confirmLargeJump: p.after - eq.hourmeter > 500 });
+        applied++;
+      } catch (error) {
+        alert(error.message === 'CATALOG_SYNC_REQUIRED'
+          ? `Se prepararon ${applied} lecturas. ${eq.code} tiene cambios pendientes; sincroniza antes de continuar.`
+          : `No se pudo preparar el horómetro de ${eq.code}.`);
+        break;
+      }
     }
-    await logAudit('HOROMETROS_IMPORTADOS', `${applied} equipos actualizados desde Excel`, App.currentUser.name);
-    showInAppToast(`✓ Horómetros importados: ${applied} equipos`);
+    showInAppToast(`✓ Horómetros preparados: ${applied}${skipped ? ` · ${skipped} retroceso(s) omitido(s)` : ''}`);
     Sync.fullSync(); // sube el lote ya, en vez de esperar el siguiente ciclo del timer
     closeModal();
     navigate('horometros');
@@ -12482,8 +12533,9 @@ function normalizePoint(p) {
 async function getHelpContent() {
   let help = await DB.get('settings', 'help_content');
   if (!help) {
-    help = stamp({ id: 'help_content', families: EQUIPMENT_FAMILIES, faq: DEFAULT_FAQ }, 'sistema');
-    await DB.put('settings', help);
+    // La ayuda predeterminada es un fallback de lectura, no una escritura de
+    // settings: abrir Ayuda nunca debe exigir permiso INSERT a un rol operativo.
+    help = { id: 'help_content', families: structuredClone(EQUIPMENT_FAMILIES), faq: structuredClone(DEFAULT_FAQ) };
   }
   help.families.forEach(f => f.zones.forEach(z => { z.points = (z.points || []).map(normalizePoint); }));
   return help;

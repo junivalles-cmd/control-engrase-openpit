@@ -15,7 +15,8 @@ function fixtureDB() {
     delete:vi.fn(),recordConflicts:vi.fn(),
   };
 }
-const activeAuth={ isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}) };
+const activeAuth={ isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}),
+  getProfile:()=>({appUserId:'u1',role:'ADMINISTRADOR'}) };
 afterEach(()=>vi.unstubAllGlobals());
 
 describe('Client pre-cutover boundary',()=>{

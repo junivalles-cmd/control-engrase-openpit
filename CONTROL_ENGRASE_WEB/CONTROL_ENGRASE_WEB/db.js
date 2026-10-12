@@ -532,6 +532,9 @@ const DB = {
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+  queueCatalogOperation(action, before, values) {
+    return queueCatalogOperationIntent(action, before, values);
   }
 };
 
@@ -687,6 +690,46 @@ async function queueGreaseValidation(validation, record) {
   }
   await DB.putEvidenceOperation(operation, [{ store: 'grease_validations', expected: null,
     row: { ...validation, recordVersion: operation.params.p_expected, recordSnapshot: structuredClone(record) } }]);
+}
+
+async function queueCatalogOperationIntent(action, before, values = {}) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'].includes(actor.role)) throw new Error('ROLE_DENIED');
+  if (actor.role === 'SUPERVISOR' && !['PAUSE','REPROGRAM'].includes(action)) throw new Error('ROLE_DENIED');
+  if (!before?._pushedVersion || before.updatedAt !== before._pushedVersion || before._executionOperationId || before._evidenceOperationId) {
+    throw new Error('CATALOG_SYNC_REQUIRED');
+  }
+  const rpc = { MOVE:'move_equipment_master_location',SHIFT:'set_equipment_shift',PAUSE:'set_equipment_alert_pause',
+    HOURMETER:'update_equipment_hourmeter',REPROGRAM:'reprogram_lubrication_plan' }[action];
+  if (!rpc) throw new Error('INVALID_OPERATION');
+  const id=uid('catalog'), params={p_operation_id:id,p_id:before.id,p_expected:before._pushedVersion};
+  const row=structuredClone(before);
+  if (action==='MOVE') {params.p_location_id=values.locationId;row.locationId=values.locationId;}
+  if (action==='SHIFT') {params.p_shift_id=values.shiftId;row.shiftId=values.shiftId;}
+  if (action==='HOURMETER') {
+    const newValue=Number(values.hourmeter), oldValue=Number(before.hourmeter||0);
+    if (!Number.isFinite(newValue) || newValue<oldValue || newValue<0) throw new Error('INVALID_HOURMETER');
+    if (newValue===oldValue) return null;
+    if (newValue-oldValue>500 && values.confirmLargeJump!==true) throw new Error('HOURMETER_CONFIRMATION_REQUIRED');
+    params.p_hourmeter=newValue;params.p_confirm_large_jump=values.confirmLargeJump===true;row.hourmeter=newValue;
+  }
+  if (['PAUSE','REPROGRAM'].includes(action)) {
+    params.p_crew_id=values.crewId||null;params.p_until=values.until||null;params.p_reason=values.reason||null;
+    if (action==='PAUSE') {
+      row.avisosPausadosHasta=values.until?new Date(values.until+'T23:59:59').toISOString():null;
+      if(values.until)row.avisosPausaMotivo=values.reason;
+    } else {
+      row.reprogramadoHasta=values.until?new Date(values.until+'T12:00:00').toISOString():null;
+      row.reprogramadoMotivo=values.until?values.reason:null;
+    }
+  }
+  if (action === 'REPROGRAM' && actor.role === 'SUPERVISOR' && !params.p_crew_id) throw new Error('SCOPE_REQUIRED');
+  stamp(row,actor.name);
+  const store=action==='REPROGRAM'?'lubrication_plans':'equipment';
+  const operation={id,actorId:actor.id,rpc,params,status:'PENDING',createdAt:nowISO(),kind:'CATALOG',
+    targetStore:store,localVersion:row.updatedAt,localRow:structuredClone(row)};
+  await DB.putEvidenceOperation(operation,[{store,row,expected:before.updatedAt}]);
+  return operation;
 }
 
 async function logAudit(action, detail, user) {

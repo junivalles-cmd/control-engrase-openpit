@@ -573,7 +573,7 @@ const Sync = {
           const reply = await response.json();
           if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) { result.authRequired = true; break; }
           if (reply.status === 'APPLIED') {
-            const store = operation.rpc.includes('anomaly') ? 'anomalies' : 'grease_validations';
+            const store = operation.kind === 'CATALOG' ? operation.targetStore : operation.rpc.includes('anomaly') ? 'anomalies' : 'grease_validations';
             if (!Array.isArray(reply.rows) || reply.rows.some(r => r.store !== store || !r.id || r.payload?.id !== r.id ||
               !Number.isFinite(Date.parse(r.updated_at)))) throw new Error('EVIDENCE_INVALID_RESPONSE');
             if (operation.rpc !== 'repeat_anomaly_from_execution' && (reply.rows.length !== 1 ||
@@ -642,6 +642,12 @@ const Sync = {
         const toPush = [];
         for (const row of rows) {
           if (row._pushedVersion === row.updatedAt || row._executionOperationId) continue;
+          if (row._evidenceOperationId) continue;
+          const role=Auth.getProfile?.()?.role;
+          if ((['equipment','settings'].includes(store) && role!=='ADMINISTRADOR') ||
+            (['lubrication_plans','lubrication_points'].includes(store) && !['ADMINISTRADOR','PLANIFICADOR'].includes(role))) {
+            errors.push('CATALOG_LEGACY_BLOCKED:'+store);continue;
+          }
           if (['anomalies', 'grease_validations'].includes(store)) {
             if (!row._evidenceOperationId) errors.push('EVIDENCE_LEGACY_REVIEW_REQUIRED');
             continue; // Never POST/PATCH evidence as a fallback, including legacy dirty rows.
@@ -683,6 +689,7 @@ const Sync = {
             },
             body: JSON.stringify(body)
           }, cfg);
+          if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) { authRequired = true; break; }
           const authIssueCreate = classifyAuthStatus(resp.status);
           if (authIssueCreate === 'AUTH_REQUIRED') { authRequired = true; break; }
           if (authIssueCreate === 'AUTH_FORBIDDEN') {
@@ -729,6 +736,7 @@ const Sync = {
               body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
             }
           , cfg);
+          if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) { authRequired = true; break; }
           const authIssueUpdate = classifyAuthStatus(resp.status);
           if (authIssueUpdate === 'AUTH_REQUIRED') { authRequired = true; break; }
           if (authIssueUpdate === 'AUTH_FORBIDDEN') {
