@@ -337,7 +337,7 @@ test('K/I/J — jerarquía de acciones: Finalizar engrase es la primaria (btn-ac
   // valida la jerarquía (≥1 secundaria, ninguna btn-accent), nunca un
   // conteo fijo que dependa de qué día cae la ejecución del test.
   const secondary = page.locator('.grease-flow-actions-secondary .btn');
-  await expect(secondary).toContainText('Reportar anomalía');
+  await expect(page.locator('.grease-flow-actions-secondary #btn-report-anomaly')).toContainText('Reportar anomalía');
   const count = await secondary.count();
   expect(count).toBeGreaterThanOrEqual(1);
   for (const cls of await secondary.evaluateAll(els => els.map(el => el.className))) {
