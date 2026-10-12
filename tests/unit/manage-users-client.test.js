@@ -42,7 +42,7 @@ function makeFakeDB() {
 
 const CFG = { url: 'https://fake.test', anonKey: 'anon-test' };
 const SESSION_VIGENTE = { accessToken: 'jwt-real', refreshToken: 'r1', expiresAt: Date.now() + 3600_000, authUserId: 'u1' };
-const PERFIL_ADMIN = { displayName: 'Junior', role: 'ADMINISTRADOR', active: true, lastVerifiedAt: Date.now() };
+const PERFIL_ADMIN = { authUserId:'u1', appUserId:'u_junior', displayName: 'Junior', role: 'ADMINISTRADOR', active: true, lastVerifiedAt: Date.now() };
 
 let db, Auth;
 

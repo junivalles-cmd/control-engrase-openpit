@@ -72,12 +72,12 @@ describe('operational catalog gateway client queue', () => {
   });
 
   it('dispatches queued catalog changes only through the typed authenticated RPC', async () => {
-    const operation = { id: 'op-1', actorId: 'u1', rpc: 'move_equipment_master_location', kind: 'CATALOG',
+    const operation = { id: 'op-1', actorId: 'u1', authorizationFingerprint:'fp1', rpc: 'move_equipment_master_location', kind: 'CATALOG',
       targetStore: 'equipment', status: 'PENDING', params: { p_operation_id: 'op-1', p_id: 'e1', p_expected: 'v1', p_location_id: 'loc2' } };
     const DB = { getEvidenceOperations: vi.fn(async () => [operation]), updateEvidenceOperation: vi.fn(async next => Object.assign(operation, next)),
       finishEvidenceOperation: vi.fn() };
     const Auth = { isSupabaseMode: () => true, isAuthenticated: () => true,
-      getSession: () => ({ accessToken: 'user-jwt' }), getProfile: () => ({ appUserId: 'u1', role: 'PLANIFICADOR' }), getSessionEpoch: () => 1 };
+      getSession: () => ({ accessToken: 'user-jwt' }), getProfile: () => ({ appUserId: 'u1', role: 'PLANIFICADOR',authorizationFingerprint:'fp1' }), getSessionEpoch: () => 1 };
     const { Sync } = loadSyncLogic(DB, ['equipment'], Auth);
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => ({ status: 'APPLIED', rows: [
       { store: 'equipment', id: 'e1', payload: { id: 'e1', locationId: 'loc2' }, updated_at: '2026-10-12T12:00:00Z' },

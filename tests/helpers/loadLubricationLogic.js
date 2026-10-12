@@ -97,9 +97,9 @@ export function loadAppLogic(fakeApp) {
   return factory(fakeApp);
 }
 
-const DB_JS_NAMES = ['uid', 'nowISO', 'stamp'];
+const DB_JS_NAMES = ['uid', 'nowISO', 'stamp', 'localAuthorizationState'];
 
-/** Devuelve uid/nowISO/stamp reales de db.js (no requieren IndexedDB). */
+/** Devuelve helpers puros de db.js (no requieren IndexedDB). */
 export function loadDbLogic() {
   const body = buildBodyFromSources([[DB_JS_PATH, DB_JS_NAMES]]);
   const factory = new Function(body);
@@ -209,6 +209,7 @@ export function loadSyncLogic(fakeDB, fakeStores, fakeAuth = {
   getSession: () => ({ accessToken: 'fixture-user-jwt' }),
   getProfile: () => ({ role: 'ADMINISTRADOR' }),
   restoreSession: async () => {},
+  refreshAuthorizationContext: async () => ({ ok:true,changed:false,firstSnapshot:false,context:{ rowScopeEnforced:true } }),
 }) {
   const body = buildBodyFromSources(SYNC_SOURCES);
   const factory = new Function('DB', 'STORES', 'Auth', body);

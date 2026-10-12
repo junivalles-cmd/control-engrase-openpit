@@ -452,6 +452,9 @@ const Sync = {
       if (operation.status === 'BLOCKED') { result.errors.push(operation.code); continue; }
       if (Object.keys(operation.dependencies || {}).length) { result.errors.push('EXECUTION_DEPENDENCY_PENDING'); continue; }
       if (operation.actorId !== Auth.getProfile()?.appUserId) { result.errors.push('EXECUTION_ACCOUNT_MISMATCH'); continue; }
+      if (!Auth.getProfile()?.authorizationFingerprint || operation.authorizationFingerprint !== Auth.getProfile()?.authorizationFingerprint) {
+        result.errors.push('AUTHORIZATION_SCOPE_STALE'); continue;
+      }
       try {
         if (!operation.frozen) {
           const prepared = await this.uploadPhotoIfNeeded('lubrication_records', {
@@ -525,6 +528,9 @@ const Sync = {
     for (const operation of operations) {
       if (operation.status === 'BLOCKED') { result.errors.push(operation.code); continue; }
       if (operation.actorId !== Auth.getProfile()?.appUserId) { result.errors.push('EVIDENCE_ACCOUNT_MISMATCH'); continue; }
+      if (!Auth.getProfile()?.authorizationFingerprint || operation.authorizationFingerprint !== Auth.getProfile()?.authorizationFingerprint) {
+        result.errors.push('AUTHORIZATION_SCOPE_STALE'); continue;
+      }
       try {
         if (!operation.frozen) {
           if (operation.recordDependency) {
@@ -681,7 +687,7 @@ const Sync = {
             prepared.push(p);
           }
           const body = prepared.map(r => ({
-            store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
+            store, id: r.id, payload: this.stripLocalAuthorizationMetadata(r), updated_at: r.updatedAt, deleted: r.active === false
           }));
           const resp = await authenticatedSyncFetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
             method: 'POST',
@@ -740,7 +746,7 @@ const Sync = {
                 apikey: cfg.anonKey,
                 Prefer: 'return=representation'
               },
-              body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
+              body: JSON.stringify({ payload: this.stripLocalAuthorizationMetadata(prepared), updated_at: prepared.updatedAt, deleted: prepared.active === false })
             }
           , cfg);
           if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) { authRequired = true; break; }
@@ -847,7 +853,7 @@ const Sync = {
       if (!STORES.includes(row.store)) continue;
       const rec = row.payload;
       rec.active = !row.deleted;
-      const existing = await DB.get(row.store, rec.id).catch(() => null);
+      const existing = await (DB.getRaw ? DB.getRaw(row.store, rec.id) : DB.get(row.store, rec.id)).catch(() => null);
 
       // P0-1: si este dispositivo tiene un cambio local SIN confirmar por el
       // servidor para este mismo id, NO lo pisamos a ciegas con lo que llega
@@ -895,7 +901,9 @@ const Sync = {
       // interpretaba como "cambio local pendiente" y la volvía a subir de inmediato —
       // ese era el bug (pull → push involuntario de vuelta al servidor).
       rec._pushedVersion = rec.updatedAt;
-      await DB.put(row.store, rec);
+      rec.__authorizationAppUserId = Auth.getProfile?.()?.appUserId || null;
+      rec.__authorizationState = 'AUTHORIZED';
+      await DB.put(row.store, rec, { source: 'server' });
       if (row.store === 'anomalies' && !row.deleted) newAnomalies.push(rec);
       if (row.updated_at > maxUpdated) maxUpdated = row.updated_at;
     }
@@ -903,6 +911,11 @@ const Sync = {
     await DB.setConfig(cfg);
     if (conflicts.length) await DB.recordConflicts(conflicts);
     return { ok: true, pulled: rows.length, newAnomalies, conflicts: conflicts.length };
+  },
+
+  stripLocalAuthorizationMetadata(row) {
+    const { __authorizationAppUserId, __authorizationState, ...payload } = row || {};
+    return payload;
   },
 
   // Se llama SOLO desde dentro de fullSync() (después de un push/pull
@@ -973,6 +986,23 @@ const Sync = {
         if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
         if (!Auth.isAuthenticated()) {
           this.notify({ status: 'AUTH_REQUIRED', at: nowISO() });
+          return;
+        }
+        // Resolve the server authority before either push or pull. A changed
+        // snapshot is a hard stop: this phase has no safe scoped cache
+        // reconciler and Phase 2D-2 has not installed row-level RLS yet.
+        const authorization = await Auth.refreshAuthorizationContext();
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        if (!authorization.ok) {
+          this.notify({ status: authorization.reason || 'AUTHORIZATION_UNAVAILABLE', at: nowISO() });
+          return;
+        }
+        if (authorization.changed || authorization.firstSnapshot) {
+          this.notify({ status: 'AUTHORIZATION_SCOPE_CHANGED', at: nowISO() });
+          return;
+        }
+        if (authorization.context.rowScopeEnforced !== true) {
+          this.notify({ status: 'AUTHORIZATION_SCOPE_NOT_ENFORCED', at: nowISO() });
           return;
         }
       }

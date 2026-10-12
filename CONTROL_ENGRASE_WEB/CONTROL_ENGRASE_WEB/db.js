@@ -73,6 +73,32 @@ function sameExecutionVersion(left, right) {
   return normalize(left) === normalize(right);
 }
 
+function localAuthorizationState(store, row, context, currentAppUserId) {
+  if (!row || !context || !currentAppUserId || row.__authorizationAppUserId !== currentAppUserId ||
+      context.appUserId !== currentAppUserId || context.active !== true) return 'OUT_OF_SCOPE';
+  const pending = row._pushedVersion !== row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+  const state = pending ? 'PENDING_LOCAL' : 'AUTHORIZED';
+  if (context.scopeType === 'GLOBAL') return state;
+  if (context.scopeType !== 'CREW_SCOPED') return 'OUT_OF_SCOPE';
+  const crews = new Set(context.authorizedCrewIds || []);
+  const locations = new Set(context.authorizedLocationIds || []);
+  if (store === 'users' || store === 'audit_log') return 'OUT_OF_SCOPE';
+  if (store === 'push_tokens') return row.userId === currentAppUserId ? state : 'OUT_OF_SCOPE';
+  if (store === 'cuadrillas') return crews.has(row.id) ? state : 'OUT_OF_SCOPE';
+  if (store === 'locations') return locations.has(row.id) ? state : 'OUT_OF_SCOPE';
+  if (store === 'equipment') return locations.has(row.locationId) ? state : 'OUT_OF_SCOPE';
+  if (store==='lubrication_assignments' && row.assignedCrewId) {
+    if (!crews.has(row.assignedCrewId)) return 'OUT_OF_SCOPE';
+    if (row.locationId && !locations.has(row.locationId)) return 'OUT_OF_SCOPE';
+    return state;
+  }
+  if (row.crewId && !crews.has(row.crewId)) return 'OUT_OF_SCOPE';
+  if (row.locationId && !locations.has(row.locationId)) return 'OUT_OF_SCOPE';
+  if (row.crewId || row.locationId) return state;
+  if (['equipment_types','lubricants','shifts','settings'].includes(store)) return state;
+  return 'OUT_OF_SCOPE';
+}
+
 const DB = {
   async getEvidenceOperations() {
     const rows = await DB.all('app_config');
@@ -336,7 +362,7 @@ const DB = {
         if (Number.isFinite(previousTime) && Date.parse(saved.updatedAt) <= previousTime) {
           saved.updatedAt = new Date(previousTime + 1).toISOString();
         }
-        const operation = { id: resolution.id, actorId: actor.id, rpc: 'resolve_grease_validation_conflict',
+        const operation = { id: resolution.id, actorId: actor.id, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: 'resolve_grease_validation_conflict',
           status: 'PENDING', createdAt: nowISO(), resolutionVersions: versions, attemptedResolution: resolution,
           params: { p_operation_id: resolution.id, p_record_id: recordId, p_id: officialId,
             p_note: reason.trim(), p_expected_signatures: rows.map(v => ({ id: v.id, updatedAt: v._pushedVersion || v.updatedAt })) } };
@@ -372,7 +398,30 @@ const DB = {
     await ensureDefaultSyncConfig();
   },
 
-  put(store, obj) {
+  put(store, obj, options = {}) {
+    if (STORES.includes(store) && typeof Auth !== 'undefined' && Auth.isSupabaseMode?.()) {
+      const appUserId = Auth.getProfile?.()?.appUserId;
+      if (!appUserId) throw new Error('AUTH_REQUIRED');
+      return this.getRaw(store,obj.id).then(existing => {
+        if (!options.source && existing?.__authorizationAppUserId && existing.__authorizationAppUserId !== appUserId) {
+          throw new Error('AUTHORIZATION_ACCOUNT_MISMATCH');
+        }
+        const tagged = { ...obj, __authorizationAppUserId: appUserId };
+        return this.getAuthorizationContext(appUserId).then(context => {
+          const state=context
+            ? this.authorizationStateForRow(store,tagged,context,appUserId)
+            : Promise.resolve('PENDING_LOCAL');
+          return Promise.resolve(state).then(value=>{
+          tagged.__authorizationState=value;
+          return new Promise((res,rej) => {
+            const r=tx(store,'readwrite').put(tagged);
+            r.onsuccess=()=>res(tagged);
+            r.onerror=e=>rej(e.target.error);
+          });
+          });
+        });
+      });
+    }
     return new Promise((res, rej) => {
       const r = tx(store, 'readwrite').put(obj);
       r.onsuccess = () => res(obj);
@@ -380,6 +429,14 @@ const DB = {
     });
   },
   get(store, id) {
+    return this.getRaw(store,id).then(async row => {
+      if (!row || !STORES.includes(store) || typeof Auth === 'undefined' || !Auth.isSupabaseMode?.()) return row;
+      const appUserId=Auth.getProfile?.()?.appUserId;
+      const context=appUserId && await this.getAuthorizationContext(appUserId);
+      return await this.authorizationStateForRow(store,row,context,appUserId)==='OUT_OF_SCOPE' ? null : row;
+    });
+  },
+  getRaw(store, id) {
     return new Promise((res, rej) => {
       const r = tx(store).get(id);
       r.onsuccess = () => res(r.result || null);
@@ -387,11 +444,42 @@ const DB = {
     });
   },
   all(store) {
+    return this.allRaw(store).then(async rows => {
+      if (!STORES.includes(store) || typeof Auth === 'undefined' || !Auth.isSupabaseMode?.()) return rows;
+      const appUserId=Auth.getProfile?.()?.appUserId;
+      const context=appUserId && await this.getAuthorizationContext(appUserId);
+      if (!appUserId || !context) return [];
+      const states=await Promise.all(rows.map(row=>this.authorizationStateForRow(store,row,context,appUserId)));
+      return rows.filter((row,index)=>states[index]!=='OUT_OF_SCOPE');
+    });
+  },
+  allRaw(store) {
     return new Promise((res, rej) => {
       const r = tx(store).getAll();
       r.onsuccess = () => res(r.result || []);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+  async authorizationStateForRow(store,row,context,appUserId) {
+    const direct=localAuthorizationState(store,row,context,appUserId);
+    if (context?.scopeType!=='CREW_SCOPED') return direct;
+    const locations=new Set(context.authorizedLocationIds||[]);
+    let equipmentId=row?.equipmentId;
+    if (store==='lubrication_points' && row?.planId) {
+      const plan=await this.getRaw('lubrication_plans',row.planId);
+      equipmentId=plan?.equipmentId;
+    }
+    if (equipmentId) {
+      const equipment=await this.getRaw('equipment',equipmentId);
+      if (equipment && locations.has(equipment.locationId) &&
+          (!row.locationId || row.locationId===equipment.locationId) &&
+          (!row.crewId || (context.authorizedCrewIds||[]).includes(row.crewId)) &&
+          (direct!=='OUT_OF_SCOPE' || ['lubrication_plans','lubrication_points'].includes(store))) {
+        const pending=row._pushedVersion!==row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+        return pending?'PENDING_LOCAL':'AUTHORIZED';
+      }
+    }
+    return direct;
   },
   delete(store, id) {
     return new Promise((res, rej) => {
@@ -507,6 +595,28 @@ const DB = {
   async setAuthProfileSnapshot(value) {
     return new Promise((res, rej) => {
       const r = tx('app_config', 'readwrite').put({ key: 'auth_profile_snapshot', value });
+      r.onsuccess = () => res(value);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+
+  // Authorization context is namespaced by app_user_id so a later login
+  // cannot accidentally reuse another account's scope/fingerprint. This is
+  // cache metadata only; the server bootstrap remains authoritative.
+  async getAuthorizationContext(appUserId) {
+    if (!appUserId) return null;
+    return new Promise((res, rej) => {
+      const r = tx('app_config').get('authorization_context:' + appUserId);
+      r.onsuccess = () => res(r.result ? r.result.value : null);
+      r.onerror = (e) => rej(e.target.error);
+    });
+  },
+  async setAuthorizationContext(appUserId, value) {
+    if (!appUserId) throw new Error('AUTH_REQUIRED');
+    return new Promise((res, rej) => {
+      const key = 'authorization_context:' + appUserId;
+      const store = tx('app_config', 'readwrite');
+      const r = value == null ? store.delete(key) : store.put({ key, value });
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });
@@ -628,7 +738,7 @@ async function queueLubricationExecution({ action, record, recordBefore, equipme
   if (equipmentAfter) changes.push({ store: 'equipment', row: equipmentAfter });
   if (planAfter) changes.push({ store: 'lubrication_plans', row: planAfter });
   if (assignmentAfter) changes.push({ store: 'lubrication_assignments', row: assignmentAfter });
-  const operation = { id, actorId, params, dependencies, status: 'PENDING',
+  const operation = { id, actorId, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, params, dependencies, status: 'PENDING',
     originalRecord: recordBefore ? structuredClone(recordBefore) : null,
     localVersions: Object.fromEntries(changes.map(c => [c.store, c.row.updatedAt])),
     localRows: Object.fromEntries(changes.map(c => [c.store, structuredClone(c.row)])),
@@ -640,7 +750,7 @@ async function queueLubricationExecution({ action, record, recordBefore, equipme
     localPhotos: params.p_photos, createdAt: nowISO() };
   if (action === 'CREATE' && ((record.details || []).some(d => !d.done) || record.sinHorometro)) {
     const evidenceId = 'auto:' + id;
-    operation.automaticAnomaly = { id: evidenceId, actorId, status: 'PENDING', createdAt: nowISO(),
+    operation.automaticAnomaly = { id: evidenceId, actorId, authorizationFingerprint: operation.authorizationFingerprint, status: 'PENDING', createdAt: nowISO(),
       rpc: 'repeat_anomaly_from_execution', recordDependency: record.id, executionDependencyId: id,
       localRecordSnapshot: structuredClone(record),
       params: { p_operation_id: evidenceId, p_record_id: record.id, p_crew_id: params.p_crew_id, p_expected: null } };
@@ -663,7 +773,7 @@ async function queueAnomalyOperation(action, row, before = null, note = null, cr
     p_description: row.description, p_criticality: row.criticality, p_photos: [] });
   if (action === 'EDIT') params.p_status = row.status;
   if (action === 'CLOSE') params.p_note = note;
-  const operation = { id, actorId: actor.id, rpc: { REPORT: 'report_anomaly', EDIT: 'edit_anomaly',
+  const operation = { id, actorId: actor.id, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: { REPORT: 'report_anomaly', EDIT: 'edit_anomaly',
     CLOSE: 'close_anomaly', RETIRE: 'retire_anomaly' }[action], params, status: 'PENDING', createdAt: nowISO(),
     localPhotos: ['REPORT', 'EDIT'].includes(action) ? row.photos || [] : null };
   if (!operation.rpc) throw new Error('INVALID_OPERATION');
@@ -674,7 +784,7 @@ async function queueAnomalyOperation(action, row, before = null, note = null, cr
 async function queueGreaseValidation(validation, record) {
   const actorId = App.currentUser?.id;
   if (!actorId) throw new Error('AUTH_REQUIRED');
-  const operation = { id: validation.id, actorId, rpc: 'capture_grease_validation', status: 'PENDING', createdAt: nowISO(),
+  const operation = { id: validation.id, actorId, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: 'capture_grease_validation', status: 'PENDING', createdAt: nowISO(),
     recordDependency: record._executionOperationId ? record.id : null, signatureLocal: validation.signatureLocal,
     executionDependencyId: record._executionOperationId || null,
     params: { p_operation_id: validation.id, p_id: validation.id, p_record_id: record.id,
@@ -726,7 +836,7 @@ async function queueCatalogOperationIntent(action, before, values = {}) {
   if (action === 'REPROGRAM' && actor.role === 'SUPERVISOR' && !params.p_crew_id) throw new Error('SCOPE_REQUIRED');
   stamp(row,actor.name);
   const store=action==='REPROGRAM'?'lubrication_plans':'equipment';
-  const operation={id,actorId:actor.id,rpc,params,status:'PENDING',createdAt:nowISO(),kind:'CATALOG',
+  const operation={id,actorId:actor.id,authorizationFingerprint:typeof Auth!=='undefined'?Auth.getProfile?.()?.authorizationFingerprint||null:null,rpc,params,status:'PENDING',createdAt:nowISO(),kind:'CATALOG',
     targetStore:store,localVersion:row.updatedAt,localRow:structuredClone(row)};
   await DB.putEvidenceOperation(operation,[{store,row,expected:before.updatedAt}]);
   return operation;

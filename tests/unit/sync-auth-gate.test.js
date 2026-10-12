@@ -19,6 +19,7 @@ function makeFakeDB() {
   let conflicts = [];
   let authTokens = null;
   let authProfileSnapshot = null;
+  const authorizationContexts = new Map();
   return {
     async getConfig() { return config; },
     async setConfig(v) { config = v; return v; },
@@ -36,6 +37,8 @@ function makeFakeDB() {
     async setAuthTokens(v) { authTokens = v; return v; },
     async getAuthProfileSnapshot() { return authProfileSnapshot; },
     async setAuthProfileSnapshot(v) { authProfileSnapshot = v; return v; },
+    async getAuthorizationContext(id) { return authorizationContexts.get(id) || null; },
+    async setAuthorizationContext(id,v) { if(v==null) authorizationContexts.delete(id); else authorizationContexts.set(id,v); return v; },
   };
 }
 
@@ -46,6 +49,7 @@ function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FA
     isAuthenticated() { return authenticated; },
     getSession() { return { accessToken }; },
     getProfile() { return { role }; },
+    async refreshAuthorizationContext() { return { ok: true, changed: false, firstSnapshot: false, context: { rowScopeEnforced: true } }; },
   };
 }
 
@@ -120,7 +124,7 @@ describe('Pre-cutover: session changes during transport', () => {
   });
 
   it('logout during a request prevents subsequent requests and keeps the queue', async () => {
-    await db.setAuthTokens({ accessToken:'JWT', refreshToken:'REFRESH', expiresAt:Date.now()+60000 });
+    await db.setAuthTokens({ accessToken:'JWT', refreshToken:'REFRESH', expiresAt:Date.now()+60000,authUserId:'u' });
     await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'ADMINISTRADOR',active:true });
     const { Auth } = loadAuthLogic(db);
     await Auth.restoreSession();
@@ -138,7 +142,7 @@ describe('Pre-cutover: session changes during transport', () => {
 
   it('a pending refresh cannot resurrect a logged-out session', async () => {
     vi.stubGlobal('navigator', { onLine:true });
-    await db.setAuthTokens({ accessToken:'OLD',refreshToken:'REFRESH',expiresAt:Date.now()-1000 });
+    await db.setAuthTokens({ accessToken:'OLD',refreshToken:'REFRESH',expiresAt:Date.now()-1000,authUserId:'u' });
     await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'LUBRICADOR',active:true });
     const { Auth } = loadAuthLogic(db);
     let resolveRefresh;
@@ -366,6 +370,7 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
   it('C) sesión y perfil válidos (Junior, ADMINISTRADOR activo) -> pull/push permitidos, sync normal', async () => {
     await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
     await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // ya no es "primera vez"
     const { Auth } = loadAuthLogic(db);
     Auth.isSupabaseMode = () => true;
@@ -373,6 +378,7 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
     vi.stubGlobal('navigator', { onLine: true });
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
       const method = (opts && opts.method) || 'GET';
+      if (String(url).includes('/rpc/get_authorization_context')) return { ok: true, status: 200, json: async () => ({ status:'AUTHORIZED', context:{ authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true } }) };
       if (method === 'GET') return { ok: true, status: 200, json: async () => [] }; // pull: nada nuevo
       throw new Error('unexpected ' + method + ' ' + url);
     }));
@@ -407,6 +413,35 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
       expect(notified.status).toBe('AUTH_REQUIRED');
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('bloquea transporte al cambiar el fingerprint y conserva el pendiente', async () => {
+    await db.setAuthTokens({accessToken:'OK',refreshToken:'RT',expiresAt:Date.now()+3600000,authUserId:'u1'});
+    await db.setAuthProfileSnapshot({authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true});
+    await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'old',rowScopeEnforced:true});
+    await db.setConfig({url:'https://fake.test',anonKey:'anon-test'});
+    await db.put('equipment',{id:'pending',active:true,updatedAt:T1});
+    const {Auth}=loadAuthLogic(db);Auth.isSupabaseMode=()=>true;
+    const {Sync}=loadSyncLogic(db,STORES_TEST,Auth);
+    const fetchMock=vi.fn(async()=>({ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'new',rowScopeEnforced:true}})}));
+    vi.stubGlobal('navigator',{onLine:true});vi.stubGlobal('fetch',fetchMock);
+    let notified;Sync.onChange(s=>{notified=s;});await Sync.fullSync();
+    expect(notified.status).toBe('AUTHORIZATION_SCOPE_CHANGED');
+    expect(fetchMock.mock.calls.some(([url])=>!String(url).includes('/rpc/get_authorization_context'))).toBe(false);
+    expect((await db.get('equipment','pending'))._pushedVersion).toBeUndefined();
+  });
+
+  it('no ejecuta first pull mientras el bootstrap indica que RLS scoped no está activa', async () => {
+    await db.setAuthTokens({accessToken:'OK',refreshToken:'RT',expiresAt:Date.now()+3600000,authUserId:'u1'});
+    await db.setAuthProfileSnapshot({authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true});
+    const ctx={authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'same',rowScopeEnforced:false};
+    await db.setAuthorizationContext('u_jvalles',ctx);await db.setConfig({url:'https://fake.test',anonKey:'anon-test'});
+    const {Auth}=loadAuthLogic(db);Auth.isSupabaseMode=()=>true;const {Sync}=loadSyncLogic(db,STORES_TEST,Auth);
+    const fetchMock=vi.fn(async()=>({ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:ctx})}));
+    vi.stubGlobal('navigator',{onLine:true});vi.stubGlobal('fetch',fetchMock);
+    let notified;Sync.onChange(s=>{notified=s;});await Sync.fullSync();
+    expect(notified.status).toBe('AUTHORIZATION_SCOPE_NOT_ENFORCED');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -483,6 +518,7 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
   it('G) sesión refrescada durante fullSync() -> la request de sync usa el JWT NUEVO, nunca el expirado (integración real Auth+Sync)', async () => {
     await db.setAuthTokens({ accessToken: 'OLD-EXPIRED', refreshToken: 'RT-BUENO', expiresAt: Date.now() - 1000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
     await db.put('equipment', { id: 'eq1', code: 'PENDIENTE', active: true, updatedAt: T0 }); // fila nueva, dispara POST en pushAll
 
     const { Auth } = loadAuthLogic(db);
@@ -500,6 +536,7 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
       if (u.includes('/rest/v1/app_profiles')) {
         return { ok: true, status: 200, json: async () => ([{ auth_user_id: 'u1', app_user_id: 'u_jvalles', display_name: 'Junior Valles', role: 'ADMINISTRADOR', active: true }]) };
       }
+      if (u.includes('/rpc/get_authorization_context')) return { ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true}}) };
       if (u.includes('engrase_sync') && method === 'POST') {
         seenAuth = opts.headers.Authorization;
         return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
@@ -581,12 +618,14 @@ describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUT
     await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // no es primera vez
     await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'ADMINISTRADOR', active: true });
+    await db.setAuthorizationContext('u_jguerra',{authUserId:'u1',appUserId:'u_jguerra',displayName:'Jose Guerrero',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
     const { Auth } = loadAuthLogic(db);
     Auth.isSupabaseMode = () => true;
     const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
     vi.stubGlobal('navigator', { onLine: true });
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
       const method = (opts && opts.method) || 'GET';
+      if (String(url).includes('/rpc/get_authorization_context')) return {ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jguerra',displayName:'Jose Guerrero',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true}})};
       if (method === 'POST') return { ok: false, status: 403, json: async () => ({ message: 'rechazado' }) };
       if (method === 'GET') return { ok: true, status: 200, json: async () => [] }; // pullAll sin novedades
       throw new Error('unexpected ' + method);

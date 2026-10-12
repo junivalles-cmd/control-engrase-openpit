@@ -188,11 +188,11 @@ it('competing administrator resolutions use the restricted RPC with CAS; loser r
       updatedAt: time, _pushedVersion: T0,
       conflictResolution: { officialValidationId: official, signatureIds: ['anchor', 'other'], reason: 'review', resolvedById: official } });
   }
-  const auth = { isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'fixture-jwt'}),getProfile:()=>({appUserId:'admin'}) };
+  const auth = { isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'fixture-jwt'}),getProfile:()=>({appUserId:'admin',authorizationFingerprint:'fp1'}) };
   let remoteVersion=T0;
   for (const [db,official] of [[dbA,'first'],[dbB,'second']]) {
     await db.put('grease_validations',{id:'other',lubricationRecordId:'r',updatedAt:T0,_pushedVersion:T0});
-    let operations=[{id:official,actorId:'admin',rpc:'resolve_grease_validation_conflict',createdAt:T1,status:'PENDING',
+    let operations=[{id:official,actorId:'admin',authorizationFingerprint:'fp1',rpc:'resolve_grease_validation_conflict',createdAt:T1,status:'PENDING',
       resolutionVersions:[{id:'anchor'},{id:'other'}],params:{p_operation_id:official,p_record_id:'r',p_id:'other',p_note:'review',p_expected_signatures:[]}}];
     const anchor=await db.get('grease_validations','anchor');await db.put('grease_validations',{...anchor,_evidenceOperationId:official});
     db.getEvidenceOperations=async()=>operations;

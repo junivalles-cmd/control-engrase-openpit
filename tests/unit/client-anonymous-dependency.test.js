@@ -16,7 +16,8 @@ function fixtureDB() {
   };
 }
 const activeAuth={ isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}),
-  getProfile:()=>({appUserId:'u1',role:'ADMINISTRADOR'}) };
+  getProfile:()=>({appUserId:'u1',role:'ADMINISTRADOR',authorizationFingerprint:'fp1'}),
+  refreshAuthorizationContext:async()=>({ok:true,changed:false,firstSnapshot:false,context:{rowScopeEnforced:true}}) };
 afterEach(()=>vi.unstubAllGlobals());
 
 describe('Client pre-cutover boundary',()=>{

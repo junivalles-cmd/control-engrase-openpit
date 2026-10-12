@@ -211,6 +211,12 @@ const Auth = {
     const snapshot = await DB.getAuthProfileSnapshot();
     if (epoch !== this._sessionEpoch) return null;
     this._profile = snapshot;
+    // A valid token and a separately persisted snapshot must belong to the
+    // same Auth identity. A crash or account switch may never pair them.
+    if (snapshot && snapshot.authUserId !== this._session.authUserId) {
+      await this.signOut();
+      return null;
+    }
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
@@ -280,6 +286,53 @@ const Auth = {
       if (isNetworkFailure(e)) return this._profile;
       throw e;
     }
+  },
+
+  // Server-issued scope snapshot. Called by Sync before any push or pull;
+  // until Phase 2D-2 installs row-scoped RLS, this deliberately keeps sync
+  // disabled even when the identity itself is valid.
+  async refreshAuthorizationContext() {
+    if (!this.isAuthenticated()) return { ok: false, reason: 'AUTH_REQUIRED' };
+    const epoch = this._sessionEpoch;
+    const profile = this._profile;
+    const cfg = await DB.getConfig();
+    const previous = await DB.getAuthorizationContext?.(profile.appUserId) || null;
+    let response;
+    try {
+      response = await fetchWithTimeout(`${cfg.url}/rest/v1/rpc/get_authorization_context`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: '{}'
+      });
+    } catch (error) {
+      if (isNetworkFailure(error)) return { ok: false, reason: 'OFFLINE', context: previous };
+      throw error;
+    }
+    if (epoch !== this._sessionEpoch) return { ok: false, reason: 'AUTH_REQUIRED' };
+    if (classifyAuthStatus(response.status)) return { ok: false, reason: 'AUTH_REQUIRED' };
+    if (!response.ok) return { ok: false, reason: 'AUTHORIZATION_BOOTSTRAP_UNAVAILABLE' };
+    const result = await response.json().catch(() => null);
+    if (!result || result.status !== 'AUTHORIZED' || !result.context) {
+      await this.signOut();
+      return { ok: false, reason: (result && result.code) || 'AUTHORIZATION_DENIED' };
+    }
+    const context = result.context;
+    if (context.authUserId !== this._session.authUserId ||
+        typeof context.appUserId !== 'string' || !context.appUserId ||
+        !isValidProfile({ role: context.role, active: context.active }) ||
+        typeof context.authorizationFingerprint !== 'string') {
+      await this.signOut();
+      return { ok: false, reason: 'AUTHORIZATION_CONTEXT_MISMATCH' };
+    }
+    const changed = !!previous && previous.authorizationFingerprint !== context.authorizationFingerprint;
+    await DB.setAuthorizationContext?.(context.appUserId, context);
+    this._profile = { ...profile, ...context };
+    await this._persistState();
+    return { ok: true, context, changed, firstSnapshot: !previous };
   },
 
   // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge

@@ -4,9 +4,9 @@ import { extractDeclaration, readSource } from '../helpers/extractFromSource.js'
 
 const source=readSource(DB_JS_PATH);
 function loadQueue(db) {
-  return new Function('DB', ['uid','nowISO','queueLubricationExecution'].map(n=>extractDeclaration(source,n)).join('\n')+';return queueLubricationExecution;')(db);
+  return new Function('DB','Auth', ['uid','nowISO','queueLubricationExecution'].map(n=>extractDeclaration(source,n)).join('\n')+';return queueLubricationExecution;')(db,auth);
 }
-const auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}),getProfile:()=>({appUserId:'u1'}),getSessionEpoch:()=>1};
+const auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}),getProfile:()=>({appUserId:'u1',authorizationFingerprint:'fp1'}),getSessionEpoch:()=>1};
 function fixture() {
   const rows={};const operations=[];
   const db={getConfig:async()=>({url:'https://fixture.test',anonKey:'public-key'}),all:async s=>Object.values(rows[s]||{}),

@@ -11,6 +11,7 @@ function makeFakeDB() {
   let config = null;
   let tokens = null;
   let profileSnapshot = null;
+  const authorizationContexts = new Map();
   return {
     async getConfig() { return config; },
     async setConfig(v) { config = v; return v; },
@@ -18,8 +19,10 @@ function makeFakeDB() {
     async setAuthTokens(v) { tokens = v; return v; },
     async getAuthProfileSnapshot() { return profileSnapshot; },
     async setAuthProfileSnapshot(v) { profileSnapshot = v; return v; },
+    async getAuthorizationContext(appUserId) { return authorizationContexts.get(appUserId) || null; },
+    async setAuthorizationContext(appUserId, v) { if (v == null) authorizationContexts.delete(appUserId); else authorizationContexts.set(appUserId, v); return v; },
     // Solo para inspección en los tests (nunca lo usa auth.js en sí).
-    _dump() { return { config, tokens, profileSnapshot }; },
+    _dump() { return { config, tokens, profileSnapshot, authorizationContexts: [...authorizationContexts] }; },
   };
 }
 
@@ -309,6 +312,49 @@ describe('refreshProfile() — rol/estado cambiado en otro dispositivo toma efec
     }));
 
     await Auth.refreshProfile();
+    expect(Auth.isAuthenticated()).toBe(false);
+  });
+});
+
+describe('authorization bootstrap — scope is account-namespaced and server-issued', () => {
+  const context = fingerprint => ({
+    status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',
+      role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:['c1'],
+      authorizedLocationIds:['l1'],authorizationFingerprint:fingerprint,rowScopeEnforced:false}
+  });
+  it('stores the first authenticated snapshot under its app user and reports firstSnapshot', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    vi.stubGlobal('fetch',vi.fn(async (url,options)=>{
+      expect(String(url)).toContain('/rpc/get_authorization_context');
+      expect(options.headers.Authorization).toBe('Bearer AT');
+      return {ok:true,status:200,json:async()=>context('fp-a')};
+    }));
+    const result=await Auth.refreshAuthorizationContext();
+    expect(result).toMatchObject({ok:true,firstSnapshot:true,changed:false});
+    expect(await db.getAuthorizationContext('u_jvalles')).toMatchObject({authorizationFingerprint:'fp-a',rowScopeEnforced:false});
+    expect(Auth.getProfile().authorizationFingerprint).toBe('fp-a');
+  });
+  it('returns stable and changed fingerprints without mixing another account', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await db.setAuthorizationContext('u_jvalles',context('fp-a').context);
+    await db.setAuthorizationContext('u_other',{appUserId:'u_other',authorizationFingerprint:'other'});
+    await Auth.restoreSession();
+    let fp='fp-a';
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,json:async()=>context(fp)})));
+    expect(await Auth.refreshAuthorizationContext()).toMatchObject({ok:true,changed:false,firstSnapshot:false});
+    fp='fp-b';
+    expect(await Auth.refreshAuthorizationContext()).toMatchObject({ok:true,changed:true,firstSnapshot:false});
+    expect(await db.getAuthorizationContext('u_other')).toEqual({appUserId:'u_other',authorizationFingerprint:'other'});
+  });
+  it('blocks a structurally mismatched context and signs out', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'other',appUserId:'u_jvalles',role:'ADMINISTRADOR',active:true,authorizationFingerprint:'x'}})})));
+    expect(await Auth.refreshAuthorizationContext()).toMatchObject({ok:false,reason:'AUTHORIZATION_CONTEXT_MISMATCH'});
     expect(Auth.isAuthenticated()).toBe(false);
   });
 });
