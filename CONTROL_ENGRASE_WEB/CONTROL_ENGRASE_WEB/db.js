@@ -365,6 +365,9 @@ function isSupabaseAuthMode() {
    cuadrillas, lubricantes, settings) se sigue sembrando igual — no tiene
    nada que ver con identidad/autenticación. */
 async function seedSoloSiElSistemaEstaVacio() {
+  // Production bootstrap is schema/config only. Remote state is NOT_CHECKED
+  // until the first authenticated pull; never seed operational demo data.
+  if (isSupabaseAuthMode() || globalThis.CONTROL_ENGRASE_ALLOW_DEMO_SEED !== true) return { remoteState: 'NOT_CHECKED' };
   const usuariosLocales = await DB.all('users');
   // OR con el flag: en AUTH_MODE='supabase', `users` se deja vacío a
   // propósito, así que `usuariosLocales.length` solo, por sí solo, ya NO
@@ -379,22 +382,7 @@ async function seedSoloSiElSistemaEstaVacio() {
     return;
   }
 
-  let servidorTieneDatos = false;
-  try {
-    const cfg = await DB.getConfig();
-    if (cfg && cfg.url && cfg.anonKey && navigator.onLine) {
-      const r = await fetch(
-        `${cfg.url}/rest/v1/engrase_sync?select=id&limit=1`,
-        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
-      );
-      if (r.ok) {
-        const filas = await r.json();
-        servidorTieneDatos = Array.isArray(filas) && filas.length > 0;
-      }
-    }
-  } catch (e) {
-    // Sin internet o servidor inalcanzable: se siembra local para poder trabajar
-  }
+  const servidorTieneDatos = false; // Explicit local demo only; no remote probe.
 
   if (servidorTieneDatos) {
     // El sistema ya existe: en AUTH_MODE='legacy', este dispositivo solo

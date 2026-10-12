@@ -2671,9 +2671,14 @@ function currentUserFromAuthProfile(profile) {
   return { id: profile.appUserId, name: profile.displayName, role: profile.role, username: profile.appUserId };
 }
 
-function enterAppAsProfile(profile) {
+async function enterAppAsProfile(profile) {
   App.currentUser = currentUserFromAuthProfile(profile);
   bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
+  const cfg = await DB.getConfig();
+  if (!cfg?.lastPull && navigator.onLine && Auth.isAuthenticated()) {
+    await Sync.fullSync();
+    if (App.currentUser?.id !== profile.appUserId || !Auth.isAuthenticated()) return;
+  }
   boot();
 }
 
@@ -13244,18 +13249,11 @@ function formatoMB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Borra de verdad un registro: del dispositivo Y del servidor
+// Physical removal is unavailable until a safe server operation is designed.
 async function borrarDefinitivo(store, id) {
-  const cfg = await DB.getConfig();
-  if (cfg && cfg.url && cfg.anonKey && navigator.onLine) {
-    try {
-      await fetch(`${cfg.url}/rest/v1/engrase_sync?store=eq.${store}&id=eq.${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` }
-      });
-    } catch (e) { console.warn('No se pudo borrar del servidor', store, id, e); }
-  }
-  await DB.delete(store, id);
+  // Storage reclamation needs a separately designed server operation.
+  // A tombstone would retain the data and would not fulfill this purpose.
+  throw new Error('HARD_DELETE_REQUIRES_DESIGN_DECISION');
 }
 
 async function renderStorageStats() {
@@ -13274,59 +13272,11 @@ async function renderStorageStats() {
 }
 
 async function purgarPapelera() {
-  const aBorrar = [];
-  for (const store of STORES) {
-    const rows = await DB.all(store);
-    rows.filter(r => r.active === false).forEach(r => aBorrar.push({ store, id: r.id }));
-  }
-  if (!aBorrar.length) { alert('La papelera ya está vacía.'); return; }
-  if (!confirm(`Se van a eliminar DEFINITIVAMENTE ${aBorrar.length} registro(s) de la papelera.\n\nEsto NO se puede deshacer y también los borra del servidor.\n\n¿Continuar?`)) return;
-  if (!confirm('Confirmación final: ¿ya descargaste una copia de respaldo?')) return;
-
-  let n = 0;
-  for (const { store, id } of aBorrar) { await borrarDefinitivo(store, id); n++; }
-  await logAudit('PURGA_PAPELERA', `${n} registros eliminados definitivamente`, App.currentUser.name);
-  showInAppToast(`✓ ${n} registro(s) eliminados definitivamente`);
-  renderConfig();
+  alert('Borrado definitivo no disponible: requiere un diseño seguro del servidor.');
 }
 
 async function purgarRegistrosAntiguos() {
-  openModal('Borrar registros antiguos', `
-    <p class="dim">Elimina de forma permanente los engrases y anomalías <b>cerradas</b> anteriores a la fecha que elijas. Los equipos, planes y usuarios NO se tocan.</p>
-    <label>Borrar todo lo anterior a
-      <input type="date" id="purge-date" class="input" value="${new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)}"/>
-    </label>
-    <div id="purge-preview" class="dim" style="margin-top:12px">Elige una fecha para ver cuántos se borrarían.</div>
-    <div class="modal-actions">
-      <button class="btn btn-danger" id="btn-do-purge-old">${ic("trash")}Borrar definitivamente</button>
-    </div>
-  `);
-
-  async function contar() {
-    const limite = new Date($('#purge-date').value).getTime();
-    if (isNaN(limite)) return { records: [], anomalies: [] };
-    const records = (await DB.all('lubrication_records')).filter(r => new Date(r.date).getTime() < limite);
-    const anomalies = (await DB.all('anomalies')).filter(a => a.status === 'Cerrada' && new Date(a.createdAt).getTime() < limite);
-    $('#purge-preview').innerHTML = `Se borrarían <b>${records.length}</b> registro(s) de engrase y <b>${anomalies.length}</b> anomalía(s) cerrada(s).`;
-    return { records, anomalies };
-  }
-  await contar();
-  $('#purge-date').addEventListener('change', contar);
-
-  $('#btn-do-purge-old').addEventListener('click', async () => {
-    const { records, anomalies } = await contar();
-    const total = records.length + anomalies.length;
-    if (!total) { alert('No hay registros anteriores a esa fecha.'); return; }
-    if (!confirm(`Se eliminarán DEFINITIVAMENTE ${total} registro(s), también del servidor.\n\nEsto NO se puede deshacer. ¿Continuar?`)) return;
-    if (!confirm('Confirmación final: ¿ya descargaste una copia de respaldo?')) return;
-
-    for (const r of records) await borrarDefinitivo('lubrication_records', r.id);
-    for (const a of anomalies) await borrarDefinitivo('anomalies', a.id);
-    await logAudit('PURGA_ANTIGUOS', `${total} registros anteriores a ${$('#purge-date').value}`, App.currentUser.name);
-    showInAppToast(`✓ ${total} registro(s) eliminados definitivamente`);
-    closeModal();
-    renderConfig();
-  });
+  alert('Borrado definitivo no disponible: requiere un diseño seguro del servidor.');
 }
 
 async function purgarFotosAntiguas() {
@@ -13767,8 +13717,8 @@ async function renderConfig() {
         <p class="dim">Cuando la base de datos se llene, aquí puedes borrar de forma <b>permanente</b> lo que ya no necesitas: registros antiguos, fotos viejas y lo que está en la papelera. A diferencia de eliminar desde las pantallas, esto <b>no se puede deshacer</b>.</p>
         <div id="storage-stats" class="dim" style="margin:10px 0">Calculando espacio usado…</div>
         <div class="toolbar">
-          <button class="btn" id="btn-purge-trash">${ic("trash")}Vaciar papelera</button>
-          <button class="btn" id="btn-purge-old">${ic("trash")}Borrar registros antiguos…</button>
+          <button class="btn" id="btn-purge-trash" disabled title="Borrado definitivo pendiente de diseño seguro">${ic("trash")}Vaciar papelera</button>
+          <button class="btn" id="btn-purge-old" disabled title="Borrado definitivo pendiente de diseño seguro">${ic("trash")}Borrar registros antiguos…</button>
           <button class="btn" id="btn-purge-photos">${ic("gallery")}Quitar fotos antiguas…</button>
         </div>
         <p class="dim" style="margin-top:8px; color:var(--amber)">⚠ Antes de borrar, descarga una copia completa (panel de abajo). Es tu única forma de recuperar lo que se elimine aquí.</p>

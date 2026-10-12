@@ -124,26 +124,37 @@ function decidePullAction(localRow, remoteUpdatedAt) {
   return { action: 'CONFLICT', localVersion: localRow.updatedAt, remoteVersion: remoteUpdatedAt };
 }
 
-// P0-2 — fuente ÚNICA del Authorization real de TODA request a
-// `engrase_sync` (pull paginado, POST create, PATCH CAS, fetchRemoteUpdatedAt)
-// Y, desde P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md), también de toda
-// request a Supabase Storage (subida de fotos/firmas, generación de signed
-// URLs) — mismo criterio, una sola fuente de verdad.
-// En AUTH_MODE='supabase' con sesión autenticada, el access_token de la
-// PERSONA (nunca el anon key) — así las políticas RLS/Storage nuevas pueden
-// resolver auth.uid() de verdad; en 'legacy' (o sin Auth cargado, o sin
-// sesión) sigue siendo el anon key compartido, comportamiento actual sin
-// cambios. Nunca duplica lógica de refresh aquí: fullSync() ya llamó
-// Auth.restoreSession() (refresca si hace falta) ANTES de tocar la red de
-// sync — esto solo LEE el resultado ya vigente vía Auth.getSession(), en
-// cada llamada, así que un token recién refrescado se usa de inmediato en
-// la siguiente request. testConnection() queda fuera a propósito: prueba
-// una anon key que el administrador acaba de escribir en el formulario,
-// antes de que exista ninguna sesión que usar.
+// Every operational request requires a valid Supabase user session.
+// The public key is only the gateway apikey, never a bearer fallback.
 function syncAuthHeaders(cfg) {
-  const useUserJwt = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
-  const bearer = useUserJwt ? Auth.getSession().accessToken : cfg.anonKey;
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+  const bearer = Auth.getSession()?.accessToken;
+  if (!bearer || bearer === cfg.anonKey) throw new Error('AUTH_REQUIRED');
   return { apikey: cfg.anonKey, Authorization: `Bearer ${bearer}` };
+}
+
+function syncSessionEpoch() {
+  return typeof Auth !== 'undefined' ? (Auth.getSessionEpoch?.() || 0) : null;
+}
+
+async function syncConfig() {
+  const epoch = syncSessionEpoch();
+  const cfg = { ...(await DB.getConfig()) };
+  Object.defineProperty(cfg, '_authEpoch', { value: epoch });
+  return cfg;
+}
+
+async function authenticatedSyncFetch(url, options, cfg) {
+  const epoch = cfg?._authEpoch ?? syncSessionEpoch();
+  cfg = cfg || await DB.getConfig();
+  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || epoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+  if (!Auth.isAuthenticated() && Auth.getSession()?.refreshToken) {
+    try { await Auth.restoreSession(); } catch (_) { throw new Error('AUTH_REQUIRED'); }
+  }
+  if (epoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+  // No asynchronous boundary between the final session check and dispatch.
+  const headers = { ...options.headers, ...syncAuthHeaders(cfg) };
+  return fetchWithTimeout(url, { ...options, headers });
 }
 
 // Diagnóstico SANITIZADO de un rechazo 403 (AUTH_FORBIDDEN) — lote "Sync 403
@@ -215,44 +226,36 @@ const Sync = {
   notify(state) { this.listeners.forEach(fn => { try { fn(state); } catch (e) {} }); },
 
   async isConfigured() {
-    const cfg = await DB.getConfig();
+    const cfg = await syncConfig();
     return !!(cfg && cfg.url && cfg.anonKey);
   },
 
   async testConnection(url, anonKey) {
     const clean = url.trim().replace(/\/+$/, '');
-    if (!/^https:\/\//i.test(clean)) {
-      throw new Error('La URL debe empezar con https:// (cópiala tal cual aparece en Project Settings → API → Project URL).');
-    }
-    let resp;
+    if (!/^https:\/\//i.test(clean)) return { status: 'SERVER_ERROR' };
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) return { status: 'AUTH_REQUIRED' };
+    const cfg = { url: clean, anonKey: anonKey.trim(), _authEpoch: syncSessionEpoch() };
     try {
-      resp = await fetchWithTimeout(`${clean}/rest/v1/engrase_sync?select=store&limit=1`, {
-        headers: { apikey: anonKey.trim(), Authorization: `Bearer ${anonKey.trim()}` }
-      });
-    } catch (networkErr) {
-      throw new Error('No se pudo contactar el servidor (sin internet, la URL está mal escrita, o el navegador bloqueó la conexión). Revisa que tengas datos/wifi activos y que la URL sea exactamente la de Supabase.');
+      const resp = await authenticatedSyncFetch(clean + '/rest/v1/engrase_sync?select=store&limit=1', {}, cfg);
+      if (resp.status === 401 || resp.status === 403) return { status: 'AUTH_REQUIRED', network: 'NETWORK_OK', httpStatus: resp.status };
+      return { status: resp.ok ? 'AUTHENTICATED_REMOTE_OK' : 'SERVER_ERROR', network: 'NETWORK_OK', httpStatus: resp.status };
+    } catch (error) {
+      return { status: error.message === 'AUTH_REQUIRED' ? 'AUTH_REQUIRED' : isNetworkFailure(error) ? 'NETWORK_ERROR' : 'SERVER_ERROR' };
     }
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error('Conectó al servidor pero la llave (anon key) fue rechazada. Verifica que copiaste la "anon public key" completa, sin espacios ni saltos de línea.');
-    }
-    if (resp.status === 404) {
-      throw new Error('El servidor respondió pero no encuentra la tabla "engrase_sync". Ejecuta el script schema.sql en el SQL Editor de Supabase.');
-    }
-    if (!resp.ok) throw new Error(`Respuesta ${resp.status} del servidor. Verifica la URL, la llave y que ejecutaste el script SQL.`);
-    return true;
   },
 
   async saveConfig(url, anonKey) {
     const clean = url.trim().replace(/\/+$/, '');
     const key = anonKey.trim();
-    await this.testConnection(clean, key);
+    const result = await this.testConnection(clean, key);
+    if (result.status !== 'AUTHENTICATED_REMOTE_OK') throw new Error(result.status);
     const prev = (await DB.getConfig()) || {};
     await DB.setConfig({ ...prev, url: clean, anonKey: key });
-    return true;
+    return result;
   },
 
   async pendingCount() {
-    const cfg = await DB.getConfig();
+    const cfg = await syncConfig();
     if (!cfg || !cfg.url) return 0;
     let count = 0;
     for (const store of STORES) {
@@ -286,14 +289,14 @@ const Sync = {
         const blob = dataURLtoBlob(p);
         const ext = (blob.type && blob.type.includes('webp')) ? 'webp' : 'jpg';
         const path = `${store}/${row.id}_${i}.${ext}`;
-        const resp = await fetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
+        const resp = await authenticatedSyncFetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
           method: 'POST',
           headers: {
-            ...syncAuthHeaders(cfg),
+            apikey: cfg.anonKey,
             'Content-Type': blob.type || 'image/jpeg', 'x-upsert': 'true'
           },
           body: blob
-        });
+        }, cfg);
         if (!resp.ok) {
           console.warn(`No se pudo subir la foto ${i} de ${store}/${row.id}: ${resp.status}`);
           uploaded.push(p); // se queda en base64; se reintenta en la próxima sincronización
@@ -329,14 +332,14 @@ const Sync = {
       const blob = dataURLtoBlob(local);
       const ext = (blob.type && blob.type.includes('webp')) ? 'webp' : 'png';
       const path = `${store}/${row.id}.${ext}`;
-      const resp = await fetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
+      const resp = await authenticatedSyncFetch(`${cfg.url}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
         method: 'POST',
         headers: {
-          ...syncAuthHeaders(cfg),
+          apikey: cfg.anonKey,
           'Content-Type': blob.type || 'image/png', 'x-upsert': 'true'
         },
         body: blob
-      });
+      }, cfg);
       if (!resp.ok) {
         console.warn(`No se pudo subir la firma de ${store}/${row.id}: ${resp.status}`);
         return row; // se queda en base64; se reintenta en la próxima sincronización
@@ -381,18 +384,18 @@ const Sync = {
     const path = resolvePhotoStoragePath(value);
     if (!path) return null;
     if (!cfg || !cfg.url || !cfg.anonKey) return null;
-    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) return null;
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) return null;
     const cacheKey = `${cfg.url}::${path}`;
     if (!force) {
       const cached = this._signedUrlCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) return cached.url;
     }
     try {
-      const resp = await fetchWithTimeout(`${cfg.url}/storage/v1/object/sign/${PHOTO_BUCKET}/${path}`, {
+      const resp = await authenticatedSyncFetch(`${cfg.url}/storage/v1/object/sign/${PHOTO_BUCKET}/${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...syncAuthHeaders(cfg) },
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
         body: JSON.stringify({ expiresIn })
-      });
+      }, cfg);
       if (!resp.ok) return null;
       const json = await resp.json();
       if (!json || typeof json.signedURL !== 'string') return null;
@@ -412,27 +415,28 @@ const Sync = {
   // buscar el dato de diagnóstico.
   async fetchRemoteUpdatedAt(store, id, cfg) {
     try {
-      const resp = await fetchWithTimeout(
+      const resp = await authenticatedSyncFetch(
         `${cfg.url}/rest/v1/engrase_sync?select=updated_at&store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(id)}`,
-        { headers: syncAuthHeaders(cfg) }
-      );
+        { headers: { apikey: cfg.anonKey } }
+      , cfg);
       if (!resp.ok) return null;
       const rows = await resp.json();
       return rows.length ? rows[0].updated_at : null;
     } catch (e) {
+      if (e.message === 'AUTH_REQUIRED') throw e;
       return null;
     }
   },
 
   async pushAll() {
-    const cfg = await DB.getConfig();
+    const cfg = await syncConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
     // P0-2 Etapa B1: mientras Auth.getMode() sea 'legacy' (default) esta
     // rama nunca corre — `typeof Auth === 'undefined'` también es válido
     // (tests/fixtures que no cargan auth.js), así que el comportamiento
     // de hoy queda intacto. Solo cuando se active AUTH_MODE='supabase' se
     // exige sesión válida ANTES de tocar la red — nunca fallback a anon.
-    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) {
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) {
       return { ok: false, reason: 'AUTH_REQUIRED' };
     }
     let pushed = 0;
@@ -472,11 +476,11 @@ const Sync = {
           const body = prepared.map(r => ({
             store, id: r.id, payload: r, updated_at: r.updatedAt, deleted: r.active === false
           }));
-          const resp = await fetchWithTimeout(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
+          const resp = await authenticatedSyncFetch(`${cfg.url}/rest/v1/engrase_sync?on_conflict=store,id`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...syncAuthHeaders(cfg),
+              apikey: cfg.anonKey,
               // ignore-duplicates (NO merge-duplicates): si el id ya existe en
               // el servidor, esa fila se omite de la respuesta en vez de
               // pisarla — así se puede distinguir "se creó" de "ya existía
@@ -484,7 +488,7 @@ const Sync = {
               Prefer: 'resolution=ignore-duplicates,return=representation'
             },
             body: JSON.stringify(body)
-          });
+          }, cfg);
           const authIssueCreate = classifyAuthStatus(resp.status);
           if (authIssueCreate === 'AUTH_REQUIRED') { authRequired = true; break; }
           if (authIssueCreate === 'AUTH_FORBIDDEN') {
@@ -519,18 +523,18 @@ const Sync = {
           // condición y escribe en la MISMA operación atómica: no hay
           // ventana entre "leer" y "escribir" donde otro dispositivo pueda
           // meterse (a diferencia de un GET seguido de un POST separado).
-          const resp = await fetchWithTimeout(
+          const resp = await authenticatedSyncFetch(
             `${cfg.url}/rest/v1/engrase_sync?store=eq.${encodeURIComponent(store)}&id=eq.${encodeURIComponent(r.id)}&updated_at=eq.${encodeURIComponent(r._pushedVersion)}`,
             {
               method: 'PATCH',
               headers: {
                 'Content-Type': 'application/json',
-                ...syncAuthHeaders(cfg),
+                apikey: cfg.anonKey,
                 Prefer: 'return=representation'
               },
               body: JSON.stringify({ payload: prepared, updated_at: prepared.updatedAt, deleted: prepared.active === false })
             }
-          );
+          , cfg);
           const authIssueUpdate = classifyAuthStatus(resp.status);
           if (authIssueUpdate === 'AUTH_REQUIRED') { authRequired = true; break; }
           if (authIssueUpdate === 'AUTH_FORBIDDEN') {
@@ -562,6 +566,7 @@ const Sync = {
       } catch (err) {
         // Un problema en UN store (ej. una foto que no subió, un error de red puntual) ya
         // no frena a los demás — seguimos con el resto y avisamos al final cuáles fallaron.
+        if (err.message === 'AUTH_REQUIRED') { authRequired = true; break; }
         console.error(`Error al subir el store "${store}"`, err);
         errors.push(store);
       }
@@ -576,11 +581,11 @@ const Sync = {
   },
 
   async pullAll() {
-    const cfg = await DB.getConfig();
+    const cfg = await syncConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
     // P0-2 Etapa B1: mismo gate que pushAll() — inerte mientras
     // AUTH_MODE sea 'legacy' o Auth no esté cargado (ver nota en pushAll).
-    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) {
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) {
       return { ok: false, reason: 'AUTH_REQUIRED' };
     }
     const since = cfg.lastPull || '1970-01-01T00:00:00.000Z';
@@ -598,10 +603,14 @@ const Sync = {
     let rows = [];
     let offset = 0;
     while (true) {
-      const resp = await fetchWithTimeout(
+      let resp;
+      try { resp = await authenticatedSyncFetch(
         `${cfg.url}/rest/v1/engrase_sync?select=*&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc,store.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`,
-        { headers: syncAuthHeaders(cfg) }
-      );
+        { headers: { apikey: cfg.anonKey } }
+      , cfg); } catch (error) {
+        if (error.message === 'AUTH_REQUIRED') return { ok:false, reason:'AUTH_REQUIRED' };
+        throw error;
+      }
       const authIssuePull = classifyAuthStatus(resp.status);
       // 401/403 en la lectura NUNCA es el CAS de P0-1 (que solo vive en
       // pushAll, siempre 200) — se corta el pull entero, sin tocar nada
@@ -693,7 +702,7 @@ const Sync = {
   // una sesión sin validar. Si ninguna ventana está pendiente, no hace
   // ninguna request de más — el chequeo de fecha/hora es 100% local.
   async runFullRefreshIfDue() {
-    const cfg = await DB.getConfig();
+    const cfg = await syncConfig();
     const now = new Date();
     const pendientes = dueFullRefreshWindows(now, cfg.lastFullRefreshWindow);
     if (!pendientes.length) return null;
@@ -748,8 +757,11 @@ const Sync = {
       // intentó refrescar primero (ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md
       // §12 y Auth.restoreSession()). Inerte mientras AUTH_MODE sea
       // 'legacy' o Auth no esté cargado — no cambia nada del flujo actual.
-      if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+      const cycleEpoch = syncSessionEpoch();
+      if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) throw new Error('AUTH_REQUIRED');
+      if (Auth.isSupabaseMode()) {
         await Auth.restoreSession();
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
         if (!Auth.isAuthenticated()) {
           this.notify({ status: 'AUTH_REQUIRED', at: nowISO() });
           return;
@@ -760,10 +772,11 @@ const Sync = {
       // se sube como "nuevo" y revive lo que el administrador ya había borrado en el
       // servidor. Bajando primero, este dispositivo se entera de qué está eliminado
       // antes de proponer nada.
-      const cfg = await DB.getConfig();
+      const cfg = await syncConfig();
       const esPrimeraVez = !cfg.lastPull;
       let pushRes, pullRes;
       if (esPrimeraVez) {
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
         pullRes = await this.pullAll();
         // P0-2 Etapa B1: si el pull inicial ya no tiene sesión válida
         // (solo posible con AUTH_MODE='supabase'), no tiene sentido
@@ -772,9 +785,16 @@ const Sync = {
           this.notify({ status: pullRes.reason, at: nowISO(), authErrorDetails: pullRes.authErrorDetails || [] });
           return;
         }
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
         pushRes = await this.pushAll();
       } else {
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
         pushRes = await this.pushAll();
+        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        if (pushRes.reason === 'AUTH_REQUIRED') {
+          this.notify({ status:'AUTH_REQUIRED', at:nowISO() });
+          return;
+        }
         pullRes = await this.pullAll();
       }
       // AUTH_REQUIRED/AUTH_FORBIDDEN son distintos de un conflicto CAS —
@@ -805,7 +825,7 @@ const Sync = {
       // reporta como 'backend_unreachable', NUNCA como si hubiera
       // sincronizado. No se toca sesión/tokens/snapshot ni se genera
       // conflicto CAS — el catch nunca los tocó, esto solo afina el status.
-      const status = isNetworkFailure(err) ? 'backend_unreachable' : 'error';
+      const status = err.message === 'AUTH_REQUIRED' ? 'AUTH_REQUIRED' : isNetworkFailure(err) ? 'backend_unreachable' : 'error';
       console.error('Sync error', err);
       this.notify({ status, message: err.message });
     } finally {
@@ -830,7 +850,7 @@ const Sync = {
     const esPrimeraVez = !(cfgBefore && cfgBefore.lastPull);
     await this.fullSync();
     if (esPrimeraVez) return; // esa sincronización ya bajó todo — no hace falta un full refresh aparte
-    if (typeof Auth !== 'undefined' && Auth.isSupabaseMode() && !Auth.isAuthenticated()) return;
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) return;
     await this.runFullRefreshIfDue();
   },
 

@@ -92,7 +92,7 @@ describe('Sync.getSignedPhotoUrl() — URL firmada TEMPORAL para ver evidencia q
     expect(signed).toBe(`${CFG.url}/storage/v1/object/sign/${PHOTO_BUCKET}/anomalies/an_1_0.jpg?token=abc123`);
   });
 
-  it('en modo legacy usa el anon key (comportamiento sin cambios, mismo criterio que syncAuthHeaders)', async () => {
+  it('en modo legacy no solicita URLs firmadas sin Auth Supabase', async () => {
     const { Sync, PHOTO_BUCKET } = loadSyncLogic(makeFakeDB(), [], makeFakeAuth({ mode: 'legacy' }));
     let seenHeaders = null;
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
@@ -100,7 +100,8 @@ describe('Sync.getSignedPhotoUrl() — URL firmada TEMPORAL para ver evidencia q
       return { ok: true, json: async () => ({ signedURL: '/object/sign/x/y?token=z' }) };
     }));
     await Sync.getSignedPhotoUrl(`${CFG.url}/storage/v1/object/public/${PHOTO_BUCKET}/x/y`, CFG);
-    expect(seenHeaders.Authorization).toBe(`Bearer ${CFG.anonKey}`);
+    expect(seenHeaders).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   describe('cache EN MEMORIA (§39 docs/STORAGE_PRIVACY_DESIGN.md)', () => {
@@ -196,14 +197,15 @@ describe('Sync.getSignedPhotoUrl() — URL firmada TEMPORAL para ver evidencia q
 });
 
 describe('Uploads de Storage (fotos/firmas) usan el JWT real en modo supabase — mismo criterio que engrase_sync (P0-2)', () => {
-  it('uploadPhotoIfNeeded: legacy sigue usando el anon key (sin cambios)', async () => {
+  it('uploadPhotoIfNeeded: legacy no sube evidencia sin Auth Supabase', async () => {
     const db = makeFakeDB({ anomalies: [] });
     const { Sync } = loadSyncLogic(db, ['anomalies'], makeFakeAuth({ mode: 'legacy' }));
     let seenHeaders = null;
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => { seenHeaders = opts.headers; return { ok: true }; }));
     const row = { id: 'an1', photo: 'data:image/jpeg;base64,AAAA' };
     await Sync.uploadPhotoIfNeeded('anomalies', row, CFG);
-    expect(seenHeaders.Authorization).toBe(`Bearer ${CFG.anonKey}`);
+    expect(seenHeaders).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('uploadPhotoIfNeeded: modo supabase autenticado usa el JWT de la persona, nunca el anon key', async () => {

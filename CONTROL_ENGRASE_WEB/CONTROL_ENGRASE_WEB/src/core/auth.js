@@ -102,6 +102,9 @@ function isValidProfile(profile) {
 const Auth = {
   _session: null, // { accessToken, refreshToken, expiresAt, authUserId } en memoria
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
+  _sessionEpoch: 0,
+  _signingOut: false,
+  getSessionEpoch() { return this._sessionEpoch; },
   listeners: [],
 
   getMode() { return AUTH_MODE; },
@@ -122,6 +125,7 @@ const Auth = {
   //     restoreSession()) se cumple exactamente por esto.
   isAuthenticated() {
     return !!(
+      !this._signingOut &&
       this._session && this._session.accessToken &&
       this._session.expiresAt && Date.now() < this._session.expiresAt &&
       isValidProfile(this._profile)
@@ -135,6 +139,8 @@ const Auth = {
   // AUTH_MODE='supabase' (la UI legacy nunca la invoca). Usa la ANON key
   // ya configurada (igual que el resto de la app) — nunca service_role.
   async signIn(username, password) {
+    if (this._signingOut) throw new Error('AUTH_REQUIRED');
+    const epoch = ++this._sessionEpoch;
     const identifier = usernameToAuthIdentifier(username);
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
@@ -148,6 +154,7 @@ const Auth = {
       throw new Error('Usuario o contraseña incorrectos.');
     }
     const data = await resp.json();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     this._session = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
@@ -156,6 +163,7 @@ const Auth = {
     };
 
     const profile = await this._fetchProfile(cfg);
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     if (!isValidProfile(profile)) {
       // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
       // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
@@ -170,6 +178,8 @@ const Auth = {
   },
 
   async signOut() {
+    this._signingOut = true;
+    ++this._sessionEpoch;
     this._session = null;
     this._profile = null;
     // Borra los DOS namespaces — nunca alcanza con limpiar uno solo:
@@ -177,6 +187,7 @@ const Auth = {
     // siendo Junior Valles" en pantalla sin ninguna sesión real detrás.
     await DB.setAuthTokens(null);
     await DB.setAuthProfileSnapshot(null);
+    this._signingOut = false;
     this._notify({ status: 'signed_out' });
   },
 
@@ -191,10 +202,15 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
+    if (this._signingOut) return null;
+    const epoch = this._sessionEpoch;
     const session = await DB.getAuthTokens();
+    if (epoch !== this._sessionEpoch) return null;
     if (!session) return null;
     this._session = session;
-    this._profile = await DB.getAuthProfileSnapshot();
+    const snapshot = await DB.getAuthProfileSnapshot();
+    if (epoch !== this._sessionEpoch) return null;
+    this._profile = snapshot;
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
@@ -215,10 +231,13 @@ const Auth = {
 
     try {
       await this._refreshSession();
+      if (epoch !== this._sessionEpoch) return null;
       await this.refreshProfile();
+      if (epoch !== this._sessionEpoch) return null;
       this._notify({ status: 'restored', profile: this._profile });
       return { user: this._profile, session: this._session };
     } catch (e) {
+      if (epoch !== this._sessionEpoch) return null;
       if (!e.authRejected && isNetworkFailure(e)) {
         // Backend no disponible ahora mismo (navigator.onLine=true no lo
         // garantiza — ver Bloque B, hallazgo real del piloto Android).
@@ -245,9 +264,11 @@ const Auth = {
   // rol/estado hecho desde OTRO dispositivo tome efecto de inmediato en
   // vez de seguir confiando en el snapshot local viejo.
   async refreshProfile() {
+    const epoch = this._sessionEpoch;
     const cfg = await DB.getConfig();
     try {
       const profile = await this._fetchProfile(cfg);
+      if (epoch !== this._sessionEpoch) return null;
       this._profile = profile; // puede quedar null/inactivo -> isAuthenticated() pasa a false
       await this._persistState();
       return this._profile;
@@ -446,7 +467,9 @@ const Auth = {
   },
 
   async _refreshSession() {
+    const epoch = this._sessionEpoch;
     const cfg = await DB.getConfig();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     if (!this._session || !this._session.refreshToken) throw new Error('Sin refresh token.');
     const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
@@ -462,6 +485,7 @@ const Auth = {
       throw err;
     }
     const data = await resp.json();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     this._session = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,

@@ -71,10 +71,11 @@ describe('A) AUTH_MODE=supabase + servidor vacío (instalación totalmente nueva
 
     expect(await db.all('users')).toHaveLength(0);
     // el catálogo no-identidad se sigue sembrando igual que siempre
-    expect(await db.all('shifts')).toHaveLength(2);
-    expect(await db.all('locations')).toHaveLength(3);
-    expect(await db.all('cuadrillas')).toHaveLength(4);
-    expect(await db.all('lubricants')).toHaveLength(3);
+    expect(await db.all('shifts')).toHaveLength(0);
+    expect(await db.all('locations')).toHaveLength(0);
+    expect(await db.all('cuadrillas')).toHaveLength(0);
+    expect(await db.all('lubricants')).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -120,7 +121,7 @@ describe('C) AUTH_MODE=supabase -> 0 registros dirty generados por bootstrap, ni
 
     const { seedSoloSiElSistemaEstaVacio } = loadDbSeedLogic(db, makeFakeAuth('supabase'));
     await seedSoloSiElSistemaEstaVacio(); // 1er boot: siembra catálogo, users sigue en 0
-    expect(await db.all('shifts')).toHaveLength(2);
+    expect(await db.all('shifts')).toHaveLength(0);
 
     // Simula un segundo boot del mismo dispositivo (users sigue vacío,
     // a propósito) — SIN el fix, esto volvería a llamar a fetch/reseed;
@@ -128,7 +129,7 @@ describe('C) AUTH_MODE=supabase -> 0 registros dirty generados por bootstrap, ni
     fetchMock.mockClear();
     await seedSoloSiElSistemaEstaVacio();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(await db.all('shifts')).toHaveLength(2); // no se duplicó
+    expect(await db.all('shifts')).toHaveLength(0); // no se duplicó
   });
 });
 
@@ -165,7 +166,7 @@ describe('D) AUTH_MODE=supabase, pull/push -> 0 push artificial originado por bo
 });
 
 describe('E) AUTH_MODE=legacy (o Auth ausente) conserva el bootstrap temporal — sin regresión', () => {
-  it('servidor con datos -> sigue creando u_admin/PIN 1111 igual que siempre', async () => {
+  it('servidor con datos -> no crea admin ni consulta servidor', async () => {
     const db = makeFakeDbSeed();
     await db.setConfig(CFG);
     vi.stubGlobal('localStorage', makeFakeLocalStorage());
@@ -175,11 +176,11 @@ describe('E) AUTH_MODE=legacy (o Auth ausente) conserva el bootstrap temporal �
     await seedSoloSiElSistemaEstaVacio();
 
     const admin = await db.get('users', 'u_admin');
-    expect(admin).toBeTruthy();
-    expect(admin.pin).toBe('1111');
+    expect(admin).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('servidor vacío -> sigue sembrando los 4 usuarios de ejemplo con sus PIN', async () => {
+  it('servidor vacío -> no crea usuarios de ejemplo', async () => {
     const db = makeFakeDbSeed();
     await db.setConfig(CFG);
     vi.stubGlobal('localStorage', makeFakeLocalStorage());
@@ -191,8 +192,8 @@ describe('E) AUTH_MODE=legacy (o Auth ausente) conserva el bootstrap temporal �
     await seedSoloSiElSistemaEstaVacio();
 
     const users = await db.all('users');
-    expect(users).toHaveLength(4);
-    expect(users.map(u => u.pin).sort()).toEqual(['1111', '2222', '3333', '4444']);
+    expect(users).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -60,7 +60,117 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('M) AUTH_MODE="legacy" (o Auth ausente) mantiene el comportamiento exacto de 588f076', () => {
+describe('Pre-cutover: session changes during transport', () => {
+  it('restore cannot reload old persisted tokens while logout cleanup is pending', async () => {
+    await db.setAuthTokens({ accessToken:'JWT',refreshToken:'R',expiresAt:Date.now()+60000 });
+    await db.setAuthProfileSnapshot({authUserId:'u',appUserId:'u',displayName:'Fixture',role:'LUBRICADOR',active:true});
+    const {Auth}=loadAuthLogic(db);
+    await Auth.restoreSession();
+    const persist=db.setAuthTokens;
+    let finish;
+    const pending=new Promise(resolve=>{finish=resolve;});
+    db.setAuthTokens=async value=>{if(value===null)await pending;return persist(value);};
+    const logout=Auth.signOut();
+    expect(await Auth.restoreSession()).toBeNull();
+    expect(Auth.isAuthenticated()).toBe(false);
+    finish();await logout;
+    expect(await db.getAuthTokens()).toBeNull();
+  });
+  it('expiry between stores restores once and uses the renewed JWT', async () => {
+    let valid = true;
+    let token = 'FIRST-JWT';
+    const auth = {
+      isSupabaseMode: () => true, isAuthenticated: () => valid,
+      getSession: () => ({ accessToken: token, refreshToken: 'REFRESH' }),
+      restoreSession: vi.fn(async () => { valid = true; token = 'RENEWED-JWT'; }),
+    };
+    await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
+    await db.put('anomalies', { id: 'a', active: true, updatedAt: T0 });
+    const seen = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      seen.push(opts.headers);
+      return { ok: true, status: 200, json: async () => {
+        if (seen.length === 1) valid = false;
+        return [{ id: seen.length === 1 ? 'e' : 'a' }];
+      } };
+    }));
+    const { Sync } = loadSyncLogic(db, ['equipment','anomalies'], auth);
+    expect((await Sync.pushAll()).pushed).toBe(2);
+    expect(auth.restoreSession).toHaveBeenCalledTimes(1);
+    expect(seen.map(h => h.Authorization)).toEqual(['Bearer FIRST-JWT','Bearer RENEWED-JWT']);
+    expect(seen.every(h => h.apikey === 'anon-test')).toBe(true);
+  });
+
+  it('failed expiry refresh stops the cycle and preserves pending data', async () => {
+    let valid = true;
+    const auth = {
+      isSupabaseMode: () => true, isAuthenticated: () => valid,
+      getSession: () => ({ accessToken: 'JWT', refreshToken: 'REFRESH' }),
+      restoreSession: async () => { throw new Error('refresh rejected'); },
+    };
+    await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
+    await db.put('anomalies', { id: 'a', active: true, updatedAt: T0 });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { valid = false; return [{ id:'e' }]; } })));
+    const { Sync } = loadSyncLogic(db, ['equipment','anomalies'], auth);
+    expect((await Sync.pushAll()).reason).toBe('AUTH_REQUIRED');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await db.get('anomalies','a'))._pushedVersion).toBeUndefined();
+  });
+
+  it('logout during a request prevents subsequent requests and keeps the queue', async () => {
+    await db.setAuthTokens({ accessToken:'JWT', refreshToken:'REFRESH', expiresAt:Date.now()+60000 });
+    await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'LUBRICADOR',active:true });
+    const { Auth } = loadAuthLogic(db);
+    await Auth.restoreSession();
+    await db.put('equipment', { id:'e',active:true,updatedAt:T0 });
+    await db.put('anomalies', { id:'a',active:true,updatedAt:T0 });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await Auth.signOut();
+      return { ok:true,status:200,json:async()=>[{ id:'e' }] };
+    }));
+    const { Sync } = loadSyncLogic(db,['equipment','anomalies'],Auth);
+    expect((await Sync.pushAll()).reason).toBe('AUTH_REQUIRED');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await db.get('anomalies','a'))._pushedVersion).toBeUndefined();
+  });
+
+  it('a pending refresh cannot resurrect a logged-out session', async () => {
+    vi.stubGlobal('navigator', { onLine:true });
+    await db.setAuthTokens({ accessToken:'OLD',refreshToken:'REFRESH',expiresAt:Date.now()-1000 });
+    await db.setAuthProfileSnapshot({ authUserId:'u',appUserId:'u',displayName:'Fixture',role:'LUBRICADOR',active:true });
+    const { Auth } = loadAuthLogic(db);
+    let resolveRefresh;
+    let entered;
+    const started = new Promise(resolve => { entered=resolve; });
+    vi.stubGlobal('fetch', vi.fn(() => { entered(); return new Promise(resolve => { resolveRefresh=resolve; }); }));
+    const restore = Auth.restoreSession();
+    await started;
+    await Auth.signOut();
+    resolveRefresh({ ok:true,status:200,json:async()=>({ access_token:'NEW',refresh_token:'NEW-R',expires_in:600 }) });
+    await restore;
+    expect(Auth.isAuthenticated()).toBe(false);
+    expect(await db.getAuthTokens()).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('connection without Auth does not probe the operational table', async () => {
+    const { Sync } = loadSyncLogic(db,STORES_TEST,makeFakeAuth({ mode:'supabase',authenticated:false }));
+    vi.stubGlobal('fetch',vi.fn());
+    expect(await Sync.testConnection('https://fake.test','anon-test')).toEqual({ status:'AUTH_REQUIRED' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([401,403,500])('connection HTTP %s cannot claim authenticated remote success', async status => {
+    const { Sync } = loadSyncLogic(db,STORES_TEST,makeFakeAuth({ mode:'supabase' }));
+    vi.stubGlobal('fetch',vi.fn(async()=>({ ok:false,status })));
+    const result=await Sync.testConnection('https://fake.test','anon-test');
+    expect(result.status).toBe(status===500?'SERVER_ERROR':'AUTH_REQUIRED');
+    expect(result.network).toBe('NETWORK_OK');
+    expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer FAKE-USER-JWT');
+  });
+});
+
+describe('M) AUTH_MODE="legacy" (o Auth ausente) no permite transporte an?nimo', () => {
   it('con Auth en modo legacy, pushAll sigue subiendo normalmente vía PATCH/POST atómico', async () => {
     await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 }); // fila nueva
     const { Sync } = loadSyncLogic(db, STORES_TEST, makeFakeAuth({ mode: 'legacy' }));
@@ -71,19 +181,18 @@ describe('M) AUTH_MODE="legacy" (o Auth ausente) mantiene el comportamiento exac
     }));
 
     const res = await Sync.pushAll();
-    expect(res.ok).toBe(true);
-    expect(res.pushed).toBe(1);
-    expect(res.reason).toBeUndefined(); // nunca AUTH_REQUIRED en modo legacy
+    expect(res.reason).toBe('AUTH_REQUIRED');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('sin ningún Auth inyectado (undefined), pushAll se comporta igual (compatibilidad total con tests previos)', async () => {
+  it('sin ningún Auth inyectado (undefined), pushAll bloquea requests sin Auth', async () => {
     await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 });
-    const { Sync } = loadSyncLogic(db, STORES_TEST); // sin 3er argumento
+    const { Sync } = loadSyncLogic(db, STORES_TEST, null); // Auth realmente ausente
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [{ id: 'eq1' }] })));
 
     const res = await Sync.pushAll();
-    expect(res.ok).toBe(true);
-    expect(res.pushed).toBe(1);
+    expect(res.reason).toBe('AUTH_REQUIRED');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -300,7 +409,7 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
 });
 
 describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, NUNCA el anon key (fix P0-2)', () => {
-  it('A) legacy mode: Authorization sigue siendo el anon key (comportamiento actual, sin cambios)', async () => {
+  it('A) legacy mode: no despacha Authorization con anon key', async () => {
     await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 });
     const { Sync } = loadSyncLogic(db, STORES_TEST, makeFakeAuth({ mode: 'legacy' }));
     let seenHeaders = null;
@@ -309,8 +418,8 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
       return { ok: true, status: 200, json: async () => [{ id: 'eq1' }] };
     }));
     await Sync.pushAll();
-    expect(seenHeaders.apikey).toBe('anon-test');
-    expect(seenHeaders.Authorization).toBe('Bearer anon-test');
+    expect(seenHeaders).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('B/C) supabase + sesión Junior: apikey=anonKey, Authorization=Bearer USER_JWT, NUNCA Bearer anonKey', async () => {

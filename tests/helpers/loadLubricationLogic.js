@@ -186,7 +186,7 @@ export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, ['classifyAuthStatus']],
-  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
+  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'syncSessionEpoch', 'syncConfig', 'authenticatedSyncFetch', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
 ];
 
 /**
@@ -197,17 +197,22 @@ const SYNC_SOURCES = [
  * gate de Auth de P0-2 Etapa B1), ligado a un `DB`/`STORES` de prueba y,
  * opcionalmente, un `Auth` de prueba (Sync los lee como globales, igual
  * que en el navegador — aquí se pasan como parámetros de la función que
- * ejecuta el código real). Si se omite `fakeAuth`, `Auth` queda
- * `undefined` dentro del cuerpo — exactamente como en cualquier test que
- * no lo necesite, el gate de Auth nunca se activa (mismo comportamiento
- * que hoy). `nowISO`/`classifyAuthStatus` se extraen de db.js/auth.js
+ * ejecuta el código real). Por defecto usa una sesión Auth ficticia explícita
+ * para probar transporte/CAS. Pasar null simula Auth ausente y verifica
+ * el rechazo antes de la red. `nowISO`/`classifyAuthStatus` se extraen de db.js/auth.js
  * porque sync.js los usa como globales compartidos (mismo scope de
  * <script> en el navegador — ver index.html).
  */
-export function loadSyncLogic(fakeDB, fakeStores, fakeAuth) {
+export function loadSyncLogic(fakeDB, fakeStores, fakeAuth = {
+  isSupabaseMode: () => true,
+  isAuthenticated: () => true,
+  getSession: () => ({ accessToken: 'fixture-user-jwt' }),
+  getProfile: () => ({ role: 'ADMINISTRADOR' }),
+  restoreSession: async () => {},
+}) {
   const body = buildBodyFromSources(SYNC_SOURCES);
   const factory = new Function('DB', 'STORES', 'Auth', body);
-  return factory(fakeDB, fakeStores, fakeAuth);
+  return factory(fakeDB, fakeStores, fakeAuth || undefined);
 }
 
 const AUTH_SOURCES = [
