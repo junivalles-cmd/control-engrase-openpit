@@ -47,9 +47,10 @@ describe('UI-FULL-103 — Configuración: Registro de auditoría tras cualquier 
     expect(body).toMatch(/makeTablesResponsive\(\$\('#audit-log-panel'\)\)/);
   });
 
-  it('sigue llamando también para push-tokens (no se tocó ese caso, ya funcionaba)', () => {
+  it('no renderiza una tabla global de tokens push que exponía datos de otros usuarios', () => {
     const body = extractDeclaration(appSource, 'renderConfig');
-    expect(body).toMatch(/makeTablesResponsive\(\$\('#push-tokens-list'\)\)/);
+    expect(body).not.toContain('push-tokens-list');
+    expect(body).not.toContain('data-edit-notif-user');
   });
 });
 

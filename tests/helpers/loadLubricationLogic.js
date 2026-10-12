@@ -326,11 +326,7 @@ const DEVICE_IDENTITY_SOURCES = [
     // patrón de prueba (DB/App/window/Sync fakes, ver
     // tests/unit/push-token-scope.test.js).
     'saveOneSignalId', 'saveNotificationPreferences',
-    // Admin edita las preferencias de OTRA persona — comparte
-    // applyNotificationPreferencesToRows() con saveNotificationPreferences()
-    // de arriba, por eso se extraen juntas (ver
-    // tests/unit/notification-prefs-admin-edit.test.js).
-    'applyNotificationPreferencesToRows', 'saveNotificationPreferencesForUser',
+    'applyNotificationPreferencesToRows',
   ]],
 ];
 

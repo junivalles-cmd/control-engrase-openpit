@@ -644,6 +644,13 @@ const Sync = {
           if (row._pushedVersion === row.updatedAt || row._executionOperationId) continue;
           if (row._evidenceOperationId) continue;
           const role=Auth.getProfile?.()?.role;
+          // IndexedDB is shared by local sessions on this device. A dirty
+          // token belonging to a different account is preserved for its
+          // owner to retry after login, never dispatched with the new JWT.
+          if (store === 'push_tokens' && row.userId !== Auth.getProfile?.()?.appUserId) {
+            errors.push('PUSH_TOKEN_ACCOUNT_MISMATCH');
+            continue;
+          }
           if ((['equipment','settings'].includes(store) && role!=='ADMINISTRADOR') ||
             (['lubrication_plans','lubrication_points'].includes(store) && !['ADMINISTRADOR','PLANIFICADOR'].includes(role))) {
             errors.push('CATALOG_LEGACY_BLOCKED:'+store);continue;

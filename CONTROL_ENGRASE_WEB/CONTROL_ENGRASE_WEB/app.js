@@ -1083,64 +1083,6 @@ async function saveNotificationPreferences(prefs) {
   await applyNotificationPreferencesToRows(propios, prefs, App.currentUser.name);
 }
 
-// Un ADMINISTRADOR ajusta las preferencias de OTRA persona (Configuración →
-// Notificaciones push → "Editar" en la lista de dispositivos) — mismo
-// mecanismo de escritura que el autoservicio de arriba, apuntando a las
-// filas de la persona elegida en vez de App.currentUser. Nunca toca una
-// fila sin userId — solo las filas de PERSONA del userId recibido.
-async function saveNotificationPreferencesForUser(targetUserId, prefs) {
-  if (!App.currentUser || App.currentUser.role !== 'ADMINISTRADOR') throw new Error('Solo un administrador puede editar las notificaciones de otra persona.');
-  const ajenos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
-  if (!ajenos.length) throw new Error('Esa persona todavía no activó las notificaciones push en ningún dispositivo.');
-  await applyNotificationPreferencesToRows(ajenos, prefs, App.currentUser.name);
-}
-
-// Modal de edición — mismos 3 campos que el autoservicio "Mis
-// notificaciones" (renderConfig()), prellenados con la primera fila activa
-// de esa persona (misma convención que usa el propio autoservicio: las
-// preferencias son iguales en todas sus plataformas).
-async function openEditUserNotificationPrefsModal(targetUserId, targetUserName) {
-  const suyos = (await DB.allActive('push_tokens')).filter(t => t.userId === targetUserId);
-  const actual = suyos[0] || {};
-  openModal(`Notificaciones de ${esc(targetUserName)}`, `
-    <form id="edit-user-notif-form" class="form-grid">
-      <label>Turno en el que recibe avisos
-        <select name="notificationShift">
-          <option value="BOTH" ${actual.notificationShift === 'BOTH' || !actual.notificationShift ? 'selected' : ''}>Ambos turnos</option>
-          <option value="DAY" ${actual.notificationShift === 'DAY' ? 'selected' : ''}>Solo Turno Día</option>
-          <option value="NIGHT" ${actual.notificationShift === 'NIGHT' ? 'selected' : ''}>Solo Turno Noche</option>
-        </select>
-      </label>
-      <label>Disponibilidad
-        <select name="notificationAvailability">
-          <option value="AVAILABLE" ${actual.notificationAvailability !== 'RESTING' ? 'selected' : ''}>Disponible</option>
-          <option value="RESTING" ${actual.notificationAvailability === 'RESTING' ? 'selected' : ''}>De descanso (no recibir avisos operativos)</option>
-        </select>
-      </label>
-      <label class="retro-toggle span-2">
-        <input type="checkbox" name="receiveAllShifts" ${actual.receiveAllShifts ? 'checked' : ''}/>
-        <span>Recibir alertas de todos los turnos (ignora el filtro de turno para esta persona)</span>
-      </label>
-      <div class="modal-actions span-2">
-        <button type="submit" class="btn btn-accent">Guardar</button>
-      </div>
-    </form>`);
-  $('#edit-user-notif-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    try {
-      await saveNotificationPreferencesForUser(targetUserId, {
-        notificationShift: fd.notificationShift,
-        notificationAvailability: fd.notificationAvailability,
-        receiveAllShifts: fd.receiveAllShifts === 'on'
-      });
-      closeModal();
-      showInAppToast(`✓ Notificaciones de ${targetUserName} guardadas`);
-      renderConfig();
-    } catch (e) { alert(e.message || 'No se pudo guardar.'); }
-  });
-}
-
 // Contexto de elegibilidad de QUIEN tiene sesión en ESTE dispositivo ahora
 // mismo (lote arquitectura de notificaciones, cierre §1/§9/§13) — objeto
 // listo para isUserEligibleForNotification() (notification-routing.js).
@@ -13671,7 +13613,6 @@ async function renderConfig() {
         ${(('serviceWorker' in navigator && 'PushManager' in window) || window.Capacitor)
           ? `<button class="btn btn-accent" id="btn-enable-push">Activar en este dispositivo</button>` : ''}
         <div id="my-notif-prefs" style="margin-top:14px"></div>
-        <div id="push-tokens-list" style="margin-top:14px"></div>
         ` : `
         <p class="dim"><b>Notificaciones push no configuradas</b></p>
         <p class="dim">Esta función todavía no está disponible.</p>
@@ -13899,25 +13840,6 @@ async function renderConfig() {
     }
   }
 
-  // Solo existe cuando ONESIGNAL_APP_ID está configurado (ver markup arriba)
-  // — nunca se toca este bloque si la tarjeta muestra "no configuradas".
-  const pushTokensListEl = $('#push-tokens-list');
-  if (pushTokensListEl) {
-    // Filtra cualquier fila histórica sin userId (del viejo esquema de
-    // dispositivo->cuadrilla, ya eliminado — corrección arquitectónica
-    // 2026-10-02) — esta tabla es "Usuario/Rol", nunca tuvo sentido
-    // mostrar ahí filas sin una persona real detrás.
-    const pushTokens = (await DB.allActive('push_tokens')).filter(t => t.userId);
-    pushTokensListEl.innerHTML = pushTokens.length ? `
-      <table class="data-table">
-        <thead><tr><th>Usuario</th><th>Rol</th><th>Plataforma</th><th>Registrado</th><th></th></tr></thead>
-        <tbody>${pushTokens.map(t => `<tr><td>${esc(t.userName)}</td><td>${t.role}</td><td>${t.platform}</td><td>${fmtDate(t.updatedAt)}</td><td><button type="button" class="btn btn-sm" data-edit-notif-user="${esc(t.userId)}" data-edit-notif-name="${esc(t.userName)}">Editar</button></td></tr>`).join('')}</tbody>
-      </table>` : '<div class="empty-state">Nadie ha activado las notificaciones push todavía (o Firebase aún no está configurado).</div>';
-    makeTablesResponsive($('#push-tokens-list'));
-    $$('[data-edit-notif-user]', pushTokensListEl).forEach(btn => {
-      btn.addEventListener('click', () => openEditUserNotificationPrefsModal(btn.dataset.editNotifUser, btn.dataset.editNotifName));
-    });
-  }
   // UI-FULL-103: navigate() ya aplica makeTablesResponsive() en la primera entrada a
   // Configuración, pero renderConfig() se vuelve a llamar directamente (sin pasar por
   // navigate()) después de casi cualquier acción de esta pantalla (guardar ajustes,
