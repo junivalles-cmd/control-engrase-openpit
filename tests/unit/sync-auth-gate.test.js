@@ -85,7 +85,7 @@ describe('Pre-cutover: session changes during transport', () => {
       restoreSession: vi.fn(async () => { valid = true; token = 'RENEWED-JWT'; }),
     };
     await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
-    await db.put('anomalies', { id: 'a', active: true, updatedAt: T0 });
+    await db.put('lubrication_points', { id: 'a', active: true, updatedAt: T0 });
     const seen = [];
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
       seen.push(opts.headers);
@@ -94,7 +94,7 @@ describe('Pre-cutover: session changes during transport', () => {
         return [{ id: seen.length === 1 ? 'e' : 'a' }];
       } };
     }));
-    const { Sync } = loadSyncLogic(db, ['equipment','anomalies'], auth);
+    const { Sync } = loadSyncLogic(db, ['equipment','lubrication_points'], auth);
     expect((await Sync.pushAll()).pushed).toBe(2);
     expect(auth.restoreSession).toHaveBeenCalledTimes(1);
     expect(seen.map(h => h.Authorization)).toEqual(['Bearer FIRST-JWT','Bearer RENEWED-JWT']);
@@ -109,12 +109,12 @@ describe('Pre-cutover: session changes during transport', () => {
       restoreSession: async () => { throw new Error('refresh rejected'); },
     };
     await db.put('equipment', { id: 'e', active: true, updatedAt: T0 });
-    await db.put('anomalies', { id: 'a', active: true, updatedAt: T0 });
+    await db.put('lubrication_points', { id: 'a', active: true, updatedAt: T0 });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { valid = false; return [{ id:'e' }]; } })));
-    const { Sync } = loadSyncLogic(db, ['equipment','anomalies'], auth);
+    const { Sync } = loadSyncLogic(db, ['equipment','lubrication_points'], auth);
     expect((await Sync.pushAll()).reason).toBe('AUTH_REQUIRED');
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect((await db.get('anomalies','a'))._pushedVersion).toBeUndefined();
+    expect((await db.get('lubrication_points','a'))._pushedVersion).toBeUndefined();
   });
 
   it('logout during a request prevents subsequent requests and keeps the queue', async () => {
@@ -123,15 +123,15 @@ describe('Pre-cutover: session changes during transport', () => {
     const { Auth } = loadAuthLogic(db);
     await Auth.restoreSession();
     await db.put('equipment', { id:'e',active:true,updatedAt:T0 });
-    await db.put('anomalies', { id:'a',active:true,updatedAt:T0 });
+    await db.put('lubrication_points', { id:'a',active:true,updatedAt:T0 });
     vi.stubGlobal('fetch', vi.fn(async () => {
       await Auth.signOut();
       return { ok:true,status:200,json:async()=>[{ id:'e' }] };
     }));
-    const { Sync } = loadSyncLogic(db,['equipment','anomalies'],Auth);
+    const { Sync } = loadSyncLogic(db,['equipment','lubrication_points'],Auth);
     expect((await Sync.pushAll()).reason).toBe('AUTH_REQUIRED');
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect((await db.get('anomalies','a'))._pushedVersion).toBeUndefined();
+    expect((await db.get('lubrication_points','a'))._pushedVersion).toBeUndefined();
   });
 
   it('a pending refresh cannot resurrect a logged-out session', async () => {

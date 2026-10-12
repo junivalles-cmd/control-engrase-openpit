@@ -74,6 +74,101 @@ function sameExecutionVersion(left, right) {
 }
 
 const DB = {
+  async getEvidenceOperations() {
+    const rows = await DB.all('app_config');
+    return rows.filter(r => r.key.startsWith('evidence:')).map(r => r.value)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  },
+  updateEvidenceOperation(operation) {
+    return DB.put('app_config', { key: 'evidence:' + operation.id, value: operation });
+  },
+  blockEvidenceOperation(operation, canonicalRows = []) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', 'grease_validations'], 'readwrite');
+      transaction.objectStore('app_config').put({ key: 'evidence:' + operation.id, value: operation });
+      if (operation.rpc === 'resolve_grease_validation_conflict') {
+        const store = transaction.objectStore('grease_validations');
+        const read = store.getAll();
+        read.onsuccess = () => {
+          for (const row of read.result.filter(v => v._evidenceOperationId === operation.id)) {
+            const remote = canonicalRows.find(r => r.id === row.id);
+            if (remote) {
+              const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+              store.put({ ...payload, signatureLocal: row.signatureLocal, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+            } else store.put({ ...row, _validationResolutionConflict: true });
+          }
+        };
+      }
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  putEvidenceOperation(operation, changes = []) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(changes.map(c => c.store))], 'readwrite');
+      let remaining = changes.length, failure;
+      const save = () => {
+        for (const { store, row } of changes) transaction.objectStore(store).put({ ...row, _evidenceOperationId: operation.id });
+        transaction.objectStore('app_config').add({ key: 'evidence:' + operation.id, value: operation });
+      };
+      if (!remaining) save();
+      for (const change of changes) {
+        const read = transaction.objectStore(change.store).get(change.row.id);
+        read.onsuccess = () => {
+          if ((read.result?.updatedAt || null) !== change.expected) {
+            failure = new Error('LOCAL_VERSION_CONFLICT'); transaction.abort(); return;
+          }
+          if (--remaining === 0) save();
+        };
+      }
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(failure || transaction.error);
+    });
+  },
+  projectEvidenceOperation(operation, changes) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', 'anomalies'], 'readwrite');
+      const read = transaction.objectStore('app_config').get('evidence:' + operation.id);
+      read.onsuccess = () => {
+        if (!read.result || read.result.value.projected) return;
+        let remaining = changes.length;
+        const save = () => {
+          for (const { row } of changes) transaction.objectStore('anomalies').put({ ...row, _evidenceOperationId: operation.id });
+          transaction.objectStore('app_config').put({ key: 'evidence:' + operation.id, value: { ...read.result.value, projected: true } });
+        };
+        if (!remaining) save();
+        for (const change of changes) {
+          const current = transaction.objectStore('anomalies').get(change.row.id);
+          current.onsuccess = () => {
+            if ((current.result?.updatedAt || null) !== change.expected) { transaction.abort(); return; }
+            if (--remaining === 0) save();
+          };
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  finishEvidenceOperation(operation, rows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(rows.map(r => r.store))], 'readwrite');
+      for (const remote of rows) {
+        const store = transaction.objectStore(remote.store);
+        const read = store.get(remote.id);
+        read.onsuccess = () => {
+          const local = read.result;
+          if (local?._evidenceOperationId && local._evidenceOperationId !== operation.id) return;
+          if (local && !local._evidenceOperationId && local.updatedAt !== local._pushedVersion) return;
+          const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+          store.put({ ...payload, ...(local?.signatureLocal ? { signatureLocal: local.signatureLocal } : {}),
+            updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+        };
+      }
+      transaction.objectStore('app_config').delete('evidence:' + operation.id);
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
   getExecutionOperations() {
     return new Promise((resolve, reject) => {
       const request = tx('app_config').getAll();
@@ -98,6 +193,9 @@ const DB = {
             transaction.objectStore(store).put({ ...row, _executionOperationId: operation.id });
           }
           transaction.objectStore('app_config').add({ key: 'execution:' + operation.id, value: operation });
+          if (operation.automaticAnomaly) transaction.objectStore('app_config').add({
+            key: 'evidence:' + operation.automaticAnomaly.id, value: operation.automaticAnomaly,
+          });
         };
       }
       transaction.oncomplete = () => resolve(operation);
@@ -149,6 +247,8 @@ const DB = {
       const transaction = _db.transaction(['app_config', ...new Set(canonicalRows.map(r => r.store))], 'readwrite');
       const config = transaction.objectStore('app_config');
       config.delete('execution:' + operation.id);
+      const confirmedRecord = canonicalRows.find(r => r.store === 'lubrication_records');
+      if (confirmedRecord) config.put({ key: 'execution-ack:' + operation.id, value: confirmedRecord.updated_at });
       for (const remote of canonicalRows) {
         const canonicalPayload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
         const store = transaction.objectStore(remote.store);
@@ -174,6 +274,15 @@ const DB = {
       }
       const pendingRequest = config.getAll();
       pendingRequest.onsuccess = () => {
+        for (const entry of pendingRequest.result.filter(r => r.key.startsWith('evidence:'))) {
+          if (entry.value.recordDependency !== operation.params.p_record_id) continue;
+          if (entry.value.executionDependencyId && entry.value.executionDependencyId !== operation.id) continue;
+          const remote = canonicalRows.find(r => r.store === 'lubrication_records');
+          if (!remote) continue;
+          entry.value.params.p_expected = remote.updated_at;
+          entry.value.recordDependency = null;
+          config.put(entry);
+        }
         for (const entry of pendingRequest.result.filter(r => r.key.startsWith('execution:'))) {
           const next = entry.value;
           for (const [field, dependency] of Object.entries(next.dependencies || {})) {
@@ -196,7 +305,7 @@ const DB = {
     }
     if (!reason || !reason.trim()) return Promise.reject(new Error('El motivo es obligatorio.'));
     return new Promise((resolve, reject) => {
-      const transaction = _db.transaction('grease_validations', 'readwrite');
+      const transaction = _db.transaction(['grease_validations', 'app_config'], 'readwrite');
       const store = transaction.objectStore('grease_validations');
       let saved, failure;
       const request = store.getAll();
@@ -227,7 +336,12 @@ const DB = {
         if (Number.isFinite(previousTime) && Date.parse(saved.updatedAt) <= previousTime) {
           saved.updatedAt = new Date(previousTime + 1).toISOString();
         }
-        store.put(saved);
+        const operation = { id: resolution.id, actorId: actor.id, rpc: 'resolve_grease_validation_conflict',
+          status: 'PENDING', createdAt: nowISO(), resolutionVersions: versions, attemptedResolution: resolution,
+          params: { p_operation_id: resolution.id, p_record_id: recordId, p_id: officialId,
+            p_note: reason.trim(), p_expected_signatures: rows.map(v => ({ id: v.id, updatedAt: v._pushedVersion || v.updatedAt })) } };
+        store.put({ ...saved, _evidenceOperationId: operation.id });
+        transaction.objectStore('app_config').add({ key: 'evidence:' + operation.id, value: operation });
       };
       transaction.oncomplete = () => resolve(saved);
       transaction.onabort = () => reject(failure || transaction.error);
@@ -521,8 +635,58 @@ async function queueLubricationExecution({ action, record, recordBefore, equipme
         .filter(([, row]) => row).map(([store, row]) => ({ store, id: row.id, updatedAt: row.updatedAt || null })),
     ],
     localPhotos: params.p_photos, createdAt: nowISO() };
+  if (action === 'CREATE' && ((record.details || []).some(d => !d.done) || record.sinHorometro)) {
+    const evidenceId = 'auto:' + id;
+    operation.automaticAnomaly = { id: evidenceId, actorId, status: 'PENDING', createdAt: nowISO(),
+      rpc: 'repeat_anomaly_from_execution', recordDependency: record.id, executionDependencyId: id,
+      localRecordSnapshot: structuredClone(record),
+      params: { p_operation_id: evidenceId, p_record_id: record.id, p_crew_id: params.p_crew_id, p_expected: null } };
+  }
   await DB.putExecutionOperation(operation, changes);
   return operation;
+}
+
+async function queueAnomalyOperation(action, row, before = null, note = null, crewId = row.crewId) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false) throw new Error('AUTH_REQUIRED');
+  if (before?._evidenceOperationId) throw new Error('EVIDENCE_SYNC_REQUIRED');
+  if (before && before.updatedAt !== before._pushedVersion) throw new Error('EVIDENCE_LEGACY_REVIEW_REQUIRED');
+  const id = uid('aop');
+  const params = { p_operation_id: id, p_id: row.id };
+  if (action !== 'RETIRE') params.p_crew_id = crewId || null;
+  if (action !== 'REPORT') params.p_expected = before?._pushedVersion || null;
+  if (action === 'REPORT') params.p_equipment_id = row.equipmentId;
+  if (['REPORT', 'EDIT'].includes(action)) Object.assign(params, { p_component: row.component,
+    p_description: row.description, p_criticality: row.criticality, p_photos: [] });
+  if (action === 'EDIT') params.p_status = row.status;
+  if (action === 'CLOSE') params.p_note = note;
+  const operation = { id, actorId: actor.id, rpc: { REPORT: 'report_anomaly', EDIT: 'edit_anomaly',
+    CLOSE: 'close_anomaly', RETIRE: 'retire_anomaly' }[action], params, status: 'PENDING', createdAt: nowISO(),
+    localPhotos: ['REPORT', 'EDIT'].includes(action) ? row.photos || [] : null };
+  if (!operation.rpc) throw new Error('INVALID_OPERATION');
+  await DB.putEvidenceOperation(operation, [{ store: 'anomalies', row, expected: before?.updatedAt || null }]);
+  return operation;
+}
+
+async function queueGreaseValidation(validation, record) {
+  const actorId = App.currentUser?.id;
+  if (!actorId) throw new Error('AUTH_REQUIRED');
+  const operation = { id: validation.id, actorId, rpc: 'capture_grease_validation', status: 'PENDING', createdAt: nowISO(),
+    recordDependency: record._executionOperationId ? record.id : null, signatureLocal: validation.signatureLocal,
+    executionDependencyId: record._executionOperationId || null,
+    params: { p_operation_id: validation.id, p_id: validation.id, p_record_id: record.id,
+      p_crew_id: record.operationalSnapshot?.crewId || null, p_expected: record._pushedVersion || null,
+      p_signer_name: validation.signerName, p_signer_role: validation.signerRole,
+      p_note: validation.reason || null, p_signature_url: null } };
+  if (operation.executionDependencyId) {
+    const acknowledgment = await DB.get('app_config', 'execution-ack:' + operation.executionDependencyId);
+    if (acknowledgment) { operation.params.p_expected = acknowledgment.value; operation.recordDependency = null; }
+  }
+  if (!operation.executionDependencyId && (!record._pushedVersion || record.updatedAt !== record._pushedVersion)) {
+    throw new Error('RECORD_SYNC_REQUIRED');
+  }
+  await DB.putEvidenceOperation(operation, [{ store: 'grease_validations', expected: null,
+    row: { ...validation, recordVersion: operation.params.p_expected, recordSnapshot: structuredClone(record) } }]);
 }
 
 async function logAudit(action, detail, user) {

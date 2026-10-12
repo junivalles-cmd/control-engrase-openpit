@@ -71,7 +71,7 @@ const CUADRILLAS = [{ id: 'crew_volcan', name: 'Cuadrilla Volcán', locationId: 
 // eq_out_of_scope: otra ubicación, SIN assignment alguna -> bloqueado para el Lubricador de crew_volcan
 const EQUIPOS = [
   { id: 'eq_planned', code: 'EQ-PLANNED', shortCode: '', brand: 'Cat', model: '740B', locationId: 'loc_volcan', status: 'Operativo', hourmeter: 100, shiftId: 'shift_dia' },
-  { id: 'eq_assigned', code: 'EQ-ASSIGNED', shortCode: '', brand: 'Cat', model: '740B', locationId: 'loc_taller', status: 'Operativo', hourmeter: 100, shiftId: 'shift_dia' },
+  { id: 'eq_assigned', code: 'EQ-ASSIGNED', shortCode: '', brand: 'Cat', model: '740B', locationId: 'loc_volcan', status: 'Operativo', hourmeter: 100, shiftId: 'shift_dia' },
   { id: 'eq_none', code: 'EQ-NONE', shortCode: '', brand: 'Cat', model: '740B', locationId: 'loc_volcan', status: 'Operativo', hourmeter: 100, shiftId: 'shift_dia' },
   { id: 'eq_out_of_scope', code: 'EQ-OOS', shortCode: '', brand: 'Cat', model: '740B', locationId: 'loc_taller', status: 'Operativo', hourmeter: 100, shiftId: 'shift_dia' },
 ];
@@ -193,7 +193,7 @@ test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)'
   // de plan" (nunca "Registrar engrase ahora" directo, eso saltaría la
   // advertencia de cross-location), que reusa handleOutOfPlanEquipoSelected()
   // como ÚNICA fuente de verdad para la advertencia real.
-  test('E — Lubricador FUERA de su cuadrilla/ubicación y sin assignment: nunca "Registrar engrase ahora" directo, ofrece "Registrar fuera de plan" con advertencia', async ({ page }) => {
+  test('E — Lubricador fuera de cobertura: solo consulta, sin bypass fuera de plan', async ({ page }) => {
     await bootPage(page, { role: 'LUBRICADOR' });
     // eq_out_of_scope: otra ubicación (loc_taller) y SIN ninguna assignment
     // hacia crew_volcan -> canLubricadorExecuteEquipment() sigue siendo
@@ -201,23 +201,21 @@ test.describe('D/E — Lubricador, scope operativo (sin regresión de permisos)'
     await abrirQr(page, 'eq_out_of_scope');
     await expect(page.locator('#qr-info-register')).toHaveCount(0);
     await expect(page.locator('#qr-info-out-of-plan')).toHaveCount(0);
-    await expect(page.locator('.qr-info-alert', { hasText: 'pertenece a otra ubicación' })).toBeVisible();
+    await expect(page.locator('.qr-info-alert', { hasText: 'No tienes cobertura autorizada' })).toBeVisible();
     const botonCross = page.locator('#qr-info-cross-location');
-    await expect(botonCross).toBeVisible();
-    await expect(botonCross).toContainText('Registrar fuera de plan');
-    await botonCross.click();
+    await expect(botonCross).toHaveCount(0);
     // Nunca llama directo a startLubricadorGreaseFlow — pasa SIEMPRE por
     // handleOutOfPlanEquipoSelected() (la advertencia real).
     expect(await page.evaluate(() => window.__calls.startLubricadorGreaseFlow)).toHaveLength(0);
     const calls = await page.evaluate(() => window.__calls.handleOutOfPlanEquipoSelected);
-    expect(calls).toEqual([['eq_out_of_scope']]);
+    expect(calls).toEqual([]);
   });
 });
 
 test.describe('F/G/H — prioridad ASSIGNED > PLANNED > OUT_OF_PLAN vía QR (Lubricador, mismo dispositivo)', () => {
   test('F — equipo con assignment activa hacia mi cuadrilla: se ofrece "Registrar engrase ahora" (abre ASSIGNED), NUNCA "fuera de plan"', async ({ page }) => {
     await bootPage(page, { role: 'LUBRICADOR' });
-    await abrirQr(page, 'eq_assigned'); // fuera de ubicación normal, pero con assignment a crew_volcan
+    await abrirQr(page, 'eq_assigned'); // assignment dentro de cobertura autorizada
     await expect(page.locator('#qr-info-register')).toBeVisible();
     await expect(page.locator('#qr-info-out-of-plan')).toHaveCount(0);
   });
@@ -239,6 +237,26 @@ test.describe('F/G/H — prioridad ASSIGNED > PLANNED > OUT_OF_PLAN vía QR (Lub
     expect(calls).toHaveLength(1);
     expect(calls[0][1]).toEqual({ outOfPlan: true });
   });
+});
+
+for(const role of ['LUBRICADOR','SUPERVISOR'])test(`${role}: QR con assignment fuera de cobertura no ofrece ejecución`,async({page})=>{
+  await bootPage(page,{role});
+  await page.evaluate(()=>{
+    const original=DB.get;
+    DB.get=async(store,id)=>{const row=await original(store,id);return store==='equipment'&&id==='eq_assigned'?{...row,locationId:'loc_taller'}:row;};
+  });
+  await abrirQr(page,'eq_assigned');
+  for(const id of ['qr-info-register','qr-info-out-of-plan','qr-info-cross-location'])await expect(page.locator('#'+id)).toHaveCount(0);
+  await expect(page.locator('#qr-info-detail')).toBeVisible();
+  expect(await page.evaluate(()=>__calls.startLubricadorGreaseFlow)).toEqual([]);
+});
+
+test('QR sin cuadrilla autorizada no habilita un flujo fuera de plan',async({page})=>{
+  await bootPage(page,{role:'LUBRICADOR'});
+  await page.evaluate(()=>{const original=DB.allActive;DB.allActive=async store=>store==='cuadrillas'?[]:original(store);});
+  await abrirQr(page,'eq_planned');
+  for(const id of ['qr-info-register','qr-info-out-of-plan','qr-info-cross-location'])await expect(page.locator('#'+id)).toHaveCount(0);
+  await expect(page.locator('.qr-info-alert',{hasText:'No tienes cobertura autorizada'})).toBeVisible();
 });
 
 test.describe('I — cero doble registro', () => {

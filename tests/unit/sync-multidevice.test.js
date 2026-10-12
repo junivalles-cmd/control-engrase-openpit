@@ -181,18 +181,40 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('competing administrator resolutions PATCH the same anchor with CAS; the loser keeps its audit', async () => {
+it('competing administrator resolutions use the restricted RPC with CAS; loser retains its intent and alternatives', async () => {
   remote.seed([row('grease_validations', 'anchor', { lubricationRecordId: 'r', signerRole: 'OPERADOR' }, T0)]);
   for (const [db, official, time] of [[dbA, 'first', T1], [dbB, 'second', T2]]) {
     await db.put('grease_validations', { id: 'anchor', lubricationRecordId: 'r', signerRole: 'OPERADOR',
       updatedAt: time, _pushedVersion: T0,
       conflictResolution: { officialValidationId: official, signatureIds: ['anchor', 'other'], reason: 'review', resolvedById: official } });
   }
+  const auth = { isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'fixture-jwt'}),getProfile:()=>({appUserId:'admin'}) };
+  let remoteVersion=T0;
+  for (const [db,official] of [[dbA,'first'],[dbB,'second']]) {
+    await db.put('grease_validations',{id:'other',lubricationRecordId:'r',updatedAt:T0,_pushedVersion:T0});
+    let operations=[{id:official,actorId:'admin',rpc:'resolve_grease_validation_conflict',createdAt:T1,status:'PENDING',
+      resolutionVersions:[{id:'anchor'},{id:'other'}],params:{p_operation_id:official,p_record_id:'r',p_id:'other',p_note:'review',p_expected_signatures:[]}}];
+    const anchor=await db.get('grease_validations','anchor');await db.put('grease_validations',{...anchor,_evidenceOperationId:official});
+    db.getEvidenceOperations=async()=>operations;
+    db.updateEvidenceOperation=async op=>{operations=[op];};
+    db.blockEvidenceOperation=async op=>{operations=[op];const row=await db.get('grease_validations','anchor');await db.put('grease_validations',{...row,_validationResolutionConflict:true});};
+    db.finishEvidenceOperation=async(op,rows)=>{operations=[];const row=rows[0];await db.put('grease_validations',{...row.payload,updatedAt:row.updated_at,_pushedVersion:row.updated_at});};
+  }
+  ({Sync:SyncA}=loadSyncLogic(dbA,STORES_TEST,auth));({Sync:SyncB}=loadSyncLogic(dbB,STORES_TEST,auth));
+  vi.stubGlobal('fetch',vi.fn(async(url,opts)=>{
+    expect(String(url)).toContain('/rpc/resolve_grease_validation_conflict');
+    const input=JSON.parse(opts.body);
+    if(input.p_expected_signatures[0].updatedAt!==remoteVersion)return {ok:true,status:200,json:async()=>({status:'CONFLICT',code:'SIGNATURES_VERSION_CONFLICT'})};
+    remoteVersion=T1;
+    const payload=await dbA.get('grease_validations','anchor');
+    return {ok:true,status:200,json:async()=>({status:'APPLIED',rows:[{store:'grease_validations',id:'anchor',payload,updated_at:T1}]})};
+  }));
   const results = await Promise.all([SyncA.pushAll(), SyncB.pushAll()]);
   expect(results.map(r => r.pushed).reduce((a, b) => a + b, 0)).toBe(1);
-  expect((await dbB.getSyncConflicts())).toHaveLength(1);
+  expect((await dbB.getEvidenceOperations())[0].status).toBe('BLOCKED');
+  expect((await dbB.get('grease_validations','anchor'))._validationResolutionConflict).toBe(true);
   expect((await dbB.get('grease_validations', 'anchor')).conflictResolution.officialValidationId).toBe('second');
-  expect(remote.rows[0].payload.conflictResolution.officialValidationId).toBe('first');
+  expect((await dbA.get('grease_validations','anchor')).conflictResolution.officialValidationId).toBe('first');
 });
 
 /* ============================================================
@@ -491,14 +513,14 @@ describe('J) grease_validations con signatureLocal pendiente en conflicto -> nun
     await SyncB.pushAll();
 
     const pushA = await SyncA.pushAll();
-    expect(pushA.conflicts).toBe(1);
+    expect(pushA.errors).toContain('EVIDENCE_LEGACY_REVIEW_REQUIRED');
 
     const localAafter = await dbA.get('grease_validations', 'val1');
     expect(localAafter.signatureLocal).toBe('data:image/png;base64,AAAA'); // intacta, nunca pisada
 
     const conflicts = await dbA.getSyncConflicts();
     // El conflicto guarda SOLO versiones/ids/timestamps — nunca el payload.
-    expect(Object.keys(conflicts[0]).sort()).toEqual(['detectedAt', 'id', 'localVersion', 'remoteVersion', 'store']);
+    expect(conflicts).toHaveLength(0); // Quarantined before any generic upload or version probe.
   });
 });
 

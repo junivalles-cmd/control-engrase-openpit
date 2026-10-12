@@ -175,7 +175,7 @@ describe('BUG-CRÍTICO fix — un sync automático NO debe borrar el flujo de Re
   it('cancelar/cerrar el modal de validación sin firmar NO llama a onDone() (irAMisEngrasesTrasRegistrar) — la pantalla "Validar ahora/después" sigue activa, el flag no se toca ahí', () => {
     // onDone() solo se invoca tras un DB.put('grease_validations', ...) + closeModal()
     // exitosos — nunca desde un cierre/cancelación del modal.
-    const iPut = validationModalSrc.indexOf("await DB.put('grease_validations', validation);");
+    const iPut = validationModalSrc.indexOf('await queueGreaseValidation(validation, record);');
     const iOnDone = validationModalSrc.indexOf('if (onDone) onDone();');
     expect(iPut).toBeGreaterThan(-1);
     expect(iOnDone).toBeGreaterThan(-1);

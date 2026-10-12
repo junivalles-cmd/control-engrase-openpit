@@ -99,7 +99,7 @@ test('A — crew Volcán + equipo Volcán (misma ubicación): nunca muestra la a
   await expect(page.locator('#modal-title-text')).toContainText('ya tiene un engrase pendiente');
 });
 
-test('B — crew Volcán + equipo Mojón CON assignment activa hacia Volcán: ASSIGNED, nunca advertencia de cross-location', async ({ page }) => {
+test('B — assignment fuera de cobertura no autoriza ejecución', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
   const equipos = [{ id: 'e2', code: '20-5530', brand: 'Cat', model: 'D8T', status: 'Operativo', locationId: 'l_mojon' }];
@@ -111,8 +111,9 @@ test('B — crew Volcán + equipo Mojón CON assignment activa hacia Volcán: AS
   await page.evaluate(() => window.handleOutOfPlanEquipoSelected('e2'));
 
   expect(errors).toEqual([]);
-  await expect(page.locator('#modal-title-text')).toContainText('ya tiene un engrase pendiente');
-  await expect(page.locator('.modal-body')).toContainText('asignación manual activa');
+  await expect(page.locator('#modal-title-text')).toContainText('cobertura autorizada');
+  await expect(page.locator('#oop-cross-continue')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__calls.startLubricadorGreaseFlow)).toEqual([]);
 });
 
 test('C/D — crew Volcán + equipo Mojón SIN assignment: muestra la advertencia real; Cancelar no inicia ningún flujo', async ({ page }) => {
@@ -124,9 +125,9 @@ test('C/D — crew Volcán + equipo Mojón SIN assignment: muestra la advertenci
   await page.evaluate(() => window.handleOutOfPlanEquipoSelected('e3'));
 
   expect(errors).toEqual([]);
-  await expect(page.locator('#modal-title-text')).toContainText('Equipo fuera de tu ubicación');
-  await expect(page.locator('.modal-body')).toContainText('Mojón');
-  await expect(page.locator('.modal-body')).toContainText('Volcán');
+  await expect(page.locator('#modal-title-text')).toContainText('cobertura autorizada');
+  await expect(page.locator('.modal-body')).toContainText('Una asignación no amplía');
+  await expect(page.locator('#oop-cross-continue')).toHaveCount(0);
 
   await page.locator('#oop-cross-cancel').click();
   const calls = await page.evaluate(() => window.__calls.startLubricadorGreaseFlow);
@@ -134,19 +135,20 @@ test('C/D — crew Volcán + equipo Mojón SIN assignment: muestra la advertenci
   await expect(page.locator('#modal-overlay.open')).toHaveCount(0);
 });
 
-test('E — crew Volcán + equipo Mojón SIN assignment, Continuar: abre el flujo como OUT_OF_PLAN (nunca normal/ASSIGNED)', async ({ page }) => {
+test('E — fuera de cobertura no ofrece bypass OUT_OF_PLAN', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e));
   const equipos = [{ id: 'e4', code: '20-5532', brand: 'Komatsu', model: 'WA470', status: 'Operativo', locationId: 'l_mojon' }];
 
   await bootPage(page, { equipos });
   await page.evaluate(() => window.handleOutOfPlanEquipoSelected('e4'));
-  await page.locator('#oop-cross-continue').click();
+  await expect(page.locator('#oop-cross-continue')).toHaveCount(0);
+  await page.locator('#oop-cross-cancel').click();
 
   expect(errors).toEqual([]);
   await expect(page.locator('#modal-overlay.open')).toHaveCount(0); // se cierra antes de abrir el flujo
   const calls = await page.evaluate(() => window.__calls.startLubricadorGreaseFlow);
-  expect(calls).toEqual([['e4', { outOfPlan: true }]]);
+  expect(calls).toEqual([]);
 });
 
 test('F/G — equipment.locationId y crew.locationId NUNCA cambian, sin importar Cancelar o Continuar', async ({ page }) => {
@@ -156,11 +158,22 @@ test('F/G — equipment.locationId y crew.locationId NUNCA cambian, sin importar
 
   await bootPage(page, { equipos });
   await page.evaluate(() => window.handleOutOfPlanEquipoSelected('e5'));
-  await page.locator('#oop-cross-continue').click();
+  await page.locator('#oop-cross-cancel').click();
 
   expect(errors).toEqual([]);
   const equipoLocId = await page.evaluate(() => window.__mockData.equipment[0].locationId);
   const crewLocId = await page.evaluate(() => window.__mockData.cuadrillas[0].locationId);
   expect(equipoLocId).toBe('l_mojon'); // el equipo SIGUE siendo de Mojón
   expect(crewLocId).toBe('l_volcan'); // la cuadrilla SIGUE siendo de Volcán
+});
+
+test('sin cuadrilla o selección ambigua: no ofrece bypass y no inicia flujo',async({page})=>{
+  await bootPage(page,{equipos:[{id:'e1',locationId:'l_volcan',status:'Operativo'}]});
+  for(const crews of [[],[...CREW,{...CREW[0],id:'second'}]]){
+    await page.evaluate(crews=>{window.__mockData.cuadrillas=crews;},crews);
+    await page.evaluate(()=>handleOutOfPlanEquipoSelected('e1'));
+    await expect(page.locator('#oop-cross-continue')).toHaveCount(0);
+    expect(await page.evaluate(()=>__calls.startLubricadorGreaseFlow)).toEqual([]);
+    await page.locator('#oop-cross-cancel').click();
+  }
 });

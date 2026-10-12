@@ -4,7 +4,7 @@ import { readSource, extractDeclaration } from '../helpers/extractFromSource.js'
 import { APP_JS_PATH, DB_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const declarations = (file, names) => names.map(n => extractDeclaration(readSource(file), n)).join('\n');
-const db = declarations(DB_JS_PATH, ['DB_NAME', 'DB_VERSION', 'STORES', 'LOCAL_STORES', 'openDB', 'tx', 'DB', 'uid', 'nowISO', 'stamp', 'logAudit']);
+const db = declarations(DB_JS_PATH, ['DB_NAME', 'DB_VERSION', 'STORES', 'LOCAL_STORES', 'openDB', 'tx', 'DB', 'uid', 'nowISO', 'stamp', 'logAudit', 'queueAnomalyOperation']);
 const app = declarations(APP_JS_PATH, ['$', '$$', 'esc', 'fmtDate', 'openModal', 'closeModal', 'MAX_PHOTOS', 'photoFieldHTML', 'getPhotoFieldPhotos',
   'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'preloadPhotosIntoField', 'getSelectedPhotos', 'photosOf',
   'fileToCompressedDataURL', 'stampEquipmentEvidencePhoto', 'pickPhotoNative', 'openAnomalyForm']);
@@ -21,6 +21,8 @@ async function boot(page) {
   await page.addScriptTag({ content: `let _db = null; ${db}\n${app}
     const App = { currentUser: { id: 'fixture', name: 'Personal name must never appear', role: 'ADMINISTRADOR' }, route: 'other' };
     const ic = () => ''; const showInAppToast = () => {}; const wirePhotoThumbs = () => {};
+    const getCurrentOperationalScope = async () => ({ kind: 'GLOBAL', role: 'ADMINISTRADOR' });
+    const canLubricadorExecuteEquipment = () => true; // Scope guard is tested in evidence-gateway/operational-scope.
     window.testDB = DB; window.openAnomaly = openAnomalyForm;
     window.__texts = [];
     const originalText = CanvasRenderingContext2D.prototype.fillText;

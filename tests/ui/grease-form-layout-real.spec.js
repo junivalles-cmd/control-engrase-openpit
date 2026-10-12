@@ -117,9 +117,16 @@ async function bootPage(page, { equipos = [EQUIPO], plans = [PLAN], points = POI
       window.currentShiftId = () => 'shift_noche';
       // Persistence boundary mock; the real IDB transaction is tested in execution-gateway.spec.js.
       window.__executionOperations = [];
+      window.__evidenceOperations = [];
+      DB.getEvidenceOperations = async () => __evidenceOperations;
+      DB.projectEvidenceOperation = async (operation, changes) => {
+        for (const change of changes) await DB.put('anomalies', { ...change.row, _evidenceOperationId: operation.id });
+        operation.projected = true;
+      };
       DB.putExecutionOperation = async (operation, changes) => {
         for (const change of changes) await DB.put(change.store, { ...change.row, _executionOperationId: operation.id });
         __executionOperations.push(operation);
+        if (operation.automaticAnomaly) __evidenceOperations.push(operation.automaticAnomaly);
       };
       ${persistenceSrc}
       ${hourmeterSrc}

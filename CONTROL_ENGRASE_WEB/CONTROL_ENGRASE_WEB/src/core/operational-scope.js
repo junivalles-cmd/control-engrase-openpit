@@ -721,8 +721,9 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
    QR — permiso de ejecución fuera de scope (§AO)
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
-  if (!scope || scope.kind !== 'CREW_SCOPED') return true; // jefaturas: sin restricción aquí
-  if ((scope.allAuthorizedLocationIds || [scope.crewLocationId]).includes(equipo.locationId)) return true;
-  const pendientes = (assignments || []).filter(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING);
-  return pendientes.some(a => a.equipmentId === equipo.id && a.assignedCrewId === scope.crewId);
+  if (!scope || !equipo) return false;
+  if (scope.kind === 'GLOBAL') return ['ADMINISTRADOR', 'PLANIFICADOR'].includes(scope.role);
+  if (scope.kind !== 'CREW_SCOPED' || !scope.crewId) return false;
+  // Assignments select work; they never grant another location or resolve an ambiguous scope.
+  return !!equipo.locationId && (scope.allAuthorizedLocationIds || [scope.crewLocationId]).includes(equipo.locationId);
 }

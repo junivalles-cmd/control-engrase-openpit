@@ -258,10 +258,14 @@ const Sync = {
     const cfg = await syncConfig();
     if (!cfg || !cfg.url) return 0;
     let count = 0;
+    const representedEvidence = new Set();
     for (const store of STORES) {
       const rows = await DB.all(store);
       count += rows.filter(r => r._pushedVersion !== r.updatedAt).length;
+      rows.filter(r => r._pushedVersion !== r.updatedAt && r._evidenceOperationId)
+        .forEach(r => representedEvidence.add(r._evidenceOperationId));
     }
+    if (DB.getEvidenceOperations) count += (await DB.getEvidenceOperations()).filter(op => !representedEvidence.has(op.id)).length;
     return count;
   },
 
@@ -324,7 +328,7 @@ const Sync = {
   // configuración nueva), y devuelve una copia del registro con
   // `signatureUrl` en vez de base64 para el servidor; el registro local
   // conserva `signatureLocal` completo para verla sin internet.
-  async uploadSignatureIfNeeded(store, row, cfg) {
+  async uploadSignatureIfNeeded(store, row, cfg, persist = true) {
     const local = row.signatureLocal;
     if (typeof local !== 'string' || !local.startsWith('data:image')) return row;
 
@@ -336,16 +340,25 @@ const Sync = {
         method: 'POST',
         headers: {
           apikey: cfg.anonKey,
-          'Content-Type': blob.type || 'image/png', 'x-upsert': 'true'
+          'Content-Type': blob.type || 'image/png', 'x-upsert': 'false'
         },
         body: blob
       }, cfg);
-      if (!resp.ok) {
+      if (!resp.ok && [400, 409].includes(resp.status)) {
+        // A lost ACK may leave an identical object. Never accept a collision blindly.
+        const existing = await authenticatedSyncFetch(`${cfg.url}/storage/v1/object/authenticated/${PHOTO_BUCKET}/${path}`, {
+          headers: { apikey: cfg.anonKey },
+        }, cfg);
+        if (!existing.ok) return row;
+        const left = new Uint8Array(await blob.arrayBuffer());
+        const right = new Uint8Array(await existing.arrayBuffer());
+        if (left.length !== right.length || left.some((byte, i) => byte !== right[i])) throw new Error('SIGNATURE_BINARY_CONFLICT');
+      } else if (!resp.ok) {
         console.warn(`No se pudo subir la firma de ${store}/${row.id}: ${resp.status}`);
         return row; // se queda en base64; se reintenta en la próxima sincronización
       }
       const url = `${cfg.url}/storage/v1/object/public/${PHOTO_BUCKET}/${path}`;
-      if (!row.signatureUploaded) {
+      if (persist && !row.signatureUploaded) {
         row.signatureUploaded = true; // marca local, no cambia updatedAt (evita reintentos infinitos)
         await DB.put(store, row);
       }
@@ -354,6 +367,7 @@ const Sync = {
       return { ...row, signatureLocal: null, signatureUrl: url };
     } catch (e) {
       console.warn('No se pudo subir la firma a Storage', e);
+      if (e.message === 'SIGNATURE_BINARY_CONFLICT' || e.message === 'AUTH_REQUIRED') throw e;
       return row;
     }
   },
@@ -505,6 +519,91 @@ const Sync = {
     return result;
   },
 
+  async pushEvidenceOperations(cfg) {
+    const result = { pushed: 0, errors: [], authRequired: false };
+    const operations = DB.getEvidenceOperations ? await DB.getEvidenceOperations() : [];
+    for (const operation of operations) {
+      if (operation.status === 'BLOCKED') { result.errors.push(operation.code); continue; }
+      if (operation.actorId !== Auth.getProfile()?.appUserId) { result.errors.push('EVIDENCE_ACCOUNT_MISMATCH'); continue; }
+      try {
+        if (!operation.frozen) {
+          if (operation.recordDependency) {
+            const acknowledgment = operation.executionDependencyId && await DB.get('app_config', 'execution-ack:' + operation.executionDependencyId);
+            if (!acknowledgment) {
+              result.errors.push('EVIDENCE_EXECUTION_PENDING'); continue;
+            }
+            operation.params.p_expected = acknowledgment.value;
+            operation.recordDependency = null;
+          }
+          if (operation.rpc === 'resolve_grease_validation_conflict') {
+            const signatures = (await DB.all('grease_validations')).filter(v => v.active !== false &&
+              v.lubricationRecordId === operation.params.p_record_id).sort((a, b) => a.id.localeCompare(b.id));
+            if (signatures.some(v => v._evidenceOperationId && v._evidenceOperationId !== operation.id)) {
+              result.errors.push('EVIDENCE_SIGNATURE_PENDING'); continue;
+            }
+            if (JSON.stringify(signatures.map(v => v.id)) !== JSON.stringify(operation.resolutionVersions.map(v => v.id))) {
+              throw new Error('SIGNATURES_VERSION_CONFLICT');
+            }
+            operation.params.p_expected_signatures = signatures.map(v => ({ id: v.id, updatedAt: v._pushedVersion || v.updatedAt }));
+          }
+          if (operation.localPhotos) {
+            const prepared = await this.uploadPhotoIfNeeded('anomalies', { id: operation.id, photos: operation.localPhotos }, cfg, false);
+            if ((prepared.photos || []).some(p => typeof p !== 'string' || !p.startsWith('https://'))) throw new Error('EVIDENCE_UPLOAD_PENDING');
+            operation.params.p_photos = prepared.photos || [];
+          }
+          if (operation.signatureLocal) {
+            const prepared = await this.uploadSignatureIfNeeded('grease_validations', {
+              id: operation.params.p_id, signatureLocal: operation.signatureLocal,
+            }, cfg, false);
+            if (!prepared.signatureUrl) throw new Error('EVIDENCE_UPLOAD_PENDING');
+            operation.params.p_signature_url = prepared.signatureUrl;
+          }
+          operation.frozen = true;
+          await DB.updateEvidenceOperation(operation);
+        }
+        let canonicalConflictRows = [];
+        const response = await authenticatedSyncFetch(`${cfg.url}/rest/v1/rpc/${operation.rpc}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(operation.params),
+        }, cfg);
+        if (response.status === 401) { result.authRequired = true; break; }
+        if (!response.ok) {
+          operation.code = response.status === 403 ? 'AUTH_FORBIDDEN' : 'EVIDENCE_GATEWAY_UNAVAILABLE';
+          operation.status = response.status === 403 ? 'BLOCKED' : 'RETRYABLE';
+        } else {
+          const reply = await response.json();
+          if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) { result.authRequired = true; break; }
+          if (reply.status === 'APPLIED') {
+            const store = operation.rpc.includes('anomaly') ? 'anomalies' : 'grease_validations';
+            if (!Array.isArray(reply.rows) || reply.rows.some(r => r.store !== store || !r.id || r.payload?.id !== r.id ||
+              !Number.isFinite(Date.parse(r.updated_at)))) throw new Error('EVIDENCE_INVALID_RESPONSE');
+            if (operation.rpc !== 'repeat_anomaly_from_execution' && (reply.rows.length !== 1 ||
+              (operation.rpc !== 'resolve_grease_validation_conflict' && reply.rows[0].id !== operation.params.p_id))) {
+              throw new Error('EVIDENCE_INVALID_RESPONSE');
+            }
+            await DB.finishEvidenceOperation(operation, reply.rows); result.pushed++; continue;
+          }
+          operation.code = reply.code || 'EVIDENCE_REJECTED'; operation.status = 'BLOCKED';
+          if (operation.rpc === 'resolve_grease_validation_conflict' && operation.code === 'SIGNATURES_VERSION_CONFLICT' &&
+            Array.isArray(reply.rows) && reply.rows.every(r => r.store === 'grease_validations' && r.payload?.id === r.id &&
+              r.payload.lubricationRecordId === operation.params.p_record_id && Number.isFinite(Date.parse(r.updated_at)))) {
+            canonicalConflictRows = reply.rows;
+          }
+        }
+        if (operation.status === 'BLOCKED') await DB.blockEvidenceOperation(operation, canonicalConflictRows);
+        else await DB.updateEvidenceOperation(operation);
+        result.errors.push(operation.code);
+      } catch (error) {
+        if (error.message === 'AUTH_REQUIRED') { result.authRequired = true; break; }
+        operation.code = error.message; operation.status = ['SIGNATURES_VERSION_CONFLICT','SIGNATURE_BINARY_CONFLICT'].includes(error.message)
+          ? 'BLOCKED' : 'RETRYABLE';
+        if (operation.status === 'BLOCKED') await DB.blockEvidenceOperation(operation);
+        else await DB.updateEvidenceOperation(operation);
+        result.errors.push(operation.code);
+      }
+    }
+    return result;
+  },
+
   async pushAll() {
     const cfg = await syncConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
@@ -527,6 +626,10 @@ const Sync = {
     errors.push(...executionPush.errors);
     if (executionPush.authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: 0, authErrors: 0, authErrorDetails: [] };
 
+    const evidencePush = await this.pushEvidenceOperations(cfg);
+    pushed += evidencePush.pushed; errors.push(...evidencePush.errors);
+    if (evidencePush.authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: 0, authErrors: 0, authErrorDetails: [] };
+
     for (const store of STORES) {
       try {
         const rows = await DB.all(store);
@@ -539,6 +642,10 @@ const Sync = {
         const toPush = [];
         for (const row of rows) {
           if (row._pushedVersion === row.updatedAt || row._executionOperationId) continue;
+          if (['anomalies', 'grease_validations'].includes(store)) {
+            if (!row._evidenceOperationId) errors.push('EVIDENCE_LEGACY_REVIEW_REQUIRED');
+            continue; // Never POST/PATCH evidence as a fallback, including legacy dirty rows.
+          }
           if (store === 'grease_validations' && (await DB.get('lubrication_records', row.lubricationRecordId))?._executionOperationId) continue;
           toPush.push(row);
         }

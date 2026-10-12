@@ -25,13 +25,14 @@ const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 const APP_NAMES = ['$', '$$', 'esc', 'fmtDate', 'GREASE_UNIT', 'openModal', 'closeModal', 'validationBadgeHTML', 'openValidationModal', 'openValidationDetailModal', 'openValidationConflictModal', 'resolveEvidenceSrc', 'evidenceValueAttr'];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const fmtSrc = extractDeclaration(statusSource, 'fmt');
-const dbRealSrc = ['uid', 'nowISO', 'stamp'].map(n => extractDeclaration(dbSource, n)).join('\n\n');
+const dbRealSrc = ['uid', 'nowISO', 'stamp', 'queueGreaseValidation'].map(n => extractDeclaration(dbSource, n)).join('\n\n');
 const validationRealSrc = ['VALIDATION_STATUS', 'VALIDATION_BADGE', 'statusForSignerRole', 'validateValidationForm', 'findActiveValidations', 'hasValidationConflict', 'findActiveValidation', 'validationStatusFor'].map(n => extractDeclaration(validationSource, n)).join('\n\n');
 
 const EQUIPMENT = { id: 'e1', code: '45-77', brand: 'Caterpillar', model: '740B' };
 const RECORD = {
   id: 'greg_1', equipmentId: 'e1', date: '2026-09-24T18:13:00', shiftId: 'shift_dia',
   userName: 'Juan Pérez', hourmeter: 5200, qty: 1.5,
+  updatedAt: '2026-09-24T18:13:00Z', _pushedVersion: '2026-09-24T18:13:00Z',
 };
 
 async function bootPage(page) {
@@ -52,6 +53,10 @@ async function bootPage(page) {
           return obj;
         },
         get: async (store, id) => (window.__stores[store] || []).find(r => r.id === id) || null,
+      };
+
+      DB.putEvidenceOperation = async (operation, changes) => {
+        for (const change of changes) await DB.put(change.store, { ...change.row, _evidenceOperationId: operation.id });
       };
 
       ${dbRealSrc}

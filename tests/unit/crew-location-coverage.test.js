@@ -97,7 +97,7 @@ describe('Cobertura multiubicación: fuente única de alcance', () => {
   it('apoyo está autorizado; equipo ajeno necesita asignación o advertencia', () => {
     expect(canLubricadorExecuteEquipment({ scope: scope(), equipo: equipos[2], assignments: [] })).toBe(true);
     expect(canLubricadorExecuteEquipment({ scope: scope(), equipo: equipos[3], assignments: [] })).toBe(false);
-    expect(canLubricadorExecuteEquipment({ scope: scope(), equipo: equipos[3], assignments: [{ equipmentId: 'outside', assignedCrewId: '76-08', status: 'PENDING' }] })).toBe(true);
+    expect(canLubricadorExecuteEquipment({ scope: scope(), equipo: equipos[3], assignments: [{ equipmentId: 'outside', assignedCrewId: '76-08', status: 'PENDING' }] })).toBe(false);
   });
   it('rechaza principal duplicada, par repetido y rol inválido', () => {
     expect(() => validateCrewLocationCoverage('76-08', rows, cuadrillas, rows)).not.toThrow();

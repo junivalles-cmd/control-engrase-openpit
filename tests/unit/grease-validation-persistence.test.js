@@ -116,86 +116,22 @@ describe('Sync.uploadSignatureIfNeeded() — firma local (base64) → Storage �
   });
 });
 
-describe('Sync.pushAll() — payload exacto que llega a engrase_sync para grease_validations', () => {
-  it('sube la firma ANTES de armar el payload, y el payload trae signatureUrl (nunca el base64 grande)', async () => {
-    const validation = {
-      id: 'val_1', lubricationRecordId: 'greg_1', equipmentId: 'e1',
-      signerName: 'Juan Pérez', signerRole: 'OPERADOR',
-      signedAt: '2026-09-25T10:00:00.000Z',
-      signatureLocal: 'data:image/png;base64,AAAA', signatureUrl: null,
-      createdAt: '2026-09-25T10:00:00.000Z', updatedAt: '2026-09-25T10:00:00.000Z',
-      createdBy: 'Juan Pérez', active: true,
-    };
-    const db = makeFakeDB({ grease_validations: [validation] });
-    db.getConfig = async () => CFG;
-    const { Sync, PHOTO_BUCKET } = loadSyncLogic(db, ['grease_validations']);
-
-    let posted = null;
-    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
-      if (String(url).includes('/storage/v1/object/')) return { ok: true };
-      if (String(url).includes('/rest/v1/engrase_sync')) {
-        // val_1 nunca tuvo _pushedVersion -> pushAll la trata como CREATE:
-        // INSERT con ignore-duplicates+return=representation. Como el
-        // servidor fake no tiene nada todavía, se "inserta" y se devuelve.
-        const method = (opts && opts.method || 'GET').toUpperCase();
-        if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
-        posted = JSON.parse(opts.body);
-        return { ok: true, json: async () => posted.map(r => ({ id: r.id })) };
-      }
-      throw new Error('unexpected fetch: ' + url);
-    }));
-
-    const res = await Sync.pushAll();
-    expect(res.ok).toBe(true);
-    expect(posted).toHaveLength(1);
-    expect(posted[0].store).toBe('grease_validations');
-    expect(posted[0].payload.signatureUrl).toContain(`/storage/v1/object/public/${PHOTO_BUCKET}/`);
-    expect(posted[0].payload.signatureLocal).toBeNull(); // nunca el base64 en el payload jsonb
-    expect(posted[0].deleted).toBe(false);
-  });
-
-  it('soft delete: un grease_validations con active:false se envía con deleted:true (mismo patrón que el resto de stores)', async () => {
-    const validation = {
-      id: 'val_1', lubricationRecordId: 'greg_1', equipmentId: 'e1', signerRole: 'OPERADOR',
-      createdAt: '2026-09-25T10:00:00.000Z', updatedAt: '2026-09-25T11:00:00.000Z', active: false,
-    };
-    const db = makeFakeDB({ grease_validations: [validation] });
-    db.getConfig = async () => CFG;
+describe('Sync.pushAll() - restricted evidence transport', () => {
+  for (const active of [true, false]) it('quarantines unmarked legacy evidence, active=' + active, async () => {
+    const validation = { id: 'val_1', active, updatedAt: 'local', signatureLocal: 'data:image/png;base64,AAAA' };
+    const db = makeFakeDB({ grease_validations: [validation] }); db.getConfig = async () => CFG;
     const { Sync } = loadSyncLogic(db, ['grease_validations']);
-
-    let posted = null;
-    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
-      if (String(url).includes('/rest/v1/engrase_sync')) {
-        const method = (opts && opts.method || 'GET').toUpperCase();
-        if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
-        posted = JSON.parse(opts.body);
-        return { ok: true, json: async () => posted.map(r => ({ id: r.id })) };
-      }
-      throw new Error('unexpected fetch: ' + url);
-    }));
-
-    await Sync.pushAll();
-    expect(posted[0].deleted).toBe(true);
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const result = await Sync.pushAll();
+    expect(result.ok).toBe(false); expect(result.errors).toContain('EVIDENCE_LEGACY_REVIEW_REQUIRED');
+    expect(fetchMock).not.toHaveBeenCalled(); expect(await db.get('grease_validations','val_1')).toEqual(validation);
   });
-
-  it('marca _pushedVersion tras un push exitoso (no se vuelve a subir hasta el próximo cambio real)', async () => {
-    const validation = {
-      id: 'val_1', lubricationRecordId: 'greg_1', equipmentId: 'e1', signerRole: 'OPERADOR',
-      createdAt: '2026-09-25T10:00:00.000Z', updatedAt: '2026-09-25T10:00:00.000Z', active: true,
-    };
-    const db = makeFakeDB({ grease_validations: [validation] });
-    db.getConfig = async () => CFG;
-    const { Sync } = loadSyncLogic(db, ['grease_validations']);
-    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
-      const method = (opts && opts.method || 'GET').toUpperCase();
-      if (method !== 'POST') throw new Error('fila nueva esperaba POST, llegó ' + method);
-      const body = JSON.parse(opts.body);
-      return { ok: true, json: async () => body.map(r => ({ id: r.id })) };
-    }));
-
-    await Sync.pushAll();
-    const stored = await db.get('grease_validations', 'val_1');
-    expect(stored._pushedVersion).toBe('2026-09-25T10:00:00.000Z');
+  it('never marks an unacknowledged signature as pushed', async () => {
+    const validation = { id:'val_1', updatedAt:'local', _evidenceOperationId:'v1' };
+    const db = makeFakeDB({ grease_validations:[validation] }); db.getConfig=async()=>CFG;
+    const { Sync }=loadSyncLogic(db,['grease_validations']); const fetchMock=vi.fn(); vi.stubGlobal('fetch',fetchMock);
+    await Sync.pushAll();expect(fetchMock).not.toHaveBeenCalled();
+    expect((await db.get('grease_validations','val_1'))._pushedVersion).toBeUndefined();
   });
 });
 

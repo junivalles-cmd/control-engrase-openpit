@@ -349,9 +349,15 @@ describe('canLubricadorExecuteEquipment() (§AO) — CASO 12 del pedido', () => 
   it('equipo fuera de su ubicación, SIN assignment a su cuadrilla -> NO ejecutable', () => {
     expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments: [] })).toBe(false);
   });
-  it('equipo fuera de su ubicación, CON assignment PENDING a su cuadrilla -> sí ejecutable', () => {
+  it('equipo fuera de cobertura sigue denegado aunque tenga assignment PENDING', () => {
     const assignments = [{ equipmentId: 'e2', assignedCrewId: 'crew_mojon', status: ASSIGNMENT_STATUS.PENDING, active: true }];
-    expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments })).toBe(true);
+    expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e2', locationId: 'loc_volcan' }, assignments })).toBe(false);
+  });
+  it('scope ausente, sin cuadrilla o ambiguo no autoriza; VISOR global no ejecuta', () => {
+    for (const scope of [null, { kind: 'NO_CREW_ASSIGNED' }, { kind: 'NEEDS_CREW_SELECTION' },
+      { kind: 'CREW_SCOPED', crewId: null, crewLocationId: 'loc_mojon' }, { kind: 'GLOBAL', role: 'VISOR' }]) {
+      expect(canLubricadorExecuteEquipment({ scope, equipo: { id: 'e1', locationId: 'loc_mojon' } })).toBe(false);
+    }
   });
   it('jefaturas (scope GLOBAL) -> siempre pueden (esta función no restringe scope global)', () => {
     const scopeAdmin = resolveOperationalScope({ currentUser: { id: 'a1', role: 'ADMINISTRADOR' }, cuadrillas, shiftId: 'shift_dia' });

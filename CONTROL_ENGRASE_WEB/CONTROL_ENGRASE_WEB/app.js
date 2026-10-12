@@ -563,9 +563,8 @@ async function showEquipmentQrInfo(equipmentId) {
   const location_ = (await DB.allActive('locations')).find(l => l.id === equipment.locationId);
   const needsGrease = s.code === 'ROJO' || s.code === 'AMARILLO';
   const canRegisterRole = ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
-  // Un Lubricador solo puede ejecutar equipos de su cuadrilla/ubicación, o con
-  // una asignación manual activa hacia su cuadrilla (§AO) — nunca cualquier
-  // equipo del sistema solo por escanear su QR.
+  // Roles con cuadrilla ejecutan solo dentro de cobertura autorizada.
+  // Una asignación manual o un QR nunca amplían esa autorización.
   let outOfScopeMsg = '';
   let canRegister = canRegisterRole;
   // §21 del lote "engrase fuera de plan": A) assignment a mi cuadrilla ->
@@ -574,24 +573,17 @@ async function showEquipmentQrInfo(equipmentId) {
   // dentro de mi scope -> ofrece "Registrar fuera de plan" en vez del botón
   // normal, D) fuera de mi scope -> bloqueado (ya cubierto arriba/abajo).
   let ofreceFueraDePlan = false;
-  // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
-  // pedido): antes bloqueaba en silencio (solo outOfScopeMsg, sin botón)
-  // — ahora ofrece el mismo camino "fuera de plan con advertencia" que el
-  // picker de Mi Turno, reusando handleOutOfPlanEquipoSelected() (abajo)
-  // como ÚNICA fuente de verdad — nunca un segundo flujo que se salte la
-  // advertencia.
-  let ofreceCrossLocation = false;
-  if (canRegisterRole && App.currentUser.role === 'LUBRICADOR') {
+  // Scope denial is final here: QR never offers a second path around it.
+  if (canRegisterRole && ['LUBRICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
     canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
     if (!canRegister) {
-      outOfScopeMsg = '<div class="qr-info-alert">Este equipo pertenece a otra ubicación — puedes registrarlo como trabajo fuera de plan.</div>';
-      ofreceCrossLocation = true;
+      outOfScopeMsg = '<div class="qr-info-alert">No tienes cobertura autorizada para ejecutar este equipo. Puedes consultar su ficha.</div>';
     } else {
       const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
       const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
-      if (existing.kind === 'NONE') ofreceFueraDePlan = true;
+      if (existing.kind === 'NONE' && App.currentUser.role === 'LUBRICADOR') ofreceFueraDePlan = true;
     }
   }
 
@@ -618,7 +610,6 @@ async function showEquipmentQrInfo(equipmentId) {
       <div class="modal-actions" style="flex-wrap:wrap">
         ${canRegister && !ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-register">${ic("check")}Registrar engrase ahora</button>` : ''}
         ${ofreceFueraDePlan ? `<button class="btn btn-accent" id="qr-info-out-of-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
-        ${ofreceCrossLocation ? `<button class="btn btn-accent" id="qr-info-cross-location">${ic("plus")}Registrar fuera de plan</button>` : ''}
         <button class="btn" id="qr-info-detail">Ver ficha completa</button>
       </div>
     </div>
@@ -638,13 +629,6 @@ async function showEquipmentQrInfo(equipmentId) {
   $('#qr-info-out-of-plan')?.addEventListener('click', async () => {
     closeModal();
     await startLubricadorGreaseFlow(equipment.id, { outOfPlan: true });
-  });
-  // Nunca salta directo al formulario: handleOutOfPlanEquipoSelected()
-  // re-evalúa y muestra la advertencia real de cross-location (§17) —
-  // misma función, mismo criterio, que el picker de Mi Turno.
-  $('#qr-info-cross-location')?.addEventListener('click', async () => {
-    closeModal();
-    await handleOutOfPlanEquipoSelected(equipment.id);
   });
   $('#qr-info-detail')?.addEventListener('click', () => {
     closeModal();
@@ -4530,6 +4514,9 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName, cove
 async function startLubricadorGreaseFlow(equipmentId, options) {
   const scope = await getCurrentOperationalScope();
   const equipment = await DB.get('equipment', equipmentId);
+  if (!canLubricadorExecuteEquipment({ scope, equipo: equipment })) {
+    showInAppToast('No tienes cobertura autorizada para ejecutar este equipo.'); return;
+  }
   if (equipment && (scope.supportLocationIds || []).includes(equipment.locationId)) {
     const assignments = await DB.allActive('lubrication_assignments');
     const assigned = assignments.some(a => a.status === ASSIGNMENT_STATUS.PENDING && a.equipmentId === equipmentId && a.assignedCrewId === scope.crewId);
@@ -4613,45 +4600,20 @@ async function handleOutOfPlanEquipoSelected(equipmentId) {
   const equipo = await DB.get('equipment', equipmentId);
   if (!equipo || equipo.active === false) { alert('Este equipo no está activo, o este dispositivo aún no lo ha sincronizado.'); return; }
 
-  if (App.currentUser.role === 'LUBRICADOR') {
+  if (['LUBRICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
     const scope = await getCurrentOperationalScope();
     const { assignments } = await loadAssignmentContext();
+    if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
+      openModal('Equipo fuera de tu cobertura autorizada', `
+        <p>No tienes cobertura autorizada para ejecutar este equipo. Una asignación no amplía la cobertura.</p>
+        <div class="modal-actions"><button type="button" class="btn" id="oop-cross-cancel">Cerrar</button></div>
+      `);
+      $('#oop-cross-cancel').addEventListener('click', closeModal);
+      return;
+    }
     const assignedHere = assignments.some(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING && a.equipmentId === equipo.id && a.assignedCrewId === scope.crewId);
     if (scope.supportLocationIds && scope.supportLocationIds.includes(equipo.locationId) && !assignedHere) {
       startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
-      return;
-    }
-    if (!canLubricadorExecuteEquipment({ scope, equipo, assignments })) {
-      // Fix 2026-10-09 ("ENGRASE DE EQUIPO DE OTRA UBICACIÓN", §16/§17 del
-      // pedido): canLubricadorExecuteEquipment() ya devuelve true si existe
-      // una assignment activa hacia esta cuadrilla (§16 "SI: usar ASSIGNED
-      // existente") — llegar aquí con `false` significa que NO la hay, el
-      // único caso real que falta es "NO: permitir OUT_OF_PLAN" con
-      // advertencia, nunca bloquear en silencio como antes. equipment.
-      // locationId/crew.locationId/crew principal NUNCA se tocan (§20) —
-      // esto solo decide si se puede CONTINUAR, nada más.
-      const locationsCross = await DB.allActive('locations');
-      const equipoLocName = (locationsCross.find(l => l.id === equipo.locationId) || {}).name || 'otra ubicación';
-      const crewLocName = (scope.allAuthorizedLocationIds || [scope.crewLocationId]).map(id => (locationsCross.find(l => l.id === id) || {}).name).filter(Boolean).join(' + ') || 'sin ubicación autorizada';
-      openModal('Equipo fuera de tu ubicación', `
-        <p>Este equipo pertenece a <b>${esc(equipoLocName)}</b> y tu cuadrilla activa está en <b>${esc(crewLocName)}</b>.</p>
-        <p class="dim">Puedes registrar el engrase como trabajo fuera de plan.</p>
-        <div class="modal-actions">
-          <button type="button" class="btn" id="oop-cross-cancel">Cancelar</button>
-          <button type="button" class="btn btn-accent" id="oop-cross-continue">Continuar fuera de plan</button>
-        </div>
-      `);
-      $('#oop-cross-cancel').addEventListener('click', closeModal);
-      $('#oop-cross-continue').addEventListener('click', () => {
-        closeModal();
-        // Nunca pasa por findExistingWorkForEquipment() de abajo: ese
-        // detector asume trabajo de ESTA cuadrilla (plan/assignment
-        // propios) — un equipo ajeno sin assignment nunca es "normal" para
-        // mí, así que va DIRECTO a fuera de plan (§19: el motivo real
-        // "Apoyo a otra ubicación" lo elige la persona en el selector ya
-        // existente del formulario, mismo mecanismo, sin migración).
-        startLubricadorGreaseFlow(equipmentId, { outOfPlan: true });
-      });
       return;
     }
   }
@@ -7781,7 +7743,7 @@ async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans,
     const activeSignatures = record ? findActiveValidations(record.id, validations) : [];
     const canViewConflict = status === VALIDATION_STATUS.CONFLICTO && (PERMISSIONS[App.currentUser.role] || []).includes('historial');
     let canRegister = !record && ['pendiente', 'no_realizado'].includes(state.tipo) && ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
-    if (canRegister && App.currentUser.role === 'LUBRICADOR') {
+    if (canRegister && ['LUBRICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
       const scope = await getCurrentOperationalScope();
       const { assignments } = await loadAssignmentContext();
       canRegister = canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments });
@@ -9105,6 +9067,7 @@ async function startGreaseFlow(equipmentId, target, options) {
         await notificarEngraseRealizado(record, equipment);
       } catch (err) {
         console.warn('Seguimiento del engrase pendiente', err);
+        if (hayPuntosOAnomaliaHorometro(record)) showInAppToast('El engrase se guardó. La anomalía queda pendiente para reintentar la sincronización.');
       }
 
       showInAppToast(esRetro ? `✓ Engrase atrasado registrado — ${equipment.code}` : `✓ Engrase registrado — ${equipment.code}`);
@@ -9313,7 +9276,9 @@ async function renderAnomalias() {
         <td>${esc(a.status)}</td>
         <td class="col-secondary">${photoThumbsHTML(a, `${eq ? eq.code : ''} · ${esc(a.component)}`, photoSrcs[i])}</td>
         <td class="row-actions">
-          <button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>
+          ${['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ||
+            (App.currentUser.role === 'LUBRICADOR' && a.capturedByUserId === App.currentUser.id)
+            ? `<button class="btn btn-sm anom-edit" data-id="${a.id}">${ic("edit")}Editar</button>` : ''}
           ${a.status !== 'Cerrada' && ['ADMINISTRADOR', 'SUPERVISOR'].includes(App.currentUser.role) ? `<button class="btn btn-sm anom-close" data-id="${a.id}">${ic("check")}Cerrar</button>` : ''}
           ${App.currentUser.role === 'ADMINISTRADOR' ? `<button class="btn btn-sm btn-danger anom-delete" data-id="${a.id}">${ic("trash")}Eliminar</button>` : ''}
         </td>
@@ -9327,11 +9292,13 @@ async function renderAnomalias() {
     }));
     $$('.anom-close', c).forEach(b => b.addEventListener('click', async () => {
       const a = await DB.get('anomalies', b.dataset.id);
+      const before = structuredClone(a);
       const note = prompt('¿Cómo se resolvió? (queda guardado en el historial de la anomalía)', '');
       if (note === null) return; // canceló, no cierra nada
       a.status = 'Cerrada';
       a.resolutionNote = note.trim() || null;
-      await DB.put('anomalies', stamp(a, App.currentUser.name));
+      await queueAnomalyOperation('CLOSE', stamp(a, App.currentUser.name), before, note.trim() || null,
+        (await getCurrentOperationalScope()).crewId);
       await logAudit('ANOMALIA_CERRADA', `${a.id}${note ? ' — ' + note : ''}`, App.currentUser.name);
       showInAppToast('✓ Anomalía cerrada');
       Sync.fullSync();
@@ -9339,9 +9306,10 @@ async function renderAnomalias() {
     }));
     $$('.anom-delete', c).forEach(b => b.addEventListener('click', async () => {
       const a = await DB.get('anomalies', b.dataset.id);
+      const before = structuredClone(a);
       if (!confirm(`¿Eliminar esta anomalía (${esc(a.component)})? No se puede deshacer desde la app.`)) return;
       a.active = false;
-      await DB.put('anomalies', stamp(a, App.currentUser.name));
+      await queueAnomalyOperation('RETIRE', stamp(a, App.currentUser.name), before);
       await logAudit('ANOMALIA_ELIMINADA', `${esc(a.component)} · ${esc(a.description)}`, App.currentUser.name);
       showInAppToast('✓ Anomalía eliminada');
       Sync.fullSync(); // sube el cambio ya, para que los demás lo vean en segundos
@@ -9369,20 +9337,27 @@ async function renderAnomalias() {
 async function createAutoAnomalies(record, equipment) {
   if (!hayPuntosOAnomaliaHorometro(record)) return [];
 
+  const operation = (await DB.getEvidenceOperations()).find(op => op.id === 'auto:' + record.id);
+  if (!operation || operation.projected) return [];
+
   const abiertas = (await DB.allActive('anomalies'))
     .filter(a => a.equipmentId === equipment.id && a.status !== 'Cerrada');
 
   const { acciones, avisos } = evaluateAnomalyActions(record, equipment, abiertas);
 
+  const changes = [];
   for (const accion of acciones) {
     if (accion.tipo === 'actualizar') {
       const existente = abiertas.find(a => a.id === accion.anomaliaId);
+      const expected = existente.updatedAt || null;
       Object.assign(existente, accion.cambios);
-      await DB.put('anomalies', stamp(existente, App.currentUser.name));
+      changes.push({ expected, row: stamp(existente, App.currentUser.name) });
     } else {
-      await DB.put('anomalies', stamp({ id: uid('anom'), ...accion.anomalia }, record.userName));
+      changes.push({ expected: null, row: stamp({ id: 'auto:' + record.id + ':' + accion.anomalia.autoPointId,
+        ...accion.anomalia }, record.userName) });
     }
   }
+  await DB.projectEvidenceOperation(operation, changes);
 
   if (avisos.length) {
     await logAudit('ANOMALIAS_AUTOMATICAS', `${equipment.code}: ${avisos.join(', ')}`, App.currentUser.name);
@@ -9391,6 +9366,12 @@ async function createAutoAnomalies(record, equipment) {
 }
 
 async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
+  const actor = App.currentUser;
+  if (!['ADMINISTRADOR', 'SUPERVISOR', 'LUBRICADOR'].includes(actor?.role) ||
+      (existing && actor.role === 'LUBRICADOR' && existing.capturedByUserId !== actor.id)) {
+    showInAppToast('No tienes permiso para modificar esta anomalía.'); return;
+  }
+  const scope = await getCurrentOperationalScope();
   const equipos = await DB.allActive('equipment');
   const a = existing || { equipmentId, component: '', description: '', criticality: 'Alta', photo: null };
   const fixedEquipment = !existing && equipos.find(e => e.id === equipmentId);
@@ -9400,7 +9381,7 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
     <form id="anom-form" class="form-grid">
       <div class="span-2 val-info"><div class="val-info-row"><span>Registrado por</span><span>${esc(a.createdBy || App.currentUser.name)}</span></div><div class="val-info-row"><span>Fecha/hora</span><span>${fmtDate(a.createdAt || nowISO())}</span></div>${fixedEquipment ? `<div class="val-info-row"><span>Equipo</span><span>${esc(fixedEquipment.code)} · ${esc(fixedEquipment.brand)} ${esc(fixedEquipment.model)}</span></div>${fixedLocation ? `<div class="val-info-row"><span>Ubicación</span><span>${esc(fixedLocation.name)}</span></div>` : ''}` : ''}</div>
       <label ${fixedEquipment ? 'class="hidden"' : ''}>Equipo
-        <select name="equipmentId">
+        <select name="equipmentId" ${existing ? 'disabled' : ''}>
           ${equipos.map(e => `<option value="${e.id}" ${e.id === (a.equipmentId || equipmentId) ? 'selected' : ''}>${esc(e.code)} · ${esc(e.brand)} ${esc(e.model)}</option>`).join('')}
         </select>
       </label>
@@ -9428,12 +9409,19 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
   $('#anom-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const before = existing ? structuredClone(existing) : null;
+    if (existing) fd.equipmentId = existing.equipmentId;
+    const selectedEquipment = equipos.find(e => e.id === fd.equipmentId);
+    if (!canLubricadorExecuteEquipment({ scope, equipo: selectedEquipment })) {
+      showInAppToast('El equipo está fuera de tu cobertura autorizada.'); return;
+    }
     delete fd.photo;
     const newPhotos = await getSelectedPhotos(ev.target);
     fd.photos = newPhotos;
     fd.photo = newPhotos[0] || null; // compatibilidad con registros viejos
-    const anomaly = existing ? Object.assign(existing, fd) : stamp({ id: uid('anom'), status: 'Abierta', ...fd }, App.currentUser.name);
-    await DB.put('anomalies', stamp(anomaly, App.currentUser.name));
+    const anomaly = existing ? { ...existing, ...fd } : stamp({ id: uid('anom'), status: 'Abierta',
+      capturedByUserId: actor.id, crewId: scope.crewId || null, ...fd }, actor.name);
+    await queueAnomalyOperation(existing ? 'EDIT' : 'REPORT', stamp(anomaly, actor.name), before, null, scope.crewId);
     await logAudit(existing ? 'ANOMALIA_EDITADA' : 'ANOMALIA_CREADA', anomaly.component, App.currentUser.name);
     showInAppToast(existing ? '✓ Anomalía actualizada' : '✓ Anomalía reportada');
     closeModal();
@@ -9825,6 +9813,7 @@ function validationBadgeHTML(status) {
 // `onDone` se llama tras confirmar, para que quien abrió el modal decida
 // cómo refrescar su propia pantalla (Historial vs. Dashboard).
 async function openValidationModal(record, equipment, onDone) {
+  record = await DB.get('lubrication_records', record.id) || record;
   // Un operador externo puede firmar en el dispositivo del lubricador.
   // Solo una sesión que identifica al propio validador evita la captura manual.
   const sessionRole = App.currentUser?.role;
@@ -9934,7 +9923,7 @@ async function openValidationModal(record, equipment, onDone) {
       signatureUrl: null, // lo llena sync.js (uploadSignatureIfNeeded) cuando hay señal
       signerUserId: App.currentUser ? App.currentUser.id : undefined,
     }, App.currentUser ? App.currentUser.name : 'sistema');
-    await DB.put('grease_validations', validation);
+    await queueGreaseValidation(validation, record);
     closeModal();
     if (onDone) onDone();
   });

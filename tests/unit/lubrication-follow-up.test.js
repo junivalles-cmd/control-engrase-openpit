@@ -59,6 +59,17 @@ it('excludes all pending IDs and normalized codes, deduplicates informational ro
 });
 // startGreaseFlow transport is intentionally replaced by Phase 2A; its scheduling
 // and execution parity are covered by operational-scope / gateway / real-form tests.
-it.each(['handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'openLubricadorMatrizModal', 'getCurrentOperationalScope', 'loadAssignmentContext'])('%s unchanged', name => {
+it.each(['openLubricadorMatrizModal', 'getCurrentOperationalScope', 'loadAssignmentContext'])('%s unchanged', name => {
   expect(extractDeclaration(source, name)).toBe(extractDeclaration(baseline, name));
+});
+it.each(['handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow'])('%s denies ambiguous or outside scope before starting execution',async name=>{
+  const {canLubricadorExecuteEquipment}=loadOperationalScopeLogic();
+  for(const role of ['LUBRICADOR','SUPERVISOR']) for(const deniedScope of [null,{kind:'NO_CREW_ASSIGNED'},scope()]){
+    const messages=[];const data={...equipos[2],active:true};
+    const fn=new Function('App','DB','getCurrentOperationalScope','loadAssignmentContext','canLubricadorExecuteEquipment',
+      'openModal','$','closeModal','showInAppToast',`${extractDeclaration(source,name)};return ${name};`)(
+        {currentUser:{id:'U1',role}}, {get:async()=>data},async()=>deniedScope,async()=>({assignments:[]}),canLubricadorExecuteEquipment,
+        title=>messages.push(title),()=>({addEventListener:()=>{}}),()=>{},message=>messages.push(message));
+    await fn('E3');expect(messages).toHaveLength(1);expect(messages[0]).toMatch(/cobertura autorizada/);expect(data.locationId).toBe('O');
+  }
 });
