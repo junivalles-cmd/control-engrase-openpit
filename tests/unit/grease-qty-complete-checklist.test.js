@@ -33,8 +33,11 @@ describe('shouldBlockCompleteChecklistWithoutGrease() — RF-01', () => {
     expect(shouldBlockCompleteChecklistWithoutGrease(5, 2, 0)).toBe(false);
   });
 
-  it('equipo sin checklist configurado (0 puntos) + 0 lb -> permitido (nada que exigir, mismo criterio que computeExecutionCompleteness())', () => {
-    expect(shouldBlockCompleteChecklistWithoutGrease(0, 0, 0)).toBe(false);
+  it('equipo sin checklist configurado (0 puntos) + 0 lb -> bloqueado por regla explícita de Fase 2A', () => {
+    expect(shouldBlockCompleteChecklistWithoutGrease(0, 0, 0)).toBe(true);
+  });
+  it('equipo sin checklist + cantidad >0 -> permitido', () => {
+    expect(shouldBlockCompleteChecklistWithoutGrease(0, 0, 0.1)).toBe(false);
   });
 
   it('D) SKIP ("No se pudo ejecutar") nunca llama a esta función — buildNoExecutionRecord() es un flujo aparte que no pasa por #grease-form', () => {

@@ -54,7 +54,7 @@ const appNames = [
   'confirmHourmeterChange', 'completeGreaseAssignmentForOccurrence', 'createAutoAnomalies',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
-const persistenceSrc = ['uid', 'nowISO', 'stamp'].map(n => extractDeclaration(readSource(DB_JS_PATH), n)).join('\n');
+const persistenceSrc = ['uid', 'nowISO', 'stamp', 'queueLubricationExecution'].map(n => extractDeclaration(readSource(DB_JS_PATH), n)).join('\n');
 const hourmeterSrc = extractDeclaration(readSource(HOURMETER_JS_PATH), 'validateHourmeterChange');
 const anomaliesSrc = extractDeclaration(readSource(ANOMALIES_JS_PATH), 'CRITICIDAD_POR_MOTIVO') + '\n' +
   ['hayPuntosOAnomaliaHorometro', 'evaluateAnomalyActions'].map(n => extractDeclaration(readSource(ANOMALY_ACTIONS_JS_PATH), n)).join('\n');
@@ -115,6 +115,12 @@ async function bootPage(page, { equipos = [EQUIPO], plans = [PLAN], points = POI
         delete: async (store, id) => { window.__mockData[store] = (window.__mockData[store] || []).filter(row => row.id !== id); },
       };
       window.currentShiftId = () => 'shift_noche';
+      // Persistence boundary mock; the real IDB transaction is tested in execution-gateway.spec.js.
+      window.__executionOperations = [];
+      DB.putExecutionOperation = async (operation, changes) => {
+        for (const change of changes) await DB.put(change.store, { ...change.row, _executionOperationId: operation.id });
+        __executionOperations.push(operation);
+      };
       ${persistenceSrc}
       ${hourmeterSrc}
       ${anomaliesSrc}
@@ -179,6 +185,17 @@ test('submit real: COMPLETE con cantidad cero bloquea; PARTIAL conserva punto pe
   expect(record.operationalSnapshot.executionCompleteness).toBe('PARTIAL');
   expect(record.details[0]).toMatchObject({ done: false, reason: 'Grasera dañada' });
   expect(await page.evaluate(() => __mockData.anomalies)).toHaveLength(1);
+});
+test('sin puntos: COMPLETE 0 lb bloquea con mensaje; cantidad positiva guarda', async ({ page }) => {
+  await bootPage(page, { points: [] });
+  await page.evaluate(() => { window.__alerts = []; window.alert = message => __alerts.push(message); return startGreaseFlow('e1', document.getElementById('reg-flow-area')); });
+  await page.locator('.btn-grease-submit').click();
+  expect(await page.evaluate(() => __mockData.lubrication_records)).toHaveLength(0);
+  expect(await page.evaluate(() => __alerts)).toContain('Un engrase completo debe registrar una cantidad de grasa mayor a 0 lb.');
+  await page.locator('input[name="qty"]').fill('0.1');
+  await page.locator('.btn-grease-submit').click();
+  await expect(page.locator('#grease-validate-now-btn')).toBeVisible();
+  expect(await page.evaluate(() => __mockData.lubrication_records[0].qty)).toBe(0.1);
 });
 
 test('submit real: assignment mantiene prioridad sobre Fuera de plan y no cambia ubicación', async ({ page }) => {

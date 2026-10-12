@@ -271,7 +271,7 @@ const Sync = {
   // Sube a Supabase Storage cada foto que todavía esté en base64, y devuelve una
   // copia del registro con LINKS en vez de imágenes — así la base de datos no se
   // llena. El registro local conserva las imágenes completas para verlas sin internet.
-  async uploadPhotoIfNeeded(store, row, cfg) {
+  async uploadPhotoIfNeeded(store, row, cfg, persistMetadata = true) {
     const localPhotos = Array.isArray(row.photos) && row.photos.length
       ? row.photos
       : (row.photo ? [row.photo] : []);
@@ -310,7 +310,7 @@ const Sync = {
       }
     }
 
-    if (algunaSubida && !row.photoUploaded) {
+    if (persistMetadata && algunaSubida && !row.photoUploaded) {
       row.photoUploaded = true; // marca local, no cambia updatedAt (evita reintentos infinitos)
       await DB.put(store, row);
     }
@@ -428,6 +428,83 @@ const Sync = {
     }
   },
 
+  async pushExecutionOperations(cfg) {
+    const result = { pushed: 0, errors: [], authRequired: false };
+    const operations = DB.getExecutionOperations ? await DB.getExecutionOperations() : [];
+    for (const pending of operations) {
+      // A preceding acknowledgment can resolve this operation's CAS dependencies.
+      const operation = (await DB.getExecutionOperations()).find(r => r.id === pending.id);
+      if (!operation) continue;
+      if (operation.status === 'BLOCKED') { result.errors.push(operation.code); continue; }
+      if (Object.keys(operation.dependencies || {}).length) { result.errors.push('EXECUTION_DEPENDENCY_PENDING'); continue; }
+      if (operation.actorId !== Auth.getProfile()?.appUserId) { result.errors.push('EXECUTION_ACCOUNT_MISMATCH'); continue; }
+      try {
+        if (!operation.frozen) {
+          const prepared = await this.uploadPhotoIfNeeded('lubrication_records', {
+            // Edits cannot overwrite objects referenced by the previous (possibly signed) version.
+            id: operation.params.p_action === 'EDIT' ? operation.id : operation.params.p_record_id,
+            photos: operation.localPhotos,
+          }, cfg, false);
+          if ((prepared.photos || []).some(p => typeof p !== 'string' || p.startsWith('data:'))) {
+            throw new Error('EVIDENCE_UPLOAD_PENDING');
+          }
+          operation.params.p_photos = prepared.photos || [];
+          // Persist the exact retry request BEFORE dispatch; canonical receipts compare it.
+          operation.frozen = true;
+          await DB.updateExecutionOperation(operation);
+        }
+        const response = await authenticatedSyncFetch(`${cfg.url}/rest/v1/rpc/lubrication_execution`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(operation.params),
+        }, cfg);
+        if (response.status === 401) { result.authRequired = true; break; }
+        if (!response.ok) {
+          operation.code = response.status === 403 ? 'AUTH_FORBIDDEN' : 'GATEWAY_UNAVAILABLE';
+          operation.status = response.status === 403 ? 'BLOCKED' : 'RETRYABLE';
+          await DB.updateExecutionOperation(operation);
+          result.errors.push(operation.code); continue;
+        }
+        const reply = await response.json();
+        if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) {
+          result.authRequired = true; break;
+        }
+        const expectedIds = { lubrication_records: operation.params.p_record_id, equipment: operation.params.p_equipment_id,
+          lubrication_plans: operation.params.p_plan_id,
+          lubrication_assignments: operation.params.p_action === 'CREATE' ? operation.params.p_assignment_id : null };
+        const validRows = Array.isArray(reply.rows) && reply.rows.every(row => expectedIds[row.store] && row.id === expectedIds[row.store]
+          && row.payload?.id === row.id && Number.isFinite(Date.parse(row.updated_at)));
+        if (reply.status !== 'APPLIED') {
+          operation.status = 'BLOCKED';
+          operation.code = reply.code || reply.status || 'GATEWAY_REJECTED';
+          await DB.updateExecutionOperation(operation);
+          if (operation.code === 'SIGNED_RECORD_LOCKED' && typeof showInAppToast === 'function') {
+            showInAppToast('Este engrase tiene firmas asociadas y no puede editarse directamente.');
+          }
+          if (operation.code === 'SIGNED_RECORD_LOCKED' && validRows && reply.rows.some(row => row.store === 'lubrication_records')) {
+            await DB.blockSignedExecution(operation, reply.rows);
+          }
+          result.errors.push(operation.code); continue;
+        }
+        // Guard again before local acknowledgment: logout cannot consume another account's intent.
+        if (cfg._authEpoch !== syncSessionEpoch() || !Auth.isAuthenticated()) {
+          result.authRequired = true; break;
+        }
+        if (!validRows || Object.keys(operation.localVersions).some(store => !reply.rows.some(row => row.store === store))) {
+          throw new Error('GATEWAY_INVALID_RESPONSE');
+        }
+        await DB.finishExecutionOperation(operation, reply.rows);
+        result.pushed++;
+      } catch (error) {
+        if (error.message === 'AUTH_REQUIRED') { result.authRequired = true; break; }
+        operation.status = operation.code === 'SIGNED_RECORD_LOCKED' ? 'BLOCKED' : 'RETRYABLE';
+        operation.code = error.message || 'GATEWAY_UNAVAILABLE';
+        await DB.updateExecutionOperation(operation);
+        result.errors.push(error.message || 'GATEWAY_UNAVAILABLE');
+      }
+    }
+    return result;
+  },
+
   async pushAll() {
     const cfg = await syncConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) return { ok: false, reason: 'not_configured' };
@@ -445,6 +522,11 @@ const Sync = {
     const authErrors = [];
     let authRequired = false;
 
+    const executionPush = await this.pushExecutionOperations(cfg);
+    pushed += executionPush.pushed;
+    errors.push(...executionPush.errors);
+    if (executionPush.authRequired) return { ok: false, reason: 'AUTH_REQUIRED', pushed, errors, conflicts: 0, authErrors: 0, authErrorDetails: [] };
+
     for (const store of STORES) {
       try {
         const rows = await DB.all(store);
@@ -454,7 +536,12 @@ const Sync = {
         // cada registro se marca individualmente al confirmarse: se sube si su versión
         // actual (updatedAt) todavía no coincide con la última versión confirmada por
         // el servidor (_pushedVersion) — no depende de comparar relojes entre equipos.
-        const toPush = rows.filter(r => r._pushedVersion !== r.updatedAt);
+        const toPush = [];
+        for (const row of rows) {
+          if (row._pushedVersion === row.updatedAt || row._executionOperationId) continue;
+          if (store === 'grease_validations' && (await DB.get('lubrication_records', row.lubricationRecordId))?._executionOperationId) continue;
+          toPush.push(row);
+        }
         if (!toPush.length) continue;
 
         // CREATE: nunca antes confirmadas por el servidor. INSERT protegido

@@ -30,8 +30,8 @@ const bootLubricadorSrc = extractDeclaration(appSource, 'bootLubricador');
 const logoutSrc = extractDeclaration(appSource, 'logout');
 
 describe('Finalizar engrase — guarda SIEMPRE el lubrication_record primero, la validación es opcional en el momento', () => {
-  it('el record se crea y se persiste (DB.put lubrication_records) ANTES de ofrecer Validar ahora/después', () => {
-    const iPut = flowSrc.indexOf("await DB.put('lubrication_records', record);");
+  it('el record y su intent RPC se persisten atómicamente ANTES de ofrecer Validar ahora/después', () => {
+    const iPut = flowSrc.indexOf("await queueLubricationExecution({ action: 'CREATE', record,");
     const iChoice = flowSrc.indexOf('grease-validate-now-btn');
     expect(iPut).toBeGreaterThan(-1);
     expect(iChoice).toBeGreaterThan(-1);
@@ -43,7 +43,8 @@ describe('Finalizar engrase — guarda SIEMPRE el lubrication_record primero, la
     expect(flowSrc).toContain('openValidationModal(record, equipment, irAMisEngrasesTrasRegistrar);');
     // No hay un segundo `uid('greg')` ni un segundo DB.put('lubrication_records' en esta función
     expect(flowSrc.match(/uid\('greg'\)/g) || []).toHaveLength(1);
-    expect(flowSrc.match(/DB\.put\('lubrication_records'/g) || []).toHaveLength(1);
+    expect(flowSrc.match(/queueLubricationExecution\(/g) || []).toHaveLength(1);
+    expect(flowSrc).not.toContain("DB.put('lubrication_records'");
   });
 
   it('"Validar después" solo navega (a Mis Engrases, ver irAMisEngrasesTrasRegistrar) — NO crea ningún grease_validation ni otro registro', () => {
@@ -153,8 +154,8 @@ describe('BUG-CRÍTICO fix — un sync automático NO debe borrar el flujo de Re
     // catch de guardado fallido de un engrase en sí.
     // Ancla en el comentario único de ESTE catch (no el de openNoExecutionForm,
     // que también usa "catch (err)" pero para un error de validación distinto).
-    const iCatch = flowSrc.indexOf('Algo falló a mitad del guardado');
-    const iReturn = flowSrc.indexOf('return; // el borrador NO se descarta');
+    const iCatch = flowSrc.indexOf("console.error('Fallo al guardar el engrase', err);");
+    const iReturn = flowSrc.indexOf('return;', iCatch);
     expect(iCatch).toBeGreaterThan(-1);
     expect(iReturn).toBeGreaterThan(iCatch);
     const catchBlock = flowSrc.slice(iCatch, iReturn);

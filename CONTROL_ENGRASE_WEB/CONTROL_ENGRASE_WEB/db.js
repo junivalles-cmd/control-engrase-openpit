@@ -54,7 +54,142 @@ function tx(storeName, mode = 'readonly') {
   return _db.transaction(storeName, mode).objectStore(storeName);
 }
 
+function orderExecutionOperations(operations) {
+  const remaining = [...operations].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const ordered = [];
+  while (remaining.length) {
+    const ids = new Set(remaining.map(op => op.id));
+    const index = remaining.findIndex(op => Object.values(op.dependencies || {}).every(dep => !ids.has(dep.operationId)));
+    if (index < 0) return [...ordered, ...remaining]; // Cycle remains pending, never dispatched blindly.
+    ordered.push(...remaining.splice(index, 1));
+  }
+  return ordered;
+}
+
+function sameExecutionVersion(left, right) {
+  const normalize = value => typeof value === 'string' ? value.replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/,
+    (_, seconds, fraction) => `${seconds}.${(fraction || '').padEnd(6, '0')}Z`) : value;
+  return normalize(left) === normalize(right);
+}
+
 const DB = {
+  getExecutionOperations() {
+    return new Promise((resolve, reject) => {
+      const request = tx('app_config').getAll();
+      request.onsuccess = () => resolve(orderExecutionOperations(request.result.filter(r => r.key.startsWith('execution:')).map(r => r.value)));
+      request.onerror = () => reject(request.error);
+    });
+  },
+  // Business rows and their restricted transport intent commit together locally.
+  putExecutionOperation(operation, changes) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set([...changes, ...operation.localBases].map(c => c.store))], 'readwrite');
+      let remaining = operation.localBases.length;
+      let failure;
+      for (const base of operation.localBases) {
+        const request = transaction.objectStore(base.store).get(base.id);
+        request.onsuccess = () => {
+          if ((request.result?.updatedAt || null) !== base.updatedAt) {
+            failure = new Error('LOCAL_VERSION_CONFLICT'); transaction.abort(); return;
+          }
+          if (--remaining !== 0) return;
+          for (const { store, row } of changes) {
+            transaction.objectStore(store).put({ ...row, _executionOperationId: operation.id });
+          }
+          transaction.objectStore('app_config').add({ key: 'execution:' + operation.id, value: operation });
+        };
+      }
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(failure || transaction.error);
+      transaction.onerror = () => reject(failure || transaction.error || new Error('LOCAL_VERSION_CONFLICT'));
+    });
+  },
+  updateExecutionOperation(operation) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction('app_config', 'readwrite');
+      transaction.objectStore('app_config').put({ key: 'execution:' + operation.id, value: operation });
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  blockSignedExecution(operation, canonicalRows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(canonicalRows.map(r => r.store))], 'readwrite');
+      const config = transaction.objectStore('app_config');
+      const request = config.getAll();
+      request.onsuccess = () => {
+        const blockedIds = new Set();
+        for (const entry of request.result.filter(r => r.key.startsWith('execution:'))) {
+          const op = entry.value;
+          if (op.params.p_record_id !== operation.params.p_record_id || op.params.p_action !== 'EDIT') continue;
+          op.status = 'BLOCKED'; op.code = 'SIGNED_RECORD_LOCKED';
+          blockedIds.add(op.id); config.put(entry);
+        }
+        for (const remote of canonicalRows) {
+          const store = transaction.objectStore(remote.store);
+          const read = store.get(remote.id);
+          read.onsuccess = () => {
+            if (!blockedIds.has(read.result?._executionOperationId)) return;
+            const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+            const original = operation.originalRecord;
+            const photos = remote.store === 'lubrication_records' && original && sameExecutionVersion(original._pushedVersion, remote.updated_at)
+              ? { photos: original.photos, photo: original.photo } : {};
+            store.put({ ...payload, ...photos, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+          };
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error || new Error('SIGNED_RECORD_RESTORE_FAILED'));
+      transaction.onerror = () => reject(transaction.error || new Error('SIGNED_RECORD_RESTORE_FAILED'));
+    });
+  },
+  finishExecutionOperation(operation, canonicalRows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(canonicalRows.map(r => r.store))], 'readwrite');
+      const config = transaction.objectStore('app_config');
+      config.delete('execution:' + operation.id);
+      for (const remote of canonicalRows) {
+        const canonicalPayload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+        const store = transaction.objectStore(remote.store);
+        const request = store.get(remote.id);
+        request.onsuccess = () => {
+          const local = request.result;
+          if (!local) return;
+          if (local._executionOperationId === operation.id && local.updatedAt === operation.localVersions[remote.store]) {
+            // Preserve already stamped local evidence for offline viewing.
+            const photos = remote.store === 'lubrication_records' ? { photos: local.photos, photo: local.photo } : {};
+            store.put({ ...canonicalPayload, ...photos, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+          } else if (local._executionOperationId === operation.id) {
+            // Another local catalog operation happened during dispatch. Preserve its delta
+            // against the exact submitted local row; remove only the completed transport tag.
+            const base = operation.localRows[remote.store];
+            const delta = Object.fromEntries(Object.entries(local).filter(([key, value]) =>
+              !key.startsWith('_') && JSON.stringify(value) !== JSON.stringify(base[key])));
+            store.put({ ...canonicalPayload, ...delta, updatedAt: local.updatedAt, _pushedVersion: remote.updated_at });
+          } else if (local._executionOperationId) {
+            store.put({ ...local, _pushedVersion: remote.updated_at });
+          }
+        };
+      }
+      const pendingRequest = config.getAll();
+      pendingRequest.onsuccess = () => {
+        for (const entry of pendingRequest.result.filter(r => r.key.startsWith('execution:'))) {
+          const next = entry.value;
+          for (const [field, dependency] of Object.entries(next.dependencies || {})) {
+            if (dependency.operationId !== operation.id) continue;
+            const remote = canonicalRows.find(r => r.store === dependency.store && r.id === dependency.id);
+            if (!remote || next.frozen) { transaction.abort(); return; }
+            next.params[field] = remote.updated_at;
+            delete next.dependencies[field];
+          }
+          config.put(entry);
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error || new Error('EXECUTION_ACK_CONFLICT'));
+    });
+  },
   resolveValidationConflict(recordId, expected, officialId, reason, actor) {
     if (!actor || actor.active === false || actor.role !== 'ADMINISTRADOR' || !actor.id) {
       return Promise.reject(new Error('Solo ADMINISTRADOR puede resolver el conflicto.'));
@@ -329,6 +464,65 @@ function stamp(obj, user) {
   if (!obj.createdBy) obj.createdBy = user || 'sistema';
   if (obj.active === undefined) obj.active = true;
   return obj;
+}
+
+// Fixed execution DTO: never transports arbitrary catalog fields or a store name.
+async function queueLubricationExecution({ action, record, recordBefore, equipmentBefore, planBefore, assignmentBefore,
+  equipmentAfter, planAfter, assignmentAfter, crewId, actorId }) {
+  if (!actorId) throw new Error('AUTH_REQUIRED');
+  // Do not absorb an earlier catalog mutation into the execution's restricted fields.
+  // Its scope/version must reach the server through its own authorized workflow first.
+  for (const row of [equipmentBefore, planBefore, assignmentBefore, recordBefore]) {
+    if (row?.updatedAt && row._pushedVersion !== row.updatedAt && !row._executionOperationId) {
+      throw new Error('CATALOG_SYNC_REQUIRED');
+    }
+  }
+  const id = action === 'CREATE' ? record.id : uid('gedit');
+  const snapshot = record.operationalSnapshot || {};
+  const params = {
+    p_operation_id: id, p_action: action, p_record_id: record.id,
+    p_equipment_id: record.equipmentId, p_plan_id: record.planId || planBefore?.id || null,
+    p_crew_id: crewId || snapshot.crewId || null,
+    p_assignment_id: snapshot.assignmentId || null,
+    p_execution_date: record.date, p_client_captured_at: record.createdAt || record.date, p_shift_id: record.shiftId,
+    p_execution_type: snapshot.executionType || 'PLANNED',
+    p_out_of_plan_reason: snapshot.outOfPlanReason || null,
+    p_performed_by: record.userId, p_retroactive: !!record.retroactivo,
+    p_hourmeter: Number(record.hourmeter), p_no_hourmeter: !!record.sinHorometro,
+    p_no_hourmeter_reason: record.noHourmeterReason || null,
+    p_lubricant_id: record.greaseType || null, p_quantity: Number(record.qty || 0),
+    p_condition: record.condition || 'Normal', p_notes: record.notes || '',
+    p_details: record.details || [], p_photos: record.photos || [],
+    p_expected_record: record._pushedVersion || null,
+    p_expected_equipment: equipmentBefore?._pushedVersion || null,
+    p_expected_plan: planBefore?._pushedVersion || null,
+    p_expected_assignment: assignmentBefore?._pushedVersion || null,
+  };
+  const dependencies = {};
+  for (const [field, store, row] of [
+    ['p_expected_record', 'lubrication_records', action === 'EDIT' ? record : null],
+    ['p_expected_equipment', 'equipment', equipmentBefore],
+    ['p_expected_plan', 'lubrication_plans', planBefore],
+    ['p_expected_assignment', 'lubrication_assignments', assignmentBefore],
+  ]) {
+    if (row?._executionOperationId) dependencies[field] = { operationId: row._executionOperationId, store, id: row.id };
+  }
+  const changes = [{ store: 'lubrication_records', row: record }];
+  if (equipmentAfter) changes.push({ store: 'equipment', row: equipmentAfter });
+  if (planAfter) changes.push({ store: 'lubrication_plans', row: planAfter });
+  if (assignmentAfter) changes.push({ store: 'lubrication_assignments', row: assignmentAfter });
+  const operation = { id, actorId, params, dependencies, status: 'PENDING',
+    originalRecord: recordBefore ? structuredClone(recordBefore) : null,
+    localVersions: Object.fromEntries(changes.map(c => [c.store, c.row.updatedAt])),
+    localRows: Object.fromEntries(changes.map(c => [c.store, structuredClone(c.row)])),
+    localBases: [
+      { store: 'lubrication_records', id: record.id, updatedAt: action === 'EDIT' ? recordBefore.updatedAt || null : null },
+      ...[['equipment', equipmentBefore], ['lubrication_plans', planBefore], ['lubrication_assignments', assignmentBefore]]
+        .filter(([, row]) => row).map(([store, row]) => ({ store, id: row.id, updatedAt: row.updatedAt || null })),
+    ],
+    localPhotos: params.p_photos, createdAt: nowISO() };
+  await DB.putExecutionOperation(operation, changes);
+  return operation;
 }
 
 async function logAudit(action, detail, user) {

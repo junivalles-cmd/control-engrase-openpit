@@ -57,6 +57,8 @@ it('excludes all pending IDs and normalized codes, deduplicates informational ro
   expect(build({ ...input, equipos: duplicates, excludedEquipmentCodes: ['20-5530'] }).map(r => r.e.code)).toEqual(['05-0870']);
   expect(build({ ...input, equipos: [...duplicates, duplicates[2]] }).map(r => r.e.id)).toEqual(['E1', 'E3']);
 });
-it.each(['handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'startGreaseFlow', 'openLubricadorMatrizModal', 'getCurrentOperationalScope', 'loadAssignmentContext'])('%s unchanged', name => {
+// startGreaseFlow transport is intentionally replaced by Phase 2A; its scheduling
+// and execution parity are covered by operational-scope / gateway / real-form tests.
+it.each(['handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'openLubricadorMatrizModal', 'getCurrentOperationalScope', 'loadAssignmentContext'])('%s unchanged', name => {
   expect(extractDeclaration(source, name)).toBe(extractDeclaration(baseline, name));
 });

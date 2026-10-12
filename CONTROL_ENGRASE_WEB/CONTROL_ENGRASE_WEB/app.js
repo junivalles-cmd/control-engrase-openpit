@@ -113,12 +113,11 @@ const GREASE_UNIT = 'lb';
 // RF-01 (auditoría pre-release): si TODOS los puntos del checklist quedaron
 // marcados como realizados, el consumo de grasa no puede ser 0/negativo —
 // sería contradictorio (se engrasó todo el equipo sin gastar nada de
-// lubricante). Sin puntos configurados (totalPoints === 0) no hay nada que
-// exigir, mismo criterio que computeExecutionCompleteness() en
-// operational-scope.js. PARTIAL (incompleteCount > 0) y SKIP (que ni llama
+// lubricante). Fase 2A: por decisión explícita, COMPLETE exige >0 lb
+// incluso sin puntos configurados. PARTIAL (incompleteCount > 0) y SKIP (que ni llama
 // a esta función — ver buildNoExecutionRecord()) no se ven afectados.
 function shouldBlockCompleteChecklistWithoutGrease(totalPoints, incompleteCount, qty) {
-  return totalPoints > 0 && incompleteCount === 0 && !(qty > 0);
+  return incompleteCount === 0 && !(qty > 0);
 }
 
 function photoFieldHTML() {
@@ -4767,6 +4766,10 @@ async function renderLubricadorHistorial() {
 
 /* ---------- Editar un engrase ya registrado (mismo día, para corregir errores) ---------- */
 async function openEditGreaseRecordForm(record) {
+  if ((await DB.allActive('grease_validations')).some(v => v.lubricationRecordId === record.id)) {
+    alert('Este engrase tiene firmas asociadas y no puede editarse directamente.');
+    return;
+  }
   const equipment = await DB.get('equipment', record.equipmentId);
   const allRecords = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === record.equipmentId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const isLatest = allRecords.length && allRecords[0].id === record.id;
@@ -4826,6 +4829,7 @@ async function openEditGreaseRecordForm(record) {
 
   $('#edit-grease-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    const recordBefore = structuredClone(record);
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     const newHourmeter = parseFloat(fd.hourmeter);
     if (isLatest && !confirmHourmeterChange(equipment.hourmeter, newHourmeter)) return;
@@ -4835,24 +4839,35 @@ async function openEditGreaseRecordForm(record) {
       done: item.querySelector('.chk-done').checked,
       reason: item.querySelector('.chk-reason').value || null
     })) : [];
+    if (newDetails.some(d => !d.done && !d.reason)) {
+      alert('Selecciona el motivo de los puntos no realizados.'); return;
+    }
+    if (parseFloat(fd.qty || 0) < 0 || shouldBlockCompleteChecklistWithoutGrease(newDetails.length,
+      newDetails.filter(d => !d.done).length, parseFloat(fd.qty || 0))) {
+      alert('Un engrase completo debe registrar una cantidad de grasa mayor a 0 lb.'); return;
+    }
     const newPhotos = await getSelectedPhotos(ev.target);
 
-    record.hourmeter = newHourmeter;
-    record.greaseType = fd.greaseType;
-    record.qty = parseFloat(fd.qty || 0);
-    record.condition = fd.condition;
-    record.notes = fd.notes;
-    if (details.length) record.details = newDetails;
-    record.photos = newPhotos;
-    record.photo = newPhotos[0] || null; // compatibilidad con registros viejos
-    await DB.put('lubrication_records', stamp(record, App.currentUser.name));
-
-    if (isLatest) {
-      equipment.hourmeter = newHourmeter;
-      await DB.put('equipment', stamp(equipment, App.currentUser.name));
-      if (plan) { plan.lastGreaseHour = newHourmeter; await DB.put('lubrication_plans', stamp(plan, App.currentUser.name)); }
+    const editedRecord = { ...record, hourmeter: newHourmeter, greaseType: fd.greaseType,
+      qty: parseFloat(fd.qty || 0), condition: fd.condition, notes: fd.notes,
+      details: details.length ? newDetails : record.details, photos: newPhotos, photo: newPhotos[0] || null };
+    const equipmentAfter = isLatest ? stamp({ ...equipment, hourmeter: newHourmeter }, App.currentUser.name) : null;
+    const planAfter = isLatest && plan && canAdvanceHourCycle({ controlType: plan.controlType,
+      completeness: computeExecutionCompleteness(editedRecord.details) })
+      ? stamp({ ...plan, lastGreaseHour: newHourmeter }, App.currentUser.name) : null;
+    const scope = await getCurrentOperationalScope();
+    try {
+      await queueLubricationExecution({ action: 'EDIT', record: stamp(editedRecord, App.currentUser.name), recordBefore,
+        equipmentBefore: equipment, planBefore: plan, equipmentAfter, planAfter,
+        crewId: scope.kind === 'CREW_SCOPED' ? scope.crewId : record.operationalSnapshot?.crewId,
+        actorId: App.currentUser.id });
+    } catch (error) {
+      alert(error.message === 'CATALOG_SYNC_REQUIRED'
+        ? 'Hay cambios previos pendientes. Conéctate y sincronízalos antes de guardar. El formulario se conserva.'
+        : 'No se pudo guardar la corrección: ' + error.message + '. Los campos se conservan para reintentar.');
+      return;
     }
-    await logAudit('ENGRASE_EDITADO', `${esc(equipment.code)} · registro del ${fmtDate(record.date)}`, App.currentUser.name);
+    Sync.fullSync();
     showInAppToast('✓ Engrase actualizado');
     closeModal();
     renderLubricadorHistorial();
@@ -8908,14 +8923,12 @@ async function startGreaseFlow(equipmentId, target, options) {
       // Validación real (lote occurrences/carryover, §2): si TODOS los puntos
       // del checklist quedaron marcados como realizados, la cantidad de
       // grasa no puede ser 0 — sería contradictorio (se engrasó todo el
-      // equipo sin gastar nada de lubricante). Sin puntos configurados no
-      // hay nada que exigir aquí (mismo criterio que
-      // computeExecutionCompleteness() en operational-scope.js: sin
-      // checklist, siempre se considera completo).
+      // equipo sin gastar nada de lubricante). La regla nueva exige >0 lb
+      // también sin checklist, que sigue considerándose COMPLETE.
       const totalPuntosChecklist = $$('.checklist-item').length;
       const qtyIngresada = parseFloat(fd.qty || 0);
       if (shouldBlockCompleteChecklistWithoutGrease(totalPuntosChecklist, incomplete.length, qtyIngresada)) {
-        alert('Indique el consumo de grasa en lb antes de guardar el engrase completo.');
+        alert('Un engrase completo debe registrar una cantidad de grasa mayor a 0 lb.');
         return;
       }
 
@@ -9052,86 +9065,46 @@ async function startGreaseFlow(equipmentId, target, options) {
       // cerraba a mitad, quedaba el engrase registrado pero el equipo sin actualizar
       // (o al revés), y nadie se enteraba. Ahora se guarda todo el conjunto y, si algo
       // falla, se revierte lo ya escrito y se avisa a la persona.
-      const respaldoEquipo = JSON.parse(JSON.stringify(equipment));
-      const respaldoPlan = plan ? JSON.parse(JSON.stringify(plan)) : null;
-      let registroGuardado = false;
       let anomaliasCreadas = [];
-
       try {
-        await DB.put('lubrication_records', record);
-        registroGuardado = true;
-
-        // Cada punto que no se pudo engrasar genera una anomalía automática, para que
-        // mantenimiento le dé seguimiento (ver createAutoAnomalies: evita duplicados).
-        anomaliasCreadas = await createAutoAnomalies(record, equipment);
-        // Guarda si el equipo venía vencido, para el aviso de "solo críticos"
-        record._veniaVencido = estadoPrevio === 'ROJO';
-        await notificarEngraseRealizado(record, equipment);
-
-        // Un engrase ATRASADO no debe pisar el estado actual del equipo si ya hubo
-        // engrases posteriores — solo actualiza si de verdad es el más reciente.
         const todosDelEquipo = (await DB.allActive('lubrication_records')).filter(r => r.equipmentId === equipment.id);
-        const esElMasReciente = !todosDelEquipo.some(r => r.id !== record.id && new Date(r.date) > new Date(fechaRegistro));
-
+        const esElMasReciente = !todosDelEquipo.some(r => new Date(r.date) > new Date(fechaRegistro));
+        let equipmentAfter = null;
+        let planAfter = null;
         if (esElMasReciente && !sinHorometro) {
-          // Ojo: aunque sea el registro más reciente, un engrase atrasado NUNCA debe bajar
-          // el horómetro actual del equipo — desde aquella fecha el equipo siguió trabajando
-          // y ese dato de hoy es más fiable que el que se anotó para el pasado.
           if (!esRetro || newHourmeter > equipment.hourmeter) {
-            equipment.hourmeter = newHourmeter;
-            await DB.put('equipment', stamp(equipment, App.currentUser.name));
+            equipmentAfter = stamp({ ...equipment, hourmeter: newHourmeter }, App.currentUser.name);
           }
-          // F-01: plan.lastGreaseHour es la base de computeOccurrenceKey() para
-          // "Horas de operación" (operational-scope.js) — avanzarla "reinicia el
-          // ciclo". canAdvanceHourCycle() exige COMPLETE para ese controlType,
-          // igual que resolveEarlyOccurrenceSatisfaction() ya exige COMPLETE
-          // para satisfacer por adelantado; otros controlType no usan
-          // lastGreaseHour para su ciclo.
           if (plan && canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })) {
-            plan.lastGreaseHour = newHourmeter;
-            await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+            planAfter = stamp({ ...plan, lastGreaseHour: newHourmeter }, App.currentUser.name);
           }
         } else if (sinHorometro && plan && plan.controlType === 'Horas de operación') {
-          // Sin lectura de horómetro no podemos recalcular por horas, pero el engrase SÍ se
-          // hizo: dejamos anotada la fecha para que el equipo no se muestre como abandonado.
-          plan.lastGreaseDateNoHm = fechaRegistro;
-          await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+          planAfter = stamp({ ...plan, lastGreaseDateNoHm: fechaRegistro }, App.currentUser.name);
         }
-
-        await logAudit(esRetro ? 'ENGRASE_RETROACTIVO_REGISTRADO' : 'ENGRASE_REGISTRADO',
-          `${equipment.code} en ${fmt(newHourmeter)} h${esRetro ? ` · fecha ${fmtDate(fechaRegistro)} · lo hizo ${autor.name} · capturado por ${App.currentUser.name}` : ''}`,
-          App.currentUser.name);
-
-        // Evento propio para engrase fuera de plan (§27) — nunca tokens/PIN,
-        // solo el contexto de negocio.
-        if (executionTypeDeEsteEngrase === 'OUT_OF_PLAN') {
-          await logAudit('OUT_OF_PLAN_GREASE_RECORDED',
-            `${equipment.code} · motivo ${operationalSnapshot.outOfPlanReason} · ${completenessDeEsteEngrase}${satisfiedOccurrenceKeyDeEsteEngrase ? ' · satisface ' + satisfiedOccurrenceKeyDeEsteEngrase : ' · pendiente de conciliación'}`,
-            App.currentUser.name);
-        }
-
-        // Si este engrase cerraba una asignación manual PENDING (§R), la
-        // completa. Si era trabajo normal sin asignación, no hace nada.
-        if (occurrenceKeyDeEsteEngrase) {
-          await completeGreaseAssignmentForOccurrence(equipment, occurrenceKeyDeEsteEngrase, record.id)
-            .catch(err => console.warn('No se pudo cerrar la asignación de este engrase', err));
-        }
-
+        const assignmentAfter = asignacionActivaDeEsteEngrase
+          ? stamp(completeAssignmentIfPending([asignacionActivaDeEsteEngrase], {
+              occurrenceKey: occurrenceKeyDeEsteEngrase, recordId: record.id, now: nowISO()
+            }), App.currentUser.name) : null;
+        const scope = await getCurrentOperationalScope();
+        await queueLubricationExecution({ action: 'CREATE', record,
+          equipmentBefore: equipment, planBefore: plan, assignmentBefore: asignacionActivaDeEsteEngrase,
+          equipmentAfter, planAfter, assignmentAfter,
+          crewId: crewIdDeEsteEngrase || (scope.kind === 'CREW_SCOPED' ? scope.crewId : null),
+          actorId: App.currentUser.id });
       } catch (err) {
-        // Algo falló a mitad del guardado (disco lleno, base bloqueada, app cerrándose).
-        // Se revierte lo que alcanzó a escribirse para no dejar el equipo con datos
-        // contradictorios, y se conserva el borrador para que nada se pierda.
         console.error('Fallo al guardar el engrase', err);
-        try {
-          if (registroGuardado) await DB.delete('lubrication_records', record.id);
-          await DB.put('equipment', respaldoEquipo);
-          if (respaldoPlan) await DB.put('lubrication_plans', respaldoPlan);
-        } catch (e2) { console.error('Además falló la reversión', e2); }
-
-        alert('No se pudo guardar el engrase: ' + (err.message || 'error desconocido') +
-              '\n\nNo se perdió nada de lo que llenaste: quedó como borrador y puedes reintentar. ' +
-              'Si el problema persiste, revisa el espacio disponible en el teléfono.');
-        return; // el borrador NO se descarta
+        alert(err.message === 'CATALOG_SYNC_REQUIRED'
+          ? 'Hay cambios previos pendientes. Conéctate y sincronízalos antes de guardar. El borrador se conserva.'
+          : 'No se pudo guardar el engrase: ' + (err.message || 'error desconocido') + '\n\nEl borrador se conserva para reintentar.');
+        return;
+      }
+      // Independent follow-up; a failure cannot undo an already committed execution intent.
+      try {
+        anomaliasCreadas = await createAutoAnomalies(record, equipment);
+        record._veniaVencido = estadoPrevio === 'ROJO';
+        await notificarEngraseRealizado(record, equipment);
+      } catch (err) {
+        console.warn('Seguimiento del engrase pendiente', err);
       }
 
       showInAppToast(esRetro ? `✓ Engrase atrasado registrado — ${equipment.code}` : `✓ Engrase registrado — ${equipment.code}`);

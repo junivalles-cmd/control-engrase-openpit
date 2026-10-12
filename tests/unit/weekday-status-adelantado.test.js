@@ -158,7 +158,8 @@ describe('§1 del pedido "FIX REALIZADO ADELANTADO + QR INTERNO" — app.js llam
   });
 
   it('completeGreaseAssignmentForOccurrence()/el avance de plan.lastGreaseHour (ocurrencia de HOY) siguen intactos — esto solo agrega la resolución de la ocurrencia de MAÑANA, nunca la reemplaza', () => {
-    expect(startGreaseFlowSrc).toContain('completeGreaseAssignmentForOccurrence(equipment, occurrenceKeyDeEsteEngrase, record.id)');
+    expect(startGreaseFlowSrc).toContain('completeAssignmentIfPending([asignacionActivaDeEsteEngrase]');
+    expect(startGreaseFlowSrc).toContain('occurrenceKey: occurrenceKeyDeEsteEngrase, recordId: record.id');
     expect(startGreaseFlowSrc).toContain('canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })');
   });
 });
