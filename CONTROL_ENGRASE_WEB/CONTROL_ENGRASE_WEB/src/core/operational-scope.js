@@ -617,11 +617,12 @@ function validateNoExecutionInput({ reason, observacion }) {
 
 function buildNoExecutionRecord({
   id, equipmentId, planId, occurrenceKey, date, shiftId,
-  reason, observacion, userId, userName, now, linkedRecordId
+  reason, observacion, userId, userName, now, linkedRecordId, crewId, locationId
 }) {
   validateNoExecutionInput({ reason, observacion });
   return {
     id, equipmentId, planId: planId || null, occurrenceKey: occurrenceKey || null,
+    ...(crewId ? { crewId } : {}), ...(locationId ? { locationId } : {}),
     date, shiftId, reason, observacion: (observacion || '').trim() || null,
     userId, userName, createdAt: now, active: true,
     // Solo para YA_ENGRASADO conciliado con un lubrication_record real

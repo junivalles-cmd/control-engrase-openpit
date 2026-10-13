@@ -31,8 +31,7 @@ async function reset(role='LUBRICADOR') {
  await db.exec('reset role; delete from public.engrase_sync; delete from public.app_profiles; delete from public.app_store_permissions; delete from public.evidence_operation_receipts;delete from public.lubrication_execution_receipts;delete from storage.objects;');
  await db.query('insert into public.app_profiles values($1,$2,$3,$4,true)',[authId,'u1','Test User',role]);
  for(const store of ['anomalies','grease_validations','lubrication_records']) await db.query(
-  'insert into public.app_store_permissions values($1,$2,true,$3,$4,$5)',[store,role,!(store==='anomalies'&&role==='PLANIFICADOR'),
-    role!=='LUBRICADOR'||store!=='anomalies',role==='ADMINISTRADOR']);
+  'insert into public.app_store_permissions values($1,$2,true,false,false,false)',[store,role]);
  await put('equipment','e1',{locationId:'loc1'});
  await put('locations','loc1',{name:'Synthetic location'});
  await put('cuadrillas','c1',{locationId:'loc1',memberUserIds:['u1']});
@@ -70,6 +69,11 @@ try {
   assert.equal((await db.query("select has_function_privilege('authenticated','public.evidence_operation(text,text,text,text,text,timestamptz,text,text,text,text,jsonb,text,text,text,text,text,jsonb)','execute') as allowed")).rows[0].allowed,false);
  });
  await test('null auth denied',async()=>{await db.query("select set_config('request.jwt.claim.sub','',false)");await unchanged('report_anomaly',report,'AUTH_REQUIRED');});
+ await test('RPC-only evidence stores work with all generic mutation flags disabled',async()=>{
+  const flags=await db.query("select bool_or(can_insert or can_update or can_delete) writable from public.app_store_permissions where store in ('anomalies','grease_validations','lubrication_records')");
+  assert.equal(flags.rows[0].writable,false);assert.equal((await call('report_anomaly',report)).status,'APPLIED');
+  assert.equal((await call('capture_grease_validation',capture)).status,'APPLIED');
+ });
  await test('inactive profile denied anomalies and signatures',async()=>{await db.exec('update public.app_profiles set active=false');for(const [name,p] of [['report_anomaly',report],['capture_grease_validation',capture]])await unchanged(name,p,'INACTIVE_PROFILE');});
  await test('wrong scope denied anomalies and signatures',async()=>{await db.exec(`update public.engrase_sync set payload=payload||'{"locationId":"other"}' where store='equipment'`);for(const [name,p] of [['report_anomaly',report],['capture_grease_validation',capture]])await unchanged(name,p,'SCOPE_DENIED');});
  await test('no membership denied',async()=>{await db.exec("delete from public.engrase_sync where store='cuadrillas'");await unchanged('report_anomaly',report,'SCOPE_DENIED');});

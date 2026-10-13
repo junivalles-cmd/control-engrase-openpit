@@ -41,8 +41,8 @@ async function put(store,id,payload) {
 async function reset({role='LUBRICADOR',active=true}={}) {
   await db.exec('reset role; delete from public.engrase_sync; delete from public.app_profiles; delete from public.app_store_permissions; delete from public.lubrication_execution_receipts;');
   await db.query('insert into public.app_profiles values($1,$2,$3,$4,$5)',[authId,'u1','Test User',role,active]);
-  await db.query('insert into public.app_store_permissions values($1,$2,true,true,true,false)', ['lubrication_records',role]);
-  await db.query('insert into public.app_store_permissions values($1,$2,true,false,true,false)', ['lubrication_assignments',role]);
+  await db.query('insert into public.app_store_permissions values($1,$2,true,false,false,false)', ['lubrication_records',role]);
+  await db.query('insert into public.app_store_permissions values($1,$2,true,false,false,false)', ['lubrication_assignments',role]);
   await put('equipment','e1',{hourmeter:100,locationId:'loc1',shiftId:shift,code:'E1',model:'M1'});
   await put('locations','loc1',{name:'Test'});
   await put('cuadrillas','c1',{locationId:'loc1',memberUserIds:['u1'],isDefault:true});
@@ -74,7 +74,10 @@ try {
   await test('NULL auth denied',async()=>{await db.query("select set_config('request.jwt.claim.sub','',false)");await denyUnchanged({},'AUTH_REQUIRED');});
   await test('inactive profile denied',async()=>{await db.exec('update public.app_profiles set active=false');await denyUnchanged({},'INACTIVE_PROFILE');});
   await test('wrong role denied',async()=>{await db.exec("update public.app_profiles set role='VISOR'");await denyUnchanged({},'INVALID_ROLE');});
-  await test('missing record permission denied',async()=>{await db.exec('update public.app_store_permissions set can_insert=false');await denyUnchanged({},'RECORD_PERMISSION_DENIED');});
+  await test('target matrix has no generic record/assignment writes; typed execution still works',async()=>{
+    const flags=await db.query("select bool_or(can_insert or can_update or can_delete) as writable from public.app_store_permissions where store in ('lubrication_records','lubrication_assignments')");
+    assert.equal(flags.rows[0].writable,false);assert.equal((await call()).status,'APPLIED');
+  });
   await test('outside legacy scope denied',async()=>{await db.exec(`update public.engrase_sync set payload=payload||'{"locationId":"other"}' where store='equipment'`);await denyUnchanged({},'SCOPE_DENIED');});
   await test('without membership denied',async()=>{await db.exec(`update public.engrase_sync set payload=payload||'{"memberUserIds":[]}' where store='cuadrillas'`);await denyUnchanged({},'SCOPE_DENIED');});
   await test('scope ambiguity denied',async()=>{await put('cuadrillas','c2',{locationId:'loc1',memberUserIds:['u1'],isDefault:false});await denyUnchanged({crew_id:null},'CREW_SELECTION_REQUIRED');});

@@ -929,16 +929,20 @@ async function assignGreaseToCrew(equipo, assignedCrewId, notes) {
   let saved;
   if (existing) {
     saved = reassignAssignment(existing, { newCrewId: assignedCrewId, now: nowISO() });
-    await logAudit('GREASE_REASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
   } else {
     saved = createAssignment({
       existing, occurrenceKey, equipmentId: equipo.id, planId: plan.id,
       assignedCrewId, assignedByUserId: App.currentUser.id, assignedByUserName: App.currentUser.name,
       notes, now: nowISO(), uid
     });
-    await logAudit('GREASE_ASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
   }
-  await DB.put('lubrication_assignments', stamp(saved, App.currentUser.name));
+  saved = stamp(saved, App.currentUser.name);
+  if (Auth.isSupabaseMode()) {
+    await DB.queueAssignmentOperation(existing ? 'REASSIGN' : 'CREATE', existing, saved);
+  } else {
+    await DB.put('lubrication_assignments', saved);
+    await logAudit(existing ? 'GREASE_REASSIGNED' : 'GREASE_ASSIGNED', `${esc(equipo.code)} → ${esc(crew ? crew.name : assignedCrewId)}`, App.currentUser.name);
+  }
   Sync.fullSync();
   return saved;
 }
@@ -947,25 +951,15 @@ async function assignGreaseToCrew(equipo, assignedCrewId, notes) {
 // cuadrilla default de su ubicación), sin borrar el historial de que existió.
 async function cancelGreaseAssignment(assignment, equipo) {
   const cancelled = cancelAssignment(assignment, { now: nowISO() });
-  await DB.put('lubrication_assignments', stamp(cancelled, App.currentUser.name));
-  await logAudit('GREASE_ASSIGNMENT_CANCELLED', esc(equipo ? equipo.code : assignment.equipmentId), App.currentUser.name);
+  const saved = stamp(cancelled, App.currentUser.name);
+  if (Auth.isSupabaseMode()) {
+    await DB.queueAssignmentOperation('CANCEL', assignment, saved);
+  } else {
+    await DB.put('lubrication_assignments', saved);
+    await logAudit('GREASE_ASSIGNMENT_CANCELLED', esc(equipo ? equipo.code : assignment.equipmentId), App.currentUser.name);
+  }
   Sync.fullSync();
   return cancelled;
-}
-
-// Se llama al guardar un registro de engrase, con la occurrenceKey calculada
-// ANTES de que el plan se actualice (el horómetro base cambia al guardar, ver
-// startGreaseFlow) — si esa ocurrencia tenía una asignación manual PENDING la
-// cierra; si el equipo se engrasó dentro de su trabajo normal, no hace nada.
-async function completeGreaseAssignmentForOccurrence(equipo, occurrenceKey, recordId) {
-  if (!occurrenceKey) return null;
-  const assignments = await DB.allActive('lubrication_assignments');
-  const completed = completeAssignmentIfPending(assignments, { occurrenceKey, recordId, now: nowISO() });
-  if (!completed) return null;
-  await DB.put('lubrication_assignments', stamp(completed, App.currentUser.name));
-  await logAudit('GREASE_ASSIGNMENT_COMPLETED', esc(equipo.code), App.currentUser.name);
-  Sync.fullSync();
-  return completed;
 }
 
 // Mueve PERMANENTEMENTE un equipo a otra ubicación (distinto de asignar un
@@ -8683,22 +8677,28 @@ async function startGreaseFlow(equipmentId, target, options) {
     async function guardarNoEjecucion({ linkedRecordId } = {}) {
       const reason = $('#noexec-reason').value;
       const observacion = $('#noexec-obs').value;
+      const skipScope = await getCurrentOperationalScope();
       let skip;
       try {
         skip = buildNoExecutionRecord({
           id: uid('skip'), equipmentId: equipment.id, planId: plan ? plan.id : null,
           occurrenceKey: occurrenceKeyHoy, date: nowISO(), shiftId: turnoActualReg,
           reason, observacion, userId: App.currentUser.id, userName: App.currentUser.name, now: nowISO(),
-          linkedRecordId
+          linkedRecordId, crewId: skipScope.kind === 'CREW_SCOPED' ? skipScope.crewId : null,
+          locationId: equipment.locationId
         });
       } catch (err) {
         alert(err.message);
         return;
       }
-      await DB.put('lubrication_skips', skip);
-      await logAudit('ENGRASE_NO_EJECUTADO',
-        `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}${linkedRecordId ? ' · vinculado a ' + linkedRecordId : ''}`,
-        App.currentUser.name);
+       if (Auth.isSupabaseMode()) {
+         await DB.queueSkipOperation(skip);
+       } else {
+         await DB.put('lubrication_skips', skip);
+         await logAudit('ENGRASE_NO_EJECUTADO',
+           `${equipment.code} · motivo ${reason}${skip.observacion ? ' · ' + skip.observacion : ''}${linkedRecordId ? ' · vinculado a ' + linkedRecordId : ''}`,
+           App.currentUser.name);
+       }
       await discardDraft();
       closeModal();
       showInAppToast(linkedRecordId ? `✓ Vinculado a un engrase real — ${equipment.code}` : `Registrado: no se pudo ejecutar — ${equipment.code}`);

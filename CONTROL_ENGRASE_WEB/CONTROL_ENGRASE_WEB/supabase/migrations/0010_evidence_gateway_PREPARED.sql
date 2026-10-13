@@ -85,24 +85,27 @@ begin
     -- Delegation is only for this actor's accepted 0009 execution, not a general editor.
     if record.payload->>'capturedByAuthUserId' is distinct from auth.uid()::text then
       return jsonb_build_object('status','DENIED','code','EXECUTION_ACTOR_DENIED'); end if;
-    perform 1 from public.app_store_permissions where role=actor.role and store='lubrication_records' and can_insert;
+    -- This derived evidence is part of an accepted 0009 execution. Generic
+    -- record INSERT is disabled in the target matrix; accepted execution,
+    -- actor and version checks below are authoritative.
+    null;
   elsif p_action in ('CAPTURE','RESOLVE') then
     if p_action='RESOLVE' and actor.role<>'ADMINISTRADOR' then
       return jsonb_build_object('status','DENIED','code','ADMIN_REQUIRED'); end if;
-    perform 1 from public.app_store_permissions where role=actor.role and store='grease_validations'
-      and case when p_action='CAPTURE' then can_insert else can_update end;
+    if p_action='CAPTURE' and actor.role not in ('ADMINISTRADOR','SUPERVISOR','LUBRICADOR') then
+      return jsonb_build_object('status','DENIED','code','ROLE_DENIED'); end if;
   else
     if actor.role='PLANIFICADOR' or (p_action='RETIRE' and actor.role<>'ADMINISTRADOR') then
       return jsonb_build_object('status','DENIED','code','ROLE_DENIED'); end if;
     if actor.role='LUBRICADOR' and p_action<>'REPORT'
       and original.payload->>'capturedByAuthUserId' is distinct from auth.uid()::text then
       return jsonb_build_object('status','DENIED','code','ANOMALY_OWNER_DENIED'); end if;
-    -- Own correction is delegated by I; it never grants generic U on anomalies.
-    perform 1 from public.app_store_permissions where role=actor.role and store='anomalies'
-      and case when p_action='RETIRE' then can_delete
-        when p_action='REPORT' or actor.role='LUBRICADOR' then can_insert else can_update end;
+    -- Anomaly mutations are available only through this typed, scoped RPC.
+    -- Planner remains denied above; retirement is Admin-only; Lubricador
+    -- edits stay owner-bound below. The target matrix has no generic writes.
+    if actor.role not in ('ADMINISTRADOR','SUPERVISOR','LUBRICADOR') then
+      return jsonb_build_object('status','DENIED','code','ROLE_DENIED'); end if;
   end if;
-  if not found then return jsonb_build_object('status','DENIED','code','PERMISSION_DENIED'); end if;
   select * into receipt from public.evidence_operation_receipts where auth_user_id=auth.uid() and operation_id=p_operation_id;
   if found then
     if receipt.request<>request then return jsonb_build_object('status','CONFLICT','code','IDEMPOTENCY_CONFLICT'); end if;

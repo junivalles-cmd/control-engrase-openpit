@@ -110,8 +110,21 @@ const DB = {
   },
   blockEvidenceOperation(operation, canonicalRows = []) {
     return new Promise((resolve, reject) => {
-      const transaction = _db.transaction(['app_config', 'grease_validations'], 'readwrite');
+      const rollbackStore = operation.kind === 'CATALOG' ? operation.targetStore : null;
+      const stores = ['app_config', 'grease_validations'];
+      if (rollbackStore && !stores.includes(rollbackStore)) stores.push(rollbackStore);
+      const transaction = _db.transaction(stores, 'readwrite');
       transaction.objectStore('app_config').put({ key: 'evidence:' + operation.id, value: operation });
+      if (rollbackStore && operation.localRow?.id) {
+        const store = transaction.objectStore(rollbackStore);
+        const read = store.get(operation.localRow.id);
+        read.onsuccess = () => {
+          const current = read.result;
+          if (current?._evidenceOperationId !== operation.id) return;
+          if (operation.originalRow) store.put(operation.originalRow);
+          else store.delete(operation.localRow.id);
+        };
+      }
       if (operation.rpc === 'resolve_grease_validation_conflict') {
         const store = transaction.objectStore('grease_validations');
         const read = store.getAll();
@@ -187,6 +200,8 @@ const DB = {
           if (local && !local._evidenceOperationId && local.updatedAt !== local._pushedVersion) return;
           const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
           store.put({ ...payload, ...(local?.signatureLocal ? { signatureLocal: local.signatureLocal } : {}),
+            ...(local?.__authorizationAppUserId ? { __authorizationAppUserId: local.__authorizationAppUserId,
+              __authorizationState: 'AUTHORIZED' } : {}),
             updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
         };
       }
@@ -645,6 +660,12 @@ const DB = {
   },
   queueCatalogOperation(action, before, values) {
     return queueCatalogOperationIntent(action, before, values);
+  },
+  queueAssignmentOperation(action, before, row) {
+    return queueAssignmentOperationIntent(action, before, row);
+  },
+  queueSkipOperation(row) {
+    return queueSkipOperationIntent(row);
   }
 };
 
@@ -842,7 +863,55 @@ async function queueCatalogOperationIntent(action, before, values = {}) {
   return operation;
 }
 
+async function queueAssignmentOperationIntent(action, before, row) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(actor.role)) throw new Error('ROLE_DENIED');
+  if (!['CREATE','REASSIGN','CANCEL'].includes(action) || !row?.id) throw new Error('INVALID_OPERATION');
+  if (action !== 'CREATE' && (!before?._pushedVersion || before.updatedAt !== before._pushedVersion)) throw new Error('ASSIGNMENT_SYNC_REQUIRED');
+  const id = uid('asgop');
+  const operation = {
+    id, actorId: actor.id, authorizationFingerprint: Auth.getProfile?.()?.authorizationFingerprint || null,
+    rpc: 'manage_lubrication_assignment', kind: 'CATALOG', targetStore: 'lubrication_assignments',
+    status: 'PENDING', createdAt: nowISO(),
+    params: { p_operation_id: id, p_action: action, p_id: row.id,
+      p_expected: before?._pushedVersion || null, p_equipment_id: row.equipmentId || before?.equipmentId || null,
+      p_plan_id: row.planId || before?.planId || null, p_occurrence_key: row.occurrenceKey || before?.occurrenceKey || null,
+      p_crew_id: action === 'CANCEL' ? null : row.assignedCrewId,
+      p_notes: row.notes || before?.notes || '' },
+    localVersion: row.updatedAt, localRow: structuredClone(row),
+    originalRow: before ? structuredClone(before) : null
+  };
+  const localRow = { ...row, __authorizationAppUserId: actor.id, __authorizationState: 'PENDING_LOCAL' };
+  operation.localRow = structuredClone(localRow);
+  await DB.putEvidenceOperation(operation, [{ store: 'lubrication_assignments', row: localRow,
+    expected: action === 'CREATE' ? null : before.updatedAt }]);
+  return operation;
+}
+
+async function queueSkipOperationIntent(row) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !row?.id) throw new Error('AUTH_REQUIRED');
+  const id = uid('skipop');
+  const operation = {
+    id, actorId: actor.id, authorizationFingerprint: Auth.getProfile?.()?.authorizationFingerprint || null,
+    rpc: 'record_lubrication_skip', kind: 'CATALOG', targetStore: 'lubrication_skips',
+    status: 'PENDING', createdAt: nowISO(),
+    params: { p_operation_id: id, p_id: row.id, p_expected: null,
+      p_equipment_id: row.equipmentId, p_plan_id: row.planId || null, p_occurrence_key: row.occurrenceKey || null,
+      p_crew_id: row.crewId || row.cuadrillaId || null, p_date: row.date, p_shift_id: row.shiftId,
+      p_reason: row.reason, p_observacion: row.observacion || null, p_linked_record_id: row.linkedRecordId || null },
+    localVersion: row.updatedAt || row.createdAt, localRow: structuredClone(row), originalRow: null
+  };
+  const localRow = { ...row, __authorizationAppUserId: actor.id, __authorizationState: 'PENDING_LOCAL' };
+  operation.localRow = structuredClone(localRow);
+  await DB.putEvidenceOperation(operation, [{ store: 'lubrication_skips', row: localRow, expected: null }]);
+  return operation;
+}
+
 async function logAudit(action, detail, user) {
+  // Supabase-mode audit entries are written by the authoritative RPC that
+  // performs an operation. Never enqueue client-authored generic audit rows.
+  if (isSupabaseAuthMode()) return null;
   await DB.put('audit_log', stamp({
     id: uid('log'), action, detail, user: user || (App.currentUser && App.currentUser.name) || 'sistema'
   }));

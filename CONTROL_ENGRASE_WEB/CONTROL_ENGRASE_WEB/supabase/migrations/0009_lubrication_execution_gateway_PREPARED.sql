@@ -77,10 +77,10 @@ begin
   if p_action is null or p_action not in ('CREATE','EDIT') or nullif(p_operation_id,'') is null or nullif(p_record_id,'') is null then
     return jsonb_build_object('status','DENIED','code','INVALID_OPERATION');
   end if;
-  perform 1 from public.app_store_permissions
-    where store = 'lubrication_records' and role = actor.role
-      and case when p_action = 'CREATE' then can_insert else can_update end for share;
-  if not found then return jsonb_build_object('status','DENIED','code','RECORD_PERMISSION_DENIED'); end if;
+  -- The typed execution gateway is the authorization boundary. Generic
+  -- app_store_permissions mutation flags are intentionally false in the
+  -- final matrix for this RPC-only store; role, ownership and scope checks
+  -- below govern execution and edit operations.
 
   -- Conservative serialization includes concurrent legacy REST signatures and catalog writes.
   -- No row lock protocol can protect signed edits while signatures still use generic REST.
@@ -264,9 +264,8 @@ begin
         return jsonb_build_object('status','DENIED','code','ASSIGNMENT_MISMATCH');
       end if;
       if assignment.updated_at is distinct from p_expected_assignment then return jsonb_build_object('status','CONFLICT','code','ASSIGNMENT_VERSION_CONFLICT'); end if;
-      if not exists(select 1 from public.app_store_permissions where store='lubrication_assignments' and role=actor.role and can_update) then
-        return jsonb_build_object('status','DENIED','code','ASSIGNMENT_PERMISSION_DENIED');
-      end if;
+      -- Completion is an atomic side effect of this typed execution RPC.
+      -- It does not require generic UPDATE on lubrication_assignments.
     elsif p_assignment_id is not null or p_execution_type='ASSIGNED' then return jsonb_build_object('status','CONFLICT','code','ASSIGNMENT_NOT_PENDING'); end if;
     if not role_global and p_execution_type='PLANNED' then
       select count(*) into n from public.engrase_sync where store='cuadrillas' and not deleted
