@@ -51,7 +51,7 @@ const appNames = [
   'NO_EXECUTION_REASON_LABELS', 'MAX_PHOTOS', 'trackRecentEquipment', 'photoFieldHTML', 'getPhotoFieldPhotos',
   'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'fileToCompressedDataURL', 'stampEquipmentEvidencePhoto', 'startGreaseFlow',
   'getSelectedPhotos', 'getSelectedCrewId', 'getCurrentOperationalScope', 'shouldBlockCompleteChecklistWithoutGrease',
-  'confirmHourmeterChange', 'completeGreaseAssignmentForOccurrence', 'createAutoAnomalies',
+  'confirmHourmeterChange', 'createAutoAnomalies',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const persistenceSrc = ['uid', 'nowISO', 'stamp', 'queueLubricationExecution'].map(n => extractDeclaration(readSource(DB_JS_PATH), n)).join('\n');
