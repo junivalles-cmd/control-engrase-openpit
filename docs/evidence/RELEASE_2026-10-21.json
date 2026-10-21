@@ -1,0 +1,76 @@
+{
+  "release": {
+    "version_tag": "v1.0.0-rc1",
+    "previous_versioning_scheme": "ninguno formal — package.json en 0.0.0 (placeholder, nunca versionado), Android versionName/versionCode son del empaquetado nativo (1.0 / 1), los tags previos del repo son checkpoints descriptivos pre-cambio (pre-cutover-*, pre-typescript-stable, etc.), no un esquema de release. v1.0.0-rc1 es el primer tag de release formal de este repo.",
+    "android_version_name": "1.0",
+    "android_version_code": 1,
+    "application_id": "com.conequisa.engraseopenpit",
+    "commit_hash": "f531040e8b4c5829f87e42a41edeb6ad580d1d48",
+    "commit_subject": "release: stabilize control de engrase pre-release",
+    "branch": "migration-typescript",
+    "created_utc": "2026-10-21T19:40:00Z"
+  },
+  "web_build": {
+    "status": "PASS",
+    "tool": "vite build",
+    "verify_dist": "PASS (tools/verify-dist.mjs — index.html, 39 archivos runtime, manifest.json/10 iconos, sw.js/34 rutas ASSETS, 15 modulos src/core/, OneSignalSDKWorker.js, assetlinks.json)",
+    "sw_cache_version": "engrase-openpit-v74"
+  },
+  "capacitor_sync": {
+    "status": "PASS",
+    "plugins": ["@capacitor/camera@6.1.3", "@capacitor/local-notifications@6.1.3", "@capawesome/capacitor-badge@6.0.0"],
+    "cordova_plugins": ["onesignal-cordova-plugin@5.5.9"]
+  },
+  "apk": {
+    "path": "CONTROL_ENGRASE_APP_ANDROID/android/app/build/outputs/apk/debug/app-debug.apk",
+    "build_type": "debug",
+    "size_bytes": 9857479,
+    "sha256": "8262472ab8ff50217be2cc07d33a64d8c601a4bcfbaffca496438f9514210aad",
+    "built_at_local": "2026-10-21T13:09:10-06:00",
+    "build_tool": "tools/build-android-local.ps1 (gradlew assembleDebug)",
+    "note_manifest_encoding": "AndroidManifest.xml traia un comentario con mojibake (acentos corruptos) reintroducido por 'npx cap sync android' — corregido en el fuente antes de este build; no afecta el APK empaquetado (AAPT descarta comentarios XML al compilar el manifest binario), pero se documenta porque cap sync lo reintroducira en la proxima corrida."
+  },
+  "device_install_smoke_test": {
+    "device_model": "Samsung SM-X135G (Galaxy Tab A9+)",
+    "device_serial": "R8YL601XNPY",
+    "install": "PASS (adb install -r, sin uninstall ni clear data)",
+    "smoke_test": "PASS",
+    "smoke_test_scope": {
+      "quick_unlock": "PASS — pantalla de PIN con sesion local real, texto 'Funciona sin conexion', sin crash",
+      "mi_turno": "PASS — datos reales de cuadrilla/turno/ubicacion, KPIs, pendientes del turno anterior",
+      "tareas": "PASS — pestanas Pendientes/Historial, estado vacio correcto",
+      "anomalias": "PASS — filtro de estado, tarjeta de anomalia real con criticidad/estado",
+      "historial": "PASS — registros reales con badges de validacion",
+      "campana": "PASS — panel de notificaciones, estado vacio correcto, enlace a Tareas y Mensajes",
+      "sync_status_badge": "presente y consistente en las 4 pantallas (estado ambar observado; no se extrajo el texto exacto del aria-label porque uiautomator no expone el DOM interno del WebView)",
+      "admin_planificador_nav": "N/A — cuenta de prueba en el dispositivo es rol LUBRICADOR, sin acceso a Configuracion/Usuarios desde ahi (esperado por alcance de rol)"
+    },
+    "logcat_crash_check": "sin FATAL EXCEPTION ni stack trace de com.conequisa.engraseopenpit durante arranque + navegacion de smoke test"
+  },
+  "test_summaries": {
+    "unit_vitest": { "files": 122, "tests": 1865, "status": "PASS" },
+    "playwright_full_suite": {
+      "total": 7070,
+      "pass": 7054,
+      "skip": 16,
+      "fail": 0,
+      "not_run": 0,
+      "method": "1 corrida 100% completa (workers=1) + reverificacion dirigida de los 5 archivos que fallaron por un gap de fixture (getAllowedRoutes no extraido tras el refactor P0) — 322/322 verdes tras el fix. Segunda corrida completa interrumpida por presion de memoria del sistema (no del comando); evidencia parcial confirmatoria, sin regresiones nuevas."
+    },
+    "typecheck": "PASS (tsc --noEmit)",
+    "build": "PASS (vite build)",
+    "verify_dist": "PASS"
+  },
+  "context_asserted_by_user_not_reverified_this_session": {
+    "note": "Los siguientes veredictos fueron provistos como contexto ya cerrado por el usuario al inicio de este bloque de cierre de release; no se repitieron en esta sesion por instruccion explicita (\"no repetir E2E completo/sync audit/push E2E\").",
+    "android_e2e": "PASS (asertado)",
+    "sync_audit": "PASS (asertado)",
+    "push_deeplink_photo_real": "PASS (asertado)"
+  },
+  "pre_release_audit_p0_closed": {
+    "finding": "LOGIC-P0-01 — SUPERVISOR veia y podia navegar a 'Usuarios' en modo Supabase, pantalla que el backend (manage-users Edge Function) siempre rechaza (403) para cualquier rol distinto de ADMINISTRADOR.",
+    "resolution": "UI ahora oculta 'Usuarios' para SUPERVISOR en modo Supabase (getAllowedRoutes()) y redirige una navegacion directa a Dashboard. Legacy sin cambios. Backend/RLS/manage-users NO se tocaron.",
+    "verified": "tests/ui/supervisor-usuarios-visibility.spec.js (4 tests x 7 viewports) + tests/unit/pre-release-quickwins.test.js"
+  },
+  "secrets": "ninguno incluido en este archivo ni en el commit — supabase/.temp/ (project-ref, pooler-url, org id del CLI local) quedo excluido via .gitignore"
+}
