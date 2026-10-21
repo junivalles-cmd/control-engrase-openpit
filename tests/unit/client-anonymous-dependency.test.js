@@ -5,7 +5,11 @@ import { extractDeclaration } from '../helpers/extractFromSource.js';
 
 function fixtureDB() {
   const rows=new Map();
-  let config={ url:'https://fixture.test',anonKey:'public-key',lastPull:'2026-10-01' };
+  // Account-scoped bootstrap: el cursor vive por cuenta/fingerprint
+  // (activeAccountSyncKey + accountSyncStates), no en cfg.lastPull.
+  let config={ url:'https://fixture.test',anonKey:'public-key',lastPull:'2026-10-01',
+    activeAccountSyncKey:'auth-u1:fp1',
+    accountSyncStates:{ 'auth-u1:fp1':{ authUserId:'auth-u1',authorizationFingerprint:'fp1',bootstrapComplete:true,lastPull:'2026-10-01' } } };
   return {
     getConfig:async()=>config,
     setConfig:async value=>{ config=value; },
@@ -16,7 +20,8 @@ function fixtureDB() {
   };
 }
 const activeAuth={ isSupabaseMode:()=>true,isAuthenticated:()=>true,getSession:()=>({accessToken:'user-jwt'}),
-  getProfile:()=>({appUserId:'u1',role:'ADMINISTRADOR',authorizationFingerprint:'fp1'}),
+  getProfile:()=>({authUserId:'auth-u1',appUserId:'u1',role:'ADMINISTRADOR',authorizationFingerprint:'fp1',
+    rowScopeEnforced:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[]}),
   refreshAuthorizationContext:async()=>({ok:true,changed:false,firstSnapshot:false,context:{rowScopeEnforced:true}}) };
 afterEach(()=>vi.unstubAllGlobals());
 
@@ -35,9 +40,13 @@ describe('Client pre-cutover boundary',()=>{
     let release;
     const pending=new Promise(resolve=>{release=resolve;});
     const source=readFileSync(APP_JS_PATH,'utf8');
-    const body=extractDeclaration(source,'currentUserFromAuthProfile')+'\n'+extractDeclaration(source,'enterAppAsProfile');
-    const enter=new Function('App','DB','Sync','Auth','navigator','bindOneSignalIdentity','boot',body+';return enterAppAsProfile;')(
-      app,{getConfig:async()=>({})},{fullSync:async()=>{order.push('pull');await pending;}},activeAuth,{onLine:online},()=>{},()=>order.push('boot'));
+    const body=extractDeclaration(source,'currentUserFromAuthProfile')+'\n'+extractDeclaration(source,'replayPendingDeeplink')+'\n'+extractDeclaration(source,'enterAppAsProfile');
+    const enter=new Function('App','DB','Sync','Auth','navigator','bindOneSignalIdentity','boot','abrirDesdeNotificacion',body+';return enterAppAsProfile;')(
+      app,{getConfig:async()=>({})},
+      // El bootstrap pendiente es por cuenta/fingerprint (Sync.getAccountSyncState()),
+      // ya no el cursor legacy del dispositivo.
+      {getAccountSyncState:async()=>({bootstrapComplete:false,key:'auth-u1:fp1'}),fullSync:async()=>{order.push('pull');await pending;}},
+      activeAuth,{onLine:online},()=>{},()=>order.push('boot'),()=>{});
     const entering=enter({appUserId:'u',displayName:'Fixture',role:'LUBRICADOR'});
     if(online){await vi.waitFor(()=>expect(order).toEqual(['pull']));release();}
     await entering;
@@ -107,14 +116,20 @@ describe('Client pre-cutover boundary',()=>{
     expect((await Sync.pushAll()).reason).toBe('AUTH_REQUIRED');expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('authenticated first pull uses JWT and does not seed operational catalogs',async()=>{
+  it('authenticated first pull uses JWT, hydrates only server rows and never seeds catalogs',async()=>{
     const db=fixtureDB();await db.setConfig({url:'https://fixture.test',anonKey:'public-key'});
-    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,json:async()=>[]})));
-    const {Sync}=loadSyncLogic(db,['equipment'],{...activeAuth,restoreSession:async()=>{}});
+    // El bootstrap de ESTA cuenta solo se confirma con filas autorizadas
+    // persistidas (un 200 vacío no lo completa, ver sync.js pullAll()).
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,
+      json:async()=>[{store:'locations',id:'locA',payload:{id:'locA',name:'A',active:true},updated_at:'2026-10-02T00:00:00.000Z',deleted:false}]})));
+    const {Sync}=loadSyncLogic(db,['equipment','locations'],{...activeAuth,restoreSession:async()=>{}});
     vi.stubGlobal('navigator',{onLine:true});
     await Sync.fullSync();
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer user-jwt');
-    expect((await db.getConfig()).lastPull).toBeTruthy();expect(await db.all('equipment')).toEqual([]);
+    const cfg=await db.getConfig();
+    expect(cfg.activeAccountSyncKey).toBe('auth-u1:fp1');
+    expect(cfg.accountSyncStates['auth-u1:fp1']).toMatchObject({bootstrapComplete:true,lastPull:'2026-10-02T00:00:00.000Z'});
+    expect(await db.all('equipment')).toEqual([]);
   });
 });

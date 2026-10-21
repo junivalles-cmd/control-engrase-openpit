@@ -1,0 +1,98 @@
+{
+  "readOnly": true,
+  "source": "existing device IndexedDB; no server request",
+  "capturedAt": "2026-10-17T21:09:41.863Z",
+  "activeEquipmentCount": 7,
+  "visibleEquipmentCount": 6,
+  "locationCount": 7,
+  "targets": [
+    {
+      "id": "eq_mskx598za032cs",
+      "code": "05-0870",
+      "locationId": "loc_mskx598yig9b1q",
+      "resolvedLocation": "Mojon",
+      "locationActive": true,
+      "active": true,
+      "effectiveActive": true,
+      "localMasterState": "VALID",
+      "visibleMasterState": "UNRESOLVED_LOCAL",
+      "uiResolvedLocation": null,
+      "visibleInApp": true,
+      "currentAssignments": [
+        {
+          "id": "asg_muoqddz6p24k34",
+          "status": "PENDING",
+          "planId": "plan_mskx6bbstrbbsz",
+          "occurrenceKey": "plan_mskx6bbstrbbsz:2026-09-30",
+          "assignedCrewId": "cuad_a",
+          "crewName": "76-08 Camion Lubrico",
+          "crewLocationId": "loc_mskx598x2iq3u8",
+          "crewLocationName": "Volcan"
+        }
+      ]
+    }
+  ],
+  "affected": [
+    {
+      "id": "eq_mskx598za032cs",
+      "code": "05-0870",
+      "locationId": "loc_mskx598yig9b1q",
+      "resolvedLocation": "Mojon",
+      "locationActive": true,
+      "active": true,
+      "effectiveActive": true,
+      "localMasterState": "VALID",
+      "visibleMasterState": "UNRESOLVED_LOCAL",
+      "uiResolvedLocation": null,
+      "visibleInApp": true,
+      "currentAssignments": [
+        {
+          "id": "asg_muoqddz6p24k34",
+          "status": "PENDING",
+          "planId": "plan_mskx6bbstrbbsz",
+          "occurrenceKey": "plan_mskx6bbstrbbsz:2026-09-30",
+          "assignedCrewId": "cuad_a",
+          "crewName": "76-08 Camion Lubrico",
+          "crewLocationId": "loc_mskx598x2iq3u8",
+          "crewLocationName": "Volcan"
+        }
+      ]
+    },
+    {
+      "id": "eq_mskx59942hzld2",
+      "code": "20-5530",
+      "locationId": "loc_mskx598yig9b1q",
+      "resolvedLocation": "Mojon",
+      "locationActive": true,
+      "active": true,
+      "effectiveActive": true,
+      "localMasterState": "VALID",
+      "visibleMasterState": "UNRESOLVED_LOCAL",
+      "uiResolvedLocation": null,
+      "visibleInApp": true,
+      "currentAssignments": [
+        {
+          "id": "asg_mv2rgm9nomrcsa",
+          "status": "PENDING",
+          "planId": "plan_mskx6baww0rm5t",
+          "occurrenceKey": "plan_mskx6baww0rm5t:2026-10-10",
+          "assignedCrewId": "cuad_c",
+          "crewName": "80-177 Camioneta Lubricadora",
+          "crewLocationId": "loc_mskx5990yw1cgc",
+          "crewLocationName": "Acarreo"
+        }
+      ]
+    }
+  ],
+  "limitation": "Missing in this local catalog does not prove missing in Supabase. Crew location is contextual only; never substituted for equipment.locationId.",
+  "scopeProjectionEvidence": {
+    "locationId": "loc_mskx598yig9b1q",
+    "locationName": "Mojon",
+    "locationOwnerMatchesCurrent": true,
+    "equipmentOwnerMatchesCurrent": true,
+    "baseLocationAuthorized": false,
+    "supportHasExactLocation": true,
+    "supportIdentityMatches": true,
+    "localStateBeforeFix": "OUT_OF_SCOPE"
+  }
+}

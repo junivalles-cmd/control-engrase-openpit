@@ -1,0 +1,4952 @@
+{
+  "bucket": [
+    {
+      "allowed_mime_types": null,
+      "file_size_limit": null,
+      "id": "engrase-photos",
+      "name": "engrase-photos",
+      "public": true
+    }
+  ],
+  "captured_at": "2026-10-18T18:19:24.575261+00:00",
+  "columns": [
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "version",
+      "not_null": true,
+      "position": 1,
+      "schema": "authorization_private",
+      "table": "release_migration_state",
+      "type": "text"
+    },
+    {
+      "default": "clock_timestamp()",
+      "generated": "",
+      "identity": "",
+      "name": "applied_at",
+      "not_null": true,
+      "position": 2,
+      "schema": "authorization_private",
+      "table": "release_migration_state",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "matrix_digest",
+      "not_null": true,
+      "position": 3,
+      "schema": "authorization_private",
+      "table": "release_migration_state",
+      "type": "text"
+    },
+    {
+      "default": "true",
+      "generated": "",
+      "identity": "",
+      "name": "singleton",
+      "not_null": true,
+      "position": 1,
+      "schema": "authorization_private",
+      "table": "support_control",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "enabled",
+      "not_null": true,
+      "position": 2,
+      "schema": "authorization_private",
+      "table": "support_control",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "store",
+      "not_null": true,
+      "position": 1,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "entity_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "assignment_id",
+      "not_null": true,
+      "position": 3,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "crew_id",
+      "not_null": true,
+      "position": 4,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "equipment_id",
+      "not_null": true,
+      "position": 5,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "plan_id",
+      "not_null": true,
+      "position": 6,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "occurrence_key",
+      "not_null": true,
+      "position": 7,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "text"
+    },
+    {
+      "default": "clock_timestamp()",
+      "generated": "",
+      "identity": "",
+      "name": "accepted_at",
+      "not_null": true,
+      "position": 8,
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "auth_user_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "uuid"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "app_user_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "display_name",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "role",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "text"
+    },
+    {
+      "default": "true",
+      "generated": "",
+      "identity": "",
+      "name": "active",
+      "not_null": true,
+      "position": 5,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "boolean"
+    },
+    {
+      "default": "now()",
+      "generated": "",
+      "identity": "",
+      "name": "created_at",
+      "not_null": true,
+      "position": 6,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": "now()",
+      "generated": "",
+      "identity": "",
+      "name": "updated_at",
+      "not_null": true,
+      "position": 7,
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "store",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "role",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "text"
+    },
+    {
+      "default": "false",
+      "generated": "",
+      "identity": "",
+      "name": "can_read",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "boolean"
+    },
+    {
+      "default": "false",
+      "generated": "",
+      "identity": "",
+      "name": "can_insert",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "boolean"
+    },
+    {
+      "default": "false",
+      "generated": "",
+      "identity": "",
+      "name": "can_update",
+      "not_null": true,
+      "position": 5,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "boolean"
+    },
+    {
+      "default": "false",
+      "generated": "",
+      "identity": "",
+      "name": "can_delete",
+      "not_null": true,
+      "position": 6,
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "auth_user_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "uuid"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "operation_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "request",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "result",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": "clock_timestamp()",
+      "generated": "",
+      "identity": "",
+      "name": "applied_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "store",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "payload",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "jsonb"
+    },
+    {
+      "default": "now()",
+      "generated": "",
+      "identity": "",
+      "name": "updated_at",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": "false",
+      "generated": "",
+      "identity": "",
+      "name": "deleted",
+      "not_null": true,
+      "position": 5,
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "auth_user_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "type": "uuid"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "operation_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "request",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "result",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "auth_user_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "uuid"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "operation_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "request",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "result",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": "clock_timestamp()",
+      "generated": "",
+      "identity": "",
+      "name": "applied_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "timestamp with time zone"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "auth_user_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "type": "uuid"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "operation_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "type": "text"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "request",
+      "not_null": true,
+      "position": 3,
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "type": "jsonb"
+    },
+    {
+      "default": null,
+      "generated": "",
+      "identity": "",
+      "name": "result",
+      "not_null": true,
+      "position": 4,
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "type": "jsonb"
+    }
+  ],
+  "constraints": [
+    {
+      "definition": "PRIMARY KEY (version)",
+      "name": "release_migration_state_pkey",
+      "schema": "authorization_private",
+      "table": "release_migration_state",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (singleton)",
+      "name": "support_control_pkey",
+      "schema": "authorization_private",
+      "table": "support_control",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "CHECK (singleton)",
+      "name": "support_control_singleton_check",
+      "schema": "authorization_private",
+      "table": "support_control",
+      "type": "c",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (store, entity_id, crew_id)",
+      "name": "support_links_pkey",
+      "schema": "authorization_private",
+      "table": "support_links",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "UNIQUE (app_user_id)",
+      "name": "app_profiles_app_user_id_key",
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "u",
+      "validated": true
+    },
+    {
+      "definition": "FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE CASCADE",
+      "name": "app_profiles_auth_user_id_fkey",
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "f",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (auth_user_id)",
+      "name": "app_profiles_pkey",
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "CHECK ((role = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text, 'SUPERVISOR'::text, 'LUBRICADOR'::text, 'VISOR'::text])))",
+      "name": "app_profiles_role_check",
+      "schema": "public",
+      "table": "app_profiles",
+      "type": "c",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (store, role)",
+      "name": "app_store_permissions_pkey",
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "CHECK ((role = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text, 'SUPERVISOR'::text, 'LUBRICADOR'::text, 'VISOR'::text])))",
+      "name": "app_store_permissions_role_check",
+      "schema": "public",
+      "table": "app_store_permissions",
+      "type": "c",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (auth_user_id, operation_id)",
+      "name": "assignment_skip_operation_receipts_pkey",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (store, id)",
+      "name": "engrase_sync_pkey",
+      "schema": "public",
+      "table": "engrase_sync",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (auth_user_id, operation_id)",
+      "name": "evidence_operation_receipts_pkey",
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (auth_user_id, operation_id)",
+      "name": "lubrication_execution_receipts_pkey",
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "type": "p",
+      "validated": true
+    },
+    {
+      "definition": "PRIMARY KEY (auth_user_id, operation_id)",
+      "name": "operational_catalog_receipts_pkey",
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "type": "p",
+      "validated": true
+    }
+  ],
+  "extensions": [
+    {
+      "name": "pg_cron",
+      "schema": "pg_catalog",
+      "version": "1.6.4"
+    },
+    {
+      "name": "pg_net",
+      "schema": "extensions",
+      "version": "0.20.4"
+    },
+    {
+      "name": "pg_stat_statements",
+      "schema": "extensions",
+      "version": "1.11"
+    },
+    {
+      "name": "pgcrypto",
+      "schema": "extensions",
+      "version": "1.3"
+    },
+    {
+      "name": "plpgsql",
+      "schema": "pg_catalog",
+      "version": "1.0"
+    },
+    {
+      "name": "supabase_vault",
+      "schema": "vault",
+      "version": "0.3.1"
+    },
+    {
+      "name": "uuid-ossp",
+      "schema": "extensions",
+      "version": "1.1"
+    }
+  ],
+  "function_grants": [
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "authorization_row_in_scope",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "authorization_row_in_scope",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "authorization_row_in_scope_baseline_0013",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "authorization_row_in_scope_baseline_0013",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_action text, p_deleted boolean",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "authorization_store_action_allowed",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_action text, p_deleted boolean",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "authorization_store_action_allowed",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text, p_assignment text, p_crew text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "link_support_entity",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_assignment_valid",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_grant_rows",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_history_allowed",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_plan text, p_key text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_occurrence_valid",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_photos jsonb, p_existing jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_photos_owned",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_store text, p_id text, p_context jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "support_row_granted",
+      "privilege": "EXECUTE",
+      "schema": "authorization_private"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "assignment_skip_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "assignment_skip_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_assignment_id text, p_record_id text, p_crew_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "authorize_assignment_evidence_upload",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_assignment_id text, p_record_id text, p_crew_id text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "authorize_assignment_evidence_upload",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_assignment_id text, p_record_id text, p_crew_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "authorize_assignment_evidence_upload",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone, p_signer_name text, p_signer_role text, p_note text, p_signature_url text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "capture_grease_validation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone, p_signer_name text, p_signer_role text, p_note text, p_signature_url text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "capture_grease_validation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone, p_signer_name text, p_signer_role text, p_note text, p_signature_url text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "capture_grease_validation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "catalog_writer_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "catalog_writer_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "catalog_writer_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_note text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "close_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_note text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "close_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_note text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "close_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "PUBLIC",
+      "name": "current_app_active",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "current_app_active",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "anon",
+      "name": "current_app_active",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "current_app_active",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "current_app_active",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "PUBLIC",
+      "name": "current_app_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "current_app_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "anon",
+      "name": "current_app_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "current_app_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "current_app_role",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "edit_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "edit_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "edit_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_equipment_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb, p_note text, p_record_id text, p_signer_name text, p_signer_role text, p_signature_url text, p_expected_signatures jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "evidence_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_equipment_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb, p_note text, p_record_id text, p_signer_name text, p_signer_role text, p_signature_url text, p_expected_signatures jsonb",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "evidence_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "get_assignment_support_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "get_assignment_support_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "get_assignment_support_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "get_authorization_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "get_authorization_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "get_authorization_context",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_record_id text, p_equipment_id text, p_plan_id text, p_crew_id text, p_assignment_id text, p_execution_date timestamp with time zone, p_client_captured_at timestamp with time zone, p_shift_id text, p_execution_type text, p_out_of_plan_reason text, p_performed_by text, p_retroactive boolean, p_hourmeter numeric, p_no_hourmeter boolean, p_no_hourmeter_reason text, p_lubricant_id text, p_quantity numeric, p_condition text, p_notes text, p_details jsonb, p_photos jsonb, p_expected_record timestamp with time zone, p_expected_equipment timestamp with time zone, p_expected_plan timestamp with time zone, p_expected_assignment timestamp with time zone",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "lubrication_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_record_id text, p_equipment_id text, p_plan_id text, p_crew_id text, p_assignment_id text, p_execution_date timestamp with time zone, p_client_captured_at timestamp with time zone, p_shift_id text, p_execution_type text, p_out_of_plan_reason text, p_performed_by text, p_retroactive boolean, p_hourmeter numeric, p_no_hourmeter boolean, p_no_hourmeter_reason text, p_lubricant_id text, p_quantity numeric, p_condition text, p_notes text, p_details jsonb, p_photos jsonb, p_expected_record timestamp with time zone, p_expected_equipment timestamp with time zone, p_expected_plan timestamp with time zone, p_expected_assignment timestamp with time zone",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "lubrication_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_record_id text, p_equipment_id text, p_plan_id text, p_crew_id text, p_assignment_id text, p_execution_date timestamp with time zone, p_client_captured_at timestamp with time zone, p_shift_id text, p_execution_type text, p_out_of_plan_reason text, p_performed_by text, p_retroactive boolean, p_hourmeter numeric, p_no_hourmeter boolean, p_no_hourmeter_reason text, p_lubricant_id text, p_quantity numeric, p_condition text, p_notes text, p_details jsonb, p_photos jsonb, p_expected_record timestamp with time zone, p_expected_equipment timestamp with time zone, p_expected_plan timestamp with time zone, p_expected_assignment timestamp with time zone",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "lubrication_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "manage_lubrication_assignment",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "manage_lubrication_assignment",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "manage_lubrication_assignment",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_location_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "move_equipment_master_location",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_location_id text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "move_equipment_master_location",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_location_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "move_equipment_master_location",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_location_id text, p_shift_id text, p_until date, p_reason text, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "operational_catalog_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_location_id text, p_shift_id text, p_until date, p_reason text, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "operational_catalog_operation",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "record_lubrication_skip",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "record_lubrication_skip",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "record_lubrication_skip",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "repeat_anomaly_from_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "repeat_anomaly_from_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "repeat_anomaly_from_execution",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "report_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "report_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "report_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb, p_assignment_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "report_assignment_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb, p_assignment_id text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "report_assignment_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb, p_assignment_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "report_assignment_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "reprogram_lubrication_plan",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "reprogram_lubrication_plan",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "reprogram_lubrication_plan",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_auth_user_id uuid",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "resolve_authorization_scope",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_auth_user_id uuid",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "resolve_authorization_scope",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_id text, p_note text, p_expected_signatures jsonb",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "resolve_grease_validation_conflict",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_id text, p_note text, p_expected_signatures jsonb",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "resolve_grease_validation_conflict",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_id text, p_note text, p_expected_signatures jsonb",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "resolve_grease_validation_conflict",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "retire_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "retire_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "retire_anomaly",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "set_equipment_alert_pause",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "set_equipment_alert_pause",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "set_equipment_alert_pause",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_shift_id text",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "set_equipment_shift",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_shift_id text",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "set_equipment_shift",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_shift_id text",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "set_equipment_shift",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "grantable": false,
+      "grantee": "postgres",
+      "name": "update_equipment_hourmeter",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "grantable": false,
+      "grantee": "authenticated",
+      "name": "update_equipment_hourmeter",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "grantable": false,
+      "grantee": "service_role",
+      "name": "update_equipment_hourmeter",
+      "privilege": "EXECUTE",
+      "schema": "public"
+    }
+  ],
+  "functions": [
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "authorization_row_in_scope",
+      "no_whitespace_md5": "8493617b1e85891beb6302495414d3d8",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "215e2de3847979514d3d574a8d150bdb"
+    },
+    {
+      "args": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "authorization_row_in_scope_baseline_0013",
+      "no_whitespace_md5": "d25407448ed0881b8fea8726ccfa5bba",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "c741089d1a767afd7eef83b245ffea43"
+    },
+    {
+      "args": "p_store text, p_action text, p_deleted boolean",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "authorization_store_action_allowed",
+      "no_whitespace_md5": "a575288e36152d90d79c9728f20d56c5",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "a93009208e8e1b0769b01c5ac7d12105"
+    },
+    {
+      "args": "p_store text, p_id text, p_assignment text, p_crew text",
+      "argument_defaults_md5": "7763119cba0bf7aeb949a58d9ffc0ac9",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "link_support_entity",
+      "no_whitespace_md5": "da5dbb41b152a83ea568fad52d2b99fd",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "void",
+      "return_type": "void",
+      "schema": "authorization_private",
+      "source_md5": "3087c55122f3f20d14448949939c1dac"
+    },
+    {
+      "args": "p_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "support_assignment_valid",
+      "no_whitespace_md5": "be6bb4427fdbe3d207bd8c425d4bb8b9",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "77e1c96df615441d02c9bf9028fbe384"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": [
+        "t",
+        "t"
+      ],
+      "language": "sql",
+      "name": "support_grant_rows",
+      "no_whitespace_md5": "0625bd9879c7af5ac5b844d122de1935",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 1000,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "TABLE(store text, id text)",
+      "return_type": "record",
+      "schema": "authorization_private",
+      "source_md5": "9692dff08b575fe19841783097d9bb23"
+    },
+    {
+      "args": "p_store text, p_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "support_history_allowed",
+      "no_whitespace_md5": "fd108159112449850928d09e613aa41f",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "263b612e1790aab1d8cf4708707640f7"
+    },
+    {
+      "args": "p_plan text, p_key text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "support_occurrence_valid",
+      "no_whitespace_md5": "7fc6aa5a77a719162839775af6e54a1e",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": false,
+      "provolatile": "i",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "088bbfce62cf15f391d3f116bac2d2fd"
+    },
+    {
+      "args": "p_photos jsonb, p_existing jsonb",
+      "argument_defaults_md5": "8b4b2df56ad0773943ef9179742da01b",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "support_photos_owned",
+      "no_whitespace_md5": "fdee4075bce60b48e23e375efb22308e",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "deb22351ca575591d90b6e6e4739736f"
+    },
+    {
+      "args": "p_store text, p_id text, p_context jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "support_row_granted",
+      "no_whitespace_md5": "61cf25fce932c41b24849060a3e3c1c6",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "authorization_private",
+      "source_md5": "52d04e8724f936743096c434d38eb138"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "assignment_skip_operation",
+      "no_whitespace_md5": "6ac507ef97720804111b9093cb08e030",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "55fec948bd9017118893fc60d01bbbbb"
+    },
+    {
+      "args": "p_assignment_id text, p_record_id text, p_crew_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "authorize_assignment_evidence_upload",
+      "no_whitespace_md5": "86637f30c514cb5be14ffd1cdfbdf15e",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "public",
+      "source_md5": "91b4e427e17de87c92832cc39e46412d"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone, p_signer_name text, p_signer_role text, p_note text, p_signature_url text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "capture_grease_validation",
+      "no_whitespace_md5": "5e11368174a39cd507b03f11a3202ab1",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "fcc5d9a28c1c5993465295cb6d7ad6c1"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "catalog_writer_role",
+      "no_whitespace_md5": "934b6b6adec39ef66ca87b0aec24cfd5",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "text",
+      "return_type": "text",
+      "schema": "public",
+      "source_md5": "b860aa0b56cfb6ae95fa1c93e8f473bf"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_note text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "close_anomaly",
+      "no_whitespace_md5": "3f5db008f1694cb6f1d604ff5c9688a0",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "d8cb5e1433f910f86997c4d72b00b4bf"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "current_app_active",
+      "no_whitespace_md5": "40e61d478f3607ca44294a35be03cb47",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "boolean",
+      "return_type": "boolean",
+      "schema": "public",
+      "source_md5": "8f4291c244172aa169836d88b1844acb"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "current_app_role",
+      "no_whitespace_md5": "e1e80b82b6a0974dd61014b94f0c5e23",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "text",
+      "return_type": "text",
+      "schema": "public",
+      "source_md5": "6879942728cf1d81c0c2a72849c935bd"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "edit_anomaly",
+      "no_whitespace_md5": "165080a131429d4ec9d16a047b6f11aa",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "db9d8817d5ea25e06bad7080e9058ab2"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_equipment_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb, p_note text, p_record_id text, p_signer_name text, p_signer_role text, p_signature_url text, p_expected_signatures jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "evidence_operation",
+      "no_whitespace_md5": "a4a58936cdd4a93c9e746cd901fafbec",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "6b198a073df0d91e63b72431015338bd"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "get_assignment_support_context",
+      "no_whitespace_md5": "c83a3eec9176e9e11c055a8cd74ba898",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "b7eb729d7edcb79dbef952fbe02dd2ab"
+    },
+    {
+      "args": "",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "get_authorization_context",
+      "no_whitespace_md5": "c3d982c067aa65a374f0873178ca0f18",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "aac0a7bc32da3064da2da7e79be91d02"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_record_id text, p_equipment_id text, p_plan_id text, p_crew_id text, p_assignment_id text, p_execution_date timestamp with time zone, p_client_captured_at timestamp with time zone, p_shift_id text, p_execution_type text, p_out_of_plan_reason text, p_performed_by text, p_retroactive boolean, p_hourmeter numeric, p_no_hourmeter boolean, p_no_hourmeter_reason text, p_lubricant_id text, p_quantity numeric, p_condition text, p_notes text, p_details jsonb, p_photos jsonb, p_expected_record timestamp with time zone, p_expected_equipment timestamp with time zone, p_expected_plan timestamp with time zone, p_expected_assignment timestamp with time zone",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "lubrication_execution",
+      "no_whitespace_md5": "fa9f7d5a02f64d7d60e3d7503f48dc2e",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "f556df666fe3792426958c1fe5b3a53e"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "manage_lubrication_assignment",
+      "no_whitespace_md5": "f03e848989128090ff6ec89c5f19bfe9",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "7f0f4872a24a323cb9cfb8e18b7af95e"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_location_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "move_equipment_master_location",
+      "no_whitespace_md5": "ab6f256bce0018690d0e9e887ccc3cee",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "1cdc34f16dedce024a6be899412296b6"
+    },
+    {
+      "args": "p_operation_id text, p_action text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_location_id text, p_shift_id text, p_until date, p_reason text, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "operational_catalog_operation",
+      "no_whitespace_md5": "578eaf7ad566105d525e33f928986de6",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "6e5589ef77404238ddf16bef39cff09a"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "record_lubrication_skip",
+      "no_whitespace_md5": "2c776606df5aaddeb8b93ad3cea31137",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "92d68d93164e1529ef02e3e75f430417"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "repeat_anomaly_from_execution",
+      "no_whitespace_md5": "fe76a7cf5b04f90d21e41b06ad81fd4d",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "7d8779ba76a51cfca92c21303aa24a49"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "report_anomaly",
+      "no_whitespace_md5": "d8eb309414a99907fba1966e2c7da620",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "7ea6efd917c205ab7e85a4420131772d"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb, p_assignment_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "report_assignment_anomaly",
+      "no_whitespace_md5": "c9f5d9dbbd654a4ee3dc06e59037c864",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "aa9cb119800753ffaff529aaeac85f10"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "reprogram_lubrication_plan",
+      "no_whitespace_md5": "b57f21da719de2a50fe22dfc11c54cb2",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "085298c786113473aedb98de4386ad9f"
+    },
+    {
+      "args": "p_auth_user_id uuid",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "plpgsql",
+      "name": "resolve_authorization_scope",
+      "no_whitespace_md5": "c4f6b6895a9bdabdbe65ae52f7e01f3a",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "s",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "29d1220cc0bd9ec3f03d50cffd82ec8f"
+    },
+    {
+      "args": "p_operation_id text, p_record_id text, p_id text, p_note text, p_expected_signatures jsonb",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "resolve_grease_validation_conflict",
+      "no_whitespace_md5": "efaec96639ff500ca7bbb0b76fcfe149",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "31c652c13bdeb120cea411604c017a37"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "retire_anomaly",
+      "no_whitespace_md5": "126e9fb11747a20c92466a6d5c099738",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "72ab85e8e21b076551938fc6ac48531b"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "set_equipment_alert_pause",
+      "no_whitespace_md5": "81d525a5f57123629bc22dddc9c4d662",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "2527cd7c974e0db9d7ad89934cba21ce"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_shift_id text",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "set_equipment_shift",
+      "no_whitespace_md5": "279a9aaa3c0a77c21847da073eda93d0",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "c10011f333a8ad50c52b4ccac12b0c67"
+    },
+    {
+      "args": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "argument_defaults_md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "argument_modes": null,
+      "language": "sql",
+      "name": "update_equipment_hourmeter",
+      "no_whitespace_md5": "c94961b6a3cac020d4657156c2e0f638",
+      "owner": "postgres",
+      "proconfig": [
+        "search_path=pg_catalog"
+      ],
+      "procost": 100,
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "prorows": 0,
+      "prosecdef": true,
+      "provolatile": "v",
+      "return_declaration": "jsonb",
+      "return_type": "jsonb",
+      "schema": "public",
+      "source_md5": "a735272552c64516501f14b8af61ad10"
+    }
+  ],
+  "indexes": [
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX release_migration_state_pkey ON authorization_private.release_migration_state USING btree (version)",
+      "name": "release_migration_state_pkey",
+      "schema": "authorization_private",
+      "table": "release_migration_state",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX support_control_pkey ON authorization_private.support_control USING btree (singleton)",
+      "name": "support_control_pkey",
+      "schema": "authorization_private",
+      "table": "support_control",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX support_links_pkey ON authorization_private.support_links USING btree (store, entity_id, crew_id)",
+      "name": "support_links_pkey",
+      "schema": "authorization_private",
+      "table": "support_links",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX app_profiles_app_user_id_key ON public.app_profiles USING btree (app_user_id)",
+      "name": "app_profiles_app_user_id_key",
+      "schema": "public",
+      "table": "app_profiles",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX app_profiles_pkey ON public.app_profiles USING btree (auth_user_id)",
+      "name": "app_profiles_pkey",
+      "schema": "public",
+      "table": "app_profiles",
+      "valid": true
+    },
+    {
+      "constraint_index": false,
+      "definition": "CREATE INDEX app_profiles_role_idx ON public.app_profiles USING btree (role)",
+      "name": "app_profiles_role_idx",
+      "schema": "public",
+      "table": "app_profiles",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX app_store_permissions_pkey ON public.app_store_permissions USING btree (store, role)",
+      "name": "app_store_permissions_pkey",
+      "schema": "public",
+      "table": "app_store_permissions",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX assignment_skip_operation_receipts_pkey ON public.assignment_skip_operation_receipts USING btree (auth_user_id, operation_id)",
+      "name": "assignment_skip_operation_receipts_pkey",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX engrase_sync_pkey ON public.engrase_sync USING btree (store, id)",
+      "name": "engrase_sync_pkey",
+      "schema": "public",
+      "table": "engrase_sync",
+      "valid": true
+    },
+    {
+      "constraint_index": false,
+      "definition": "CREATE INDEX engrase_sync_updated_at_idx ON public.engrase_sync USING btree (updated_at)",
+      "name": "engrase_sync_updated_at_idx",
+      "schema": "public",
+      "table": "engrase_sync",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX evidence_operation_receipts_pkey ON public.evidence_operation_receipts USING btree (auth_user_id, operation_id)",
+      "name": "evidence_operation_receipts_pkey",
+      "schema": "public",
+      "table": "evidence_operation_receipts",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX lubrication_execution_receipts_pkey ON public.lubrication_execution_receipts USING btree (auth_user_id, operation_id)",
+      "name": "lubrication_execution_receipts_pkey",
+      "schema": "public",
+      "table": "lubrication_execution_receipts",
+      "valid": true
+    },
+    {
+      "constraint_index": true,
+      "definition": "CREATE UNIQUE INDEX operational_catalog_receipts_pkey ON public.operational_catalog_receipts USING btree (auth_user_id, operation_id)",
+      "name": "operational_catalog_receipts_pkey",
+      "schema": "public",
+      "table": "operational_catalog_receipts",
+      "valid": true
+    }
+  ],
+  "matrix": [
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "anomalies"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "anomalies"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "anomalies"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "anomalies"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "anomalies"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": false,
+      "role": "ADMINISTRADOR",
+      "store": "audit_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": false,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "audit_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": false,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "audit_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": false,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "audit_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "audit_log"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "cuadrillas"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "cuadrillas"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "cuadrillas"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "cuadrillas"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "cuadrillas"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "equipment"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "equipment"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "equipment"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "equipment"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "equipment"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "equipment_types"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "equipment_types"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "equipment_types"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "equipment_types"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "equipment_types"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "grease_validations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "grease_validations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "grease_validations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "grease_validations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "grease_validations"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "locations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "locations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "locations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "locations"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "locations"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubricants"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "lubricants"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "lubricants"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "lubricants"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubricants"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubrication_assignments"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "lubrication_assignments"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "PLANIFICADOR",
+      "store": "lubrication_assignments"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "lubrication_assignments"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubrication_assignments"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubrication_plans"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "lubrication_plans"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "lubrication_plans"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "lubrication_plans"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubrication_plans"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubrication_points"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "lubrication_points"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "lubrication_points"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "lubrication_points"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubrication_points"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubrication_records"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "lubrication_records"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "PLANIFICADOR",
+      "store": "lubrication_records"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "lubrication_records"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubrication_records"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "lubrication_skips"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "lubrication_skips"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "PLANIFICADOR",
+      "store": "lubrication_skips"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "lubrication_skips"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "lubrication_skips"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "ADMINISTRADOR",
+      "store": "notification_dispatch_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "notification_dispatch_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "notification_dispatch_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "notification_dispatch_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "notification_dispatch_log"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "push_tokens"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "LUBRICADOR",
+      "store": "push_tokens"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "PLANIFICADOR",
+      "store": "push_tokens"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "push_tokens"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": false,
+      "can_update": true,
+      "role": "VISOR",
+      "store": "push_tokens"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "settings"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "settings"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "settings"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "settings"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": false,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "settings"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "shifts"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "shifts"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "shifts"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "SUPERVISOR",
+      "store": "shifts"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "shifts"
+    },
+    {
+      "can_delete": true,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "ADMINISTRADOR",
+      "store": "users"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "LUBRICADOR",
+      "store": "users"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "PLANIFICADOR",
+      "store": "users"
+    },
+    {
+      "can_delete": false,
+      "can_insert": true,
+      "can_read": true,
+      "can_update": true,
+      "role": "SUPERVISOR",
+      "store": "users"
+    },
+    {
+      "can_delete": false,
+      "can_insert": false,
+      "can_read": true,
+      "can_update": false,
+      "role": "VISOR",
+      "store": "users"
+    }
+  ],
+  "policies": [
+    {
+      "cmd": "INSERT",
+      "permissive": "PERMISSIVE",
+      "policyname": "app_profiles: admin crea perfiles",
+      "qual": null,
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "app_profiles",
+      "with_check": "((current_app_role() = 'ADMINISTRADOR'::text) AND current_app_active())"
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "PERMISSIVE",
+      "policyname": "app_profiles: admin edita otros",
+      "qual": "((auth.uid() <> auth_user_id) AND (current_app_role() = 'ADMINISTRADOR'::text) AND current_app_active())",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "app_profiles",
+      "with_check": "(auth.uid() <> auth_user_id)"
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "app_profiles: admin lee todos",
+      "qual": "((current_app_role() = 'ADMINISTRADOR'::text) AND current_app_active())",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "app_profiles",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "app_profiles: leer el propio perfil",
+      "qual": "(auth.uid() = auth_user_id)",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "app_profiles",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "app_store_permissions: lectura autenticada",
+      "qual": "current_app_active()",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "app_store_permissions",
+      "with_check": null
+    },
+    {
+      "cmd": "ALL",
+      "permissive": "PERMISSIVE",
+      "policyname": "acceso interno con anon key",
+      "qual": "true",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "true"
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "assignment_skip_rpc_delete_only",
+      "qual": "(store <> ALL (ARRAY['lubrication_assignments'::text, 'lubrication_skips'::text, 'lubrication_records'::text]))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "assignment_skip_rpc_insert_only",
+      "qual": null,
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(store <> ALL (ARRAY['lubrication_assignments'::text, 'lubrication_skips'::text, 'lubrication_records'::text]))"
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "assignment_skip_rpc_update_only",
+      "qual": "(store <> ALL (ARRAY['lubrication_assignments'::text, 'lubrication_skips'::text, 'lubrication_records'::text]))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(store <> ALL (ARRAY['lubrication_assignments'::text, 'lubrication_skips'::text, 'lubrication_records'::text]))"
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_scope_delete",
+      "qual": "authorization_private.authorization_row_in_scope_baseline_0013(store, id, payload, 'DELETE'::text, ( SELECT get_authorization_context() AS get_authorization_context))",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_scope_insert",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "authorization_private.authorization_row_in_scope_baseline_0013(store, id, payload, 'INSERT'::text, ( SELECT get_authorization_context() AS get_authorization_context))"
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_scope_select",
+      "qual": "(authorization_private.authorization_row_in_scope(store, id, payload, 'SELECT'::text, ( SELECT get_authorization_context() AS get_authorization_context)) OR ((store = 'settings'::text) AND (( SELECT (get_authorization_context() ->> 'status'::text)) = 'AUTHORIZED'::text)))",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_scope_update",
+      "qual": "authorization_private.authorization_row_in_scope_baseline_0013(store, id, payload, 'UPDATE'::text, ( SELECT get_authorization_context() AS get_authorization_context))",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "authorization_private.authorization_row_in_scope_baseline_0013(store, id, payload, 'UPDATE'::text, ( SELECT get_authorization_context() AS get_authorization_context))"
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_store_delete",
+      "qual": "authorization_private.authorization_store_action_allowed(store, 'DELETE'::text, deleted)",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_store_insert",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "authorization_private.authorization_store_action_allowed(store, 'INSERT'::text, deleted)"
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_store_select",
+      "qual": "authorization_private.authorization_store_action_allowed(store, 'SELECT'::text, deleted)",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "authorization_store_update",
+      "qual": "authorization_private.authorization_store_action_allowed(store, 'UPDATE_USING'::text, deleted)",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "authorization_private.authorization_store_action_allowed(store, 'UPDATE_CHECK'::text, deleted)"
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "catalog_delete_roles",
+      "qual": "(store <> ALL (ARRAY['equipment'::text, 'lubrication_plans'::text, 'lubrication_points'::text, 'settings'::text]))",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "catalog_insert_roles",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "\nCASE\n    WHEN (store = ANY (ARRAY['equipment'::text, 'settings'::text])) THEN (catalog_writer_role() = 'ADMINISTRADOR'::text)\n    WHEN (store = ANY (ARRAY['lubrication_plans'::text, 'lubrication_points'::text])) THEN (catalog_writer_role() = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text]))\n    ELSE true\nEND"
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "catalog_settings_read",
+      "qual": "((store = 'settings'::text) AND (catalog_writer_role() = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text, 'SUPERVISOR'::text, 'LUBRICADOR'::text])))",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "catalog_update_roles",
+      "qual": "\nCASE\n    WHEN (store = ANY (ARRAY['equipment'::text, 'settings'::text])) THEN (catalog_writer_role() = 'ADMINISTRADOR'::text)\n    WHEN (store = ANY (ARRAY['lubrication_plans'::text, 'lubrication_points'::text])) THEN (catalog_writer_role() = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text]))\n    ELSE true\nEND",
+      "roles": [
+        "authenticated"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "\nCASE\n    WHEN (store = ANY (ARRAY['equipment'::text, 'settings'::text])) THEN (catalog_writer_role() = 'ADMINISTRADOR'::text)\n    WHEN (store = ANY (ARRAY['lubrication_plans'::text, 'lubrication_points'::text])) THEN (catalog_writer_role() = ANY (ARRAY['ADMINISTRADOR'::text, 'PLANIFICADOR'::text]))\n    ELSE true\nEND"
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase_sync: actualizar según matriz",
+      "qual": "(current_app_active() AND (EXISTS ( SELECT 1\n   FROM app_store_permissions p\n  WHERE ((p.store = engrase_sync.store) AND (p.role = current_app_role()) AND (p.can_update OR p.can_delete)))))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(current_app_active() AND (EXISTS ( SELECT 1\n   FROM app_store_permissions p\n  WHERE ((p.store = engrase_sync.store) AND (p.role = current_app_role()) AND ((engrase_sync.deleted AND p.can_delete) OR ((NOT engrase_sync.deleted) AND p.can_update))))))"
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase_sync: crear según matriz",
+      "qual": null,
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(current_app_active() AND (EXISTS ( SELECT 1\n   FROM app_store_permissions p\n  WHERE ((p.store = engrase_sync.store) AND (p.role = current_app_role()) AND p.can_insert))))"
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase_sync: leer según matriz",
+      "qual": "(current_app_active() AND (EXISTS ( SELECT 1\n   FROM app_store_permissions p\n  WHERE ((p.store = engrase_sync.store) AND (p.role = current_app_role()) AND p.can_read))))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "evidence_rpc_delete_only",
+      "qual": "(store <> ALL (ARRAY['anomalies'::text, 'grease_validations'::text]))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "RESTRICTIVE",
+      "policyname": "evidence_rpc_insert_only",
+      "qual": null,
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(store <> ALL (ARRAY['anomalies'::text, 'grease_validations'::text]))"
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "evidence_rpc_update_only",
+      "qual": "(store <> ALL (ARRAY['anomalies'::text, 'grease_validations'::text]))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "public",
+      "tablename": "engrase_sync",
+      "with_check": "(store <> ALL (ARRAY['anomalies'::text, 'grease_validations'::text]))"
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase-photos actualizar con anon key",
+      "qual": "(bucket_id = 'engrase-photos'::text)",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "storage",
+      "tablename": "objects",
+      "with_check": null
+    },
+    {
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase-photos lectura publica",
+      "qual": "(bucket_id = 'engrase-photos'::text)",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "storage",
+      "tablename": "objects",
+      "with_check": null
+    },
+    {
+      "cmd": "INSERT",
+      "permissive": "PERMISSIVE",
+      "policyname": "engrase-photos subir con anon key",
+      "qual": null,
+      "roles": [
+        "public"
+      ],
+      "schemaname": "storage",
+      "tablename": "objects",
+      "with_check": "(bucket_id = 'engrase-photos'::text)"
+    },
+    {
+      "cmd": "DELETE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "signature_objects_immutable_delete",
+      "qual": "(NOT ((bucket_id = 'engrase-photos'::text) AND (name ~~ 'grease_validations/%'::text)))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "storage",
+      "tablename": "objects",
+      "with_check": null
+    },
+    {
+      "cmd": "UPDATE",
+      "permissive": "RESTRICTIVE",
+      "policyname": "signature_objects_immutable_update",
+      "qual": "(NOT ((bucket_id = 'engrase-photos'::text) AND (name ~~ 'grease_validations/%'::text)))",
+      "roles": [
+        "public"
+      ],
+      "schemaname": "storage",
+      "tablename": "objects",
+      "with_check": "(NOT ((bucket_id = 'engrase-photos'::text) AND (name ~~ 'grease_validations/%'::text)))"
+    }
+  ],
+  "read_only": "on",
+  "release_state": [
+    {
+      "matrix_digest": "n/a: performance-only, no app_store_permissions change",
+      "version": "0016_fix_support_rls_performance"
+    }
+  ],
+  "schema_grants": [
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "CREATE",
+      "schema": "authorization_private"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "USAGE",
+      "schema": "authorization_private"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "USAGE",
+      "schema": "authorization_private"
+    },
+    {
+      "grantable": false,
+      "grantee": "PUBLIC",
+      "privilege": "USAGE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "pg_database_owner",
+      "privilege": "CREATE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "pg_database_owner",
+      "privilege": "USAGE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "USAGE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "USAGE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "USAGE",
+      "schema": "public"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "USAGE",
+      "schema": "public"
+    }
+  ],
+  "sequences": [],
+  "server_version": "17.6",
+  "support_control": [
+    {
+      "enabled": true,
+      "singleton": true
+    }
+  ],
+  "table_grants": [
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "authorization_private",
+      "table": "release_migration_state"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "authorization_private",
+      "table": "support_control"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "authorization_private",
+      "table": "support_links"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_profiles"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "app_store_permissions"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "assignment_skip_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "anon",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "authenticated",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "engrase_sync"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "evidence_operation_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "lubrication_execution_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "postgres",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "DELETE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "INSERT",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "MAINTAIN",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "REFERENCES",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "SELECT",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRIGGER",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "TRUNCATE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    },
+    {
+      "grantable": false,
+      "grantee": "service_role",
+      "privilege": "UPDATE",
+      "schema": "public",
+      "table": "operational_catalog_receipts"
+    }
+  ],
+  "tables": [
+    {
+      "name": "release_migration_state",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "authorization_private"
+    },
+    {
+      "name": "support_control",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "authorization_private"
+    },
+    {
+      "name": "support_links",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "authorization_private"
+    },
+    {
+      "name": "app_profiles",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "app_store_permissions",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "assignment_skip_operation_receipts",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "engrase_sync",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "evidence_operation_receipts",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "lubrication_execution_receipts",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    },
+    {
+      "name": "operational_catalog_receipts",
+      "owner": "postgres",
+      "relforcerowsecurity": false,
+      "relkind": "r",
+      "relrowsecurity": true,
+      "schema": "public"
+    }
+  ],
+  "triggers": [
+    {
+      "definition_md5": "42a45bbea5d52f517084cdb0bbb03cca",
+      "enabled": "O",
+      "external_webhook": true,
+      "function_name": "http_request",
+      "function_schema": "supabase_functions",
+      "name": "avisar-push",
+      "schema": "public",
+      "table": "engrase_sync"
+    }
+  ],
+  "types": [],
+  "views": []
+}

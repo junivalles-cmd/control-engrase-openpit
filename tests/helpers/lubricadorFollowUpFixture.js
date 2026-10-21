@@ -13,7 +13,10 @@ export const followUpEquipment = [
   { id: 'E1', code: 'TEST-M', locationId: 'M' }, { id: 'E2', code: 'TEST-V', locationId: 'V' }, { id: 'E3', code: 'TEST-O', locationId: 'O' },
 ].map(e => ({ ...e, brand: 'Komatsu', model: 'PC500LC-10M0', status: 'Operativo', active: true, hourmeter: 10 }));
 export const followUpRecords = followUpEquipment.map((e, i) => ({ id: `R${i}`, equipmentId: e.id, date: `2026-10-0${5 + i}T08:39:00`, active: true, shiftId: 'shift_dia', userName: 'Fixture' }));
-export async function bootLubricadorFollowUp(page, { source = appSource, equipos = followUpEquipment, records = followUpRecords, coverage = followUpCoverage, plans = [], assignments = [], skips = [] } = {}) {
+export async function bootLubricadorFollowUp(page, { source = appSource, equipos = followUpEquipment, records = followUpRecords, coverage = followUpCoverage, plans = [], assignments = [], skips = [],
+  // Age-only scenarios use signed historical executions. Pass [] explicitly
+  // for a pending-validation scenario; real validation rules stay enabled.
+  validations = records.map(r => ({ id:`validation:${r.id}`,lubricationRecordId:r.id,signerRole:'OPERADOR',active:true })) } = {}) {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', route => {
     if (route.request().url().endsWith('/__follow_up_fixture')) return route.fulfill({ contentType: 'text/html', body: '<main id="app-content"></main>' });
@@ -31,6 +34,9 @@ export async function bootLubricadorFollowUp(page, { source = appSource, equipos
     let _db = null;
     window.App = { route: 'turno', currentUser: { id: 'U1', name: 'Usuario ficticio', role: 'LUBRICADOR' }, generalSettings: { shiftDayStart: 6, shiftNightStart: 18 } };
     let lastSyncState = { status: 'ok' };
+    // This fixture starts with a populated local account; bootstrap itself
+    // is exercised by lubricador-fresh-install-bootstrap.spec.js.
+    window.Sync = { getAccountSyncState: async () => ({ bootstrapComplete: true }) };
     window.__flows = []; window.__details = [];
     window.startLubricadorGreaseFlow = (id, options) => window.__flows.push({ id, options: options || {} });
     window.openEquipmentDetail = id => window.__details.push(id);
@@ -42,11 +48,11 @@ export async function bootLubricadorFollowUp(page, { source = appSource, equipos
     window.DB = DB; window.renderLubricadorHome = renderLubricadorHome;
     window.__offline = () => { lastSyncState.status = 'offline'; };
   ` });
-  await page.evaluate(async ({ crew, locations, coverage, equipos, records, plans, assignments, skips }) => {
+  await page.evaluate(async ({ crew, locations, coverage, equipos, records, plans, assignments, skips, validations }) => {
     await openDB(); await DB.setConfig({ lastPull: 'fixture' });
     await DB.put('cuadrillas', crew); await DB.putMany('locations', locations);
-    for (const [store, rows] of Object.entries({ crew_locations: coverage, equipment: equipos, lubrication_records: records, lubrication_plans: plans, lubrication_assignments: assignments, lubrication_skips: skips })) await DB.putMany(store, rows);
+    for (const [store, rows] of Object.entries({ crew_locations: coverage, equipment: equipos, lubrication_records: records, lubrication_plans: plans, lubrication_assignments: assignments, lubrication_skips: skips, grease_validations: validations })) await DB.putMany(store, rows);
     await renderLubricadorHome();
-  }, { crew: followUpCrew, locations: followUpLocations, coverage, equipos, records, plans, assignments, skips });
+  }, { crew: followUpCrew, locations: followUpLocations, coverage, equipos, records, plans, assignments, skips, validations });
   return errors;
 }

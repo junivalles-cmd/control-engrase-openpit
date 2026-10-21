@@ -118,7 +118,8 @@ for (const width of [360, 384, 390, 412]) {
   test(`Mi Turno @ ${width}px — sin scroll horizontal`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
@@ -127,7 +128,8 @@ for (const width of [360, 384, 390, 412]) {
   test(`Mi Turno @ ${width}px — los 4 KPIs están en 2 columnas, visibles sin scroll adicional`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     const cards = page.locator('.lub-kpi-card');
     await expect(cards).toHaveCount(4);
@@ -138,7 +140,8 @@ for (const width of [360, 384, 390, 412]) {
   test(`Mi Turno @ ${width}px — acciones rápidas, acciones de Atrasados y de Mi Turno cumplen touch target >=44px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     const quickActions = page.locator('.lub-quick-action');
     const n = await quickActions.count();
@@ -163,6 +166,7 @@ for (const width of [360, 384, 390, 412]) {
 test('4 KPIs siempre visibles incluso en 0 (nunca se ocultan, a diferencia de Atrasados/Mi Turno/Realizados/Alertas)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withArrastrados: false, withMiTurno: false, withRealizados: false, withAlertas: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('.lub-kpi-card')).toHaveCount(4);
@@ -173,6 +177,7 @@ test('4 KPIs siempre visibles incluso en 0 (nunca se ocultan, a diferencia de At
 test('"Atrasados" se oculta por completo cuando no hay registros (nunca una tarjeta en 0)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withArrastrados: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#arrastrados-head')).toHaveCount(0);
@@ -182,6 +187,7 @@ test('"Atrasados" se oculta por completo cuando no hay registros (nunca una tarj
 test('"Mi Turno" se oculta por completo cuando no hay trabajo del turno actual', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withMiTurno: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#mi-turno-head')).toHaveCount(0);
@@ -191,6 +197,7 @@ test('"Mi Turno" se oculta por completo cuando no hay trabajo del turno actual',
 test('"Realizados" se oculta por completo cuando no hay engrases completados hoy', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withRealizados: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#realizados-head')).toHaveCount(0);
@@ -200,6 +207,7 @@ test('"Realizados" se oculta por completo cuando no hay engrases completados hoy
 test('"Alertas" se oculta por completo cuando no hay equipos para mostrar', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withAlertas: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#alertas-head')).toHaveCount(0);
@@ -209,6 +217,7 @@ test('"Alertas" se oculta por completo cuando no hay equipos para mostrar', asyn
 test('orden de pantalla: Atrasados > Mi Turno > Realizados > Alertas', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const arrastradosBox = await page.locator('#arrastrados-head').boundingBox();
@@ -223,6 +232,7 @@ test('orden de pantalla: Atrasados > Mi Turno > Realizados > Alertas', async ({ 
 test('cada tarjeta de Atrasados muestra código, modelo, ubicación, origen y acciones Registrar/Ver ficha', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('.lub-arrastrado-card').first();
@@ -237,6 +247,7 @@ test('cada tarjeta de Atrasados muestra código, modelo, ubicación, origen y ac
 test('una tarjeta de Mi Turno asignada muestra el badge ASIGNADO junto al estado', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ asignadoEnMiTurno: true }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('#mi-turno-list .lub-eq-btn').first();
@@ -247,6 +258,7 @@ test('una tarjeta de Mi Turno asignada muestra el badge ASIGNADO junto al estado
 test('una tarjeta de Mi Turno sin asignación NO muestra el badge ASIGNADO', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ asignadoEnMiTurno: false }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('#mi-turno-list .lub-eq-btn').first();
@@ -257,6 +269,7 @@ test('una tarjeta de Mi Turno sin asignación NO muestra el badge ASIGNADO', asy
 test('§12: el badge ASIGNADO (origen) se ve visualmente distinto del status-chip de ESTADO (sin confundirse, aunque comparten color)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ asignadoEnMiTurno: true }));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const estadoChip = page.locator('#mi-turno-list .lub-eq-top .status-chip', { hasText: 'PRÓXIMO' });
@@ -273,6 +286,7 @@ test('§12: el badge ASIGNADO (origen) se ve visualmente distinto del status-chi
 test('cada tarjeta de Realizados muestra código, hora, lb, quién lo realizó, estado de validación y Ver ficha', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('#realizados-list .lub-arrastrado-card').first();
@@ -287,6 +301,7 @@ test('cada tarjeta de Realizados muestra código, hora, lb, quién lo realizó, 
 test('cada tarjeta de Alertas muestra el código de equipo (abre la Ficha) y los días sin engrasar', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('#alertas-list .lub-arrastrado-card').first();
@@ -297,6 +312,7 @@ test('cada tarjeta de Alertas muestra el código de equipo (abre la Ficha) y los
 test('contexto compacto muestra turno + ubicación + cuadrilla + sincronización en una sola fila', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const chips = await page.locator('.lub-context-chip').allTextContents();
@@ -309,6 +325,7 @@ test('contexto compacto muestra turno + ubicación + cuadrilla + sincronización
 test('"Registrar fuera de plan" es la acción principal dominante (tarjeta grande separada), y Accesos rápidos tiene exactamente 4 botones: Escanear QR, Buscar equipo, Matriz semanal, Reportar anomalía', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('.lub-hero-action')).toContainText('Registrar fuera de plan');
@@ -319,6 +336,7 @@ test('"Registrar fuera de plan" es la acción principal dominante (tarjeta grand
 test('tarjeta de bienvenida muestra nombre + rol del usuario junto al contexto', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const card = page.locator('.lub-welcome-card');

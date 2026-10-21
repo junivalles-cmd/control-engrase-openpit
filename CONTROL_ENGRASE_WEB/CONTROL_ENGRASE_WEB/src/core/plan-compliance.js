@@ -136,8 +136,19 @@ function findPreviousRecord(record, allRecordsSameEquipo) {
 // cálculo (general y porEquipo) se restringe a ESE turno únicamente.
 function computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, dias, turnoFiltro) {
   function turnoOk(plan, shiftId) { return !plan.shiftId || plan.shiftId === shiftId; }
-  function hechoEnTurno(equipmentId, fechaStr, turno) {
-    return records.some(r => r.equipmentId === equipmentId && r.shiftId === turno && new Date(r.date).toDateString() === fechaStr);
+  function hechoEnTurno(equipmentId, fechaStr, turno, requireOperationalSnapshot = false) {
+    return records.some(r => {
+      if (r.equipmentId!==equipmentId) return false;
+      const assigned=r.operationalSnapshot?.assignedOccurrenceKey;
+      if (assigned) {
+        const plan=planByEquipoId[equipmentId];
+        const dateISO=requireOperationalSnapshot ? fechaStr : (()=>{const d=new Date(fechaStr);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;})();
+        const key=plan.id+':'+dateISO+(requireOperationalSnapshot ? ':'+turno : '');
+        return assigned===key && r.operationalSnapshot.satisfiedOccurrenceKey===key && Number(r.qty)>0 && (r.details||[]).every(d=>d.done);
+      }
+      return r.shiftId===turno && (r.operationalSnapshot?.operationalDate===fechaStr
+        || (!requireOperationalSnapshot && new Date(r.date).toDateString()===fechaStr));
+    });
   }
 
   const porTurno = { shift_dia: { programados: 0, realizados: 0 }, shift_noche: { programados: 0, realizados: 0 } };
@@ -148,22 +159,35 @@ function computeProgramadoRealizadoPeriodo(equiposDT, records, planByEquipoId, d
     const plan = planByEquipoId[e.id];
     porEquipoMap[e.id] = { e, programados: 0, realizados: 0 };
     dias.forEach(d => {
-      if (!(plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) return;
       const fechaStr = d.toDateString();
-      const turnosDelPlan = plan.shiftId ? [plan.shiftId] : ['shift_dia', 'shift_noche'];
+      const dateISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dualRequired = Array.isArray(plan.requiredShifts) && ['shift_dia','shift_noche'].every(id => plan.requiredShifts.includes(id))
+        && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+      if (plan.controlType === 'Día y turno de la semana'
+        && !(plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) return;
+      if (!dualRequired && !(plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) return;
+      const turnosDelPlan = dualRequired ? ['shift_dia', 'shift_noche'] : (plan.shiftId ? [plan.shiftId] : ['shift_dia', 'shift_noche']);
       const turnosAplican = turnoFiltro ? turnosDelPlan.filter(t => t === turnoFiltro) : turnosDelPlan;
       if (!turnosAplican.length) return;
 
-      generalProgramados++;
-      porEquipoMap[e.id].programados++;
-      if (turnosAplican.some(t => hechoEnTurno(e.id, fechaStr, t))) {
-        generalRealizados++;
-        porEquipoMap[e.id].realizados++;
+      if (dualRequired) {
+        generalProgramados += turnosAplican.length;
+        porEquipoMap[e.id].programados += turnosAplican.length;
+        const done = turnosAplican.filter(t => hechoEnTurno(e.id, dateISO, t, true)).length;
+        generalRealizados += done;
+        porEquipoMap[e.id].realizados += done;
+      } else {
+        generalProgramados++;
+        porEquipoMap[e.id].programados++;
+        if (turnosAplican.some(t => hechoEnTurno(e.id, fechaStr, t))) {
+          generalRealizados++;
+          porEquipoMap[e.id].realizados++;
+        }
       }
 
       turnosAplican.forEach(t => {
         porTurno[t].programados++;
-        if (hechoEnTurno(e.id, fechaStr, t)) porTurno[t].realizados++;
+        if (hechoEnTurno(e.id, dualRequired ? dateISO : fechaStr, t, dualRequired)) porTurno[t].realizados++;
       });
     });
   });

@@ -27,6 +27,7 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
   // Dedicated local origin: no app boot, authentication or remote requests.
   await page.route('**/__crew_fixture', route => route.fulfill({ contentType: 'text/html', body: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><main id="app-content"></main></body></html>' }));
   await page.goto('/__crew_fixture');
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css') });
   await page.addScriptTag({ content: `
     let _db = null;
@@ -37,7 +38,12 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
     window.updateLubricadorWidgetSnapshot = snapshot => window.__widget = snapshot;
     window.startGreaseFlow = async (id, target, options) => { window.__flow = { id, options }; };
     window.refreshPushTokenCrewScope = async () => {};
-    window.Sync = { fullSync: async () => ({ ok: true }) };
+    window.Sync = {
+      fullSync: async () => ({ ok: true }),
+      // Explicit account-readiness fixture; real cursor identity is unit-tested.
+      getAccountSyncState: async () => ({bootstrapComplete:typeof window.__bootstrapOverride==='boolean'
+        ? window.__bootstrapOverride : !!(await DB.getConfig())?.lastPull})
+    };
     window.logAudit = async () => {}; window.showInAppToast = () => {};
     window.Auth = { manageUsers: async () => ({ users: [] }) };
     ${source}
@@ -72,6 +78,91 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
   return errors;
 }
 const kpi = page => page.locator('.lub-kpi-card', { hasText: 'Pendientes hoy' }).locator('.lub-kpi-value');
+
+for (const supportIds of [[], ['mojon'], ['mojon', 'acarreo']]) {
+  test(`cobertura independiente del trabajo normal: PRINCIPAL Volcán + APOYO ${supportIds.join(',') || 'ninguno'}`, async ({ page }) => {
+    const fixtureCoverage = ['volcan', ...supportIds].map(id => ({
+      id: `coverage:${id}`, crew_id: crew.id, location_id: id,
+      role: id === 'volcan' ? 'PRINCIPAL' : 'APOYO', active: true,
+    }));
+    // Legacy apunta deliberadamente a una ubicación ajena a la cobertura.
+    const errors = await boot(page, { fixtureCrew: { ...crew, locationId: 'outside' }, fixtureCoverage });
+    const state = await page.evaluate(async () => ({ scope: await getCurrentOperationalScope(), render: JSON.parse(App._lubTurnoSignature) }));
+    expect(state.scope.principalLocationIds).toEqual(['volcan']);
+    expect([...state.scope.supportLocationIds].sort()).toEqual([...supportIds].sort());
+    expect(state.scope.legacyFallback).toBe(false);
+    expect([...state.render.filterLocations].sort()).toEqual(['volcan', ...supportIds].sort());
+    expect(state.render.filterLocations[0]).toBe('volcan');
+    await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('VOLCAN');
+    await expect(kpi(page)).toHaveText('1');
+    await expect(page.locator('.crew-location-filter')).toHaveCount(supportIds.length ? supportIds.length + 2 : 0);
+    const followUp = page.locator('#lub-follow-up .lub-follow-up-row');
+    await expect(followUp).toHaveCount(supportIds.length + 1);
+    const ids = await followUp.evaluateAll(rows => rows.map(r => r.dataset.equipmentId));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.sort()).toEqual(['volcan', ...supportIds].map(id => `eq:${id}`).sort());
+    for (const id of supportIds) {
+      await page.locator(`.crew-location-filter[data-location-id="${id}"]`).click();
+      await expect(kpi(page)).toHaveText('0');
+      await expect(page.locator('.lub-mt-reg, .lub-arr-reg')).toHaveCount(0);
+      await expect(page.locator('#lub-follow-up .lub-eq-code')).toHaveText(id.toUpperCase());
+    }
+    if (supportIds.length) await page.locator('.crew-location-filter[data-location-id=""]').click();
+    await expect(page.locator('.lub-mt-reg')).toHaveCount(1);
+    expect(await page.evaluate(async () => (await DB.all('equipment')).map(e => [e.id, e.locationId]).sort()))
+      .toEqual(locations.map(l => [`eq:${l.id}`, l.id]).sort());
+    expect(errors).toEqual([]);
+  });
+}
+
+test('APOYO sin equipos o con seguimiento ya excluido sigue visible como filtro', async ({ page }) => {
+  const fixtureCoverage = ['volcan', 'mojon', 'acarreo'].map(id => ({
+    id, crew_id: crew.id, location_id: id, role: id === 'volcan' ? 'PRINCIPAL' : 'APOYO', active: true,
+  }));
+  const errors = await boot(page, { fixtureCoverage, equipmentRows: [
+    {id:'V',code:'V',locationId:'volcan'}, {id:'M',code:'M',locationId:'mojon'},
+  ] });
+  await page.evaluate(async () => {
+    await DB.put('lubrication_records', { id:'today:M',equipmentId:'M',active:true,date:new Date().toISOString(),
+      operationalSnapshot:{executionCompleteness:'COMPLETE',crewId:'another-crew'} });
+    await renderLubricadorHome();
+  });
+  expect(await page.evaluate(() => JSON.parse(App._lubTurnoSignature).filterLocations.sort())).toEqual(['acarreo','mojon','volcan']);
+  for (const id of ['mojon','acarreo']) {
+    await page.locator(`.crew-location-filter[data-location-id="${id}"]`).click();
+    await expect(page.locator('#lub-follow-up .lub-follow-up-row')).toHaveCount(0);
+    await expect(page.locator('.lub-mt-reg')).toHaveCount(0);
+    await expect(kpi(page)).toHaveText('0');
+  }
+  expect(errors).toEqual([]);
+});
+
+for (const inactive of [false, true]) test(`fallback legacy únicamente sin filas propias (inactivas=${inactive})`, async ({ page }) => {
+  const fixtureCoverage = inactive ? coverage.map(r => ({...r,active:false})) : [];
+  const errors = await boot(page, { fixtureCoverage });
+  const state = await page.evaluate(async () => ({ scope:await getCurrentOperationalScope(), render:JSON.parse(App._lubTurnoSignature) }));
+  expect(state.scope.legacyFallback).toBe(!inactive);
+  expect(state.render.filterLocations).toEqual(inactive ? [] : ['volcan']);
+  await expect(page.locator('.crew-location-filter')).toHaveCount(0);
+  await expect(page.locator('.lub-mt-reg')).toHaveCount(inactive ? 0 : 1);
+  await expect(page.locator('#lub-follow-up .lub-follow-up-row')).toHaveCount(inactive ? 0 : 1);
+  expect(errors).toEqual([]);
+});
+
+test('assignment manual con grant cross-location fuera de cobertura conserva una única obligación', async ({ page }) => {
+  const fixtureCoverage = [{id:'principal',crew_id:crew.id,location_id:'volcan',role:'PRINCIPAL',active:true}];
+  const errors = await boot(page, { fixtureCoverage, equipmentRows: [
+    {id:'V',code:'V',locationId:'volcan'}, {id:'X',code:'X',locationId:'outside'},
+  ], assignmentRows:[{id:'cross',equipmentId:'X',planId:'plan:X',_supportOperational:true}] });
+  await expect(kpi(page)).toHaveText('2');
+  await expect(page.locator('.lub-mt-reg[data-id="X"]')).toHaveCount(1);
+  await expect(page.locator('.lub-eq-btn', {hasText:'X'}).getByText('ASIGNADO', {exact:true})).toHaveCount(1);
+  await expect(page.locator('#lub-follow-up .lub-follow-up-row[data-equipment-id="X"]')).toHaveCount(0);
+  await page.evaluate(() => renderLubricadorHome());
+  await expect(page.locator('.lub-mt-reg')).toHaveCount(2);
+  expect(await page.evaluate(async () => (await DB.all('lubrication_assignments')).map(a=>[a.id,a.status,a.equipmentId]))).toEqual([['cross','PENDING','X']]);
+  expect(errors).toEqual([]);
+});
 
 // Controlled C1/E1/E2/E3 scenarios. No real IDs/cache from 80-177 are inferred.
 const scenarioLocations = [
@@ -220,7 +311,7 @@ test('asignación en apoyo se cuenta una vez; sin asignación abre OUT_OF_PLAN',
   await page.evaluate(() => startLubricadorGreaseFlow('eq:acarreo'));
   expect(await page.evaluate(() => __flow.options?.outOfPlan || false)).toBe(false);
   await page.evaluate(async () => { const a = await DB.get('lubrication_assignments', 'asg'); await DB.put('lubrication_assignments', { ...a, active: false }); await handleOutOfPlanEquipoSelected('eq:acarreo'); });
-  expect(await page.evaluate(() => __flow.options.outOfPlan)).toBe(true);
+  await expect.poll(() => page.evaluate(() => __flow?.options?.outOfPlan)).toBe(true);
   expect(await page.evaluate(() => __flow.options.outOfPlanReason)).toBe('SUPPORT_OTHER_LOCATION');
   expect(errors).toEqual([]);
 });
@@ -239,9 +330,18 @@ test('legacy sin tabla remota conserva una ubicación; cache multiubicación fun
 });
 
 test('fresh install espera cobertura durante primer pull antes de decidir el alcance', async ({ page }) => {
+  // Fix 2026-10-17 ("RACE BOOTSTRAP/SCOPE"): el gate de bootstrap ya NUNCA
+  // depende de scope.kind/lastSyncState.status — es el ÚNICO chequeo de
+  // `Sync.getAccountSyncState()` de toda la función, antes de calcular
+  // ningún scope. El mensaje mientras bootstrapComplete es false es ahora
+  // siempre el mismo (Estado A, "Cargando tu asignación de trabajo.") —
+  // antes había un segundo mensaje aparte ("Cargando cobertura de
+  // ubicaciones.") que dependía de scope.kind==='CREW_SCOPED' ya resuelto,
+  // exactamente el tipo de combinación que causaba el bug real (una
+  // instalación nueva con 2+ cuadrillas podía no mostrar NUNCA el selector).
   const errors = await boot(page, { legacy: true, firstPull: true });
   await page.evaluate(async rows => { await DB.putMany('crew_locations', [rows[0]]); __setSyncStatus('syncing'); await renderLubricadorHome(); }, coverage);
-  await expect(page.getByText('Cargando cobertura de ubicaciones.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Cargando tu asignación de trabajo.', { exact: false })).toBeVisible();
   await expect(page.getByText('Sin cuadrilla autorizada', { exact: true })).toHaveCount(0);
   await page.evaluate(async rows => { await DB.putMany('crew_locations', rows); await DB.setConfig({ lastPull: '2026-10-10T10:00:00.000Z' }); __setSyncStatus('ok'); await renderLubricadorHome(); }, coverage);
   await expect(page.locator('.lub-mt-reg')).toHaveCount(2);
@@ -262,6 +362,43 @@ test('editor permite roles y revocación persistente, sin alterar legacy ni equi
   expect(saved.crew.locationId).toBe('volcan');
   await page.evaluate(async () => { App.currentUser.role = 'SUPERVISOR'; document.querySelector('#app-content').innerHTML = await cuadrillasPanelHTML(); });
   await expect(page.locator('.cq-coverage')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+// Simplificar Configuración > Organización (auditoría 2026-10-18) —
+// ROOT CAUSE DUPLICACIÓN: "Editar cuadrilla" y "Cobertura" administraban
+// las MISMAS ubicaciones/PRINCIPAL-APOYO desde dos pantallas distintas
+// (locationId/isDefault legacy vs. crew_locations). Modelo definitivo:
+// "Editar cuadrilla" administra SOLO nombre + miembros; "Cobertura" es la
+// ÚNICA fuente visual para ubicación(es)/rol. Los campos legacy se
+// conservan en el documento (nunca se borran del modelo/migraciones),
+// solo dejan de EDITARSE desde esta ventana.
+test('"Editar cuadrilla" ya no muestra Ubicación ni "Cuadrilla principal de esta ubicación" — solo nombre y miembros', async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(async () => { App.currentUser.role = 'PLANIFICADOR'; document.querySelector('#app-content').innerHTML = await cuadrillasPanelHTML(); wireCuadrillasPanel(document.querySelector('#app-content'), () => {}); });
+  await page.locator('.cq-edit').click();
+  await expect(page.locator('#cq-form')).toHaveCount(1);
+  await expect(page.locator('#cq-form [name="name"]')).toHaveCount(1);
+  await expect(page.locator('#cq-form [name="locationId"]')).toHaveCount(0);
+  await expect(page.locator('#cq-form [name="isDefault"]')).toHaveCount(0);
+  await expect(page.getByText('Cuadrilla principal de esta ubicación')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('Guardar en "Editar cuadrilla" cambia solo el nombre — locationId/isDefault legacy quedan intactos (Cobertura sigue siendo la única fuente para eso)', async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(async () => { App.currentUser.role = 'PLANIFICADOR'; document.querySelector('#app-content').innerHTML = await cuadrillasPanelHTML(); wireCuadrillasPanel(document.querySelector('#app-content'), () => {}); });
+  await page.locator('.cq-edit').click();
+  await page.locator('#cq-form [name="name"]').fill('76-08 Camión Lubrico (renombrado)');
+  await page.locator('#cq-form button[type="submit"]').click();
+  await expect(page.locator('#cq-form')).toHaveCount(0);
+  const saved = await page.evaluate(async () => DB.get('cuadrillas', '76-08'));
+  expect(saved.name).toBe('76-08 Camión Lubrico (renombrado)');
+  expect(saved.locationId).toBe('volcan');
+  expect(saved.isDefault).toBe(true);
+  // La cobertura real (crew_locations) tampoco se tocó al guardar desde "Editar".
+  const rows = await page.evaluate(async () => (await DB.all('crew_locations')).filter(r => r.crew_id === '76-08' && r.active !== false));
+  expect(rows.map(r => r.location_id).sort()).toEqual(['acarreo', 'mojon', 'volcan']);
   expect(errors).toEqual([]);
 });
 
@@ -305,7 +442,14 @@ test('COMPLETE adelantado en ambas principales no reaparece; PARTIAL y carryover
   });
   await expect(page.locator('.lub-adelantado-ver')).toHaveCount(1);
   await expect(page.locator('.lub-arr-reg, .lub-mt-reg')).toHaveCount(1);
-  await expect(page.locator('.lub-real-ver')).toHaveCount(0);
+  // .lub-real-ver se comparte con validaciones de registros anteriores.
+  // El COMPLETE de Volcán sigue pendiente de firma; PARTIAL de Mojón no
+  // entra en Realizados hoy ni en ese seguimiento de validación anterior.
+  await expect(page.locator('.lub-real-ver:not(#lub-pending-validations .lub-real-ver)')).toHaveCount(0);
+  await expect(page.locator('#lub-pending-validations .lub-real-ver')).toHaveCount(1);
+  await expect(page.locator('#lub-pending-validations')).toContainText('VOLCAN');
+  await expect(page.locator('#lub-pending-validations')).not.toContainText('MOJON');
+  await expect(page.locator('.lub-kpi-card', { hasText: 'Realizados hoy' }).locator('.lub-kpi-value')).toHaveText('0');
   expect(errors).toEqual([]);
 });
 
@@ -339,4 +483,18 @@ test('UX change crew belongs to welcome context and invokes existing selection f
   await btn.click();
   expect(await page.evaluate(() => getSelectedCrewId('lub'))).toBe('');
   await expect(page.locator('#lub-change-crew')).toHaveCount(0);
+});
+
+test('account bootstrap UI ignores legacy cursor and selects three crews after hydration', async ({ page }) => {
+  await boot(page);
+  await page.evaluate(async () => {
+    window.__bootstrapOverride=false;
+    for(const id of ['fixture-c2','fixture-c3']) await DB.put('cuadrillas',{id,name:id,locationId:'volcan',memberUserIds:['lub'],active:true});
+    await renderLubricadorHome();
+  });
+  await expect(page.getByText('Sin cuadrilla autorizada',{exact:true})).toHaveCount(0);
+  await expect(page.getByText('Sincronizando datos…',{exact:true})).toBeVisible();
+  await page.evaluate(async()=>{window.__bootstrapOverride=true;await renderLubricadorHome();});
+  await expect(page.locator('.crew-select-btn')).toHaveCount(3);
+  await expect(page.getByText('Sin cuadrilla autorizada',{exact:true})).toHaveCount(0);
 });

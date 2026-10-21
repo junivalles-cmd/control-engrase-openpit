@@ -11,10 +11,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { loadSyncLogic } from '../helpers/loadLubricationLogic.js';
 
+const ACCOUNT_KEY = 'fixture-auth:fixture-fp'; // identidad del fakeAuth por defecto de loadSyncLogic()
+const accountState = async db => (await db.getConfig()).accountSyncStates?.[ACCOUNT_KEY] || {};
+const setAccountState = async (db, patch) => {
+  const cfg = await db.getConfig();
+  await db.setConfig({ ...cfg, accountSyncStates: { ...cfg.accountSyncStates, [ACCOUNT_KEY]: { ...cfg.accountSyncStates?.[ACCOUNT_KEY], ...patch } } });
+};
+
 function makeFakeDB(seed = {}) {
   const data = {};
   for (const [store, rows] of Object.entries(seed)) data[store] = [...rows];
-  let config = { url: 'https://fake.supabase.co', anonKey: 'anon-test', lastPull: '2026-01-01T00:00:00.000Z' };
+  // El cursor y el estado de las ventanas son account-scoped: viven en
+  // accountSyncStates[cuenta:fingerprint], no en cfg.lastPull (ver sync.js
+  // getAccountSyncState()/runFullRefreshIfDue()).
+  let config = { url: 'https://fake.supabase.co', anonKey: 'anon-test', lastPull: '2026-01-01T00:00:00.000Z',
+    activeAccountSyncKey: ACCOUNT_KEY,
+    accountSyncStates: { [ACCOUNT_KEY]: { authUserId: 'fixture-auth', authorizationFingerprint: 'fixture-fp',
+      bootstrapComplete: true, lastPull: '2026-01-01T00:00:00.000Z' } } };
   return {
     _data: data,
     async getConfig() { return config; },
@@ -109,38 +122,37 @@ describe('Sync.runFullRefreshIfDue()', () => {
     expect(result.ok).toBe(true);
     expect(result.window).toBe('AM');
     expect(seenPullUrl).toContain('updated_at=gt.1970-01-01'); // cursor retrocedido, re-pull completo
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toEqual({ date: '2026-09-29', windows: ['AM'] });
-    expect(cfg.lastFullRefreshAt).toBeTruthy();
+    const state = await accountState(db);
+    expect(state.lastFullRefreshWindow).toEqual({ date: '2026-09-29', windows: ['AM'] });
+    expect(state.lastFullRefreshAt).toBeTruthy();
   });
 
   it('si el pull falla: NO marca la ventana como cumplida, y restaura el cursor anterior (se reintenta después)', async () => {
     vi.setSystemTime(new Date('2026-09-29T07:30:00'));
     const db = makeFakeDB();
-    await db.setConfig({ ...(await db.getConfig()), lastPull: '2026-09-28T10:00:00.000Z' });
+    await setAccountState(db, { lastPull: '2026-09-28T10:00:00.000Z' });
     const { Sync } = loadSyncLogic(db, ['equipment']);
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('sin red'); }));
 
     const result = await Sync.runFullRefreshIfDue();
 
     expect(result.ok).toBe(false);
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toBeUndefined();
-    expect(cfg.lastPull).toBe('2026-09-28T10:00:00.000Z'); // restaurado, no se perdió el cursor incremental
+    const state = await accountState(db);
+    expect(state.lastFullRefreshWindow).toBeFalsy();
+    expect(state.lastPull).toBe('2026-09-28T10:00:00.000Z'); // restaurado, no se perdió el cursor incremental
   });
 
   it('segunda ventana pendiente el mismo día (ej. AM ya cumplida, ahora es de noche): solo procesa PM, no repite AM', async () => {
     vi.setSystemTime(new Date('2026-09-29T19:10:00'));
     const db = makeFakeDB();
-    await db.setConfig({ ...(await db.getConfig()), lastFullRefreshWindow: { date: '2026-09-29', windows: ['AM'] } });
+    await setAccountState(db, { lastFullRefreshWindow: { date: '2026-09-29', windows: ['AM'] } });
     const { Sync } = loadSyncLogic(db, ['equipment']);
     vi.stubGlobal('fetch', vi.fn(async (url, opts) => (!opts || !opts.method) ? { ok: true, json: async () => [] } : { ok: true, status: 200, json: async () => [] }));
 
     const result = await Sync.runFullRefreshIfDue();
 
     expect(result.window).toBe('PM');
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow.windows).toEqual(['AM', 'PM']);
+    expect((await accountState(db)).lastFullRefreshWindow.windows).toEqual(['AM', 'PM']);
   });
 });
 
@@ -159,8 +171,7 @@ describe('Sync.fullSync() en sí — NUNCA dispara el full refresh (evita que el
 
     await Sync.fullSync();
 
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toBeUndefined();
+    expect((await accountState(db)).lastFullRefreshWindow).toBeFalsy();
     expect(pullCalls).toBe(1); // solo el pull incremental normal
   });
 });
@@ -182,8 +193,7 @@ describe('Sync.runAutoCycle() — punto de entrada de los ciclos AUTOMÁTICOS (a
 
     await Sync.runAutoCycle();
 
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toBeUndefined(); // no se ejecutó
+    expect((await accountState(db)).lastFullRefreshWindow).toBeFalsy(); // no se ejecutó
     expect(pullCalls).toBe(1); // solo el pull normal de esPrimeraVez, ningún pull extra de full refresh
   });
 
@@ -196,8 +206,7 @@ describe('Sync.runAutoCycle() — punto de entrada de los ciclos AUTOMÁTICOS (a
 
     await Sync.runAutoCycle();
 
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toEqual({ date: '2026-09-29', windows: ['AM'] });
+    expect((await accountState(db)).lastFullRefreshWindow).toEqual({ date: '2026-09-29', windows: ['AM'] });
   });
 
   it('catch-up real: app se abre a las 09:15 con la ventana de las 07:00 pendiente -> se ejecuta igual, sin bloquear el login/PIN (runAutoCycle corre solo, nadie lo espera para mostrar la app)', async () => {
@@ -209,8 +218,7 @@ describe('Sync.runAutoCycle() — punto de entrada de los ciclos AUTOMÁTICOS (a
 
     await Sync.runAutoCycle();
 
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow.windows).toContain('AM');
+    expect((await accountState(db)).lastFullRefreshWindow.windows).toContain('AM');
   });
 
   it('sin sesión válida en AUTH_MODE=supabase: NUNCA corre el full refresh (mismo gate que pushAll/pullAll)', async () => {
@@ -223,7 +231,6 @@ describe('Sync.runAutoCycle() — punto de entrada de los ciclos AUTOMÁTICOS (a
 
     await Sync.runAutoCycle();
 
-    const cfg = await db.getConfig();
-    expect(cfg.lastFullRefreshWindow).toBeUndefined();
+    expect((await accountState(db)).lastFullRefreshWindow).toBeFalsy();
   });
 });

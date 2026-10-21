@@ -1,0 +1,287 @@
+{
+  "type": "OFFLINE_REAL_CODE_CONTRACT_NOT_REAL_STORAGE",
+  "completionAllowlist": [
+    "status",
+    "completedBy",
+    "completedAt",
+    "completionComment",
+    "photos",
+    "photo",
+    "photoUploaded"
+  ],
+  "forbiddenCompletionFields": [],
+  "integrationWith0017": "PASS_CONTRACT_ONLY",
+  "snapshots": {
+    "manual_tasks": {
+      "before": {
+        "id": "TEST0017_PHOTO_manual_tasks",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ]
+      },
+      "localAfter": {
+        "id": "TEST0017_PHOTO_manual_tasks",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ],
+        "photoUploaded": true
+      },
+      "uploadReturn": {
+        "id": "TEST0017_PHOTO_manual_tasks",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PHOTO_manual_tasks_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PHOTO_manual_tasks_0.jpg"
+      },
+      "payload": {
+        "id": "TEST0017_PHOTO_manual_tasks",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PHOTO_manual_tasks_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PHOTO_manual_tasks_0.jpg"
+      },
+      "requests": [
+        {
+          "pathname": "/storage/v1/object/engrase-photos/manual_tasks/TEST0017_PHOTO_manual_tasks_0.jpg",
+          "bytes": 68,
+          "mime": "image/png"
+        }
+      ],
+      "localWrites": [
+        {
+          "store": "manual_tasks",
+          "row": {
+            "id": "TEST0017_PHOTO_manual_tasks",
+            "crewId": "TEST0017_CREW_A",
+            "equipmentId": "TEST0017_EQUIPMENT_X",
+            "createdBy": "TEST0017_SUPERVISOR",
+            "title": "Synthetic contract",
+            "status": "COMPLETED",
+            "completedBy": "TEST0017_LUB_A",
+            "completedAt": "2026-10-18T12:00:00Z",
+            "completionComment": "Synthetic",
+            "photos": [
+              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+            ],
+            "photoUploaded": true
+          }
+        }
+      ]
+    },
+    "anomalies": {
+      "before": {
+        "id": "TEST0017_PHOTO_anomalies",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ]
+      },
+      "localAfter": {
+        "id": "TEST0017_PHOTO_anomalies",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ],
+        "photoUploaded": true
+      },
+      "uploadReturn": {
+        "id": "TEST0017_PHOTO_anomalies",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/anomalies/TEST0017_PHOTO_anomalies_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/anomalies/TEST0017_PHOTO_anomalies_0.jpg"
+      },
+      "payload": {
+        "id": "TEST0017_PHOTO_anomalies",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/anomalies/TEST0017_PHOTO_anomalies_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/anomalies/TEST0017_PHOTO_anomalies_0.jpg"
+      },
+      "requests": [
+        {
+          "pathname": "/storage/v1/object/engrase-photos/anomalies/TEST0017_PHOTO_anomalies_0.jpg",
+          "bytes": 68,
+          "mime": "image/png"
+        }
+      ],
+      "localWrites": [
+        {
+          "store": "anomalies",
+          "row": {
+            "id": "TEST0017_PHOTO_anomalies",
+            "crewId": "TEST0017_CREW_A",
+            "equipmentId": "TEST0017_EQUIPMENT_X",
+            "createdBy": "TEST0017_SUPERVISOR",
+            "title": "Synthetic contract",
+            "status": "COMPLETED",
+            "completedBy": "TEST0017_LUB_A",
+            "completedAt": "2026-10-18T12:00:00Z",
+            "completionComment": "Synthetic",
+            "photos": [
+              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+            ],
+            "photoUploaded": true
+          }
+        }
+      ]
+    },
+    "lubrication_records": {
+      "before": {
+        "id": "TEST0017_PHOTO_lubrication_records",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ]
+      },
+      "localAfter": {
+        "id": "TEST0017_PHOTO_lubrication_records",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+        ],
+        "photoUploaded": true
+      },
+      "uploadReturn": {
+        "id": "TEST0017_PHOTO_lubrication_records",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/lubrication_records/TEST0017_PHOTO_lubrication_records_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/lubrication_records/TEST0017_PHOTO_lubrication_records_0.jpg"
+      },
+      "payload": {
+        "id": "TEST0017_PHOTO_lubrication_records",
+        "crewId": "TEST0017_CREW_A",
+        "equipmentId": "TEST0017_EQUIPMENT_X",
+        "createdBy": "TEST0017_SUPERVISOR",
+        "title": "Synthetic contract",
+        "status": "COMPLETED",
+        "completedBy": "TEST0017_LUB_A",
+        "completedAt": "2026-10-18T12:00:00Z",
+        "completionComment": "Synthetic",
+        "photos": [
+          "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/lubrication_records/TEST0017_PHOTO_lubrication_records_0.jpg"
+        ],
+        "photoUploaded": true,
+        "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/lubrication_records/TEST0017_PHOTO_lubrication_records_0.jpg"
+      },
+      "requests": [
+        {
+          "pathname": "/storage/v1/object/engrase-photos/lubrication_records/TEST0017_PHOTO_lubrication_records_0.jpg",
+          "bytes": 68,
+          "mime": "image/png"
+        }
+      ],
+      "localWrites": [
+        {
+          "store": "lubrication_records",
+          "row": {
+            "id": "TEST0017_PHOTO_lubrication_records",
+            "crewId": "TEST0017_CREW_A",
+            "equipmentId": "TEST0017_EQUIPMENT_X",
+            "createdBy": "TEST0017_SUPERVISOR",
+            "title": "Synthetic contract",
+            "status": "COMPLETED",
+            "completedBy": "TEST0017_LUB_A",
+            "completedAt": "2026-10-18T12:00:00Z",
+            "completionComment": "Synthetic",
+            "photos": [
+              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="
+            ],
+            "photoUploaded": true
+          }
+        }
+      ]
+    }
+  },
+  "additionalLimit": "Final payload shown is the real stripLocalAuthorizationMetadata result; actual SQL persistence is tested separately in 0017-validation.mjs. Real Storage/Auth remain for remote staging."
+}

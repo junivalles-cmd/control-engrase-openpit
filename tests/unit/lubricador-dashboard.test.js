@@ -94,7 +94,7 @@ describe('§3 — cada tarjeta de Arrastrados trae código/modelo/ubicación/ori
 
   it('"Ver ficha" abre openEquipmentDetail() (la Ficha real, universal) y "Registrar engrase" abre startLubricadorGreaseFlow() (el mismo flujo real)', () => {
     expect(src).toContain("$$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
-    expect(src).toContain("$$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));");
+    expect(src).toContain("$$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));");
   });
 
   it('nunca crea una ocurrencia nueva para representar el arrastre (sin create/insert en el bloque de arrastrados)', () => {
@@ -105,7 +105,7 @@ describe('§3 — cada tarjeta de Arrastrados trae código/modelo/ubicación/ori
   });
 
   it('"Mi Turno" (hardening UI 2026-10-08) también trae Registrar engrase/Ver ficha explícitos — ya no es una tarjeta clicable completa', () => {
-    expect(src).toContain("$$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));");
+    expect(src).toContain("$$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));");
     expect(src).toContain("$$('.lub-mt-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));");
   });
 });
@@ -164,14 +164,19 @@ describe('"Asignaciones activas" (hardening UI 2026-10-08) — ya NO es una secc
 
   it('la clasificación reusa el MISMO status.code ya calculado por computeAllStatuses() (statusesAssigned) — ROJO va a Atrasados, el resto (salvo VERDE, fix 2026-10-08) a Mi Turno, cero cálculo nuevo', () => {
     const idx = src.indexOf('const asignadosPorId');
-    const block = src.slice(idx, idx + 1300);
-    expect(block).toContain("if (s.code === 'ROJO') {");
+    // Fix 2026-10-17 ("FECHA VISUAL DE ASIGNACIÓN ATRASADA") agregó un
+    // comentario explicativo + parseOccurrenceKeyDate() dentro de esta misma
+    // rama ROJO (ver operational-scope.js) — ensancha la ventana para seguir
+    // cubriendo arrastradosTotal.push(.../miTurnoTotal.push(, sin cambiar lo
+    // que esta prueba verifica.
+    const block = src.slice(idx, idx + 2400);
+    expect(block).toContain("if (row.kind === 'CARRYOVER') {");
     expect(block).toContain('arrastradosTotal.push(');
     expect(block).toContain('miTurnoTotal.push(');
   });
 
   it('dedup real: un equipo ya presente (arrastradosIds/miTurnoTotalIds) o ya realizado hoy (realizadosHoyIds) nunca se vuelve a agregar — solo se marca con el badge', () => {
-    expect(src).toContain('if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id) || realizadosHoyIds.has(e.id)) return;');
+    expect(src).toContain('if (seen.has(identity)) continue;');
   });
 
   it('el badge ASIGNADO reusa el MISMO componente/color ya usado en la Ficha de equipo (status-chip + var(--amber)), nunca una clase/paleta nueva', () => {
@@ -188,7 +193,7 @@ describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro
   });
 
   it('está acotado al scope activo (normal + asignados) — nunca equipos de otra cuadrilla', () => {
-    expect(src).toContain('const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);');
+    expect(src).toContain("assignments.filter(a => a.active !== false && a.status === 'COMPLETED')");
     expect(src).toContain('scopeEquipoIds.has(r.equipmentId)');
   });
 
@@ -199,9 +204,10 @@ describe('"Realizados" (hardening UI 2026-10-08) — solo COMPLETE de hoy dentro
 });
 
 describe('Seguimiento por antigüedad es independiente del estado formal del plan', () => {
-  it('usa la proyección scoped compartida y excluye pendientes reales anteriores', () => {
+  it('usa la proyección scoped compartida y excluye pendientes reales anteriores, nunca MI TURNO (puede coexistir)', () => {
     expect(src).toContain('const followUpRows = buildCrewLubricationFollowUp({');
-    expect(src).toContain('equipos, records, scope, excludedEquipmentIds: arrastradosTotal.map(row => row.e.id)');
+    expect(src).toContain('excludedEquipmentIds: arrastradosTotal.map(row => row.e.id)');
+    expect(src).not.toContain('excludedEquipmentIds: [...arrastradosTotal, ...miTurnoTotal]');
   });
   it('filtra ubicación y muestra primeros cinco más Ver todos, sin recortar el dataset', () => {
     expect(src).toContain('const followUpVisible = filterLocationRows(followUpRows)');
@@ -293,10 +299,9 @@ describe('Fix 2026-10-08 ("alinear estado y trabajo realizado") — VERDE/"AL D�
     expect(src).toContain("!arrastradosIds.has(e.id) && !vencidosHorometroIds.has(e.id) && s.code !== 'VERDE' && !realizadosHoyIds.has(e.id)");
   });
 
-  it('el camino de asignados también excluye VERDE antes de agregar a Mi Turno (mismo criterio, sin duplicar código de cálculo)', () => {
-    const idx = src.indexOf("if (s.code === 'ROJO') {");
-    const block = src.slice(idx, idx + 300);
-    expect(block).toContain("} else if (s.code !== 'VERDE') {");
+  it('asignados completados se excluyen por identidad, no por el semaforo de otra ocurrencia', () => {
+    expect(src).toContain('if (completed) continue;');
+    expect(src).toContain('projectAssignedShiftWork({ assignedRows: assigned');
   });
 
   it('realizadosHoyIds se calcula ANTES que Mi Turno/Atrasados y se usa como barrera de dedup explícita (nunca solo implícita vía status.code)', () => {
@@ -304,7 +309,7 @@ describe('Fix 2026-10-08 ("alinear estado y trabajo realizado") — VERDE/"AL D�
     const iMiTurno = src.indexOf('const statusesNormalRestantes');
     expect(iReal).toBeGreaterThan(-1);
     expect(iMiTurno).toBeGreaterThan(iReal);
-    expect(src).toContain('|| realizadosHoyIds.has(e.id)) return;');
+    expect(src).toContain('if (completed) continue;');
   });
 });
 
@@ -340,34 +345,49 @@ describe('Fix 2026-10-08 — un PARTIAL nunca desaparece de la bandeja (reclasif
 // (sync.js, pullAll()) y lastSyncState.status (ya mantenido por
 // onSyncStateChange()) — nunca un segundo sistema de estado, nunca un
 // cambio a sync.js/Auth.
-describe('Fix fresh install — NO_CREW_ASSIGNED distingue 3 estados antes de afirmar "sin cuadrilla"', () => {
-  const idx = src.indexOf("if (scope.kind === 'NO_CREW_ASSIGNED') {");
-  const block = src.slice(idx, src.indexOf("if (scope.kind === 'NEEDS_CREW_SELECTION')"));
+describe('Fix 2026-10-17 ("RACE BOOTSTRAP/SCOPE") — bootstrap se resuelve ANTES de calcular ningún scope, nunca combinado con scope.kind en una misma condición', () => {
+  const idxBootstrap = src.indexOf('const accountBootstrap = await Sync.getAccountSyncState();');
+  const idxNoCrew = src.indexOf("if (scope.kind === 'NO_CREW_ASSIGNED') {");
+  const bootstrapBlock = src.slice(idxBootstrap, idxNoCrew);
 
-  it('la señal de "nunca hubo pull exitoso" es cfg.lastPull (DB.getConfig()) — nunca una variable nueva', () => {
-    expect(block).toContain('const cfg = await DB.getConfig();');
-    expect(block).toContain('const sinPullExitosoAun = !(cfg && cfg.lastPull);');
+  it('el gate de bootstrap vive ANTES de getCurrentOperationalScope() — nunca combinado con scope.kind en el mismo `if` (esa combinación era el bug real: un scope calculado con el catálogo todavía vacío podía quedar NO_CREW_ASSIGNED y usarse igual aunque bootstrapComplete ya fuera true)', () => {
+    expect(idxBootstrap).toBeGreaterThan(-1);
+    expect(idxNoCrew).toBeGreaterThan(idxBootstrap);
+    expect(bootstrapBlock).toContain('if (!accountBootstrap.bootstrapComplete) {');
+    expect(bootstrapBlock).not.toContain("scope.kind === 'NO_CREW_ASSIGNED' || !accountBootstrap.bootstrapComplete");
+    expect(bootstrapBlock).not.toContain('cfg.lastPull');
+    // scope (y el resto del catálogo local) recién se piden DESPUÉS de
+    // confirmar bootstrapComplete — nunca antes.
+    const iGate = bootstrapBlock.indexOf('if (!accountBootstrap.bootstrapComplete) {');
+    const iScope = bootstrapBlock.indexOf('const scope = await getCurrentOperationalScope();');
+    expect(iScope).toBeGreaterThan(iGate);
   });
 
   it('distingue "sync en curso/sin empezar" de "ya falló" leyendo lastSyncState.status — nunca Sync.syncing reimplementado ni un segundo estado', () => {
-    expect(block).toContain("const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured']);");
-    expect(block).toContain('ESTADOS_FALLO_SYNC.has(lastSyncState.status)');
+    expect(bootstrapBlock).toContain("const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE', 'stalled']);");
+    expect(bootstrapBlock).toContain('ESTADOS_FALLO_SYNC.has(lastSyncState.status)');
   });
 
-  it('Estado A ("Sincronizando") y Estado B ("No se pudo cargar" + Reintentar) solo se muestran mientras sinPullExitosoAun — nunca compiten con el caso real (Estado C)', () => {
-    expect(block).toContain('Sincronizando datos…');
-    expect(block).toContain('No se pudo cargar tu asignación de trabajo.');
-    expect(block).toContain('id="lub-retry-bootstrap"');
-    // Estado C ("Sin cuadrilla autorizada" real) vive DESPUÉS del `return`
-    // del bloque sinPullExitosoAun — nunca dentro de él.
-    const iReturn = block.indexOf('Sin cuadrilla autorizada');
-    const iSincronizando = block.indexOf('Sincronizando datos…');
-    expect(iReturn).toBeGreaterThan(iSincronizando);
+  // Auditoría de sincronización 2026-10-20 (§13 "WATCHDOG UX"): 'stalled'
+  // (armSyncWatchdog(), app.js) se suma a ESTADOS_FALLO_SYNC — un bootstrap
+  // sin cache que lleva >45s sin terminar ofrece Reintentar, nunca se queda
+  // mudo en "Sincronizando datos…" para siempre.
+  it("'stalled' (watchdog de sync eterno) entra al mismo camino de fallo que offline/error/etc — nunca un texto nuevo de Sincronizando sin salida", () => {
+    expect(bootstrapBlock).toContain("'stalled'");
+  });
+
+  it('Estado A ("Sincronizando") y Estado B ("No se pudo cargar" + Reintentar) nunca concluyen "Sin cuadrilla autorizada" ni navegan al dashboard — ambos terminan el render con `return` dentro del gate de bootstrap', () => {
+    expect(bootstrapBlock).toContain('Sincronizando datos…');
+    expect(bootstrapBlock).toContain('No se pudo cargar tu asignación de trabajo.');
+    expect(bootstrapBlock).toContain('id="lub-retry-bootstrap"');
+    // Estado C ("Sin cuadrilla autorizada" real) ya vive en su PROPIO bloque
+    // (ver describe de abajo), nunca dentro del gate de bootstrap.
+    expect(bootstrapBlock).not.toContain('Sin cuadrilla autorizada');
   });
 
   it('el botón "Reintentar" llama Sync.fullSync() — EXACTAMENTE el mismo mecanismo real de sync (nunca runAutoCycle() ni uno alternativo), fuerza el re-render inmediato a "Sincronizando" (App._lubBootstrapRetrying) y vuelve a renderizar cuando fullSync() termina, sin reload manual', () => {
-    const iBtn = block.indexOf("$('#lub-retry-bootstrap')");
-    const btnBlock = block.slice(iBtn, iBtn + 400);
+    const iBtn = bootstrapBlock.indexOf("$('#lub-retry-bootstrap')");
+    const btnBlock = bootstrapBlock.slice(iBtn, iBtn + 400);
     expect(btnBlock).toContain('App._lubBootstrapRetrying = true;');
     expect(btnBlock).toContain('renderLubricadorHome();');
     expect(btnBlock).toContain('Sync.fullSync().finally(() => {');
@@ -375,8 +395,17 @@ describe('Fix fresh install — NO_CREW_ASSIGNED distingue 3 estados antes de af
     expect(btnBlock).toContain('App._lubBootstrapRetrying = false;');
   });
 
+  it('scope.kind === "NO_CREW_ASSIGNED" (Estado C real) es ahora un chequeo SOLO de scope — nunca vuelve a leer accountBootstrap/Sync.getAccountSyncState()', () => {
+    expect(idxNoCrew).toBeGreaterThan(-1);
+    const noCrewBlock = src.slice(idxNoCrew, src.indexOf("if (scope.kind === 'NEEDS_CREW_SELECTION')", idxNoCrew));
+    expect(noCrewBlock).toContain('Sin cuadrilla autorizada');
+    expect(noCrewBlock).not.toContain('accountBootstrap');
+    expect(noCrewBlock).not.toContain('Sync.getAccountSyncState');
+  });
+
   it('nunca escribe/borra nada (DB.put/DB.delete/pushAll) — es presentación pura sobre señales ya existentes', () => {
-    expect(block).not.toMatch(/DB\.(put|delete)\(/);
-    expect(block).not.toContain('pushAll');
+    const fullBlock = src.slice(idxBootstrap, src.indexOf("if (scope.kind === 'NEEDS_CREW_SELECTION')", idxBootstrap));
+    expect(fullBlock).not.toMatch(/DB\.(put|delete)\(/);
+    expect(fullBlock).not.toContain('pushAll');
   });
 });

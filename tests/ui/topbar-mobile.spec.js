@@ -49,6 +49,7 @@ function fixture({ title = 'Configuración', connText = 'SIN INTERNET · GUARDAN
 async function setup(page, width, opts) {
   await page.setViewportSize({ width, height: 700 });
   await page.setContent(fixture(opts));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 }
 

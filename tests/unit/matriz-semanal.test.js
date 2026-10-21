@@ -26,21 +26,21 @@ describe('weekdayStatusFor() — plan por día/turno de la semana', () => {
 
   it('sin días asignados -> SIN DÍAS ASIGNADOS', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [] };
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [] };
     const r = await weekdayStatusFor(equipo, plan, []);
     expect(r).toMatchObject({ code: 'GRIS', label: 'SIN DÍAS ASIGNADOS' });
   });
 
   it('hoy es su día asignado y todavía no se registró -> AMARILLO / PROGRAMADO HOY', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] }; // Miércoles
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] }; // Miércoles
     const r = await weekdayStatusFor(equipo, plan, []);
     expect(r).toMatchObject({ code: 'AMARILLO', label: 'PROGRAMADO HOY' });
   });
 
   it('hoy es su día asignado y YA se registró un engrase hoy -> VERDE / AL DÍA (realizado)', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] };
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] };
     const records = [{ equipmentId: 'e1', date: MIERCOLES.toISOString() }];
     const r = await weekdayStatusFor(equipo, plan, records);
     expect(r).toMatchObject({ code: 'VERDE', label: 'AL DÍA' });
@@ -48,14 +48,14 @@ describe('weekdayStatusFor() — plan por día/turno de la semana', () => {
 
   it('su día asignado más reciente fue ayer (Martes) y no se registró -> ROJO / VENCIDO (no realizado)', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[2]] }; // Martes
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[2]] }; // Martes
     const r = await weekdayStatusFor(equipo, plan, []);
     expect(r).toMatchObject({ code: 'ROJO', label: 'VENCIDO' });
   });
 
   it('el registro de OTRO equipo no cuenta como realizado', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] };
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [WEEKDAY_NAMES[3]] };
     const records = [{ equipmentId: 'otro-equipo', date: MIERCOLES.toISOString() }];
     const r = await weekdayStatusFor(equipo, plan, records);
     expect(r).toMatchObject({ code: 'AMARILLO', label: 'PROGRAMADO HOY' });
@@ -63,14 +63,14 @@ describe('weekdayStatusFor() — plan por día/turno de la semana', () => {
 
   it('reprogramado para HOY, sin registrar todavía -> AMARILLO / REPROGRAMADO PARA HOY', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [], reprogramadoHasta: MIERCOLES.toISOString() };
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [], reprogramadoHasta: MIERCOLES.toISOString() };
     const r = await weekdayStatusFor(equipo, plan, []);
     expect(r).toMatchObject({ code: 'AMARILLO', reprogramado: true });
   });
 
   it('reprogramado para HOY y YA registrado -> VERDE / AL DÍA', async () => {
     vi.useFakeTimers(); vi.setSystemTime(MIERCOLES);
-    const plan = { equipmentId: 'e1', assignedDays: [], reprogramadoHasta: MIERCOLES.toISOString() };
+    const plan = { id: 'plan-e1', equipmentId: 'e1', assignedDays: [], reprogramadoHasta: MIERCOLES.toISOString() };
     const records = [{ equipmentId: 'e1', date: MIERCOLES.toISOString() }];
     const r = await weekdayStatusFor(equipo, plan, records);
     expect(r).toMatchObject({ code: 'VERDE', label: 'AL DÍA' });

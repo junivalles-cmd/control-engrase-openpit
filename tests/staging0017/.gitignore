@@ -1,0 +1,6 @@
+*.local
+*.local.*
+credentials/
+baseline-input/
+local/supabase/.temp/
+local/supabase/.branches/

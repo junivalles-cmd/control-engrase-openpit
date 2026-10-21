@@ -1,0 +1,48 @@
+{
+  "type": "STAGING_PREPARATION_NOT_BASELINE_CERTIFICATION",
+  "productionAccessThisTask": false,
+  "local": {
+    "projectId": "control_engrase_test0017",
+    "api": "http://127.0.0.1:55321",
+    "databasePort": 55322,
+    "automaticMigrations": false,
+    "automaticSeed": false
+  },
+  "fixtureUsers": [
+    "TEST0017_ADMIN",
+    "TEST0017_PLANNER",
+    "TEST0017_SUPERVISOR",
+    "TEST0017_LUB_A",
+    "TEST0017_LUB_B",
+    "TEST0017_VIEWER"
+  ],
+  "fixtureRows": 11,
+  "hashes": {
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/schema.sql": "7db09f4809a651fed7ac1cb15902e51384015b798e2e2401ddb6ae88f4edc7b4",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/sync.js": "1e33c793b0f4c7452ed0acedb94cb281ec9dbaf40ea153fae327d90d8e32a0a8",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/db.js": "f76009ff0f78746541773e92b7a85f341f1401886f76aca4670b36d7953fc2d9",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0002_auth_profiles_rls_PREPARED.sql": "0040bdd7a40964d872e2edc67d67e4acd0386fb275ea56cbf0f22e73959002c4",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0007_push_tokens_ownership_rls_PREPARED.sql": "c710ba3651a4f5a354dfd8eb241f10d3dba0cb964dc4b937ec3fddc44c966f4f",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql": "48bdb456774297c59d613c8820e488ec318189c44af999b660b4bc5689605dd9",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0015_store_permission_target_PREPARED.sql": "f7f7af99551a39c79af03dd02c7627265f960f39642191f456f20985ec868326",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0016_fix_support_rls_performance_PREPARED.sql": "2b8bbe7dc85ab9c6b8e6530a08650f985d2b588dfabcac9fae219e596ae32de5",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0017_broadcast_messages_scope_PREPARED.sql": "57934cce9fe4e7f8d188ffb0424062482a43c74d9cecf8dd13e9c235962e5681",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0017_broadcast_messages_scope_ROLLBACK_PREPARED.sql": "edbaa1a0bc3f026ccc5eabe4010943e57576bceedbcef27ad921fa20da1b38e0"
+  },
+  "cachedReference": {
+    "checkedAt": "2026-10-18T17:40:07.361319+00:00",
+    "source": "docs/evidence/0017_SUPABASE_PREAPPLY_FINAL_2026-10-18.json",
+    "wrapperNoWhitespaceMd5": "8493617b1e85891beb6302495414d3d8",
+    "policyCount": 8
+  },
+  "fidelityBlocker": {
+    "store": "notification_dispatch_log",
+    "prepared0015ReadableRolesWith0006Visor": 0,
+    "cachedProductionReadableRoles": 1,
+    "guaranteedMismatchIfApplyingPrepared0015": true,
+    "missing": "Exact current permission rows, grants, full relevant catalog/index/Storage state and confirmed migration selection/order are not available in saved metadata."
+  },
+  "baseline0016": "BLOCKED_NOT_BUILT_OR_CERTIFIED",
+  "apply0017": "NOT_RUN",
+  "readyForProduction0017": false
+}

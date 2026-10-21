@@ -34,6 +34,7 @@ export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-act
 export const PLAN_COMPLIANCE_JS_PATH = path.join(SRC_ROOT, 'src/core/plan-compliance.js');
 export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
 export const NOTIFICATION_ROUTING_JS_PATH = path.join(SRC_ROOT, 'src/core/notification-routing.js');
+export const TASKS_NOTIFICATIONS_PANEL_JS_PATH = path.join(SRC_ROOT, 'src/core/tasks-notifications-panel.js');
 
 // Cada entrada: [archivo, [nombres a extraer de ese archivo]]
 const APP_LOGIC_SOURCES = [
@@ -44,11 +45,12 @@ const APP_LOGIC_SOURCES = [
   // detectar un COMPLETE que satisfizo esta ocurrencia por adelantado —
   // mismo patrón ya establecido por WEEKLY_MATRIX_SOURCES más abajo con
   // estadoCelda().
-  [OPERATIONAL_SCOPE_JS_PATH, ['computeOccurrenceKey', 'toISODateUTCLocal']],
+  [OPERATIONAL_SCOPE_JS_PATH, ['REQUIRED_SHIFT_IDS', 'EXECUTION_COMPLETENESS', 'computeOccurrenceKey', 'toISODateUTCLocal', 'operationalDateForShift', 'computeExecutionCompleteness']],
   [LUBRICATION_STATUS_JS_PATH, [
     'fmt',
     'WEEKDAY_NAMES',
     'mostRecentAssignedDate',
+    'dualShiftStatusFor',
     'weekdayStatusFor',
     'statusFor',
   ]],
@@ -69,6 +71,8 @@ const APP_LOGIC_SOURCES = [
     'parseEquipmentIdFromScan',
     'resolveEquipmentFromScan',
     'equipoMatchesQuery',
+    'todayDateISO',
+    'computeTasksMensajesBadgeCount',
   ]],
 ];
 
@@ -91,17 +95,39 @@ function buildBodyFromSources(sources) {
  * `App.currentUser` / `App.generalSettings` como estado global — aquí se
  * pasa como parámetro, igual que antes de la modularización).
  */
-export function loadAppLogic(fakeApp) {
+export function loadAppLogic(fakeApp, fakeDB) {
   const body = buildBodyFromSources(APP_LOGIC_SOURCES);
-  const factory = new Function('App', body);
-  return factory(fakeApp);
+  const factory = new Function('App', 'DB', body);
+  return factory(fakeApp, fakeDB);
 }
 
-const DB_JS_NAMES = ['uid', 'nowISO', 'stamp', 'localAuthorizationState'];
+const DB_JS_NAMES = ['uid', 'nowISO', 'stamp', 'localAuthorizationState', 'buildManualTaskCompletionRow'];
 
 /** Devuelve helpers puros de db.js (no requieren IndexedDB). */
 export function loadDbLogic() {
   const body = buildBodyFromSources([[DB_JS_PATH, DB_JS_NAMES]]);
+  const factory = new Function(body);
+  return factory();
+}
+
+// DB.authorizationStateForRow() (db.js) llama `this.allRaw(...)`/
+// `this.getRaw(...)` para resolver broadcast_messages targetType=LOCATION
+// contra la cobertura REAL de cuadrilla (crew_locations vía
+// resolveCrewLocationCoverage(), operational-scope.js — NUNCA
+// authorizedLocationIds, corrección 2026-10-18). No es puro (necesita esos
+// 2 métodos), pero tampoco necesita IndexedDB real: el caller pasa un
+// `this` de prueba con `allRaw`/`getRaw` en memoria vía
+// `DB.authorizationStateForRow.call(fakeThis, ...)` — exactamente el mismo
+// patrón que loadSyncLogic() usa para Sync.pushAll()/pullAll() (fakeDB en
+// memoria, nunca una base real).
+const DB_AUTHORIZATION_SOURCES = [
+  [OPERATIONAL_SCOPE_JS_PATH, ['resolveCrewLocationCoverage']],
+  [DB_JS_PATH, ['localAuthorizationState', 'DB']],
+];
+
+/** Devuelve { DB, resolveCrewLocationCoverage } reales — DB.authorizationStateForRow debe invocarse con .call(fakeThis, ...). */
+export function loadDbAuthorizationLogic() {
+  const body = buildBodyFromSources(DB_AUTHORIZATION_SOURCES);
   const factory = new Function(body);
   return factory();
 }
@@ -140,8 +166,8 @@ const WEEKLY_MATRIX_SOURCES = [
   // estadoCelda() usa computeOccurrenceKey() (operational-scope.js) para
   // detectar "REALIZADO ADELANTADO" (engrase fuera de plan que satisfizo
   // esta celda por adelantado, ver lote "engrase fuera de plan" §19).
-  [OPERATIONAL_SCOPE_JS_PATH, ['computeOccurrenceKey']],
-  [WEEKLY_MATRIX_JS_PATH, ['estadoCelda']],
+  [OPERATIONAL_SCOPE_JS_PATH, ['ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'REQUIRED_SHIFT_IDS', 'computeOccurrenceKey', 'requiredShiftsForPlan', 'findActivePendingAssignment', 'computeExecutionCompleteness', 'resolveOccurrenceState']],
+  [WEEKLY_MATRIX_JS_PATH, ['estadoCelda', 'estadosCeldaPorTurno', 'estadoCeldaPorFila', 'planAppliesToShiftInWeek']],
 ];
 
 /** Devuelve la función real estadoCelda() de src/core/weekly-matrix.js. */
@@ -186,7 +212,7 @@ export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, ['classifyAuthStatus']],
-  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'syncSessionEpoch', 'syncConfig', 'authenticatedSyncFetch', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
+  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'perfNow', 'logSyncPerf', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'syncSessionEpoch', 'syncConfig', 'authenticatedSyncFetch', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
 ];
 
 /**
@@ -207,7 +233,7 @@ export function loadSyncLogic(fakeDB, fakeStores, fakeAuth = {
   isSupabaseMode: () => true,
   isAuthenticated: () => true,
   getSession: () => ({ accessToken: 'fixture-user-jwt' }),
-  getProfile: () => ({ role: 'ADMINISTRADOR' }),
+  getProfile: () => ({ role: 'ADMINISTRADOR',authUserId:'fixture-auth',appUserId:'fixture-app',authorizationFingerprint:'fixture-fp',rowScopeEnforced:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[] }),
   restoreSession: async () => {},
   refreshAuthorizationContext: async () => ({ ok:true,changed:false,firstSnapshot:false,context:{ rowScopeEnforced:true } }),
 }) {
@@ -248,6 +274,33 @@ export function loadGreaseValidationLogic() {
   return factory();
 }
 
+// Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — necesita
+// isRecordPendingValidation()/isRecordValidationExpired() reales de
+// grease-validation.js (y su propia cadena de dependencias) en el MISMO
+// scope que tasks-notifications-panel.js, igual que las comparte app.js en
+// el navegador (scripts clásicos, scope global compartido).
+const TASKS_NOTIFICATIONS_PANEL_SOURCES = [
+  [GREASE_VALIDATION_JS_PATH, ['GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS', 'isRecordSubjectToValidation',
+    'statusForSignerRole', 'findActiveValidations', 'shiftKindAt', 'shiftDurationHours', 'shiftWindowStart',
+    'validationDeadline', 'isValidationExpired', 'isRecordPendingValidation', 'isRecordValidationExpired']],
+  [OPERATIONAL_SCOPE_JS_PATH, ['parseOccurrenceKeyDate', 'broadcastDisplayTitle']],
+  [TASKS_NOTIFICATIONS_PANEL_JS_PATH, [
+    'PANEL_PRIORITY', 'PANEL_ANOMALY_OPEN_STATUSES', 'panelEquipmentLookup', 'isPastDateISO',
+    'anomalyTaskId', 'validationTaskId', 'assignmentTaskId', 'assignmentNoticeId', 'reprogramacionNoticeId',
+    'manualTaskId', 'MANUAL_TASK_PRIORITY_TO_PANEL', 'buildManualTaskItems',
+    'broadcastNoticeId', 'isBroadcastVigente', 'BROADCAST_PRIORITY_TO_PANEL', 'buildBroadcastNotices',
+    'buildAnomalyTasks', 'buildValidationTasks', 'buildAssignmentTasksAndNotices', 'buildReprogramacionNotices',
+    'PRIORITY_RANK', 'sortPanelItems', 'buildTasksNotificationsPanel', 'countPanelBadges',
+  ]],
+];
+
+/** Devuelve buildTasksNotificationsPanel()/countPanelBadges() reales de src/core/tasks-notifications-panel.js. */
+export function loadTasksNotificationsPanelLogic() {
+  const body = buildBodyFromSources(TASKS_NOTIFICATIONS_PANEL_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
 // Rediseño operativo (dispositivos + cuadrillas + ubicaciones + asignación
 // manual) — 100% puro, sin DB/App/Auth, mismo patrón que grease-validation.js.
 const OPERATIONAL_SCOPE_SOURCES = [
@@ -255,12 +308,14 @@ const OPERATIONAL_SCOPE_SOURCES = [
   // mismo patrón que estadoCelda() en weekly-matrix.js.
   [LUBRICATION_STATUS_JS_PATH, ['WEEKDAY_NAMES']],
   [OPERATIONAL_SCOPE_JS_PATH, [
+    'REQUIRED_SHIFT_IDS', 'isExcavatorEquipment', 'requiredShiftsForPlan', 'requiredShiftsForEquipmentPlan',
+    'operationalDateForShift', 'generateOccurrences', 'resolveOccurrenceState', 'previousShiftOccurrence',
     'ASSIGNMENT_STATUS', 'ROLES_CAN_MANAGE_ASSIGNMENTS', 'ROLES_CAN_MOVE_EQUIPMENT',
     'ROLES_CAN_MOVE_CREW', 'ROLES_CAN_MANAGE_CREW_MEMBERSHIP', 'ROLES_CAN_REGISTER_OUT_OF_PLAN',
     'ROLES_CREW_SCOPED',
     'canManageAssignments', 'canMoveEquipment', 'canMoveCrew', 'canManageCrewMembership',
     'canRegisterOutOfPlan', 'getAuthorizedCrews',
-    'computeOccurrenceKey', 'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'validateCrewLocationCoverage', 'resolveOperationalScope',
+    'computeOccurrenceKey', 'parseOccurrenceKeyDate', 'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'validateCrewLocationCoverage', 'resolveOperationalScope',
     'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'findActivePendingAssignment', 'createAssignment',
     'reassignAssignment', 'cancelAssignment', 'completeAssignmentIfPending',
     'canLubricadorExecuteEquipment',
@@ -419,6 +474,16 @@ export function loadNotifyPushEligibility() {
   return factory();
 }
 
+// Lote "push real Tareas y Mensajes" (2026-10-19): funciones PURAS nuevas
+// de notify-push/index.ts — pushUrgency() (escala única 0-10 de OneSignal,
+// §4 del pedido) y crewIdsCoveringLocation() (misma semántica LOCATION ya
+// validada en 0017/0018, separada del fetch para poder probarla sin red).
+export function loadNotifyPushTargeting() {
+  const body = buildBodyFromSources([[NOTIFY_PUSH_TS_PATH, ['pushUrgency', 'crewIdsCoveringLocation']]]);
+  const factory = new Function(body);
+  return factory();
+}
+
 // P0-2 — PIN rápido offline. Usa `DB` (global, igual que auth.js/sync.js) y
 // `nowISO` (de db.js) como globales compartidos; `crypto`/`TextEncoder` son
 // globales nativos de Node/navegador, no hace falta inyectarlos.
@@ -427,6 +492,7 @@ const QUICK_UNLOCK_SOURCES = [
   [DB_JS_PATH, ['nowISO']],
   [QUICK_UNLOCK_JS_PATH, [
     'QUICK_UNLOCK_SALT_BYTES', 'QUICK_UNLOCK_ITERATIONS', 'QUICK_UNLOCK_MAX_ATTEMPTS', 'QUICK_UNLOCK_LOCKOUT_MS',
+    'QUICK_UNLOCK_INACTIVITY_MS',
     'isValidPinFormat', 'isTrivialPin', 'bytesToHex', 'hexToBytes', 'randomSaltHex', 'pbkdf2HashHex', 'QuickUnlock',
   ]],
 ];

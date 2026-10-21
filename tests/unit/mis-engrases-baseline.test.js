@@ -71,11 +71,11 @@ describe('"Mis Engrases" (renderLubricadorHistorial) — reutiliza la vista de t
     expect(misEngrasesSrc).not.toContain('validationStatusFor(r.id, validations)');
   });
 
-  it('acción por estado: Pendiente→Validar, 1 activa→Ver validación, 2+→Ver conflicto, Histórico/Vencida→SIN botón', () => {
+  it('acción por estado: Pendiente→Validar, 1 activa→Ver validación, 2+→Ver conflicto, Histórico→SIN botón; Vencida SIGUE pudiendo validarse (regla de doble turno: no se oculta por antigüedad)', () => {
     expect(misEngrasesSrc).toContain('lub-validar-btn');
     expect(misEngrasesSrc).toContain('lub-ver-validacion-btn');
     expect(misEngrasesSrc).toContain('lub-ver-conflicto-btn');
-    expect(misEngrasesSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA \? '' :/);
+    expect(misEngrasesSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
   });
 
   it('"Validar ahora" desde Mis Engrases reutiliza openValidationModal() real (mismo modal que Historial/Dashboard)', () => {
@@ -84,9 +84,9 @@ describe('"Mis Engrases" (renderLubricadorHistorial) — reutiliza la vista de t
 });
 
 describe('Historial (drawHistory) y Dashboard respetan el baseline histórico — nunca exigen firma a un engrase antiguo', () => {
-  it('drawHistory() usa validationStatusForRecord() y NO muestra ningún botón cuando el estado es HISTORICO o VENCIDA', () => {
+  it('drawHistory() usa validationStatusForRecord() y SOLO oculta el botón cuando el estado es HISTORICO (Vencida sigue siendo validable, ver regla E de doble turno — no desaparece por antigüedad)', () => {
     expect(historialTableSrc).toContain('validationStatusForRecord(r, validations, ahoraValHist, App.generalSettings)');
-    expect(historialTableSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA \? '' :/);
+    expect(historialTableSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
   });
 
   it('Dashboard "Pendientes de validación" usa isRecordPendingValidation() (excluye histórico y vencidas), no un filtro manual de 0 activas', () => {

@@ -36,12 +36,12 @@ const shiftsSrc = extractDeclaration(shiftsSource, 'currentShiftId');
 const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const statusSrc = statusNames.map((n) => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
-  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
+  'operationalDateForShift', 'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
   'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
   'toISODateUTCLocal',
 ];
-const scopeSrc = scopeNames.map((n) => extractDeclaration(scopeSource, n)).join('\n\n');
+const scopeSrc = scopeSource;
 const validationNames = [
   'VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS',
   'isRecordSubjectToValidation', 'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict',
@@ -67,9 +67,11 @@ function isoDaysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); retur
 
 async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [] } = {}) {
   await page.setContent('<div id="app-content"></div>');
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
+      window.Sync = {getAccountSyncState: async () => ({bootstrapComplete:true})};
       window.App = {
         route: 'turno', currentUser: { id: 'lub1', name: 'Lubricador de prueba', role: 'LUBRICADOR' },
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
@@ -94,7 +96,8 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
         lubrication_records: ${JSON.stringify(records)},
         lubrication_skips: ${JSON.stringify(skips)},
         lubrication_assignments: ${JSON.stringify(assignments)},
-        grease_validations: [],
+        // Age-only follow-up scenarios represent already signed executions.
+        grease_validations: ${JSON.stringify(records.map(r=>({id:'v:'+r.id,lubricationRecordId:r.id,signerRole:'OPERADOR',active:true})))},
       };
       window.DB = { getConfig: async () => ({ lastPull: 'fixture-pulled' }), all: async (store) => window.DB.allActive(store), allActive: async (store) => window.__mockData[store] || [] };
       ${shiftsSrc}

@@ -1,6 +1,12 @@
 -- PREPARED ONLY — never execute without explicit authorization.
--- Apply only after the compatible client is deployed and the 0003 legacy
--- anon policy has been removed. This migration does not change data,
+-- Apply after the read-only preflight and before 0015 / the final cutover,
+-- once compatible clients are ready and active token rows have a verified
+-- owner. This can be installed while the 0003 legacy anon policy remains:
+-- its RESTRICTIVE policies target authenticated only and protect those
+-- sessions by row ownership. It does NOT restrict anon while the legacy
+-- PERMISSIVE policy remains; remove that exposure later at final cutover.
+-- 0015 depends on these owner guards before it enables generic push_tokens
+-- RIU in the permission matrix. This migration does not change data,
 -- app_store_permissions, or any other store's authorization.
 --
 -- Push tokens are self-service rows. Every authenticated role may manage

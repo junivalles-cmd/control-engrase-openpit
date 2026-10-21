@@ -36,7 +36,7 @@ const STATUS_NAMES = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekday
 const SHIFTS_NAMES = ['currentShiftId'];
 const OP_SCOPE_NAMES = [
   'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope',
-  'computeOccurrenceKey', 'toISODateUTCLocal',
+  'operationalDateForShift', 'computeOccurrenceKey', 'toISODateUTCLocal',
   'findActivePendingAssignment', 'canLubricadorExecuteEquipment', 'findExistingWorkForEquipment',
 ];
 

@@ -26,7 +26,7 @@ const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayS
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
   'ASSIGNMENT_STATUS', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope',
-  'computeOccurrenceKey', 'toISODateUTCLocal', 'findActivePendingAssignment',
+  'operationalDateForShift', 'computeOccurrenceKey', 'toISODateUTCLocal', 'findActivePendingAssignment',
   'canLubricadorExecuteEquipment', 'findExistingWorkForEquipment', 'classifyEquipmentWork',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');

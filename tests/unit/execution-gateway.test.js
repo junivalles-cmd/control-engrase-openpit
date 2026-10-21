@@ -34,6 +34,28 @@ const response=(status,body)=>({ok:status>=200&&status<300,status,json:async()=>
 const applied=f=>({status:'APPLIED',rows:Object.entries(f.rows).flatMap(([store,rows])=>Object.values(rows).map(row=>({store,id:row.id,payload:row,updated_at:'2026-10-12T12:00:00Z'})))});
 
 describe('Restricted lubrication transport',()=>{
+  it('offline across shifts and reconstructed sync runtime replays the same execution/assignment exactly once',async()=>{
+    const f=fixture();
+    const key='p1:2026-10-12:shift_dia';
+    f.record.shiftId='shift_noche';
+    f.record.operationalSnapshot={...f.record.operationalSnapshot,assignmentId:'a1',assignedOccurrenceKey:key,
+      occurrenceKey:key,satisfiedOccurrenceKey:key,executionType:'ASSIGNED',executionCompleteness:'COMPLETE'};
+    await f.create({assignmentBefore:{id:'a1',_pushedVersion:'old'},assignmentAfter:{id:'a1',occurrenceKey:key,status:'COMPLETED',completedRecordId:'r1',updatedAt:'local'}});
+    vi.stubGlobal('fetch',vi.fn(async()=>{throw new TypeError('Offline during shift change');}));
+    await f.Sync.pushAll(); const first=fetch.mock.calls[0][1].body;
+    const persisted=JSON.stringify(f.operations); expect(f.operations).toHaveLength(1);
+    // New runtime uses the same persisted queue, not a newly generated task.
+    const restarted=loadSyncLogic(f.db,['equipment','lubrication_plans','lubrication_records','lubrication_assignments','grease_validations'],auth).Sync;
+    expect(JSON.stringify(f.operations)).toBe(persisted);
+    fetch.mockResolvedValue(response(200,applied(f)));
+    await restarted.pushAll();
+    expect(fetch.mock.calls[1][1].body).toBe(first);
+    await restarted.pushAll(); expect(fetch).toHaveBeenCalledTimes(2);
+    expect(Object.values(f.rows.lubrication_records)).toHaveLength(1);
+    expect(f.rows.lubrication_records.r1.shiftId).toBe('shift_noche');
+    expect(f.rows.lubrication_records.r1.operationalSnapshot.assignedOccurrenceKey).toBe(key);
+    expect(f.rows.lubrication_assignments.a1.completedRecordId).toBe('r1');
+  });
   it('cache version equivalence keeps UTC precision through microseconds',()=>{
     const same=new Function(extractDeclaration(source,'sameExecutionVersion')+';return sameExecutionVersion;')();
     expect(same('2026-10-12T12:00:00.000Z','2026-10-12T12:00:00+00:00')).toBe(true);

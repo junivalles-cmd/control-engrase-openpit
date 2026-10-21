@@ -1,0 +1,116 @@
+{
+  "date": "2026-10-20",
+  "timezone": "America/Managua",
+  "gradleRootCause": {
+    "phase": "Gradle client NIO selector before Android tasks",
+    "error": "java.io.IOException: Unable to establish loopback connection",
+    "cause": "java.net.SocketException: Invalid argument: connect in UnixDomainSockets.connect0",
+    "defaultTempProbe": "AF_UNIX connect and Selector.open FAIL",
+    "projectSocketDirectoryProbe": "AF_UNIX connect and Selector.open PASS",
+    "tcpDaemonHost": "127.0.0.1",
+    "note": "Internal AF_UNIX wakeup pipe failed; no evidence of proxy, dependency or backend failure."
+  },
+  "fix": {
+    "scope": "Per-process environment only",
+    "jvmOption": "jdk.net.unixdomain.tmpdir",
+    "helper": "tools/build-android-local.ps1",
+    "globalSettingsChanged": false
+  },
+  "jdk": "JetBrains 17.0.14",
+  "gradle": "8.2.1",
+  "build": {
+    "result": "PASS",
+    "apk": "CONTROL_ENGRASE_APP_ANDROID/android/app/build/outputs/apk/debug/app-debug.apk",
+    "sizeBytes": 9528895,
+    "sha256": "536d229482e7b5dd758fe7e5aa95e2248eaeb60b2e4ed305d5d0842a2394d2f4",
+    "timestampUTC": "2026-10-20T15:17:30.714Z",
+    "timestampManagua": "20/10/26, 09:17:30"
+  },
+  "install": {
+    "method": "adb install -r",
+    "result": "PASS",
+    "installedApkHashMatches": true,
+    "preservedAccount": true,
+    "preservedCounts": true,
+    "beforeCounts": {
+      "lubrication_records": 108,
+      "manual_tasks": 2,
+      "broadcast_messages": 4,
+      "broadcast_message_reads": 3
+    },
+    "afterCounts": {
+      "lubrication_records": 108,
+      "manual_tasks": 2,
+      "broadcast_messages": 4,
+      "broadcast_message_reads": 3
+    }
+  },
+  "runtime": {
+    "role": "LUBRICADOR",
+    "authenticated": true,
+    "home": true,
+    "loading": false,
+    "staleBroadcastReference": false,
+    "cache": "engrase-openpit-v71",
+    "reopenStatus": "ok",
+    "reopenSyncAt": "2026-10-20T15:26:16.211Z"
+  },
+  "pull": {
+    "httpGet": 200,
+    "httpPatch": 200,
+    "remoteValueInitiallyAbsentLocally": true,
+    "arrived": true,
+    "pulled": 55,
+    "ok": true,
+    "lastSyncChanged": true,
+    "status": "ok",
+    "at": "2026-10-20T15:20:16.443Z",
+    "accountLastPull": "2026-10-20T15:20:11.076+00:00",
+    "home": true,
+    "changedData": "New server version of readAt on a preexisting TEST broadcast receipt; value absent locally before sync"
+  },
+  "push": {
+    "http": 200,
+    "backendReadEqualsLocal": true,
+    "clean": true,
+    "status": "ok",
+    "at": "2026-10-20T15:20:52.993Z",
+    "changedData": "Existing markBroadcastAsRead flow; backend readAt equals local readAt"
+  },
+  "manualSync": {
+    "status": "ok",
+    "at": "2026-10-20T15:20:58.864Z",
+    "home": true
+  },
+  "offline": {
+    "navigatorOnline": true,
+    "backendReachable": false,
+    "networkError": "TimeoutError",
+    "status": "backend_unreachable",
+    "sameUser": true,
+    "role": "LUBRICADOR",
+    "authenticated": true,
+    "home": true,
+    "recordsBefore": 108,
+    "recordsAfter": 108
+  },
+  "reconnect": {
+    "automaticRecovery": true,
+    "status": "ok",
+    "at": "2026-10-20T15:24:54.603Z",
+    "sameUser": true,
+    "home": true,
+    "records": 108,
+    "autoSeconds": 120
+  },
+  "fixtures": {
+    "newRowsCreated": 0,
+    "cleanup": "No disposable rows created; only existing TEST receipt reading timestamp updated."
+  },
+  "protectedSourceUnchanged": [
+    "sync.js",
+    "db.js",
+    "src/core/auth.js"
+  ],
+  "verdict": "SYNC_ANDROID_READY"
+}

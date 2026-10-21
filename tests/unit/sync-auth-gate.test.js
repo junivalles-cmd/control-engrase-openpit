@@ -48,7 +48,7 @@ function makeFakeAuth({ mode = 'legacy', authenticated = true, accessToken = 'FA
     isSupabaseMode() { return mode === 'supabase'; },
     isAuthenticated() { return authenticated; },
     getSession() { return { accessToken }; },
-    getProfile() { return { role }; },
+    getProfile() { return { role,authUserId:'fixture-auth',appUserId:'fixture-app',authorizationFingerprint:'fixture-fp',rowScopeEnforced:true }; },
     async refreshAuthorizationContext() { return { ok: true, changed: false, firstSnapshot: false, context: { rowScopeEnforced: true } }; },
   };
 }
@@ -371,7 +371,8 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
     await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
     await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
-    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // ya no es "primera vez"
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0,
+      activeAccountSyncKey:'u1:fp1',accountSyncStates:{'u1:fp1':{bootstrapComplete:true,lastPull:T0}} });
     const { Auth } = loadAuthLogic(db);
     Auth.isSupabaseMode = () => true;
     const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
@@ -415,7 +416,7 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('bloquea transporte al cambiar el fingerprint y conserva el pendiente', async () => {
+  it('rehidrata al cambiar fingerprint; un pull vacío no completa bootstrap y conserva el pendiente', async () => {
     await db.setAuthTokens({accessToken:'OK',refreshToken:'RT',expiresAt:Date.now()+3600000,authUserId:'u1'});
     await db.setAuthProfileSnapshot({authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true});
     await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'old',rowScopeEnforced:true});
@@ -423,11 +424,11 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
     await db.put('equipment',{id:'pending',active:true,updatedAt:T1});
     const {Auth}=loadAuthLogic(db);Auth.isSupabaseMode=()=>true;
     const {Sync}=loadSyncLogic(db,STORES_TEST,Auth);
-    const fetchMock=vi.fn(async()=>({ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'new',rowScopeEnforced:true}})}));
+    const fetchMock=vi.fn(async url=>({ok:true,status:200,json:async()=>String(url).includes('/rpc/get_authorization_context')?({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'new',rowScopeEnforced:true}}):[]}));
     vi.stubGlobal('navigator',{onLine:true});vi.stubGlobal('fetch',fetchMock);
     let notified;Sync.onChange(s=>{notified=s;});await Sync.fullSync();
-    expect(notified.status).toBe('AUTHORIZATION_SCOPE_CHANGED');
-    expect(fetchMock.mock.calls.some(([url])=>!String(url).includes('/rpc/get_authorization_context'))).toBe(false);
+    expect(notified.status).toBe('AUTHORIZATION_BOOTSTRAP_INCOMPLETE');
+    expect(fetchMock.mock.calls.some(([url])=>String(url).includes('/rest/v1/engrase_sync?'))).toBe(true);
     expect((await db.get('equipment','pending'))._pushedVersion).toBeUndefined();
   });
 
@@ -516,6 +517,7 @@ describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, 
   });
 
   it('G) sesión refrescada durante fullSync() -> la request de sync usa el JWT NUEVO, nunca el expirado (integración real Auth+Sync)', async () => {
+    await db.setConfig({url:'https://fake.test',anonKey:'anon-test',activeAccountSyncKey:'u1:fp1',accountSyncStates:{'u1:fp1':{bootstrapComplete:true,lastPull:T0}}});
     await db.setAuthTokens({ accessToken: 'OLD-EXPIRED', refreshToken: 'RT-BUENO', expiresAt: Date.now() - 1000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
     await db.setAuthorizationContext('u_jvalles',{authUserId:'u1',appUserId:'u_jvalles',displayName:'Junior Valles',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
@@ -613,9 +615,19 @@ describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUT
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('fullSync() propaga authErrorDetails hasta notify() cuando el push falla con 403', async () => {
+  // Corrección de semántica visual (2026-10-20, "indicador rojo de
+  // sincronización en Android") — una fila AISLADA rechazada con 403
+  // durante el push (push+pull igual terminan normalmente) ya NO reporta
+  // status 'AUTH_FORBIDDEN' (rojo, "todo el ciclo falló") — ahora es
+  // 'partial' (ámbar, "terminó con advertencia"). authErrorDetails sigue
+  // intacto y visible (nunca se oculta el problema, solo deja de pintar
+  // todo el ciclo como si no hubiera terminado). 'AUTH_FORBIDDEN' real
+  // queda reservado para cuando el pull GLOBAL es rechazado — ver el test
+  // siguiente, dedicado exactamente a ese caso.
+  it('fullSync() propaga authErrorDetails hasta notify() cuando el push falla con 403 — status queda en \'partial\' (ámbar), nunca \'AUTH_FORBIDDEN\' (rojo), porque es una fila aislada', async () => {
     await db.put('equipment', { id: 'eqNew', code: 'NUEVO', active: true, updatedAt: T0 });
-    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0 }); // no es primera vez
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0,
+      activeAccountSyncKey:'u1:fp1',accountSyncStates:{'u1:fp1':{bootstrapComplete:true,lastPull:T0}} });
     await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
     await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'ADMINISTRADOR', active: true });
     await db.setAuthorizationContext('u_jguerra',{authUserId:'u1',appUserId:'u_jguerra',displayName:'Jose Guerrero',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
@@ -635,8 +647,35 @@ describe('Q) lote "Sync 403 diagnostic" — detalle sanitizado de un rechazo AUT
     Sync.onChange(state => { notified = state; });
     await Sync.fullSync();
 
-    expect(notified.status).toBe('AUTH_FORBIDDEN');
+    expect(notified.status).toBe('partial');
     expect(notified.authErrorDetails).toHaveLength(1);
     expect(notified.authErrorDetails[0]).toMatchObject({ store: 'equipment', operation: 'INSERT', status: 403, role: 'ADMINISTRADOR' });
+  });
+
+  it('fullSync() SÍ reporta status \'AUTH_FORBIDDEN\' (rojo) cuando el pull GLOBAL completo es rechazado con 403 — nunca se confunde con una fila aislada', async () => {
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0,
+      activeAccountSyncKey:'u1:fp1',accountSyncStates:{'u1:fp1':{bootstrapComplete:true,lastPull:T0}} });
+    await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jguerra', displayName: 'Jose Guerrero', role: 'ADMINISTRADOR', active: true });
+    await db.setAuthorizationContext('u_jguerra',{authUserId:'u1',appUserId:'u_jguerra',displayName:'Jose Guerrero',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true});
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      if (String(url).includes('/rpc/get_authorization_context')) return {ok:true,status:200,json:async()=>({status:'AUTHORIZED',context:{authUserId:'u1',appUserId:'u_jguerra',displayName:'Jose Guerrero',role:'ADMINISTRADOR',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],authorizationFingerprint:'fp1',rowScopeEnforced:true}})};
+      // El pull ENTERO (GET a engrase_sync) es rechazado con 403 — a
+      // diferencia del test anterior, donde solo el POST (push) de UNA
+      // fila fallaba y el GET sí traía datos.
+      if (method === 'GET') return { ok: false, status: 403, json: async () => ({ message: 'rechazado' }) };
+      throw new Error('unexpected ' + method);
+    }));
+
+    let notified = null;
+    Sync.onChange(state => { notified = state; });
+    await Sync.fullSync();
+
+    expect(notified.status).toBe('AUTH_FORBIDDEN');
   });
 });

@@ -1,0 +1,232 @@
+{
+  "capturedAt": "2026-10-18T18:19:24.575261+00:00",
+  "readOnly": true,
+  "functionCount": 36,
+  "verifiedLocalFunctions": [
+    {
+      "name": "authorization_private.authorization_row_in_scope",
+      "signature": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0016_fix_support_rls_performance_PREPARED.sql",
+      "match": "KNOWN_0016_WHITESPACE_ONLY"
+    },
+    {
+      "name": "authorization_private.authorization_row_in_scope_baseline_0013",
+      "signature": "p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0013_authorization_row_scope_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.authorization_store_action_allowed",
+      "signature": "p_store text, p_action text, p_deleted boolean",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0013_authorization_row_scope_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.link_support_entity",
+      "signature": "p_store text, p_id text, p_assignment text, p_crew text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_assignment_valid",
+      "signature": "p_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_grant_rows",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_history_allowed",
+      "signature": "p_store text, p_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_occurrence_valid",
+      "signature": "p_plan text, p_key text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_photos_owned",
+      "signature": "p_photos jsonb, p_existing jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "authorization_private.support_row_granted",
+      "signature": "p_store text, p_id text, p_context jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0016_fix_support_rls_performance_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.assignment_skip_operation",
+      "signature": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.authorize_assignment_evidence_upload",
+      "signature": "p_assignment_id text, p_record_id text, p_crew_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.capture_grease_validation",
+      "signature": "p_operation_id text, p_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone, p_signer_name text, p_signer_role text, p_note text, p_signature_url text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.catalog_writer_role",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.close_anomaly",
+      "signature": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_note text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.current_app_active",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0001_auth_profiles_rls_DRAFT.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.current_app_role",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0001_auth_profiles_rls_DRAFT.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.edit_anomaly",
+      "signature": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.evidence_operation",
+      "signature": "p_operation_id text, p_action text, p_id text, p_equipment_id text, p_crew_id text, p_expected timestamp with time zone, p_component text, p_description text, p_criticality text, p_status text, p_photos jsonb, p_note text, p_record_id text, p_signer_name text, p_signer_role text, p_signature_url text, p_expected_signatures jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.get_assignment_support_context",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.get_authorization_context",
+      "signature": "",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0013_authorization_row_scope_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.lubrication_execution",
+      "signature": "p_operation_id text, p_action text, p_record_id text, p_equipment_id text, p_plan_id text, p_crew_id text, p_assignment_id text, p_execution_date timestamp with time zone, p_client_captured_at timestamp with time zone, p_shift_id text, p_execution_type text, p_out_of_plan_reason text, p_performed_by text, p_retroactive boolean, p_hourmeter numeric, p_no_hourmeter boolean, p_no_hourmeter_reason text, p_lubricant_id text, p_quantity numeric, p_condition text, p_notes text, p_details jsonb, p_photos jsonb, p_expected_record timestamp with time zone, p_expected_equipment timestamp with time zone, p_expected_plan timestamp with time zone, p_expected_assignment timestamp with time zone",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.manage_lubrication_assignment",
+      "signature": "p_operation_id text, p_action text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_notes text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.move_equipment_master_location",
+      "signature": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_location_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "EXACT_NORMALIZED_BODY"
+    },
+    {
+      "name": "public.operational_catalog_operation",
+      "signature": "p_operation_id text, p_action text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_location_id text, p_shift_id text, p_until date, p_reason text, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.record_lubrication_skip",
+      "signature": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_equipment_id text, p_plan_id text, p_occurrence_key text, p_crew_id text, p_date timestamp with time zone, p_shift_id text, p_reason text, p_observacion text, p_linked_record_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.repeat_anomaly_from_execution",
+      "signature": "p_operation_id text, p_record_id text, p_crew_id text, p_expected timestamp with time zone",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.report_anomaly",
+      "signature": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.report_assignment_anomaly",
+      "signature": "p_operation_id text, p_id text, p_equipment_id text, p_crew_id text, p_component text, p_description text, p_criticality text, p_photos jsonb, p_assignment_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0014_assignment_skip_gateways_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.reprogram_lubrication_plan",
+      "signature": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "EXACT_NORMALIZED_BODY"
+    },
+    {
+      "name": "public.resolve_authorization_scope",
+      "signature": "p_auth_user_id uuid",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0012_authorization_scope_bootstrap_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.resolve_grease_validation_conflict",
+      "signature": "p_operation_id text, p_record_id text, p_id text, p_note text, p_expected_signatures jsonb",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.retire_anomaly",
+      "signature": "p_operation_id text, p_id text, p_expected timestamp with time zone",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0010_evidence_gateway_PREPARED.sql",
+      "match": "SQL_TOKENS_IDENTICAL"
+    },
+    {
+      "name": "public.set_equipment_alert_pause",
+      "signature": "p_operation_id text, p_id text, p_crew_id text, p_expected timestamp with time zone, p_until date, p_reason text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "EXACT_NORMALIZED_BODY"
+    },
+    {
+      "name": "public.set_equipment_shift",
+      "signature": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_shift_id text",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "EXACT_NORMALIZED_BODY"
+    },
+    {
+      "name": "public.update_equipment_hourmeter",
+      "signature": "p_operation_id text, p_id text, p_expected timestamp with time zone, p_hourmeter numeric, p_confirm_large_jump boolean",
+      "source": "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/0011_operational_catalog_gateway_PREPARED.sql",
+      "match": "EXACT_NORMALIZED_BODY"
+    }
+  ],
+  "missingFunctions": [],
+  "unsupported": {
+    "types": [],
+    "sequences": [],
+    "views": [],
+    "partitionedTables": []
+  },
+  "schemaEquivalent": "PENDING_BASELINE_REPLAY",
+  "remoteStagingCompared": false
+}

@@ -196,9 +196,9 @@ describe('FICHA DE ENGRASE — openEquipmentDetail() reutiliza funciones YA exis
     expect(src).toContain('findCarriedOverSkipForToday(');
   });
 
-  it('O) assignment activo: reutiliza findActivePendingAssignment() + computeOccurrenceKey() (operational-scope.js)', () => {
+  it('O) assignment activo: reutiliza findActivePendingAssignment() + la clave central de equipo/ocurrencia', () => {
     expect(src).toContain('findActivePendingAssignment(');
-    expect(src).toContain('computeOccurrenceKey(');
+    expect(src).toContain('equipoOccurrenceKey(');
   });
 
   it('P) historial/cuadrilla de última ejecución: usa resolveRecordCrewId() (snapshot), nunca la ubicación/cuadrilla ACTUAL del equipo para reescribir ese dato histórico', () => {

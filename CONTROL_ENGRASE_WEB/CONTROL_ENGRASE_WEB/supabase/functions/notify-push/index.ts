@@ -27,6 +27,21 @@
 // normal de "engrase realizado") y deduplicación (§30, por id de fila —
 // un webhook reintentado nunca manda el mismo aviso dos veces) también se
 // agregan en este lote.
+//
+// Lote "push real para Tareas y Mensajes" (2026-10-19, auditoría previa
+// documentada aparte): se reutiliza TAL CUAL esta misma arquitectura — el
+// trigger "avisar-push" (AFTER INSERT en engrase_sync) ya cubre tanto
+// manual_tasks como broadcast_messages sin tocar infraestructura, así que
+// solo se agregan 2 ramas nuevas con el mismo patrón (eligibility/dedupe/
+// OneSignal) de las de arriba. Targeting CREW/LOCATION/USER (broadcast) y
+// crew-scope (manual_tasks) salen de push_tokens.cuadrillaId (ya mantenido
+// al día por refreshPushTokenCrewScope() en app.js) + crew_locations para
+// LOCATION — nunca el cliente decide a quién llega (§11). Reasignación/
+// cancelación/completado quedan PENDIENTES a propósito: son eventos
+// UPDATE y el trigger actual solo dispara en INSERT; extenderlo exige un
+// 2do trigger de UPDATE sobre TODA engrase_sync (más tráfico en cada
+// store de la app, no solo aquí) — decisión de infraestructura separada,
+// nunca implementada a medias.
 
 import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
 
@@ -34,12 +49,20 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const ONESIGNAL_APP_ID = Deno.env.get("ONESIGNAL_APP_ID") ?? "";
 const ONESIGNAL_REST_API_KEY = Deno.env.get("ONESIGNAL_REST_API_KEY") ?? "";
+const OPERATIONAL_TIME_ZONE = "America/Managua";
+
+function operationalHour(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: OPERATIONAL_TIME_ZONE, hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  return Number(parts.find((part) => part.type === "hour")?.value);
+}
 
 // Turno actual real — MISMA fuente que currentShiftId() (src/core/shifts.js
 // en el cliente): shiftDayStart/shiftNightStart de settings/general, nunca
 // un horario distinto inventado aquí. Defaults 6/18 si no hay nada guardado
 // (idénticos a App.generalSettings en app.js).
-async function getCurrentNotificationShift(): Promise<"DAY" | "NIGHT"> {
+async function getCurrentNotificationShift(now = new Date()): Promise<"DAY" | "NIGHT"> {
   let shiftDayStart = 6, shiftNightStart = 18;
   try {
     const res = await fetch(
@@ -52,7 +75,7 @@ async function getCurrentNotificationShift(): Promise<"DAY" | "NIGHT"> {
       if (g) { shiftDayStart = g.shiftDayStart ?? shiftDayStart; shiftNightStart = g.shiftNightStart ?? shiftNightStart; }
     }
   } catch (_) { /* si falla, usa los defaults */ }
-  const h = new Date().getHours();
+  const h = operationalHour(now);
   return (h >= shiftDayStart && h < shiftNightStart) ? "DAY" : "NIGHT";
 }
 
@@ -78,17 +101,74 @@ function isRecipientEligible(disp, roles, turnoActual) {
   return shift === "BOTH" || shift === turnoActual;
 }
 
-async function getEligiblePushIds(roles: string[], turnoActual: "DAY" | "NIGHT") {
+// Lote "push real Tareas y Mensajes" (2026-10-19): extraído de
+// getEligiblePushIds() SIN cambiar su comportamiento — ahora también lo
+// usan las ramas nuevas de manual_tasks/broadcast_messages, que necesitan
+// los campos CRUDOS (userId/cuadrillaId) para el targeting, no solo el
+// token final.
+async function getAllPushTokenRows(): Promise<any[]> {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/engrase_sync?store=eq.push_tokens&select=payload`,
     { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
   );
   if (!res.ok) throw new Error(`No se pudieron leer los tokens: ${res.status}`);
   const rows: { payload: any }[] = await res.json();
-  return rows
-    .map((r) => r.payload)
+  return rows.map((r) => r.payload);
+}
+
+async function getEligiblePushIds(roles: string[], turnoActual: "DAY" | "NIGHT") {
+  const tokens = await getAllPushTokenRows();
+  return tokens
     .filter((t) => isRecipientEligible(t, roles, turnoActual))
     .map((t) => t.token); // en push_tokens, "token" guarda el subscription id de OneSignal
+}
+
+// Prioridad (§4 del pedido) — UNA sola escala, nunca una 2da paralela:
+// se traduce directo al campo `priority` (0-10) que OneSignal ya entiende
+// para Android (10 = entrega inmediata incluso en Doze/ahorro de batería).
+// Sirve tanto para manual_tasks (BAJA/MEDIA/ALTA) como para
+// broadcast_messages (INFORMATIVA/IMPORTANTE/CRITICA) — mismos nombres que
+// MANUAL_TASK_PRIORITIES/BROADCAST_PRIORITIES en operational-scope.js.
+// Sin anotaciones de tipo A PROPÓSITO (igual que isRecipientEligible() más
+// arriba) — para poder extraerla y probarla con new Function() sin Deno.
+function pushUrgency(priority) {
+  if (priority === "ALTA" || priority === "CRITICA") return 10; // prioritaria
+  if (priority === "IMPORTANTE") return 7; // destacada
+  return 5; // normal (MEDIA/BAJA/INFORMATIVA/ausente)
+}
+
+// Cobertura real de LOCATION (§3 del pedido) — PURA, recibe las filas YA
+// leídas (separada del fetch para poder probarla sin red, mismo patrón que
+// getOutstandingDualOccurrences() en notify-vencidos/index.ts). MISMA
+// semántica ya validada en 0017/0018 (authorization_private.
+// broadcast_row_in_scope, rama LOCATION) y resolveCrewLocationCoverage()
+// (operational-scope.js) — reimplementada acá porque Deno no puede
+// importar ninguna de las dos; cualquier cambio a esa regla debe
+// reflejarse en los 3 lugares. PRINCIPAL/APOYO NO importan (cualquier fila
+// activa cuenta); el fallback legacy (cuadrillas.locationId) SOLO aplica a
+// una cuadrilla sin NINGUNA fila crew_locations — nunca authorizedLocationIds.
+// Sin anotaciones de tipo A PROPÓSITO, mismo motivo que arriba.
+function crewIdsCoveringLocation(locationId, crewLocationRows, cuadrillaRows) {
+  const crewIdsWithRows = new Set(crewLocationRows.map((cl) => cl.crew_id));
+  const covering = new Set();
+  for (const cl of crewLocationRows) {
+    if ((cl.active ?? true) !== false && cl.location_id === locationId) covering.add(cl.crew_id);
+  }
+  for (const cq of cuadrillaRows) {
+    if (!crewIdsWithRows.has(cq.id) && (cq.active ?? true) !== false && cq.locationId === locationId) covering.add(cq.id);
+  }
+  return covering;
+}
+
+async function fetchCrewIdsCoveringLocation(locationId) {
+  const headers = { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` };
+  const [clRes, cqRes] = await Promise.all([
+    fetch(`${SUPABASE_URL}/rest/v1/engrase_sync?store=eq.crew_locations&select=payload,deleted`, { headers }),
+    fetch(`${SUPABASE_URL}/rest/v1/engrase_sync?store=eq.cuadrillas&select=id,payload,deleted`, { headers }),
+  ]);
+  const crewLocationRows = clRes.ok ? (await clRes.json()).filter((r: any) => !r.deleted).map((r: any) => r.payload) : [];
+  const cuadrillaRows = cqRes.ok ? (await cqRes.json()).filter((r: any) => !r.deleted).map((r: any) => ({ id: r.id, ...r.payload })) : [];
+  return crewIdsCoveringLocation(locationId, crewLocationRows, cuadrillaRows);
 }
 
 // Deduplicación (§30) — clave durable = tipo + ocurrencia (aquí, el id de
@@ -120,7 +200,13 @@ async function claimDedupeKey(dedupeKey: string, meta: Record<string, unknown>):
   } catch (_) { return true; }
 }
 
-async function sendOneSignalPush(subscriptionIds: string[], title: string, body: string) {
+// `extra` (lote "push real Tareas y Mensajes", 2026-10-19) es OPCIONAL y
+// retrocompatible — las llamadas existentes (anomalías/engrase/skip) no lo
+// pasan y siguen funcionando idéntico. `data` es el payload que
+// abrirDesdeNotificacion() (app.js) lee al tocar la notificación (§7 del
+// pedido: deep link a la card exacta, nunca un modal); `priority` es el
+// campo 0-10 nativo de OneSignal (ver pushUrgency() arriba).
+async function sendOneSignalPush(subscriptionIds: string[], title: string, body: string, extra?: { data?: Record<string, unknown>; priority?: number }) {
   if (!subscriptionIds.length) return;
   const res = await fetch("https://onesignal.com/api/v1/notifications", {
     method: "POST",
@@ -133,6 +219,8 @@ async function sendOneSignalPush(subscriptionIds: string[], title: string, body:
       include_subscription_ids: subscriptionIds,
       headings: { en: title },
       contents: { en: body },
+      ...(extra?.data ? { data: extra.data } : {}),
+      ...(extra?.priority ? { priority: extra.priority } : {}),
     }),
   });
   if (!res.ok) console.error(`OneSignal respondió ${res.status}: ${await res.text()}`);
@@ -159,6 +247,12 @@ async function getNotifSettings() {
       rolesUnsafe: ["ADMINISTRADOR", "SUPERVISOR"],
       rolesReconciliacion: ["ADMINISTRADOR", "PLANIFICADOR"],
     },
+    // Tareas y Mensajes (lote "push real", 2026-10-19) — sin roles: el
+    // destinatario SIEMPRE lo decide el targeting (crewId/targetType/
+    // targetId), nunca una lista de roles como las demás categorías.
+    // Sin UI propia en Configuración todavía (mismo patrón ya documentado
+    // para noEjecucion) — usa este default hasta que se guarde algo distinto.
+    tareasYMensajes: { enabled: true },
   };
   if (!res.ok) return base;
   const rows = await res.json();
@@ -169,7 +263,18 @@ async function getNotifSettings() {
     engraseRealizado: { ...base.engraseRealizado, ...(guardado.engraseRealizado || {}) },
     anomalias: { ...base.anomalias, ...(guardado.anomalias || {}) },
     noEjecucion: { ...base.noEjecucion, ...(guardado.noEjecucion || {}) },
+    tareasYMensajes: { ...base.tareasYMensajes, ...(guardado.tareasYMensajes || {}) },
   };
+}
+
+// Las notificaciones de ejecución conservan la identidad de la ocurrencia.
+// Para NIGHT después de medianoche, operationalDate es la fecha operativa
+// guardada en el snapshot; nunca se deduce de la fecha del dispositivo.
+function executionContextLabel(record) {
+  const shiftId = record?.shiftId || record?.operationalSnapshot?.shiftId;
+  const shift = shiftId === "shift_dia" ? "DÍA" : shiftId === "shift_noche" ? "NOCHE" : "";
+  const date = record?.operationalSnapshot?.operationalDate;
+  return [shift, date].filter(Boolean).join(" · ");
 }
 
 serve(async (req) => {
@@ -247,7 +352,8 @@ serve(async (req) => {
 
       const ids = await getEligiblePushIds(cfg.roles, turnoActual);
       const title = pendientes ? "⚠ Engrase con puntos pendientes" : "✓ Engrase realizado";
-      const body = `${codigo} · ${rec.userName ?? "un lubricador"}${pendientes ? ` · ${pendientes} punto(s) sin engrasar` : ""}`;
+      const contexto = executionContextLabel(rec);
+      const body = `${codigo}${contexto ? ` · ${contexto}` : ""} · ${rec.userName ?? "un lubricador"}${pendientes ? ` · ${pendientes} punto(s) sin engrasar` : ""}`;
       await sendOneSignalPush(ids, title, body);
       return new Response(`ok, engrase enviado a ${ids.length} dispositivo(s)`, { status: 200 });
     }
@@ -290,6 +396,92 @@ serve(async (req) => {
         : `${codigoSkip} · ${skip.userName ?? "un lubricador"} marcó "ya engrasado" — revisar si es un duplicado o un registro real pendiente.`;
       await sendOneSignalPush(ids, title, body);
       return new Response(`ok, ${esUnsafe ? "unsafe" : "conciliación"} enviado a ${ids.length} dispositivo(s)`, { status: 200 });
+    }
+
+    // ── Tareas y Mensajes (lote "push real", 2026-10-19) ─────────────
+    // El webhook "avisar-push" SOLO dispara en INSERT (ver CREATE TRIGGER
+    // en Supabase) — por eso estas 2 ramas cubren ÚNICAMENTE creación.
+    // Reasignación/cancelación/completado son UPDATE y HOY no llegan
+    // aquí; agregarlos requeriría un 2do trigger de UPDATE sobre TODA
+    // engrase_sync (impacto de tráfico en toda la app, no solo en este
+    // módulo) — decisión pendiente, explícitamente fuera de este lote, NO
+    // implementado a medias. §10 (anti-spam) queda gratis: marcar leído,
+    // completar, reabrir el panel, fullSync, etc. son UPDATE o cambios
+    // locales — nunca llegan a disparar un push desde aquí.
+
+    // Nueva tarea (§2 del pedido): SOLO si nace PENDING (una fila nueva en
+    // otro estado sería un caso raro de importación/migración, no un
+    // aviso real de "tarea nueva") y con cuadrilla asignada — dirigida a
+    // los LUBRICADOR de esa cuadrilla, nunca a roles administrativos (eso
+    // ya lo cubre el badge/la propia pantalla de quien la creó).
+    if (row.store === "manual_tasks") {
+      const cfg = settings.tareasYMensajes;
+      if (!cfg.enabled) return new Response("aviso de tareas/mensajes desactivado", { status: 200 });
+      const task = row.payload ?? {};
+      if (task.status !== "PENDING") {
+        return new Response("tarea nueva en estado no-PENDING: caso raro, no se avisa", { status: 200 });
+      }
+      if (!task.crewId) return new Response("tarea sin cuadrilla: no hay a quién dirigir el aviso", { status: 200 });
+
+      const tokens = await getAllPushTokenRows();
+      const eligible = tokens.filter((t) => isRecipientEligible(t, ["LUBRICADOR"], turnoActual) && t.cuadrillaId === task.crewId);
+
+      const tipoLabels: Record<string, string> = {
+        ENGRASE: "Engrasar equipo", REVISAR_NIVEL_LUBRICANTE: "Revisar nivel de lubricante",
+        REVISAR_PUNTO_ENGRASE: "Revisar punto de engrase", OTRO: "Otro",
+      };
+      const tipo = tipoLabels[task.taskType] || task.taskType || "Otro";
+      const title = "🛠 Nueva tarea asignada";
+      const body = `${task.title || tipo}${task.description ? " · " + task.description : ""}`.slice(0, 180);
+
+      const toNotify: string[] = [];
+      for (const t of eligible) {
+        // §5: identidad estable por destinatario (manual-task|<taskId>|<userId>|immediate)
+        // — MISMO formato pipe-delimited de buildNotificationDedupeKey()
+        // (notification-routing.js), nunca uno nuevo. Un reintento del
+        // webhook jamás vuelve a mandarle el mismo aviso a quien ya lo reclamó.
+        const dedupeKey = `manual-task|${row.id}|${t.userId}|immediate`;
+        if (await claimDedupeKey(dedupeKey, { rowId: row.id, userId: t.userId })) toNotify.push(t.token);
+      }
+      await sendOneSignalPush(toNotify, title, body, { data: { kind: "TAREA", taskId: row.id }, priority: pushUrgency(task.priority) });
+      return new Response(`ok, tarea nueva enviada a ${toNotify.length} dispositivo(s)`, { status: 200 });
+    }
+
+    // Mensaje operativo nuevo (§3 del pedido) — targeting ALL_LUBRICATORS/
+    // CREW/LOCATION/USER. §11: el servidor decide destinatarios SIEMPRE;
+    // el cliente nunca puede ampliar a quién llega. targetType desconocido
+    // -> fail closed (0 destinatarios), igual que el propio RLS de 0018.
+    if (row.store === "broadcast_messages") {
+      const cfg = settings.tareasYMensajes;
+      if (!cfg.enabled) return new Response("aviso de tareas/mensajes desactivado", { status: 200 });
+      const msg = row.payload ?? {};
+
+      const tokens = await getAllPushTokenRows();
+      let eligible = tokens.filter((t) => isRecipientEligible(t, ["LUBRICADOR"], turnoActual));
+
+      if (msg.targetType === "CREW") {
+        eligible = eligible.filter((t) => t.cuadrillaId === msg.targetId);
+      } else if (msg.targetType === "LOCATION") {
+        // §3: MISMA semántica validada (crew_locations, PRINCIPAL+APOYO,
+        // fallback legacy solo sin filas) — nunca authorizedLocationIds.
+        const coveringCrewIds = await fetchCrewIdsCoveringLocation(msg.targetId);
+        eligible = eligible.filter((t) => t.cuadrillaId && coveringCrewIds.has(t.cuadrillaId));
+      } else if (msg.targetType === "USER") {
+        eligible = eligible.filter((t) => t.userId === msg.targetId);
+      } else if (msg.targetType !== "ALL_LUBRICATORS") {
+        eligible = []; // targetType desconocido: fail closed, nunca "a todos por defecto"
+      }
+
+      const title = msg.title || (String(msg.message || "").trim().split(/\s+/).slice(0, 8).join(" ") || "Mensaje operativo");
+      const body = String(msg.message || "").slice(0, 180);
+
+      const toNotify: string[] = [];
+      for (const t of eligible) {
+        const dedupeKey = `broadcast|${row.id}|${t.userId}|immediate`;
+        if (await claimDedupeKey(dedupeKey, { rowId: row.id, userId: t.userId })) toNotify.push(t.token);
+      }
+      await sendOneSignalPush(toNotify, title, body, { data: { kind: "MENSAJE", messageId: row.id }, priority: pushUrgency(msg.priority) });
+      return new Response(`ok, mensaje enviado a ${toNotify.length} dispositivo(s)`, { status: 200 });
     }
 
     return new Response("ignorado (no requiere aviso)", { status: 200 });

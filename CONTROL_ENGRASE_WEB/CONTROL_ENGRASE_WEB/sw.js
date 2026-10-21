@@ -1,5 +1,7 @@
-const CACHE = 'engrase-openpit-v69'; // v69: QRious (GPL-3.0) reemplazada por qrcode-generator (MIT) como generador de QR — lote "QR license fix". jsQR (escáner) no cambió. Mismo precache obligatorio (ASSETS), solo cambia el archivo vendorizado.
+const CACHE = 'engrase-openpit-v74'; // v74: descarte de renders antiguos de Anomalías y guardas locales.
 const ASSETS = [
+  './src/core/tasks-notifications-panel.js',
+  './src/core/lubricador-notifications.js',
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline

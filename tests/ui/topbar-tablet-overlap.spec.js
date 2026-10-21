@@ -55,7 +55,8 @@ for (const width of WIDTHS_TO_VALIDATE) {
     test(`Topbar @ ${width}px ("${title}") — título NUNCA se superpone con .topbar-right (buscador/conexión/turno/usuario)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 400 });
       await page.setContent(fixture(title));
-      await page.addStyleTag({ path: STYLES_PATH });
+      await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
       await page.evaluate(() => document.fonts.ready);
 
       const titleBox = await page.locator('#topbar-title').boundingBox();
@@ -69,7 +70,8 @@ for (const width of WIDTHS_TO_VALIDATE) {
     test(`Topbar @ ${width}px ("${title}") — sin overflow horizontal, título sigue legible (no vacío)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 400 });
       await page.setContent(fixture(title));
-      await page.addStyleTag({ path: STYLES_PATH });
+      await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
       expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
@@ -85,6 +87,7 @@ for (const width of WIDTHS_TO_VALIDATE) {
 test('Topbar @ 1024px — buscador, QR y conexión siguen accesibles después del fix', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 400 });
   await page.setContent(fixture('Configuración'));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#quick-find')).toHaveAttribute('aria-label', 'Buscar equipo por código');
@@ -98,6 +101,7 @@ test('Topbar @ 1024px — buscador, QR y conexión siguen accesibles después de
 test('Topbar @ 1280px — buscador, QR y conexión siguen accesibles después del fix', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 400 });
   await page.setContent(fixture('Configuración'));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   await expect(page.locator('#quick-find')).toHaveAttribute('aria-label', 'Buscar equipo por código');
@@ -109,7 +113,8 @@ test('Topbar @ 1440px/1920px — título muestra el texto COMPLETO, sin recortar
   for (const width of [1440, 1920]) {
     await page.setViewportSize({ width, height: 400 });
     await page.setContent(fixture('Configuración'));
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
     await expect(page.locator('#topbar-title')).toHaveText('Configuración');
   }
 });

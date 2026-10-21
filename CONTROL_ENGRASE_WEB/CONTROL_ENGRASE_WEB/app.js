@@ -582,7 +582,7 @@ async function showEquipmentQrInfo(equipmentId) {
       outOfScopeMsg = '<div class="qr-info-alert">No tienes cobertura autorizada para ejecutar este equipo. Puedes consultar su ficha.</div>';
     } else {
       const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
-      const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+      const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date(), shiftId: currentShiftId() }) : { kind: 'NONE' };
       if (existing.kind === 'NONE' && App.currentUser.role === 'LUBRICADOR') ofreceFueraDePlan = true;
     }
   }
@@ -667,6 +667,10 @@ const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (lunes)
 const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
 const NOTIF_ID_ASSIGNED = 1010;        // engrase asignado manualmente a mi cuadrilla
 const NOTIF_ID_ASSIGNED_REC = 1011;    // recordatorio de asignación todavía pendiente
+const NOTIF_ID_VALIDATION = 1012;      // validación pendiente de mi cuadrilla
+const NOTIF_ID_VALIDATION_REC = 1013;  // recordatorio de validación todavía pendiente
+const NOTIF_ID_DUAL_SHIFT_BASE = 2000; // recordatorios por fecha/turno, ventana de 7 días
+const LOCAL_DUAL_SHIFT_NOTIF_IDS = Array.from({ length: 14 }, (_, i) => ({ id: NOTIF_ID_DUAL_SHIFT_BASE + i }));
 
 // Factorizada aparte (lote arquitectura de notificaciones, §15) para poder
 // cancelar TODAS las notificaciones locales programadas desde logout()
@@ -679,7 +683,8 @@ const LOCAL_NOTIF_IDS = [
   { id: NOTIF_ID_VENCIDOS }, { id: NOTIF_ID_POR_ENGRASAR },
   { id: NOTIF_ID_VENCIDOS_REC }, { id: NOTIF_ID_POR_ENGRASAR_REC },
   { id: NOTIF_ID_SEMANAL }, { id: NOTIF_ID_ESCALADO },
-  { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC }
+  { id: NOTIF_ID_ASSIGNED }, { id: NOTIF_ID_ASSIGNED_REC },
+  { id: NOTIF_ID_VALIDATION }, { id: NOTIF_ID_VALIDATION_REC }, ...LOCAL_DUAL_SHIFT_NOTIF_IDS
 ];
 async function cancelAllLocalNotifications() {
   const LN = window.Capacitor?.Plugins?.LocalNotifications;
@@ -713,7 +718,10 @@ const NOTIF_DEFAULTS = {
   // 5) Anomalías nuevas (inmediata, se agrupan si llegan varias seguidas)
   anomalias: { enabled: true, roles: ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'], agruparMinutos: 30 },
   // 6) Resumen SEMANAL (lunes)
-  resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] }
+  resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
+  // 7) Validaciones PENDIENTES de mi cuadrilla (persistente — nunca expira
+  // por antigüedad, ver isRecordPendingValidation() en grease-validation.js)
+  validaciones: { enabled: true, roles: ['LUBRICADOR'] }
 };
 
 /* ---------- ¿Qué equipos le corresponden a esta persona? ----------
@@ -769,7 +777,7 @@ function mergeNotifSettings(guardado) {
   const base = JSON.parse(JSON.stringify(NOTIF_DEFAULTS));
   if (!guardado) return base;
   const out = { ...base, ...guardado };
-  ['vencidos', 'porEngrasar', 'engraseRealizado', 'cumplimiento', 'anomalias', 'resumenSemanal'].forEach(k => {
+  ['vencidos', 'porEngrasar', 'engraseRealizado', 'cumplimiento', 'anomalias', 'resumenSemanal', 'validaciones'].forEach(k => {
     out[k] = { ...base[k], ...(guardado[k] || {}) };
   });
   return out;
@@ -793,6 +801,67 @@ function nextTimeAt(hour, minute) {
   return d;
 }
 
+function localDateISO(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// Próxima hora local del recordatorio dentro del turno configurado. La fecha
+// operativa y la hora salen del plan/ajustes existentes, sin crear horarios.
+function nextDualShiftReminderTime({ operationalDate, shiftId, cfg, settings, now = new Date() }) {
+  const [year, month, day] = operationalDate.split('-').map(Number);
+  const dayStart = Number(settings.shiftDayStart ?? 6);
+  const nightStart = Number(settings.shiftNightStart ?? 18);
+  let hour = Number(cfg.hour ?? 6);
+  let minute = Number(cfg.minute ?? 0);
+  const minuteOfDay = hour * 60 + minute;
+  const dayStartMinute = dayStart * 60;
+  const nightStartMinute = nightStart * 60;
+  const insideTargetShift = shiftId === 'shift_dia'
+    ? minuteOfDay >= dayStartMinute && minuteOfDay < nightStartMinute
+    : minuteOfDay >= nightStartMinute || minuteOfDay < dayStartMinute;
+  if (!insideTargetShift) {
+    hour = shiftId === 'shift_dia' ? dayStart : nightStart;
+    minute = 0;
+  }
+  const candidate = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (shiftId === 'shift_noche' && hour < dayStart) candidate.setDate(candidate.getDate() + 1);
+  return candidate > now ? candidate : null;
+}
+
+function buildDualShiftNotificationGroups({ plans, equipos, records, assignments, skips, settings, cfg, now, canReceiveShift, canReceiveEquipment }) {
+  const groups = new Map();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dualConfigured = (plan, dateISO) => Array.isArray(plan?.requiredShifts)
+    && ['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+    && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+
+  for (let offset = 0; offset < 7; offset++) {
+    const date = new Date(today); date.setDate(date.getDate() + offset);
+    const dateISO = localDateISO(date);
+    for (const equipment of equipos) {
+      if (equipment.status !== 'Operativo' || avisosPausados(equipment)) continue;
+      const plan = plans.find(candidate => candidate.equipmentId === equipment.id);
+      if (!dualConfigured(plan, dateISO)) continue;
+      const occurrences = generateOccurrences({ plan, startDateISO: dateISO, endDateISO: dateISO });
+      for (const occurrence of occurrences) {
+        const when = nextDualShiftReminderTime({ operationalDate: occurrence.operationalDate,
+          shiftId: occurrence.shiftId, cfg, settings, now });
+        if (!when || !canReceiveShift(occurrence.shiftId)
+          || !canReceiveEquipment(equipment, occurrence.shiftId)) continue;
+        const state = resolveOccurrenceState({ plan, operationalDate: occurrence.operationalDate,
+          shiftId: occurrence.shiftId, records, assignments, skips,
+          asOfDateISO: occurrence.operationalDate });
+        if (['COMPLETE', 'SKIPPED', 'NOT_SCHEDULED', 'INVALID'].includes(state.state)) continue;
+        const key = `${occurrence.operationalDate}|${occurrence.shiftId}`;
+        if (!groups.has(key)) groups.set(key, { operationalDate: occurrence.operationalDate,
+          shiftId: occurrence.shiftId, at: when, items: [] });
+        groups.get(key).items.push({ equipment, occurrence });
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
 /* ---------- Contador de pendientes en el ícono de la app (badge) ---------- */
 /* ---------- Notificaciones push reales (vía OneSignal) ----------
    A diferencia de las notificaciones locales, estas SÍ pueden llegar aunque nadie tenga la
@@ -800,7 +869,7 @@ function nextTimeAt(hour, minute) {
    que hace falta es pegar el "App ID" de OneSignal aquí abajo (ver GUIA_NOTIFICACIONES_PUSH.md).
    Si el plugin no está disponible (app web, o todavía no se configuró el App ID), estas
    funciones simplemente no hacen nada — el resto de la app funciona igual. */
-const ONESIGNAL_APP_ID = ''; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
+const ONESIGNAL_APP_ID = 'ecc2c6bc-e7ed-41a5-9014-b03fdd8a19bf'; // pega aquí tu App ID de OneSignal (ver la guía) — mientras esté vacío, el push queda desactivado sin dar error
 
 function wirePushListeners() {
   const OneSignal = window.plugins?.OneSignal || window.OneSignal;
@@ -901,7 +970,13 @@ function todayDateISO() {
 function equipoOccurrenceKey(equipo, plansByEquipoId) {
   const plan = plansByEquipoId[equipo.id];
   if (!plan) return null;
-  return computeOccurrenceKey(plan, { dateISO: todayDateISO() });
+  const dateISO = todayDateISO();
+  const isDualShiftActive = Array.isArray(plan.requiredShifts) && REQUIRED_SHIFT_IDS.every(id => plan.requiredShifts.includes(id))
+    && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+  if (!isDualShiftActive) return computeOccurrenceKey(plan, { dateISO });
+  const shiftId = currentShiftId();
+  const operationalDate = operationalDateForShift(new Date(), shiftId, App.generalSettings);
+  return computeOccurrenceKey(plan, { dateISO: operationalDate, shiftId });
 }
 
 async function loadAssignmentContext() {
@@ -919,12 +994,14 @@ async function loadAssignmentContext() {
 // (responsabilidad temporal — NUNCA mueve el equipo de ubicación, ver
 // moverEquipoDeUbicacion() más abajo para eso). Si ya había una asignación
 // activa para esta misma ocurrencia, la reasigna en vez de duplicarla.
-async function assignGreaseToCrew(equipo, assignedCrewId, notes) {
+async function assignGreaseToCrew(equipo, assignedCrewId, notes, assignmentId = null) {
   const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
   const plan = plansByEquipoId[equipo.id];
   if (!plan) throw new Error('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.');
   const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
-  const existing = findActivePendingAssignment(assignments, occurrenceKey);
+  const pending=assignments.filter(a=>a.equipmentId===equipo.id && a.status==='PENDING');
+  const existing = assignmentId ? pending.find(a=>a.id===assignmentId) : findActivePendingAssignment(assignments, occurrenceKey) || (pending.length===1 ? pending[0] : null);
+  if (assignmentId && !existing) throw new Error('La asignación ya no está pendiente. Sincroniza para revisar su estado.');
   const crew = cuadrillas.find(cq => cq.id === assignedCrewId);
   let saved;
   if (existing) {
@@ -1240,6 +1317,15 @@ function avisosPausados(equipo) {
 
 /* Guarda un registro de cada aviso enviado, para poder responder "¿me llegó o no?" */
 async function registrarAvisoEnviado(tipo, titulo, cuerpo, destinatarios) {
+  // Mismo principio que logAudit() (db.js): en modo Supabase Auth la
+  // identidad real de una fila de auditoría solo puede venir del RPC
+  // autoritativo del servidor, nunca de un registro armado por el cliente
+  // — 0013 deniega a propósito su INSERT genérico (ver
+  // docs/AUTHORIZATION_ROW_SCOPE_PHASE_2D2.md). La notificación local del
+  // teléfono (LocalNotifications.schedule(), en refreshLocalNotifications())
+  // no depende de esto en absoluto — solo se omite este registro de
+  // auditoría sincronizable, redundante en este modo.
+  if (isSupabaseAuthMode()) return null;
   try {
     await DB.put('audit_log', stamp({
       id: uid('notif'),
@@ -1252,11 +1338,36 @@ async function registrarAvisoEnviado(tipo, titulo, cuerpo, destinatarios) {
   } catch (e) { /* si falla el registro, no se frena el aviso */ }
 }
 
+// Abre Tareas y Mensajes en Pendientes y enfoca la tarea/mensaje que
+// originó el push (§7/§9/§12 del pedido "push real", 2026-10-19) — NUNCA
+// un modal (LUBRICADOR ya es inline; renderTareasYMensajes() solo hace
+// scroll+resalte, ver applyTymFocus() ahí). El push puede llegar ANTES
+// que el dato exista en IndexedDB: se sincroniza primero (si hay red; sin
+// ella se busca con lo que ya haya), se busca por ID después — si sigue
+// sin aparecer, se avisa sin inventar nada local (§9: "no crear item
+// falso local").
+async function focusTareasYMensajesItem(kind, id) {
+  try { await Sync.fullSync(); } catch (e) { /* sin red: se intenta con lo que ya hay */ }
+  const store = kind === 'TAREA' ? 'manual_tasks' : 'broadcast_messages';
+  const item = await DB.get(store, id);
+  await renderTareasYMensajes({ activeTab: 'pendientes', focusId: item ? id : null });
+  if (!item) showInAppToast('La información todavía se está sincronizando.');
+}
+
 /* Abre la pantalla correcta al tocar una notificación. Si el aviso era de un solo
    equipo, se abre ese equipo directo (listo para engrasar); si era de varios, la
    pantalla general que corresponda. Antes todo llevaba a Anomalías. */
 async function abrirDesdeNotificacion(datos) {
-  if (!App.currentUser || !datos) return;
+  if (!datos) return;
+  // Hallazgo real (E2E push/deeplink, 2026-10-20): wirePushListeners() se
+  // engancha ANTES del gate de Quick Unlock (ver boot inicial), así que un
+  // tap en la notificación mientras la pantalla de PIN sigue mostrándose
+  // llega acá con App.currentUser todavía null — antes el `return`
+  // temprano perdía el deep-link en silencio, sin ningún reintento después
+  // de desbloquear. Ahora se guarda UNA sola vez (la última pedida, nunca
+  // una cola) y enterAppAsProfile()/el restore de sesión legacy la
+  // reproduce con este mismo código, ya con el usuario cargado.
+  if (!App.currentUser) { App._pendingDeeplink = datos; return; }
   try {
     if (datos.equipoId) {
       const eq = await DB.get('equipment', datos.equipoId);
@@ -1266,7 +1377,13 @@ async function abrirDesdeNotificacion(datos) {
         return;
       }
     }
-    const permitidas = PERMISSIONS[App.currentUser.role] || [];
+    // Tarea/mensaje (push real de Tareas y Mensajes) — ver
+    // focusTareasYMensajesItem() arriba. `navigate()` ya deja el shell
+    // (título/nav activa) en el estado correcto para CUALQUIER rol; el
+    // 2do render con foco corre encima, nunca reemplaza esta llamada.
+    if (datos.taskId) { navigate('tareas-mensajes'); await focusTareasYMensajesItem('TAREA', datos.taskId); return; }
+    if (datos.messageId) { navigate('tareas-mensajes'); await focusTareasYMensajesItem('MENSAJE', datos.messageId); return; }
+    const permitidas = getAllowedRoutes(App.currentUser.role);
     const destino = datos.ruta && permitidas.includes(datos.ruta) ? datos.ruta : permitidas[0];
     if (destino) navigate(destino);
   } catch (e) { console.warn('No se pudo abrir desde la notificación', e); }
@@ -1308,6 +1425,10 @@ async function refreshLocalNotifications() {
     const rol = App.currentUser.role;
     const equipos = await DB.allActive('equipment');
     const statuses = await computeAllStatuses(equipos);
+    const [plansNotif, recordsNotif, assignmentsNotif, skipsNotif] = await Promise.all([
+      DB.allActive('lubrication_plans'), DB.allActive('lubrication_records'),
+      DB.allActive('lubrication_assignments'), DB.allActive('lubrication_skips')
+    ]);
     const notifications = [];
 
     // Migración al routing central (lote arquitectura de notificaciones,
@@ -1331,8 +1452,14 @@ async function refreshLocalNotifications() {
       return mios.length > 0;
     });
 
-    const vencidos = relevantes.filter(x => x.s.code === 'ROJO');
-    const porEngrasar = relevantes.filter(x => x.s.code === 'AMARILLO');
+    const nowNotif = new Date();
+    const currentOperationalDate = operationalDateForShift(nowNotif, turnoReal, App.generalSettings);
+    const isDualEffectiveNow = (plan) => Array.isArray(plan?.requiredShifts)
+      && ['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+      && !!plan.effectiveDate && currentOperationalDate >= plan.effectiveDate;
+    const regularRelevantes = relevantes.filter(x => !isDualEffectiveNow(x.s.plan));
+    const vencidos = regularRelevantes.filter(x => x.s.code === 'ROJO');
+    const porEngrasar = regularRelevantes.filter(x => x.s.code === 'AMARILLO');
 
     // Al tocar un aviso, la app abre el equipo correcto en vez de una pantalla genérica
     const extraDatos = (lista, tipo) => ({
@@ -1340,6 +1467,47 @@ async function refreshLocalNotifications() {
       equipoId: lista.length === 1 ? lista[0].e.id : '',
       ruta: lista.length === 1 ? 'equipo' : (tipo === 'anomalia' ? 'anomalias' : 'dashboard')
     });
+
+    // Recordatorios de excavadora por ocurrencia, no por equipo: se dejan
+    // preparados los próximos siete días programados para que completar DAY
+    // nunca cancele ni sustituya el recordatorio NIGHT.
+    const cfgDual = settings.porEngrasar;
+    if (cfgDual.enabled && cfgDual.roles?.includes(rol)) {
+      const userScope = rol === 'LUBRICADOR' ? await getCurrentOperationalScope() : null;
+      const permitEquipment = (equipment, shiftId) => {
+        if (rol !== 'LUBRICADOR') return true;
+        if (App.currentUser.shiftId && App.currentUser.shiftId !== shiftId) return false;
+        if (userScope?.kind !== 'CREW_SCOPED' || !userScope.crewId
+          || !canLubricadorExecuteEquipment({ scope: userScope, equipo: equipment })) return false;
+        if (equipment.cuadrillaId && equipment.cuadrillaId !== userScope.crewId) return false;
+        return true;
+      };
+      const groups = buildDualShiftNotificationGroups({
+        plans: plansNotif, equipos, records: recordsNotif, assignments: assignmentsNotif, skips: skipsNotif,
+        settings: App.generalSettings, cfg: cfgDual, now: nowNotif,
+        canReceiveShift: shiftId => isUserEligibleForNotification({
+          user: personaElegible, rolesPermitidos: cfgDual.roles, currentShiftId: shiftId
+        }),
+        canReceiveEquipment: permitEquipment
+      });
+      for (const group of groups.values()) {
+        const shiftLabel = group.shiftId === 'shift_dia' ? 'DÍA' : 'NOCHE';
+        const codes = group.items.slice(0, 5).map(item => item.equipment.code).join(', ');
+        const extra = group.items.length > 5 ? ` y ${group.items.length - 5} más` : '';
+        const dayOffset = Math.round((new Date(`${group.operationalDate}T12:00:00`).getTime() - new Date(`${localDateISO(nowNotif)}T12:00:00`).getTime()) / 86400000);
+        const shiftOffset = group.shiftId === 'shift_dia' ? 0 : 1;
+        const extraOccurrence = {
+          tipo: 'porEngrasar', shiftId: group.shiftId, operationalDate: group.operationalDate,
+          equipoId: group.items.length === 1 ? group.items[0].equipment.id : '', ruta: 'turno'
+        };
+        notifications.push({
+          id: NOTIF_ID_DUAL_SHIFT_BASE + Math.max(0, Math.min(6, dayOffset)) * 2 + shiftOffset,
+          title: `🟡 ${group.items.length} engrase(s) · TURNO ${shiftLabel}`,
+          body: `${codes}${extra} · ${group.operationalDate}. Pendiente de completar.`,
+          extra: extraOccurrence, schedule: { at: group.at }
+        });
+      }
+    }
 
     // ── 1) Engrases VENCIDOS ──────────────────────────────────────
     const cfgV = settings.vencidos;
@@ -1522,6 +1690,48 @@ async function refreshLocalNotifications() {
             schedule: { at: new Date(Date.now() + 2 * 60 * 60 * 1000) }
           });
         }
+
+        // ── 6) Validaciones PENDIENTES de mi cuadrilla (panel de tareas —
+        // "validación pendiente" era el único tipo de evento sin ningún
+        // recordatorio: solo visible si el lubricador abría Mi Turno. Mismo
+        // patrón EXACTO que el bloque 5 (asignaciones): se recalcula desde
+        // cero cada vez — isRecordPendingValidation() YA NO excluye
+        // "vencida" (regla E de doble turno), así que una validación nunca
+        // deja de recordarse solo por antigüedad; cuando se firma
+        // (findActiveValidations ya no la deja pendiente), simplemente deja
+        // de calificar aquí y no se reprograma — nunca hace falta
+        // "cancelarla" a mano, igual que una asignación completada. ──
+        if (settings.validaciones.enabled && settings.validaciones.roles.includes(rol)) {
+          const validationsNotif = await DB.allActive('grease_validations');
+          const ahoraValidacionNotif = new Date();
+          const misPendientesValidacion = recordsNotif.filter(r =>
+            (r.operationalSnapshot?.crewId || r.crewId) === scopeNotif.crewId
+            && isRecordPendingValidation(r, validationsNotif, ahoraValidacionNotif, App.generalSettings));
+          if (misPendientesValidacion.length) {
+            const equiposValidacion = misPendientesValidacion
+              .map(r => equipos.find(e => e.id === r.equipmentId)).filter(Boolean);
+            const listaVal = equiposValidacion.slice(0, 5).map(e => e.code).join(', ');
+            const tituloVal = `🖊 ${misPendientesValidacion.length} engrase(s) a la espera de validación`;
+            const cuerpoVal = `${listaVal}${equiposValidacion.length > 5 ? ` y ${equiposValidacion.length - 5} más` : ''}. Se conserva el mismo registro hasta firmarse.`;
+            const extraVal = {
+              tipo: 'validacion',
+              equipoId: equiposValidacion.length === 1 ? equiposValidacion[0].id : '',
+              ruta: 'turno'
+            };
+            notifications.push({
+              id: NOTIF_ID_VALIDATION, title: tituloVal, body: cuerpoVal,
+              extra: extraVal, schedule: { at: new Date(Date.now() + 3000) }
+            });
+            registrarAvisoEnviado('validacion', tituloVal, cuerpoVal, rol);
+            notifications.push({
+              id: NOTIF_ID_VALIDATION_REC,
+              title: `🖊 Recordatorio: ${misPendientesValidacion.length} validación(es) siguen pendientes`,
+              body: listaVal,
+              extra: extraVal,
+              schedule: { at: new Date(Date.now() + 2 * 60 * 60 * 1000) }
+            });
+          }
+        }
       }
     }
 
@@ -1574,13 +1784,36 @@ async function notificarEngraseRealizado(record, equipment) {
   } catch (e) { console.warn('No se pudo avisar del engrase', e); }
 }
 
+// "Tareas y mensajes" (módulo unificado, 2026-10-18) — ÚNICO acceso
+// principal para manual_tasks/broadcast_messages, visible a los 4 roles
+// operativos (NUNCA VISOR: cero acceso a ambos stores por RLS). LUBRICADOR
+// no usa PERMISSIONS/MENU (su shell es fijo, ver bootLubricador()) — se
+// agrega ahí por separado.
 const PERMISSIONS = {
-  ADMINISTRADOR: ['dashboard','equipos','plan','matriz','turno','registrar','horometros','anomalias','lubricantes','historial','reportes','usuarios','config','ayuda'],
-  PLANIFICADOR: ['dashboard','equipos','plan','matriz','turno','historial','reportes','horometros','ayuda'],
-  SUPERVISOR: ['dashboard','equipos','matriz','turno','anomalias','historial','usuarios','ayuda'],
+  ADMINISTRADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','registrar','horometros','anomalias','lubricantes','historial','reportes','usuarios','config','ayuda'],
+  PLANIFICADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','historial','reportes','horometros','ayuda'],
+  SUPERVISOR: ['dashboard','tareas-mensajes','equipos','matriz','turno','anomalias','historial','usuarios','ayuda'],
   LUBRICADOR: ['turno','anomalias','historial','ayuda'],
   VISOR: ['dashboard','matriz','historial','reportes','ayuda']
 };
+
+// Hallazgo LOGIC-P0-01 (auditoría pre-release 2026-10-21): en AUTH_MODE
+// legacy, SUPERVISOR sí administra lubricadores de su cuadrilla en
+// 'usuarios' (ver renderUsuarios()) y PERMISSIONS sigue siendo la
+// autorización real para ese modo — no se toca. En modo Supabase, la Edge
+// Function manage-users rechaza con 403 a cualquiera que no sea
+// ADMINISTRADOR (supabase/functions/manage-users/index.ts), así que dejar
+// "Usuarios" visible/navegable para SUPERVISOR ahí es un botón que SIEMPRE
+// falla — la UI debe reflejar el permiso real. Este es el ÚNICO lugar que
+// decide esa visibilidad (menú y navegación directa la consultan a
+// través de esta función, nunca releen PERMISSIONS a mano para 'usuarios').
+function getAllowedRoutes(role) {
+  const base = PERMISSIONS[role] || [];
+  if (role === 'SUPERVISOR' && typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    return base.filter(r => r !== 'usuarios');
+  }
+  return base;
+}
 
 /* ---------- utilidades ---------- */
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -1681,11 +1914,6 @@ const STATUS_ICON = { VERDE: '●', AMARILLO: '●', ROJO: '●', GRIS: '●' };
    SheetJS en su versión gratuita no aplica estilos automáticamente, pero sí los
    conserva si se escriben en cada celda. Estas funciones ponen encabezados con
    fondo de color, bordes y celdas coloreadas según el estado. */
-function xlsCell(valor, estilo) {
-  const esNumero = typeof valor === 'number';
-  return { v: valor, t: esNumero ? 'n' : 's', s: estilo };
-}
-
 function xlsEstiloEncabezado(hexFondo = REPORT_COLORS.marca.hex) {
   return {
     font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } },
@@ -1705,16 +1933,6 @@ function xlsEstiloCelda({ hexFondo, hexTexto, negrita, centrado } = {}) {
   };
   if (hexFondo) e.fill = { patternType: 'solid', fgColor: { rgb: hexFondo } };
   return e;
-}
-
-// Colores de relleno/texto según el estado del equipo
-function xlsEstiloEstado(label) {
-  const t = String(label || '').toUpperCase();
-  const C = REPORT_COLORS;
-  if (t.includes('VENCID')) return xlsEstiloCelda({ hexFondo: C.rojoSuave.hex, hexTexto: REPORT_COLORS.rojoTexto.hex, negrita: true, centrado: true });
-  if (t.includes('PRÓXIM') || t.includes('PROXIM')) return xlsEstiloCelda({ hexFondo: C.ambarSuave.hex, hexTexto: REPORT_COLORS.ambarTexto.hex, negrita: true, centrado: true });
-  if (t.includes('AL DÍA') || t.includes('AL DIA')) return xlsEstiloCelda({ hexFondo: C.verdeSuave.hex, hexTexto: REPORT_COLORS.verdeTexto.hex, negrita: true, centrado: true });
-  return xlsEstiloCelda({ hexFondo: C.grisSuave.hex, hexTexto: REPORT_COLORS.grisTexto.hex, centrado: true });
 }
 
 function xlsEstiloCriticidad(crit) {
@@ -1929,9 +2147,85 @@ function openThemePicker() {
   }));
 }
 
+/* ---------------- Mostrar/ocultar contraseña (pulido UX global, §8 del
+   pedido) — envuelve cada <input type="password"> real (nunca los PIN
+   numéricos de 4/6 dígitos, que son otro componente) en .pw-field y le
+   agrega un botón ojo/ojo-tachado. Puramente visual: solo alterna
+   input.type entre "password"/"text", nunca toca name/value/validación/
+   autocomplete, así que ningún formulario existente cambia de
+   comportamiento. Un MutationObserver (no hooks por pantalla) cubre los
+   8 campos reales dispersos en login/cambiar contraseña/temporal — login
+   y los modales de usuarios se renderizan en momentos/contenedores
+   distintos, así que enganchar cada render uno por uno sería frágil. */
+function wirePasswordReveal(input) {
+  if (!input || input.dataset.pwWired || input.closest('.pw-field')) return;
+  input.dataset.pwWired = '1';
+  const wrap = document.createElement('div');
+  wrap.className = 'pw-field';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  input.style.paddingRight = '44px'; // gana siempre, sin pelear con paddings específicos de cada pantalla (p.ej. .login-card)
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pw-toggle';
+  btn.setAttribute('aria-label', 'Mostrar contraseña');
+  btn.setAttribute('aria-pressed', 'false');
+  btn.innerHTML = '<span class="btn-icon icon-eye" aria-hidden="true"></span>';
+  btn.addEventListener('click', () => {
+    const revealed = input.type === 'text';
+    input.type = revealed ? 'password' : 'text';
+    btn.setAttribute('aria-pressed', String(!revealed));
+    btn.setAttribute('aria-label', revealed ? 'Mostrar contraseña' : 'Ocultar contraseña');
+    btn.querySelector('.btn-icon').className = 'btn-icon ' + (revealed ? 'icon-eye' : 'icon-eye-off');
+  });
+  wrap.appendChild(btn);
+}
+function wirePasswordReveals(root) {
+  (root || document).querySelectorAll('input[type="password"]:not([inputmode="numeric"])').forEach(wirePasswordReveal);
+}
+function initPasswordRevealObserver() {
+  wirePasswordReveals(document);
+  const obs = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      m.addedNodes.forEach(node => {
+        if (node.nodeType !== 1) return;
+        if (node.matches?.('input[type="password"]:not([inputmode="numeric"])')) wirePasswordReveal(node);
+        else if (node.querySelectorAll) wirePasswordReveals(node);
+      });
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
 /* ---------- arranque ---------- */
+// Auditoría de sincronización (2026-10-20, §13 "WATCHDOG UX"): DB.init()
+// es el PRIMER await de todo el arranque — si queda colgado (IndexedDB
+// bloqueada por otra conexión, ver onblocked en db.js) la pantalla se
+// queda en blanco para siempre, sin ningún mensaje. Carrera contra un
+// timeout generoso (nunca cancela la apertura real, solo deja de
+// esperarla): si gana el timeout, se ofrece "Reintentar" (recarga limpia,
+// nunca borra IndexedDB/sesión) en vez de una pantalla blanca muda.
+function bootWatchdogTimeout(ms) {
+  return new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), ms));
+}
 window.addEventListener('DOMContentLoaded', async () => {
-  await DB.init();
+  initPasswordRevealObserver();
+  const bootResult = await Promise.race([DB.init().then(() => 'OK'), bootWatchdogTimeout(12000)]);
+  if (bootResult === 'TIMEOUT') {
+    document.body.innerHTML = `
+      <div class="login-screen">
+        <div class="login-card">
+          <div class="brand brand-login">
+            <div class="brand-mark"></div>
+            <div><div class="brand-title">CONTROL DE ENGRASE</div><div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div></div>
+          </div>
+          <p class="login-hint">No se pudo abrir la base de datos local. Puede deberse a otra pestaña/instalación de la app abierta al mismo tiempo.</p>
+          <button type="button" class="btn btn-accent" style="width:100%" id="boot-watchdog-retry">Reintentar</button>
+        </div>
+      </div>`;
+    $('#boot-watchdog-retry').addEventListener('click', () => location.reload());
+    return;
+  }
   await loadGeneralSettings();
   captureQrDeepLink(); // guarda el equipo del QR antes de mostrar el login
   if ('serviceWorker' in navigator) {
@@ -1941,7 +2235,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     navigator.serviceWorker.addEventListener('message', (ev) => {
       if (ev.data?.tipo === 'notificacion-abierta' && App.currentUser) {
         const destino = ev.data.destino === 'anomaly' ? 'anomalias' : 'dashboard';
-        const permitidas = PERMISSIONS[App.currentUser.role] || [];
+        const permitidas = getAllowedRoutes(App.currentUser.role);
         if (permitidas.includes(destino)) navigate(destino);
       }
     });
@@ -1998,6 +2292,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (saved) {
       App.currentUser = JSON.parse(saved);
       boot();
+      replayPendingDeeplink();
     } else {
       renderLogin();
     }
@@ -2013,9 +2308,15 @@ function redibujarPantallaActual() {
   try {
     const esLubricador = !!document.querySelector('.lub-shell');
     if (esLubricador) {
-      const pintar = { anomalias: renderAnomalias, historial: renderLubricadorHistorial, turno: renderLubricadorHome };
+      const pintar = { anomalias: renderAnomalias, historial: renderLubricadorHistorial, turno: renderLubricadorHome, 'tareas-mensajes': renderTareasYMensajes };
       const fn = pintar[App.route] || renderLubricadorHome;
-      fn();
+      // Fix 2026-10-17 ("ELIMINAR PARPADEO EN SYNC INCREMENTAL"): esta
+      // función SOLO se llama tras un sync que trajo algo nuevo (ver
+      // onSyncStateChange()) — nunca es una navegación real. renderAnomalias()/
+      // renderLubricadorHistorial() no declaran parámetros, así que el extra
+      // arg no les afecta; renderLubricadorHome() lo usa para no vaciar la
+      // pantalla ni mostrar "Cargando tu turno…" en este repintado automático.
+      fn({ silent: true });
     } else {
       navigate(App.route);
     }
@@ -2111,8 +2412,25 @@ function wireQuickFind() {
   });
 }
 
-function onSyncStateChange(state) {
+// Auditoría de sincronización (2026-10-20, §13 "WATCHDOG UX") — nunca
+// cancela fullSync() ni cambia su resultado: solo evita que el header se
+// quede diciendo "SINCRONIZANDO…" indefinidamente si, por lo que sea (red
+// muy lenta, muchas páginas de pull), el ciclo tarda de verdad más de lo
+// razonable. Cada fetch real ya tiene su propio timeout de 10s
+// (fetchWithTimeout, db.js) — esto es una red de seguridad de UX por
+// encima, no un timeout de red nuevo. Si fullSync() SÍ termina después
+// (éxito o error real), su propio notify() siguiente reemplaza 'stalled'
+// de inmediato — nunca queda pisado.
+let _syncWatchdogTimer = null;
+function armSyncWatchdog() {
+  clearTimeout(_syncWatchdogTimer);
+  _syncWatchdogTimer = setTimeout(() => {
+    if (lastSyncState.status === 'syncing') onSyncStateChange({ status: 'stalled', at: nowISO() });
+  }, 45000);
+}
+async function onSyncStateChange(state) {
   lastSyncState = state;
+  if (state.status === 'syncing') armSyncWatchdog(); else clearTimeout(_syncWatchdogTimer);
   updateConnBadge();
   // Si llegaron datos nuevos del servidor, se redibuja la pantalla actual para que la
   // persona vea el cambio sin tener que salir y volver a entrar. Antes solo se refrescaban
@@ -2145,6 +2463,30 @@ function onSyncStateChange(state) {
       redibujarPantallaActual();
     }
   }
+  // Fix 2026-10-17 ("BOOTSTRAP HANG EN ERROR", bug real confirmado en
+  // dispositivo: un pull que falla repetidamente — p. ej. 500 del backend —
+  // dejaba Mi Turno congelado para siempre en "Sincronizando…", aunque
+  // lastSyncState.status (arriba) ya reflejara el error). Un sync que
+  // TERMINA en cualquier estado que NO sea 'ok' nunca entra al bloque de
+  // arriba (ese es solo para éxito con filas nuevas) — sin esto, nada volvía
+  // a llamar renderLubricadorHome() para que reevaluara sus propios Estados
+  // A/B (ya existentes, ver renderLubricadorHome()) contra el lastSyncState
+  // recién actualizado. Acotado al mínimo:
+  //   - SOLO mientras el bootstrap de ESTA cuenta sigue incompleto (una vez
+  //     bootstrapComplete es true, este camino nunca vuelve a aplicar — el
+  //     bloque de éxito de arriba ya cubre ese caso normal);
+  //   - SOLO en 'turno' (la única pantalla con esta pantalla de bootstrap);
+  //   - MISMOS guards de flujo/modal activo que el bloque de arriba — nunca
+  //     interrumpe un formulario/confirmación en curso.
+  // Nunca marca el sync como resuelto ni toca sync.js/RLS/autorización —
+  // esto es presentación pura: solo decide si hay que VOLVER A MOSTRAR lo
+  // que Sync ya decidió.
+  if (state.status !== 'ok' && App.route === 'turno' &&
+      !App.lubricadorGreaseFlowActive &&
+      !document.querySelector('#modal-overlay.open') && !document.querySelector('#grease-form') && !document.querySelector('.grease-validate-choice')) {
+    const accountSync = await Sync.getAccountSyncState();
+    if (!accountSync.bootstrapComplete) redibujarPantallaActual();
+  }
   if (state.status === 'ok' && state.newAnomalies && state.newAnomalies.length) {
     notifyNewAnomalies(state.newAnomalies);
   }
@@ -2155,6 +2497,7 @@ function onSyncStateChange(state) {
   // sync existente, con su propio intervalo configurable).
   if (state.status === 'ok' && state.pulled > 0) {
     refreshLocalNotifications();
+    updateTareasMensajesNavBadge();
   }
 }
 
@@ -2254,6 +2597,15 @@ function updateConnBadge() {
   } else if (lastSyncState.status === 'syncing') {
     text = 'SINCRONIZANDO…';
     b.className = 'conn-badge conn-warn';
+  } else if (lastSyncState.status === 'stalled') {
+    // Watchdog de UX (§13, auditoría de sincronización 2026-10-20) — nunca
+    // significa que fullSync() se canceló (sigue corriendo de fondo); solo
+    // que lleva más de lo razonable sin terminar y el header deja de fingir
+    // que está a punto de terminar. Si el ciclo real SÍ termina después,
+    // el próximo notify() real (ok/error/etc.) pisa este estado de inmediato.
+    text = 'SINCRONIZACIÓN DEMORADA';
+    b.className = 'conn-badge conn-off';
+    detail = 'La sincronización está tardando más de lo normal. Tus datos locales siguen intactos — toca para reintentar.';
   } else if (lastSyncState.status === 'offline') {
     // navigator.onLine ya dio false ANTES de llegar aquí (mismo caso que el
     // chequeo de arriba) — se cubre igual por si algo más adelante llega a
@@ -2273,15 +2625,40 @@ function updateConnBadge() {
     b.className = 'conn-badge conn-off';
     detail = lastSyncState.message || '';
   } else if (lastSyncState.status === 'partial') {
-    text = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;
+    // Corrección de semántica visual (2026-10-20, "indicador rojo de
+    // sincronización en Android") — 'partial' ahora agrupa TODO problema
+    // AISLADO que no impidió que el ciclo terminara: filas con error de
+    // datos, filas rechazadas por permiso (403, aislado — ver sync.js
+    // fullSync()) y conflictos CAS detectados. Antes un solo 403 aislado
+    // se reportaba como 'AUTH_FORBIDDEN' (rojo, "SIN PERMISO PARA
+    // SINCRONIZAR") aunque push+pull hubieran terminado normalmente — ese
+    // texto/color ahora queda reservado para cuando el pull COMPLETO es
+    // rechazado (ver el early-return de fullSync(), antes de llegar a
+    // calcular 'partial'). Nada de esto oculta el problema: las filas
+    // siguen registradas en `errors`/`authErrorDetails` y visibles en
+    // Configuración > Diagnóstico — solo deja de pintar TODO el ciclo como
+    // si no hubiera terminado.
+    const pendientes = (lastSyncState.errors?.length || 0) + (lastSyncState.authErrors || 0) + (lastSyncState.conflicts || 0);
+    text = `SINCRONIZADO CON ADVERTENCIA (${pendientes} pendiente${pendientes === 1 ? '' : 's'})`;
     b.className = 'conn-badge conn-warn';
-    detail = 'Falló: ' + lastSyncState.errors.join(', ') + ' — se reintenta solo en la próxima sincronización.';
+    const partes = [];
+    if (lastSyncState.errors?.length) partes.push('Falló: ' + lastSyncState.errors.join(', '));
+    if (lastSyncState.authErrors) partes.push(`${lastSyncState.authErrors} fila(s) sin permiso para sincronizar`);
+    if (lastSyncState.conflicts) partes.push(`${lastSyncState.conflicts} conflicto(s) detectado(s)`);
+    detail = partes.join(' · ') + ' — tus datos locales están a salvo; se reintenta solo en la próxima sincronización.';
   } else if (lastSyncState.status === 'AUTH_REQUIRED' || lastSyncState.status === 'AUTH_FORBIDDEN') {
     // Solo posible en AUTH_MODE='supabase' (inerte en 'legacy', ver
     // sync.js) — nunca debe leerse como "SINCRONIZADO" solo porque
-    // navigator.onLine es true.
+    // navigator.onLine es true. AUTH_FORBIDDEN aquí es SIEMPRE el pull
+    // GLOBAL rechazado (nunca una fila aislada, ver comentario de
+    // 'partial' arriba y el de fullSync() en sync.js) — un fallo real,
+    // rojo correcto.
     text = lastSyncState.status === 'AUTH_REQUIRED' ? 'SESIÓN REQUERIDA' : 'SIN PERMISO PARA SINCRONIZAR';
     b.className = 'conn-badge conn-off';
+  } else if (lastSyncState.status === 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE') {
+    text = 'DATOS PENDIENTES DE HIDRATAR';
+    b.className = 'conn-badge conn-warn';
+    detail = 'La descarga de esta cuenta aún no está completa. Los cambios locales se conservan; toca para reintentar.';
   } else if (lastSyncState.status === 'ok') {
     text = 'SINCRONIZADO';
     b.className = 'conn-badge conn-ok';
@@ -2304,7 +2681,10 @@ function updateConnBadge() {
   // (clic) — nunca depende de hover/title, que en touch no es alcanzable.
   const detailBtn = $('#conn-badge-detail');
   if (detailBtn) {
-    const hasDetail = lastSyncState.status === 'AUTH_FORBIDDEN' && (lastSyncState.authErrorDetails || []).length > 0;
+    // 'partial' es ahora donde caen las filas aisladas con 403 (ver arriba)
+    // — el botón de diagnóstico debe seguir apareciendo ahí, no solo en
+    // 'AUTH_FORBIDDEN' (que ahora es exclusivamente el pull global rechazado).
+    const hasDetail = (lastSyncState.status === 'AUTH_FORBIDDEN' || lastSyncState.status === 'partial') && (lastSyncState.authErrorDetails || []).length > 0;
     detailBtn.classList.toggle('hidden', !hasDetail);
   }
 }
@@ -2407,6 +2787,7 @@ async function renderLogin() {
       App.currentUser = { id: selected.id, name: selected.name, role: selected.role };
       sessionStorage.setItem('engrase_user', JSON.stringify(App.currentUser));
       boot();
+      replayPendingDeeplink();
     } else {
       const newCount = attempts.count + 1;
       if (newCount >= MAX_ATTEMPTS) {
@@ -2574,7 +2955,12 @@ function lockApp() {
   stopInactivityTimer();
   App.currentUser = null;
   App.lubricadorGreaseFlowActive = false;
-  renderAuthGateSupabase();
+  // forcePin:true — "Bloquear" (manual, fin de turno, o las 4h de
+  // inactividad real) SIEMPRE debe mostrar Quick Unlock de inmediato,
+  // nunca la ventana de gracia que sí aplica al reabrir/recargar la app
+  // (ver renderAuthGateSupabase()) — bloquear ES, por definición, la
+  // acción que exige volver a verificar identidad ahora mismo.
+  renderAuthGateSupabase({ forcePin: true });
 }
 
 /* ============================================================
@@ -2595,15 +2981,27 @@ function currentUserFromAuthProfile(profile) {
   return { id: profile.appUserId, name: profile.displayName, role: profile.role, username: profile.appUserId };
 }
 
+// Reproduce el deep-link que abrirDesdeNotificacion() dejó en espera por
+// no tener todavía App.currentUser (pantalla de Quick Unlock/login de por
+// medio) — único lugar que lo limpia y lo dispara, para no reproducirlo
+// dos veces si boot() se llama más de una vez en la misma entrada.
+function replayPendingDeeplink() {
+  if (!App._pendingDeeplink) return;
+  const datos = App._pendingDeeplink;
+  App._pendingDeeplink = null;
+  abrirDesdeNotificacion(datos);
+}
+
 async function enterAppAsProfile(profile) {
   App.currentUser = currentUserFromAuthProfile(profile);
   bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
-  const cfg = await DB.getConfig();
-  if (!cfg?.lastPull && navigator.onLine && Auth.isAuthenticated()) {
+  const accountSync = await Sync.getAccountSyncState();
+  if (!accountSync.bootstrapComplete && navigator.onLine && Auth.isAuthenticated()) {
     await Sync.fullSync();
     if (App.currentUser?.id !== profile.appUserId || !Auth.isAuthenticated()) return;
   }
   boot();
+  replayPendingDeeplink();
 }
 
 // Punto de entrada único para AUTH_MODE='supabase': se llama al arrancar Y
@@ -2614,12 +3012,24 @@ async function enterAppAsProfile(profile) {
 // la sesión real en segundo plano; sync.js decide aparte, con su propio
 // gate (sin cambios de esta tarea), si eso alcanza para sincronizar — esta
 // pantalla NUNCA decide sync, solo qué pantalla mostrar.
-async function renderAuthGateSupabase() {
+async function renderAuthGateSupabase({ forcePin = false } = {}) {
   await Auth.restoreSession();
   const snapshot = await DB.getAuthProfileSnapshot();
   if (snapshot && isValidProfile(snapshot)) {
     const configured = await QuickUnlock.isConfigured(snapshot.appUserId);
-    if (configured) return renderQuickUnlockScreen(snapshot);
+    if (configured) {
+      // Simplificación para campo (2026-10-20) — reabrir/recargar con
+      // actividad real hace MENOS de 4h entra directo, sin PIN (mismo
+      // camino que un desbloqueo exitoso: enterAppAsProfile(), que ya
+      // reproduce el deep-link pendiente si lo hay — ver
+      // replayPendingDeeplink()). `forcePin` (bloqueo manual/por
+      // inactividad/fin de turno, ver lockApp()) nunca usa esta ventana —
+      // siempre exige el PIN de inmediato.
+      if (!forcePin && await QuickUnlock.isWithinInactivityGrace(snapshot.appUserId)) {
+        return enterAppAsProfile(snapshot);
+      }
+      return renderQuickUnlockScreen(snapshot);
+    }
   }
   return renderSupabaseLoginForm();
 }
@@ -2786,7 +3196,7 @@ function offerQuickUnlockSetup(profile) {
           <div id="quick-unlock-setup-error" class="login-error span-2"></div>
           <button type="submit" class="btn btn-accent span-2">Configurar PIN</button>
         </form>
-        <button type="button" id="quick-unlock-setup-skip" class="btn">Ahora no</button>
+        <button type="button" id="quick-unlock-setup-skip" class="btn login-btn-secondary">Ahora no</button>
       </div>
     </div>`;
   $('#quick-unlock-setup-skip').addEventListener('click', () => enterAppAsProfile(profile));
@@ -2821,8 +3231,12 @@ function quickUnlockConfigureModal(mode, onDone = renderConfig) {
       <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
       <label>Confirmar PIN<input required name="pinConfirm" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
       <div id="quick-unlock-modal-error" class="login-error span-2"></div>
-      <div class="modal-actions span-2"><button type="submit" class="btn btn-accent">Guardar</button></div>
+      <div class="modal-actions span-2">
+        <button type="button" class="btn" id="quick-unlock-modal-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-accent">Guardar</button>
+      </div>
     </form>`);
+  $('#quick-unlock-modal-cancel').addEventListener('click', () => closeModal());
   $('#quick-unlock-modal-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = Object.fromEntries(new FormData(ev.target).entries());
@@ -3172,11 +3586,15 @@ async function renderLubricadorConfig() {
         </div>
         <button type="button" class="btn btn-accent" id="lub-config-theme" style="margin-top:10px">🎨 Personalizar apariencia</button>
       </div>
+    </div>
+    <div class="config-narrow lub-config-actions">
+      <button type="button" class="btn" id="lub-config-help">${ic('help')}Ayuda</button>
     </div></div>`;
 
   $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
   $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
   $('#lub-config-theme').addEventListener('click', () => openThemePicker());
+  $('#lub-config-help').addEventListener('click', () => navigate('ayuda'));
   // §3 del pedido: solo limpia la selección de SESIÓN (localStorage) para
   // que resolveOperationalScope() vuelva a pedir elegir entre las YA
   // autorizadas — nunca toca memberships/cuadrillas/permisos (eso vive en
@@ -3197,10 +3615,56 @@ async function renderLubricadorConfig() {
    cola de sync + fotos + PIN configurado) — nunca un bloqueo nuevo, nunca
    logout automático por tiempo. Si alguien deja el dispositivo
    desbloqueado, se bloquea solo tras un rato sin uso; se reanuda con el
-   mismo PIN, nunca con usuario/contraseña de nuevo. */
-const INACTIVITY_MINUTES = 30;
+   mismo PIN, nunca con usuario/contraseña de nuevo.
+
+   Simplificación para campo (2026-10-20, "Quick Unlock para uso en
+   campo") — el umbral pasó de 30 minutos a
+   QUICK_UNLOCK_INACTIVITY_MS (4 horas, constante única en quick-
+   unlock.js — nunca duplicada aquí) y ahora PERSISTE `lastActivityAt`
+   (ver QuickUnlock.recordActivity(), con throttle abajo) para que
+   renderAuthGateSupabase() pueda saltar el PIN al reabrir/recargar si la
+   última actividad real fue hace menos de 4h — antes esta pantalla
+   aparecía en CUALQUIER reapertura fría, sin mirar cuán reciente fue el
+   último uso. */
 let inactivityTimer = null;
 let finTurnoTimer = null;
+// Throttle de la escritura a IndexedDB (nunca en cada tap/tecla/scroll —
+// innecesario contra una ventana de 4 HORAS, y cada DB.setQuickUnlock() es
+// una transacción real). Una escritura cada 60s de uso activo sigue siendo
+// más que suficiente precisión para esa ventana.
+const ACTIVITY_PERSIST_THROTTLE_MS = 60 * 1000;
+let lastActivityPersistAt = 0;
+// Reintento corto (nunca otra ventana de 4h) mientras hay un
+// formulario/flujo abierto en el momento exacto en que se cumplieron las
+// 4h — §3 del pedido: "no interrumpir trabajo activo". Si la persona
+// sigue interactuando, resetInactivityTimer() ya cancela este reintento
+// (actividad real = nunca se cumplieron las 4h en primer lugar); esto
+// solo cubre el caso borde de alguien que se alejó a mitad de un
+// formulario exactamente en el límite.
+const AUTO_LOCK_SAFE_RETRY_MS = 30 * 1000;
+
+// Mismo criterio que el gate de re-render de sync (ver onSyncStateChange(),
+// auditoría de sincronización 2026-10-20) — nunca una 2da implementación
+// de "hay un formulario/flujo en curso que no se debe interrumpir".
+function isSafeToAutoLock() {
+  return !App.lubricadorGreaseFlowActive &&
+    !document.querySelector('#modal-overlay.open') &&
+    !document.querySelector('#grease-form') &&
+    !document.querySelector('.grease-validate-choice');
+}
+
+function fireInactivityLock() {
+  if (!App.currentUser) return;
+  if (!isSafeToAutoLock()) {
+    // Nunca pierde el trabajo en curso — reintenta pronto, sin abrir una
+    // ventana nueva de 4h (si la persona sigue tecleando/tocando, el
+    // próximo evento real ya cancela este timer vía resetInactivityTimer()).
+    inactivityTimer = setTimeout(fireInactivityLock, AUTO_LOCK_SAFE_RETRY_MS);
+    return;
+  }
+  alert('Dispositivo bloqueado por inactividad. Ingresa tu PIN para continuar.');
+  lockApp();
+}
 
 /* ---------- Bloqueo local al terminar el turno ----------
    Fix 2026-10-09 (mismo motivo de arriba — era logout(), ahora lockApp()):
@@ -3235,11 +3699,18 @@ function programarCierrePorFinDeTurno() {
 function resetInactivityTimer() {
   if (!App.currentUser) return;
   clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(() => {
-    if (!App.currentUser) return;
-    alert(`Dispositivo bloqueado por ${INACTIVITY_MINUTES} minutos de inactividad. Ingresa tu PIN para continuar.`);
-    lockApp();
-  }, INACTIVITY_MINUTES * 60 * 1000);
+  inactivityTimer = setTimeout(fireInactivityLock, QUICK_UNLOCK_INACTIVITY_MS);
+  // Persiste `lastActivityAt` (con throttle) — SOLO en AUTH_MODE='supabase'
+  // (Quick Unlock no existe en 'legacy'; DB.getQuickUnlock() ahí nunca
+  // matchea este usuario, así que sería un no-op, pero el guard explícito
+  // documenta la intención y evita una escritura inerte en cada tap).
+  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    const now = Date.now();
+    if (now - lastActivityPersistAt >= ACTIVITY_PERSIST_THROTTLE_MS) {
+      lastActivityPersistAt = now;
+      QuickUnlock.recordActivity(App.currentUser.id).catch(() => {});
+    }
+  }
 }
 
 function stopInactivityTimer() { clearTimeout(inactivityTimer); inactivityTimer = null; clearTimeout(finTurnoTimer); finTurnoTimer = null; }
@@ -3258,6 +3729,13 @@ function startInactivityTracking() {
 // boot(), ".menu-sep"), nunca para ocultar ni reordenar por rol.
 const MENU = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', group: 'op' },
+  // Módulo unificado (2026-10-18) — manual_tasks + broadcast_messages en
+  // UN solo lugar, nunca escondido dentro de Configuración/Ficha/Mi Turno
+  // (esos conservan accesos rápidos que abren el MISMO formulario, nunca
+  // uno paralelo). 2do lugar a propósito: entra en menuItems.slice(0,5)
+  // (barra inferior móvil de escritorio, ver boot()) para los 3 roles que
+  // lo tienen en PERMISSIONS.
+  { id: 'tareas-mensajes', label: 'Tareas y Mensajes', icon: 'list', group: 'op' },
   { id: 'plan', label: 'Plan de Engrase', icon: 'list', group: 'op' },
   { id: 'matriz', label: 'Matriz Semanal', icon: 'matrix', group: 'op' },
   { id: 'turno', label: 'Engrase del Turno', icon: 'clock', group: 'op' },
@@ -3290,7 +3768,16 @@ function boot() {
   // cuando el Administrador las prende a propósito desde Configuración → Notificaciones push,
   // una vez que Firebase ya está listo.
   if (App.currentUser.role === 'LUBRICADOR') { bootLubricador(); return; }
-  const allowed = PERMISSIONS[App.currentUser.role] || [];
+  const allowed = getAllowedRoutes(App.currentUser.role);
+  // "Usuarios" (cierre bloque Configuración, 2026-10-18): para quien
+  // también tiene "config", ya no es una entrada de menú separada — vive
+  // dentro de Configuración > Usuarios y accesos (misma función real,
+  // reusada), así que mostrarla aparte sería la MISMA pantalla dos veces
+  // en el menú. PERMISSIONS no se toca (la autorización por rol sigue
+  // igual) — esto es solo qué botón del menú se muestra. Quien NO tiene
+  // "config" (p.ej. SUPERVISOR) sigue viendo "Usuarios" exactamente igual
+  // que siempre, como pantalla propia.
+  const menuItems = MENU.filter(m => allowed.includes(m.id) && !(m.id === 'usuarios' && allowed.includes('config')));
   document.body.innerHTML = `
     <div class="app-shell">
       <aside class="sidebar" id="sidebar">
@@ -3303,7 +3790,7 @@ function boot() {
         </div>
         <nav class="menu">
           ${(() => {
-            const items = MENU.filter(m => allowed.includes(m.id));
+            const items = menuItems;
             let prevGroup = null;
             return items.map(m => {
               const sep = (prevGroup !== null && m.group !== prevGroup) ? '<div class="menu-sep" aria-hidden="true"></div>' : '';
@@ -3312,6 +3799,7 @@ function boot() {
             <button class="menu-item" data-route="${m.id}">
               <span class="menu-icon icon-${m.icon}"></span>
               <span>${m.label}</span>
+              ${m.id === 'tareas-mensajes' ? '<span class="nav-badge-dot hidden" data-nav-badge="tareas-mensajes"></span>' : ''}
             </button>`;
             }).join('');
           })()}
@@ -3326,7 +3814,7 @@ function boot() {
 
       <div class="main">
         <header class="topbar">
-          <button id="btn-menu-toggle" class="icon-btn only-mobile">☰</button>
+          <button id="btn-menu-toggle" class="icon-btn only-mobile" aria-label="Abrir menú" aria-expanded="false">☰</button>
           <div class="brand-mark small only-mobile"></div>
           <div class="topbar-title" id="topbar-title">Dashboard</div>
           <div class="topbar-right">
@@ -3346,7 +3834,7 @@ function boot() {
       </div>
 
       <nav class="bottom-nav only-mobile">
-        ${MENU.filter(m => allowed.includes(m.id)).slice(0, 5).map(m => `
+        ${menuItems.slice(0, 5).map(m => `
           <button class="bottom-item" data-route="${m.id}">
             <span class="menu-icon icon-${m.icon}"></span>
             <span>${m.label.split(' ')[0]}</span>
@@ -3356,6 +3844,7 @@ function boot() {
 
   updateConnBadge();
   wireShiftTimer(updateShiftBadge);
+  updateTareasMensajesNavBadge();
 
   $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
     b.addEventListener('click', () => navigate(b.dataset.route));
@@ -3365,7 +3854,11 @@ function boot() {
   $('#btn-lock-app')?.addEventListener('click', lockApp);
   $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   const toggle = $('#btn-menu-toggle');
-  if (toggle) toggle.addEventListener('click', () => $('#sidebar').classList.toggle('open'));
+  if (toggle) toggle.addEventListener('click', () => {
+    const open = $('#sidebar').classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
+  });
 
   wireQuickFind();
   // Consulta universal (§2 del lote): buscar (quick-find, arriba) + escanear
@@ -3388,12 +3881,33 @@ function updateShiftBadge() {
 }
 
 function navigate(route) {
+  // "Usuarios" (cierre bloque Configuración, 2026-10-18): quien también
+  // tiene "config" ya no tiene un botón de menú separado para esto (ver
+  // arriba), pero cualquier llamada directa a navigate('usuarios') que
+  // quede suelta (acceso antiguo, enlace guardado, etc.) redirige aquí a
+  // Configuración > Usuarios y accesos en vez de abrir la pantalla
+  // duplicada — centralizado en un solo lugar, nunca un hack por botón.
+  // `_activeConfigCategory` es la MISMA variable que ya usa
+  // wireConfigCategoryNav()/renderConfig() para recordar la categoría
+  // activa entre renders. Quien NO tiene "config" (p.ej. SUPERVISOR) sigue
+  // yendo a la pantalla 'usuarios' de siempre, sin cambios.
+  // LOGIC-P0-01: en modo Supabase, 'usuarios' siempre falla (403) para
+  // SUPERVISOR (ver getAllowedRoutes()) — una navegación directa (deep
+  // link, enlace viejo) no debe abrir esa pantalla solo porque el menú ya
+  // no muestra el botón. Se redirige a Dashboard, igual que cualquier
+  // otro rol sin la ruta solicitada.
+  if (route === 'usuarios' && App.currentUser.role === 'SUPERVISOR' && typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
+    route = 'dashboard';
+  } else if (route === 'usuarios' && (PERMISSIONS[App.currentUser.role] || []).includes('config')) {
+    _activeConfigCategory = 'usuarios';
+    route = 'config';
+  }
   App.route = route;
   // §7 (no-op en escritorio: .lub-user-strip no existe en ese shell) —
   // mismo criterio que el handler de .lub-nav-item en bootLubricador(),
   // para cuando se llega a 'lubconfig'/'miperfil' desde el menú de cuenta.
   $('.lub-user-strip')?.classList.toggle('hidden', route === 'turno');
-  $$('.menu-item[data-route], .bottom-item[data-route]').forEach(b => {
+  $$('.menu-item[data-route], .bottom-item[data-route], .lub-nav-item[data-route]').forEach(b => {
     const active = b.dataset.route === route;
     b.classList.toggle('active', active);
     if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -3412,13 +3926,16 @@ function navigate(route) {
   const titulo = $('#topbar-title');
   if (titulo) titulo.textContent = item ? item.label : (EXTRA_ROUTE_TITLES[route] || '');
   $('#sidebar')?.classList.remove('open');
+  const menuToggle = $('#btn-menu-toggle');
+  if (menuToggle) { menuToggle.setAttribute('aria-expanded', 'false'); menuToggle.setAttribute('aria-label', 'Abrir menú'); }
   const renderers = {
     dashboard: renderDashboard, equipos: renderEquipos, plan: renderPlan,
     turno: renderTurno, registrar: renderRegistrar, horometros: renderHorometros,
     matriz: renderMatrizSemanal,
     anomalias: renderAnomalias, lubricantes: renderLubricantes, historial: renderHistorial,
     reportes: renderReportes, usuarios: renderUsuarios, config: renderConfig, ayuda: renderAyuda,
-    miperfil: renderMiPerfil, lubconfig: renderLubricadorConfig
+    miperfil: renderMiPerfil, lubconfig: renderLubricadorConfig,
+    'tareas-mensajes': renderTareasYMensajes
   };
   Promise.resolve((renderers[route] || renderDashboard)()).then(() => makeTablesResponsive($('#app-content')));
 }
@@ -3507,6 +4024,11 @@ function bootLubricador() {
             <div id="quick-find-results" class="quick-find-results hidden"></div>
           </div>
           <button type="button" id="btn-scan-qr-topbar" class="icon-btn" aria-label="Escanear QR de equipo" title="Escanear QR de equipo">${ic('qr')}</button>
+          <button type="button" id="btn-lub-notifications" class="icon-btn lub-notification-bell" aria-label="Notificaciones" title="Notificaciones" aria-haspopup="dialog" aria-controls="lub-notifications-panel" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <span class="lub-notification-count hidden" data-lub-notification-count aria-hidden="true"></span>
+          </button>
+          <span class="sr-only" id="lub-notification-status" role="status" aria-live="polite" aria-atomic="true"></span>
           <button type="button" id="conn-badge" class="conn-badge" title="Tocar para sincronizar ahora"></button>
           <button type="button" id="conn-badge-detail" class="icon-btn hidden" aria-label="Ver detalle del error de sincronización" title="Ver detalle del error de sincronización">ⓘ</button>
           <!-- Fix 2026-10-09 ("CONFIGURACIÓN FINAL + SESIÓN OFFLINE", §6 del
@@ -3526,13 +4048,15 @@ function bootLubricador() {
       <main id="app-content" class="lub-content"></main>
       <nav class="lub-bottom-nav">
         <button class="lub-nav-item active" data-route="turno" aria-current="page"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
+        <button class="lub-nav-item" data-route="tareas-mensajes"><span class="menu-icon icon-list"></span><span class="nav-badge-dot hidden" data-nav-badge="tareas-mensajes"></span><span>Tareas</span></button>
         <button class="lub-nav-item" data-route="anomalias"><span class="menu-icon icon-alert"></span><span>Anomalías</span></button>
-        <button class="lub-nav-item" data-route="historial"><span class="menu-icon icon-history"></span><span>Mis Engrases</span></button>
-        <button class="lub-nav-item" data-route="ayuda"><span class="menu-icon icon-help"></span><span>Ayuda</span></button>
+        <button class="lub-nav-item" data-route="historial" aria-label="Historial"><span class="menu-icon icon-history"></span><span>Historial</span></button>
       </nav>
     </div>`;
 
   updateConnBadge();
+  if (typeof wireLubNotificationBell === 'function') wireLubNotificationBell();
+  updateTareasMensajesNavBadge();
   // Null-guard (hardening pre-release 2026-10-08): si el DOM ya cambió de
   // rol (otro boot() reemplazó #lub-shell por el shell de escritorio) antes
   // de que corra este tick, NO debe reventar con TypeError — igual criterio
@@ -3564,9 +4088,9 @@ function bootLubricador() {
     App.route = b.dataset.route;
     $('.lub-user-strip')?.classList.toggle('hidden', b.dataset.route === 'turno');
     if (b.dataset.route === 'turno') renderLubricadorHome();
+    else if (b.dataset.route === 'tareas-mensajes') renderTareasYMensajes();
     else if (b.dataset.route === 'anomalias') renderAnomalias();
     else if (b.dataset.route === 'historial') renderLubricadorHistorial();
-    else renderAyuda();
   }));
 
   App.route = 'turno';
@@ -3631,23 +4155,134 @@ function wireKeyboardOpenWatcher() {
   });
 }
 
-async function renderLubricadorHome() {
+// Fix 2026-10-17 ("ELIMINAR PARPADEO EN SYNC INCREMENTAL"): `options.silent`
+// SOLO lo pasa redibujarPantallaActual() (repintado automático tras un
+// sync que trajo algo nuevo, ver onSyncStateChange()) — una navegación real
+// a "Mi Turno" (barra inferior, botones, "← Volver a mi turno", etc.)
+// nunca lo pasa, así que conserva el "Cargando tu turno…" de siempre. En
+// silent=true NUNCA se vacía la pantalla al entrar: el contenido actual
+// sigue visible mientras se recalculan los datos, y más abajo (antes del
+// único innerHTML real de esta función) se decide si de verdad hace falta
+// repintar, ver turnoSignature.
+async function renderLubricadorHome(options = {}) {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
-  c.innerHTML = `<div class="loading">Cargando tu turno…</div>`;
-  const equipos = await DB.allActive('equipment');
-  const locations = await DB.allActive('locations');
+  if (typeof updateTareasMensajesNavBadge === 'function') updateTareasMensajesNavBadge();
+  // Fix 2026-10-17 ("RACE BOOTSTRAP/SCOPE EN MI TURNO", bug real: LUBRICADOR
+  // AUTHORIZED/CREW_SCOPED con cuadrillas válidas en el servidor veía "Sin
+  // cuadrilla autorizada" o nunca el selector de 2+ cuadrillas en una
+  // instalación nueva). Token de reentrancia: boot() dispara
+  // Sync.runAutoCycle() SIN esperarlo (ver boot()) y eso puede disparar OTRO
+  // render de esta misma pantalla (vía onSyncStateChange()) mientras este ya
+  // está en curso. La invocación VIEJA nunca debe decidir qué pantalla
+  // mostrar con un snapshot que una invocación MÁS NUEVA ya dejó obsoleto —
+  // se verifica en cada punto de decisión (nunca solo al final) y se
+  // abandona en silencio si una invocación más nueva ya está corriendo.
+  const myRenderRun = (App._lubRenderGen = (App._lubRenderGen || 0) + 1);
+  const isStaleRun = () => App._lubRenderGen !== myRenderRun;
+  if (!options.silent) c.innerHTML = `<div class="loading">Cargando tu turno…</div>`;
 
+  // (a) Estado de bootstrap PRIMERO — antes de calcular ningún scope. Nunca
+  // se combina con scope.kind en una misma condición (eso era el bug: un
+  // scope calculado ANTES de que el catálogo local terminara de hidratarse
+  // podía quedar "NO_CREW_ASSIGNED" por datos vacíos, y luego usarse igual
+  // aunque bootstrapComplete ya fuera true).
+  const accountBootstrap = await Sync.getAccountSyncState();
+  if (isStaleRun()) return; // una invocación más nueva ya está decidiendo la pantalla
+  if (!accountBootstrap.bootstrapComplete) {
+    // (b) Bootstrap incompleto: NUNCA se concluye NO_CREW_ASSIGNED ni se
+    // navega al dashboard — solo Sincronizando/Error, y se termina el
+    // render. Mismo contenido real que ya existía (Estados A/B del fix
+    // "FIX FRESH INSTALL / FALSE NO_CREW_ASSIGNED"), ahora como el ÚNICO
+    // gate de bootstrap de toda la función — ya no hay un segundo chequeo
+    // de `Sync.getAccountSyncState()` más abajo con otro resultado posible.
+    // 'stalled': watchdog de UX (§13, auditoría de sincronización
+    // 2026-10-20) — el bootstrap inicial lleva >45s sin terminar (ver
+    // armSyncWatchdog()/onSyncStateChange()). Mismo criterio que los demás
+    // estados de esta lista: sin cache local todavía, nunca queda mudo en
+    // "Sincronizando datos…" para siempre — ofrece Reintentar.
+    const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE', 'stalled']);
+    // App._lubBootstrapRetrying fuerza "Sincronizando" de inmediato al
+    // reintentar (§2: "mientras reintenta, volver a Sincronizando"), sin
+    // esperar el primer notify({status:'syncing'}) async de fullSync().
+    const falloBootstrap = !App._lubBootstrapRetrying && ESTADOS_FALLO_SYNC.has(lastSyncState.status);
+    if (falloBootstrap) {
+      // Estado B: el primer sync de este dispositivo ya terminó con error —
+      // el botón reusa Sync.fullSync() tal cual (MISMO mecanismo que "Tocar
+      // para sincronizar ahora" de #conn-badge), nunca un sync alternativo.
+      c.innerHTML = `
+        <div class="lub-empty-crew">
+          ${ic('alert')}
+          <h2>No se pudo cargar tu asignación de trabajo.</h2>
+          <p>Verifica la conexión e inténtalo nuevamente.</p>
+          <button type="button" class="btn btn-accent" id="lub-retry-bootstrap">${ic('check')}Reintentar</button>
+        </div>`;
+      $('#lub-retry-bootstrap').addEventListener('click', () => {
+        App._lubBootstrapRetrying = true;
+        renderLubricadorHome();
+        Sync.fullSync().finally(() => {
+          App._lubBootstrapRetrying = false;
+          if (App.route === 'turno') renderLubricadorHome();
+        });
+      });
+    } else {
+      // Estado A: todavía no hay evidencia de que el bootstrap haya
+      // terminado (ni éxito ni fallo) — nunca se afirma "sin cuadrilla" ni
+      // "elige cuadrilla" sin haber terminado de descargarla primero.
+      c.innerHTML = `
+        <div class="lub-empty-crew">
+          ${ic('clock')}
+          <h2>Sincronizando datos…</h2>
+          <p>Cargando tu asignación de trabajo.</p>
+        </div>`;
+    }
+    return;
+  }
+
+  // (c) Bootstrap confirmado completo: scope SIEMPRE fresco a partir de
+  // aquí — nunca se reusa un scope calculado antes de este punto (ese era
+  // el otro lado del bug: aunque bootstrapComplete ya fuera true, el scope
+  // seguía siendo el de la foto vieja).
+  const equipos = await DB.allActive('equipment');
+  // Conserva las ubicaciones inactivas visibles para diagnosticar la
+  // referencia maestra; la cobertura sigue usando solo las activas.
+  const masterLocations = await DB.all('locations');
+  const locations = masterLocations.filter(l => l.active !== false && l.deleted !== true);
+  function resolveEquipmentMasterLocation(equipment, locationRows) {
+    const locationId = equipment?.locationId ?? null;
+    if (locationId === null || (typeof locationId === 'string' && !locationId.trim())) {
+      return { state: 'MISSING', locationId, name: null, label: 'Ubicación maestra sin definir',
+        detail: 'El equipo no tiene locationId. Planificación debe revisar el dato maestro.' };
+    }
+    if (typeof locationId !== 'string') {
+      return { state: 'INVALID_REFERENCE', locationId, name: null, label: 'Referencia de ubicación maestra inválida',
+        detail: 'El locationId del equipo no es un identificador de texto válido.' };
+    }
+    const location = (locationRows || []).find(l => l.id === locationId);
+    if (!location) {
+      return { state: 'UNRESOLVED', locationId, name: null, label: 'Ubicación maestra no disponible',
+        detail: `La referencia ${locationId} no está en el catálogo local visible. Revisar catálogo y dato maestro; no confirma que falte en el servidor.` };
+    }
+    const name = typeof location.name === 'string' && location.name.trim() ? location.name : null;
+    if (location.deleted === true || location.active === false) {
+      return { state: 'INACTIVE', locationId, name, label: `Ubicación maestra inactiva${name ? ' · ' + name : ''}`,
+        detail: 'La ubicación referida está inactiva o eliminada. Planificación debe revisar el dato maestro.' };
+    }
+    if (!name) {
+      return { state: 'MISSING_NAME', locationId, name: null, label: 'Ubicación maestra sin nombre',
+        detail: `La ubicación ${locationId} existe pero no tiene un nombre válido.` };
+    }
+    return { state: 'VALID', locationId, name, label: name, detail: 'Ubicación maestra del equipo' };
+  }
+  const masterLocationFor = e => resolveEquipmentMasterLocation(e, masterLocations);
+  const masterLocationHTML = e => {
+    const location = masterLocationFor(e);
+    return `<div class="lub-eq-location" data-master-location-state="${location.state}" title="${esc(location.detail)}">📍 ${esc(location.label)}</div>`;
+  };
   const scope = await getCurrentOperationalScope();
   const cuadrillas = await DB.allActive('cuadrillas');
+  if (isStaleRun()) return; // idem — una invocación más nueva ya decidió con datos más frescos
   const myCrew = cuadrillas.find(cq => cq.id === scope.crewId);
-  if (scope.kind === 'CREW_SCOPED' && lastSyncState.status === 'syncing') {
-    const config = await DB.getConfig();
-    if (!(config && config.lastPull)) {
-      c.innerHTML = '<div class="loading">Sincronizando datos… Cargando cobertura de ubicaciones.</div>';
-      return;
-    }
-  }
   const principalLocations = scope.principalLocationIds || (scope.crewLocationId ? [scope.crewLocationId] : []);
   const coverageName = principalLocations.map(id => (locations.find(l => l.id === id) || {}).name || 'Sin ubicación').join(' + ');
   const filterKey = `crew-location-filter:${App.currentUser.id}:${scope.crewId}`;
@@ -3668,67 +4303,14 @@ async function renderLubricadorHome() {
   // autorizada, NUNCA cae a la lista global de equipos — se pide contactar
   // a un Planificador/Administrador para autorizarlo en Configuración →
   // Cuadrillas (reemplaza el viejo "Dispositivo operativo").
+  //
+  // Fix 2026-10-17: este chequeo ya NUNCA se combina con bootstrapComplete
+  // (ver arriba, (a)/(b)) — si llegamos aquí, el bootstrap YA está
+  // confirmado completo y `scope` ya es fresco, así que un NO_CREW_ASSIGNED
+  // en este punto es el caso real (§3 del fix histórico "FIX FRESH INSTALL
+  // / FALSE NO_CREW_ASSIGNED"): el usuario de verdad no tiene membership,
+  // nunca una instalación nueva con cache todavía vacía.
   if (scope.kind === 'NO_CREW_ASSIGNED') {
-    // Fix 2026-10-09 ("FIX FRESH INSTALL / FALSE NO_CREW_ASSIGNED"): en una
-    // instalación nueva, boot() dispara Sync.runAutoCycle() SIN esperarlo
-    // (ver boot()) y este primer render corre con IndexedDB todavía vacío
-    // — en ese instante, scope.kind === 'NO_CREW_ASSIGNED' es indistinguible
-    // de un usuario REALMENTE sin cuadrilla. Antes de afirmar eso, se
-    // distingue el estado real del bootstrap reusando SOLO señales ya
-    // existentes — cero sistema de estado nuevo, cero cambio a sync.js:
-    //   - cfg.lastPull: solo se pone (pullAll(), sync.js) tras un pull
-    //     EXITOSO — mientras esté vacío, la respuesta vacía de `cuadrillas`
-    //     todavía no es confiable.
-    //   - lastSyncState.status (ya mantenido por onSyncStateChange(), ver
-    //     arriba) distingue "primer intento todavía en curso/sin empezar"
-    //     de "el primer intento ya terminó con error".
-    const cfg = await DB.getConfig();
-    const sinPullExitosoAun = !(cfg && cfg.lastPull);
-    if (sinPullExitosoAun) {
-      const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured']);
-      // App._lubBootstrapRetrying fuerza "Sincronizando" de inmediato al
-      // reintentar (§2: "mientras reintenta, volver a Sincronizando"), sin
-      // esperar el primer notify({status:'syncing'}) async de fullSync().
-      const falloBootstrap = !App._lubBootstrapRetrying && ESTADOS_FALLO_SYNC.has(lastSyncState.status);
-      if (falloBootstrap) {
-        // Estado B (§2 del pedido): el primer sync de este dispositivo ya
-        // terminó con error — el botón reusa Sync.fullSync() tal cual
-        // (MISMO mecanismo que "Tocar para sincronizar ahora" de
-        // #conn-badge), nunca un sync alternativo.
-        c.innerHTML = `
-          <div class="lub-empty-crew">
-            ${ic('alert')}
-            <h2>No se pudo cargar tu asignación de trabajo.</h2>
-            <p>Verifica la conexión e inténtalo nuevamente.</p>
-            <button type="button" class="btn btn-accent" id="lub-retry-bootstrap">${ic('check')}Reintentar</button>
-          </div>`;
-        $('#lub-retry-bootstrap').addEventListener('click', () => {
-          App._lubBootstrapRetrying = true;
-          renderLubricadorHome();
-          Sync.fullSync().finally(() => {
-            App._lubBootstrapRetrying = false;
-            if (App.route === 'turno') renderLubricadorHome();
-          });
-        });
-      } else {
-        // Estado A (§1 del pedido): todavía no hay evidencia de que el
-        // bootstrap haya terminado (ni éxito ni fallo) — nunca se afirma
-        // "sin cuadrilla" sin haber intentado descargarla primero.
-        c.innerHTML = `
-          <div class="lub-empty-crew">
-            ${ic('clock')}
-            <h2>Sincronizando datos…</h2>
-            <p>Cargando tu asignación de trabajo.</p>
-          </div>`;
-      }
-      return;
-    }
-
-    // Estado C (§3 del pedido): ya hubo al menos un pull exitoso en este
-    // dispositivo (cfg.lastPull existe) y el scope SIGUE sin cuadrilla —
-    // este sí es el caso real de usuario sin membership, nunca una
-    // instalación nueva con cache todavía vacía.
-    //
     // Compacto (lote "mobile UX real Android" §4): icono + título corto +
     // UN párrafo breve + un solo botón — antes ocupaba casi toda la
     // pantalla con título largo + párrafo largo repitiendo la misma idea.
@@ -3751,27 +4333,104 @@ async function renderLubricadorHome() {
   if (scope.kind === 'NEEDS_CREW_SELECTION') {
     c.innerHTML = `
       <div class="lub-header-row"><div><h2 class="lub-heading">Elige tu cuadrilla de trabajo</h2></div></div>
-      <p class="dim" style="padding:0 2px 10px">Estás autorizado en más de una cuadrilla — elige con cuál vas a trabajar ahora. Puedes cambiarla después.</p>
+      <p class="dim" style="padding:0 2px 10px">Elige con cuál cuadrilla autorizada vas a trabajar ahora. Puedes cambiarla después.</p>
       <div class="lub-eq-list">
         ${scope.authorizedCrews.map(cq => `<button class="btn btn-accent crew-select-btn" style="width:100%;margin-bottom:8px" data-crew-id="${esc(cq.id)}">${esc(cq.name)}</button>`).join('')}
       </div>`;
     $$('.crew-select-btn', c).forEach(b => b.addEventListener('click', async () => {
       setSelectedCrewId(App.currentUser.id, b.dataset.crewId);
-      await refreshPushTokenCrewScope();
       renderLubricadorHome();
+      await refreshPushTokenCrewScope();
     }));
     return;
   }
 
-  const { assignments, plansByEquipoId } = await loadAssignmentContext();
+  const { assignments: allAssignments, plansByEquipoId: allPlansByEquipoId } = await loadAssignmentContext();
+  const assignments = allAssignments.filter(a => a.assignedCrewId === scope.crewId);
+  // `plansByEquipoId` cubre TODOS los equipos (normal + asignado) — una
+  // versión anterior lo restringía solo a los referidos por assignments,
+  // lo que dejaba sin plan (status()/equipoOccurrenceKeyFn ven "SIN PLAN")
+  // a cualquier equipo normal sin asignación manual (la inmensa mayoría del
+  // trabajo diario real). El plan de cada equipo sigue siendo el SUYO
+  // (equipoId->plan, misma fuente que loadAssignmentContext() usa en el
+  // resto de la app) — nunca el de otra cuadrilla, porque `equipos` (más
+  // abajo, classifyEquipmentWork) ya viene acotado a la ubicación/cuadrilla
+  // correcta antes de llegar aquí.
+  const plansByEquipoId = allPlansByEquipoId;
+  const selectedPlans = Object.values(plansByEquipoId);
   const { normal, assigned } = classifyEquipmentWork({
-    scope, equipos, cuadrillas, assignments,
+    // classifyEquipmentWork() recibe TODAS las asignaciones (no solo las de
+    // esta cuadrilla): necesita ver las de OTRAS cuadrillas para excluir de
+    // "normal" un equipo cuya ocurrencia de HOY ya está tomada por otra
+    // (si se pre-filtra aquí, esa exclusión nunca puede dispararse — ver
+    // tests/unit/crew-location-coverage.test.js, que siempre pasa la lista
+    // completa). La función ya filtra "assigned" a `scope.crewId` por dentro.
+    scope, equipos, cuadrillas, assignments: allAssignments, selectedCrewOnly: true,
     equipoOccurrenceKeyFn: (e) => equipoOccurrenceKey(e, plansByEquipoId)
   });
+  // Fix 2026-10-17 ("FECHA VISUAL DE ASIGNACIÓN ATRASADA" / "CHIP
+  // SUPPORT_OTHER_LOCATION"): acceso directo a la lubrication_assignment
+  // real de cada equipo asignado — nunca se recalcula nada, solo se LEE
+  // (parseOccurrenceKeyDate(), _supportOperational ya decorado por
+  // db.js:decorateSupportRow()). Si un equipo tuviera 2+ assignments
+  // PENDING a esta misma cuadrilla (raro — startGreaseFlow() ya resuelve
+  // esa ambigüedad con un selector, ver app.js:8651-8660), esta tarjeta
+  // informativa usa la última del arreglo; nunca afecta qué occurrenceKey
+  // se ejecuta de verdad.
+  const assignmentByEquipoId = new Map(assigned.map(a => [a.equipmentId, a]));
+  // Proyeccion pura de asignaciones persistidas: no crea tareas y no usa
+  // familia/tipo de equipo. Cambiar turno solo cambia CURRENT/CARRYOVER.
+  function projectAssignedShiftWork({ assignedRows, equipmentRows, planRows, recordRows, operationalDate, shiftId, now, settings = {} }) {
+    const seen = new Set();
+    const rank = shift => shift === 'shift_dia' ? 0 : shift === 'shift_noche' ? 1 : null;
+    const work = [];
+    for (const assignment of [...assignedRows].sort((a, b) => String(a.id).localeCompare(String(b.id)))) {
+      if (assignment.active === false || assignment.status !== 'PENDING' || !assignment.occurrenceKey) continue;
+      const e = equipmentRows.find(row => row.id === assignment.equipmentId);
+      if (!e) continue;
+      const identity = `${assignment.equipmentId}:${assignment.occurrenceKey}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      const plan = planRows.find(p => p.id === assignment.planId && p.equipmentId === e.id);
+      const completed = recordRows.some(r => {
+        if (r.active === false || r.equipmentId !== e.id || (r.planId && r.planId !== assignment.planId)
+            || new Date(r.date).getTime() > new Date(now).getTime() + 300000) return false;
+        const snap = r.operationalSnapshot || {};
+        const key = snap.assignedOccurrenceKey || snap.satisfiedOccurrenceKey || snap.occurrenceKey;
+        const sameWork = key ? key === assignment.occurrenceKey
+          : snap.assignmentId === assignment.id || assignment.completedRecordId === r.id;
+        return sameWork && snap.executionCompleteness !== 'PARTIAL'
+          && computeExecutionCompleteness(r.details) === 'COMPLETE' && Number(r.qty) > 0;
+      });
+      if (completed) continue; // Ejecutado no vuelve a pendiente por falta de firma/sync.
+      const parsed = parseOccurrenceKeyDate(assignment.occurrenceKey);
+      const created = assignment.createdAt ? new Date(assignment.createdAt) : null;
+      const validCreated = created && !Number.isNaN(created.getTime());
+      const creationShift = validCreated ? (created.getHours() >= (settings.shiftDayStart ?? 6)
+        && created.getHours() < (settings.shiftNightStart ?? 18) ? 'shift_dia' : 'shift_noche') : null;
+      const scheduledShift = parsed?.shiftId || assignment.scheduledShift || plan?.shiftId || creationShift;
+      const scheduledDate = parsed?.dateISO || assignment.scheduledDate
+        || (validCreated ? operationalDateForShift(created, scheduledShift || creationShift, settings) : null);
+      const earlierShift = rank(scheduledShift) !== null && rank(scheduledShift) < rank(shiftId);
+      const laterShift = rank(scheduledShift) !== null && rank(scheduledShift) > rank(shiftId);
+      const carried = !!scheduledDate && (scheduledDate < operationalDate || scheduledDate === operationalDate && earlierShift);
+      const future = !!scheduledDate && (scheduledDate > operationalDate || scheduledDate === operationalDate && laterShift);
+      work.push({ e, assignment, assignmentId: assignment.id, occurrenceKey: assignment.occurrenceKey,
+        occurrenceDate: scheduledDate ? new Date(`${scheduledDate}T12:00:00`) : null,
+        shiftId: scheduledShift, kind: carried ? 'CARRYOVER' : future ? 'FUTURE' : 'CURRENT',
+        asignado: true, tone: 'amber', origen: 'Pendiente del turno anterior', label: 'PENDIENTE DEL TURNO ANTERIOR' });
+    }
+    return work;
+  }
 
-  const statusesNormal = await computeAllStatuses(normal);
-  const equiposAsignados = assigned.map(a => equipos.find(e => e.id === a.equipmentId)).filter(Boolean);
-  const statusesAssigned = await computeAllStatuses(equiposAsignados);
+  const records = await DB.allActive('lubrication_records');
+  const statusesForSelectedPlans = rows => Promise.all(rows.map(async e => ({
+    e, s: await statusFor(e, Object.values(plansByEquipoId), records)
+  })));
+  const statusesNormal = await statusesForSelectedPlans(normal);
+  const assignedEquipmentIds = new Set(assigned.map(a => a.equipmentId));
+  const equiposAsignados = equipos.filter(e => assignedEquipmentIds.has(e.id));
+  const statusesAssigned = await statusesForSelectedPlans(equiposAsignados);
   const order = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
   // Prioridad (§T): asignados a mi cuadrilla > vencidos > pendientes de turno > al día.
   statusesNormal.sort((a, b) => order[a.s.code] - order[b.s.code]);
@@ -3792,8 +4451,14 @@ async function renderLubricadorHome() {
   //     arriba en computeAllStatuses — da scheduleDate para los planes de
   //     Día y turno, que es lo que permite distinguir "día anterior" /
   //     "mayor antigüedad" sin reinventar el cálculo de vencimiento).
-  const records = await DB.allActive('lubrication_records');
   const skips = await DB.allActive('lubrication_skips');
+  // Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — anomalías
+  // nunca se habían cargado en esta pantalla (confirmado por auditoría:
+  // vivían SOLO en la ruta separada 'anomalias', nunca mezcladas con Mi
+  // Turno). Se cargan aquí, junto a records/skips/validaciones, para que
+  // buildTasksNotificationsPanel() (src/core/tasks-notifications-panel.js)
+  // las pueda clasificar como TAREA sin un segundo render.
+  const anomaliesParaPanel = await DB.allActive('anomalies');
   const turnoActual = currentShiftId();
   const today = new Date().toDateString();
   const todayISODash = todayDateISO();
@@ -3818,12 +4483,34 @@ async function renderLubricadorHome() {
   // implementación del carryover.
   const skipsHoyScope = skips.filter(s => s.active !== false && (s.date || '').slice(0, 10) === todayISODash && normalIds.has(s.equipmentId));
   const pendientesTurnoAnterior = normal.filter(e => {
+    const plan = plansByEquipoId[e.id];
+    if (plan && Array.isArray(plan.requiredShifts) && ['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+      && plan.effectiveDate && todayISODash >= plan.effectiveDate) return false;
     const carry = findCarriedOverSkipForToday(skipsHoyScope, { equipmentId: e.id, dateISO: todayISODash });
     if (!carry || carry.shiftId === turnoActual) return false;
     const yaEngrasadoHoy = records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today);
     return !yaEngrasadoHoy;
   });
   const turnoAnteriorIds = new Set(pendientesTurnoAnterior.map(e => e.id));
+
+  // La obligación previa de un plan dual se consulta por identidad exacta.
+  // Así puede aparecer junto con NIGHT/DAY actual para el mismo equipo.
+  const fechaOperativaActual = operationalDateForShift(new Date(), turnoActual, App.generalSettings);
+  const turnoPrevio = previousShiftOccurrence({ operationalDate: fechaOperativaActual, shiftId: turnoActual });
+  const previousDualWorkRows = normal.flatMap(e => {
+    const plan = plansByEquipoId[e.id];
+    if (!plan || !Array.isArray(plan.requiredShifts) || !['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+      || !plan.effectiveDate || turnoPrevio.operationalDate < plan.effectiveDate) return [];
+    const resolved = resolveOccurrenceState({ plan, operationalDate: turnoPrevio.operationalDate, shiftId: turnoPrevio.shiftId,
+      records, assignments, skips, asOfDateISO: fechaOperativaActual });
+    const assignmentForMyCrew = resolved.state === 'ASSIGNED' && resolved.assignment?.assignedCrewId === scope.crewId;
+    if (!['PENDING', 'MISSED', 'PARTIAL', 'SKIPPED'].includes(resolved.state) && !assignmentForMyCrew) return [];
+    return [{ e, occurrenceDate: turnoPrevio.operationalDate, shiftId: turnoPrevio.shiftId,
+      occurrenceKey: resolved.occurrenceKey, skip: resolved.skip || null,
+      asignado: assignmentForMyCrew, tone: resolved.state === 'MISSED' ? 'red' : 'amber',
+      origen: resolved.state === 'SKIPPED' ? 'No ejecutado · turno anterior' : 'Pendiente del turno anterior',
+      label: resolved.state === 'SKIPPED' ? 'NO EJECUTADO · TURNO ANTERIOR' : 'PENDIENTE DEL TURNO ANTERIOR' }];
+  });
 
   // "Vencidos por horas" (KPI #1, renombrado 2026-10-09 — antes "Vencidos" a
   // secas, pedido "CERRAR KPI VENCIDOS" §1: confirmado que esto SIEMPRE fue
@@ -3898,26 +4585,44 @@ async function renderLubricadorHome() {
   // nueva, solo diferenciación visual.
   const asignadoBadgeHTML = '<span class="status-chip chip-origen" style="--c:var(--amber)">ASIGNADO</span>';
 
-  const arrastradoRowHTML = ({ e, origen, tone, asignado }) => {
-    const skip = lastSkipByEquipoId[e.id];
-    const loc = (locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación';
+  // Fix 2026-10-17 ("CHIP SUPPORT_OTHER_LOCATION", solo UX): distingue una
+  // asignación cross-location REAL (equipo cuya ubicación MAESTRA no es la
+  // principal de esta cuadrilla, autorizada vía _supportOperational===true
+  // — ver db.js:decorateSupportRow()) de una asignación normal dentro de la
+  // propia ubicación. Nunca cambia equipment.locationId/authorizedLocationIds/
+  // permisos/filtros — solo lee lo que ya decidió classifyEquipmentWork().
+  // Mismo componente visual que ASIGNADO (status-chip + chip-origen), color
+  // neutro (--gray-status) para no competir con él.
+  const supportChipHTML = (e) => {
+    const asg = assignmentByEquipoId.get(e.id);
+    if (!asg || asg._supportOperational !== true) return '';
+    if (!e.locationId || principalLocations.includes(e.locationId)) return '';
+    const master = masterLocationFor(e);
+    if (master.state !== 'VALID') return '';
+    const nombre = master.name.toUpperCase();
+    return `<span class="status-chip chip-origen" style="--c:var(--gray-status)">APOYO · ${esc(nombre)}</span>`;
+  };
+
+  const arrastradoRowHTML = ({ e, origen, tone, asignado, assignmentId, occurrenceKey, shiftId: rowShiftId, occurrenceDate: rowDate, skip: rowSkip, label: rowLabel }) => {
+    const skip = rowSkip || lastSkipByEquipoId[e.id];
     const scheduled = statusesNormalYAsignados.find(row => row.e.id === e.id)?.s.scheduleDate;
     const plan = plansByEquipoId[e.id];
-    const pendingShift = turnoAnteriorIds.has(e.id)
+    const pendingShift = rowShiftId || (turnoAnteriorIds.has(e.id)
       ? findCarriedOverSkipForToday(skipsHoyScope, { equipmentId: e.id, dateISO: todayISODash })?.shiftId
-      : plan?.shiftId;
-    const pendingContext = [scheduled ? fmtOrigenFecha(scheduled) : '', pendingShift === 'shift_dia' ? 'Turno Día' : pendingShift === 'shift_noche' ? 'Turno Noche' : '', origen].filter(Boolean).join(' · ');
+      : plan?.shiftId);
+    const pendingContext = [rowDate ? fmtOrigenFecha(rowDate) : scheduled ? fmtOrigenFecha(scheduled) : '', pendingShift === 'shift_dia' ? 'Turno Día' : pendingShift === 'shift_noche' ? 'Turno Noche' : '', origen].filter(Boolean).join(' · ');
     return `
-      <div class="lub-arrastrado-card lub-pending-card tone-${tone}" data-equipment-id="${esc(e.id)}">
-        <span class="lub-arrastrado-origen tone-${tone}">PENDIENTE DEL TURNO ANTERIOR</span>
+      <div class="lub-arrastrado-card lub-pending-card tone-${tone}" data-equipment-id="${esc(e.id)}" data-occurrence-key="${esc(occurrenceKey || '')}">
+        <span class="lub-arrastrado-origen tone-${tone}">${esc(rowLabel || 'PENDIENTE DEL TURNO ANTERIOR')}</span>
         ${asignado ? asignadoBadgeHTML : ''}
+        ${supportChipHTML(e)}
         <div class="lub-eq-top"><span class="lub-eq-code">${esc(e.code)}</span></div>
         <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-        <div class="lub-eq-location">📍 ${esc(loc)}</div>
+        ${masterLocationHTML(e)}
         <div class="lub-pending-context dim">${esc(pendingContext)}</div>
         ${skip ? `<div class="lub-arrastrado-motivo">Motivo: ${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</div>` : ''}
         <div class="lub-arrastrado-actions">
-          <button type="button" class="btn btn-accent lub-arr-reg" data-id="${e.id}">${ic("check")}Registrar engrase</button>
+          <button type="button" class="btn btn-accent lub-arr-reg" data-id="${e.id}" data-assignment-id="${esc(assignmentId || '')}">${ic("check")}Registrar engrase</button>
           <button type="button" class="btn lub-arr-ver" data-id="${e.id}">Ver ficha</button>
         </div>
       </div>`;
@@ -3929,21 +4634,22 @@ async function renderLubricadorHome() {
   // a <div> + .lub-arrastrado-actions (MISMA clase ya estilizada, nunca CSS
   // nuevo). El color del borde por estado (data-status) y el resto del
   // layout no cambian.
-  const eqButtonHTML = (e, s, asignado) => `
-    <div class="lub-eq-btn" data-status="${s.code}">
+  const eqButtonHTML = (e, s, asignado, assignmentId, occurrenceKey) => `
+    <div class="lub-eq-btn" data-status="${s.code}" data-occurrence-key="${esc(occurrenceKey || '')}">
       <div class="lub-eq-top">
         <span class="lub-eq-code">${esc(e.code)}</span>
         <span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span>
         ${asignado ? asignadoBadgeHTML : ''}
       </div>
+      ${supportChipHTML(e)}
       <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-      <div class="lub-eq-location">📍 ${(locations.find(l => l.id === e.locationId) || {}).name || 'Sin ubicación'}</div>
+      ${masterLocationHTML(e)}
       <div class="lub-eq-bottom">
         <span class="mono">${fmt(e.hourmeter)} h</span>
         ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
       </div>
       <div class="lub-arrastrado-actions">
-        <button type="button" class="btn btn-accent lub-mt-reg" data-id="${e.id}">${ic("check")}Registrar engrase</button>
+        <button type="button" class="btn btn-accent lub-mt-reg" data-id="${e.id}" data-assignment-id="${esc(assignmentId || '')}">${ic("check")}Registrar engrase</button>
         <button type="button" class="btn lub-mt-ver" data-id="${e.id}">Ver ficha</button>
       </div>
     </div>`;
@@ -3991,14 +4697,108 @@ async function renderLubricadorHome() {
   // esté caído, y si la sincronización falla DESPUÉS, el resultado local
   // no debe revertirse. No agregar ningún gate de `lastSyncState`/online
   // a este cálculo.
-  const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id)]);
+  const scopeEquipoIds = new Set([...normalIds, ...equiposAsignados.map(e => e.id),
+    ...records.filter(r => (r.operationalSnapshot?.crewId || r.crewId) === scope.crewId).map(r => r.equipmentId),
+    ...assignments.filter(a => a.active !== false && a.status === 'COMPLETED').map(a => a.equipmentId)]);
   const ahoraValidacion = new Date();
   const validationsHoy = await DB.allActive('grease_validations');
+  const pendingValidationFollowUp = records.filter(r => scopeEquipoIds.has(r.equipmentId)
+    && new Date(r.date).toDateString() !== today
+    && isRecordPendingValidation(r, validationsHoy, ahoraValidacion, App.generalSettings));
+
+  // Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — SOLO
+  // anomalías y notificaciones informativas (reasignación saliente/
+  // cancelación/reprogramación) se muestran aquí como secciones NUEVAS: el
+  // ingreso/validación de engrase y las asignaciones recibidas YA tienen su
+  // bandeja propia, validada y probada, arriba en esta misma pantalla
+  // (Arrastrados/Mi Turno con badge ASIGNADO/En seguimiento · Validación)
+  // — nunca se duplican aquí. `visibleEquipoIdsPanel` reusa exactamente el
+  // mismo alcance ("le corresponde") que ya resolvió classifyEquipmentWork()
+  // + el alcance de validaciones de esta pantalla, nunca un cálculo nuevo.
+  const visibleEquipoIdsPanel = new Set([...normalIds, ...assignedEquipmentIds, ...scopeEquipoIds]);
+  // Guard defensivo (mismo patrón que `window.Capacitor?.Plugins?.
+  // LocalNotifications` en refreshLocalNotifications()): si por lo que sea
+  // src/core/tasks-notifications-panel.js no se cargó, Mi Turno sigue
+  // funcionando igual que siempre — esta sección nueva simplemente no
+  // aparece, nunca rompe el resto de la pantalla.
+  // manual_tasks (0017, ACTIVE en producción) — PENDING de la cuadrilla
+  // activa de este LUBRICADOR (mismo `scope.crewId` que ya filtra
+  // asignaciones arriba, nunca un alcance nuevo). DB.allActive() ya aplica
+  // el row-scope real (CREW_SCOPED solo ve lo suyo) — `visibleCrewIds` aquí
+  // es un filtro ADICIONAL defensivo, no la autorización real.
+  const manualTasksPanelData = await DB.allActive('manual_tasks');
+  const notifTasksPanel = typeof buildTasksNotificationsPanel === 'function' ? buildTasksNotificationsPanel({
+    anomalies: anomaliesParaPanel, records, validations: validationsHoy, assignments: allAssignments,
+    plans: selectedPlans, equipment: equipos, visibleEquipmentIds: visibleEquipoIdsPanel,
+    manualTasks: manualTasksPanelData, visibleCrewIds: scope.crewId ? [scope.crewId] : null,
+    includeBroadcasts: false,
+    myCrewId: scope.crewId, currentShiftId: turnoActual, todayISO: todayISODash,
+    now: ahoraValidacion, shiftBoundaries: App.generalSettings,
+    isRecordPendingValidationFn: isRecordPendingValidation, isRecordValidationExpiredFn: isRecordValidationExpired,
+    parseOccurrenceKeyDateFn: parseOccurrenceKeyDate,
+  }) : { tasks: [], notifications: [], manualTasks: [] };
+  const panelAnomalyTasks = notifTasksPanel.tasks.filter(t => t.type === 'ANOMALIA');
+  const panelManualTasks = notifTasksPanel.manualTasks || [];
+  const PANEL_PRIORITY_COLOR = { CRITICA: '#C00000', PENDIENTE: '#F4B183', INFORMATIVA: '#8893A6' };
+  // Tarjeta de tarea operativa (más campos que panelItemRowHTML genérica:
+  // cuadrilla/creador/tipo/vence — §4 del pedido). Reusa los MISMOS tokens
+  // visuales (status-chip/lub-arrastrado-card) — ningún estilo nuevo.
+  const manualTaskPanelItemHTML = (item) => {
+    const eq = equipos.find(e => e.id === item.equipmentId);
+    const crew = cuadrillas.find(cq => cq.id === item.crewId);
+    const tipoLabel = (MANUAL_TASK_TYPES.find(o => o.id === item.taskType) || {}).label || item.taskType || 'Otro';
+    return `
+      <div class="lub-arrastrado-card lub-pending-card">
+        <div class="lub-eq-head">
+          <span class="lub-eq-code">${esc(eq?.code || item.equipmentCode || '—')}</span>
+          <span class="status-chip" style="--c:${PANEL_PRIORITY_COLOR[item.priority]}">${item.priority === 'CRITICA' ? 'CRÍTICA' : 'PENDIENTE'}${item.overdue ? ' · VENCIDA' : ''}</span>
+        </div>
+        <div class="lub-eq-model">${esc(item.title || tipoLabel)}</div>
+        <div class="dim">${esc(item.description || '')}</div>
+        <div class="lub-record-meta dim">
+          <span>${esc(tipoLabel)}</span>
+          <span>${crew ? esc(crew.name) : ''}</span>
+          ${item.fechaHora ? `<span>${fmtDate(item.fechaHora)}</span>` : ''}
+          ${item.dueAt ? `<span>Vence ${fmtDate(item.dueAt)}</span>` : ''}
+        </div>
+        <div class="lub-arrastrado-actions">
+          <button type="button" class="btn lub-panel-action" data-panel-action="VER_EQUIPO" data-panel-target="${esc(item.equipmentId)}" data-panel-equipment="${esc(item.equipmentId)}">Ver equipo</button>
+          <button type="button" class="btn btn-accent lub-panel-action" data-panel-action="${esc(item.actionType)}" data-panel-target="${esc(item.actionTarget)}" data-panel-equipment="${esc(item.equipmentId)}">${esc(item.actionLabel)}</button>
+        </div>
+      </div>`;
+  };
+  const panelItemRowHTML = (item) => {
+    const eq = equipos.find(e => e.id === item.equipmentId);
+    return `
+      <div class="lub-arrastrado-card lub-pending-card">
+        <div class="lub-eq-head">
+          <span class="lub-eq-code">${esc(eq?.code || item.equipmentCode || '—')}</span>
+          <span class="status-chip" style="--c:${PANEL_PRIORITY_COLOR[item.priority]}">${item.priority === 'CRITICA' ? 'CRÍTICA' : item.priority === 'PENDIENTE' ? 'PENDIENTE' : 'INFORMATIVA'}${item.overdue ? ' · VENCIDO' : ''}</span>
+        </div>
+        <div class="lub-eq-model">${esc(item.motivo)}</div>
+        <div class="lub-record-meta dim">
+          <span>${esc(item.estado)}</span>
+          ${item.fechaHora ? `<span>${fmtDate(item.fechaHora)}</span>` : ''}
+        </div>
+        <div class="lub-arrastrado-actions">
+          <button type="button" class="btn lub-panel-action" data-panel-action="${esc(item.actionType)}" data-panel-target="${esc(item.actionTarget)}" data-panel-equipment="${esc(item.equipmentId)}">${esc(item.actionLabel)}</button>
+        </div>
+      </div>`;
+  };
   const realizadosHoyList = records
     .filter(r => scopeEquipoIds.has(r.equipmentId) && new Date(r.date).toDateString() === today
       && resolveRecordCompleteness(r) !== EXECUTION_COMPLETENESS.PARTIAL)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
-  const realizadosHoyIds = new Set(realizadosHoyList.map(r => r.equipmentId));
+  const actualesDualCompletas = new Set(statusesNormalYAsignados
+    .filter(({ s }) => s.occurrenceKey && s.code === 'VERDE' && s.record)
+    .map(({ s }) => s.record.id));
+  const realizadosHoyIds = new Set(realizadosHoyList.filter(r => {
+    const plan = plansByEquipoId[r.equipmentId];
+    const esDualActivo = plan && Array.isArray(plan.requiredShifts)
+      && ['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+      && !!plan.effectiveDate && fechaOperativaActual >= plan.effectiveDate;
+    return !esDualActivo || actualesDualCompletas.has(r.id);
+  }).map(r => r.equipmentId));
 
   // "4. TRABAJO DEL TURNO ACTUAL": el resto de `normal`, SIN repetir lo que
   // ya se muestra en Arrastrados (cada equipo aparece una sola vez en toda
@@ -4035,18 +4835,40 @@ async function renderLubricadorHome() {
   // cuadrilla) solo se marca con el badge, nunca se duplica la tarjeta.
   // ============================================================
   const asignadosPorId = new Map(statusesAssigned.map(x => [x.e.id, x]));
-  const arrastradosTotal = arrastrados.map(x => ({ ...x, asignado: asignadosPorId.has(x.e.id) }));
+  const arrastradosTotal = [...arrastrados, ...previousDualWorkRows].map(x => ({ ...x, asignado: x.asignado || asignadosPorId.has(x.e.id) }));
   const miTurnoTotal = statusesNormalRestantes.map(({ e, s }) => ({ e, s, asignado: asignadosPorId.has(e.id) }));
   const miTurnoTotalIds = new Set(miTurnoTotal.map(x => x.e.id));
+  const assignedShiftWork = projectAssignedShiftWork({ assignedRows: assigned, equipmentRows: equipos,
+    planRows: selectedPlans, recordRows: records, operationalDate: fechaOperativaActual,
+    shiftId: turnoActual, now: new Date(), settings: App.generalSettings });
+  const assignedShiftWorkIds = new Set(assignedShiftWork.map(row => row.e.id));
+  assignedShiftWork.forEach(row => {
+    if (row.kind === 'FUTURE') return;
+    const technical = asignadosPorId.get(row.e.id)?.s || {};
+    if (row.kind === 'CARRYOVER') {
+      arrastradosTotal.push(row);
+      arrastradosIds.add(row.e.id);
+    } else {
+      miTurnoTotal.push({ ...row, s: { ...technical,
+        code: technical.code === 'ROJO' ? 'ROJO' : 'AMARILLO',
+        label: 'PROGRAMADO TURNO ACTUAL', occurrenceKey: row.occurrenceKey } });
+      miTurnoTotalIds.add(row.e.id);
+    }
+  });
+  // Respaldo (comportamiento previo a projectAssignedShiftWork, conservado):
+  // una asignación sin occurrenceKey parseable (sin fecha/turno programado
+  // explícito — projectAssignedShiftWork() la ignora, nunca inventa una
+  // fecha) sigue clasificándose por su ESTADO técnico real, igual que
+  // cualquier equipo normal — nunca desaparece de Mi Turno/Atrasados solo
+  // por no tener esa metadata.
   statusesAssigned.forEach(({ e, s }) => {
-    // ya contado arriba (solo le faltaba el badge, ya puesto), o ya
-    // realizado hoy (ver realizadosHoyIds arriba) — nunca se duplica.
-    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id) || realizadosHoyIds.has(e.id)) return;
+    if (arrastradosIds.has(e.id) || miTurnoTotalIds.has(e.id) || realizadosHoyIds.has(e.id) || assignedShiftWorkIds.has(e.id)) return;
     if (s.code === 'ROJO') {
       arrastradosTotal.push({
         e, asignado: true, tone: 'red',
         origen: s.scheduleDate ? `Pendiente desde ${fmtOrigenFecha(s.scheduleDate)}` : 'Asignado — vencido',
       });
+      arrastradosIds.add(e.id);
     } else if (s.code !== 'VERDE') {
       miTurnoTotal.push({ e, s, asignado: true });
       miTurnoTotalIds.add(e.id);
@@ -4110,7 +4932,7 @@ async function renderLubricadorHome() {
     return `
       <div class="lub-arrastrado-card tone-green">
         <div class="lub-eq-top"><span class="lub-eq-code">${eq ? esc(eq.code) : '—'}</span>
-          <span class="dim">${new Date(r.date).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</span>
+          <span class="dim">${r.shiftId === 'shift_dia' ? 'DÍA' : r.shiftId === 'shift_noche' ? 'NOCHE' : ''}${r.shiftId ? ' · ' : ''}${new Date(r.date).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
         <div class="lub-eq-model">${eq ? esc(eq.brand) + ' ' + esc(eq.model) : ''}</div>
         <div class="lub-record-meta dim">
@@ -4121,14 +4943,26 @@ async function renderLubricadorHome() {
         <div class="lub-arrastrado-actions">
           <button type="button" class="btn lub-real-ver" data-id="${r.equipmentId}">Ver ficha</button>
           ${activas.length === 1 ? `<button type="button" class="btn lub-real-val" data-rec="${r.id}" data-eq="${r.equipmentId}">Ver validación</button>` : ''}
+          ${activas.length === 0 && [VALIDATION_STATUS.PENDIENTE, VALIDATION_STATUS.VENCIDA].includes(valStatus) ? `<button type="button" class="btn lub-real-validate" data-rec="${r.id}" data-eq="${r.equipmentId}">Validar engrase</button>` : ''}
         </div>
       </div>`;
   };
 
   // Read-only age follow-up uses master location coverage, including APOYO.
-  // Every existing formal pending row has precedence; classification is unchanged.
+  // Solo arrastradosTotal tiene precedencia sobre este seguimiento — un
+  // equipo en MI TURNO (pendiente formal de HOY) puede coexistir con su
+  // propia alerta de antigüedad (una versión anterior agregó miTurnoTotal
+  // a esta exclusión, ocultando esa coexistencia ya probada). Sí se
+  // excluyen los equipos ya cubiertos por su propia tarjeta de validación
+  // pendiente (pendingValidationFollowUp) o por un registro de HOY
+  // (realizadosHoyList) — evita duplicar la MISMA señal en dos secciones.
   const followUpRows = buildCrewLubricationFollowUp({
-    equipos, records, scope, excludedEquipmentIds: arrastradosTotal.map(row => row.e.id),
+    // Agregar APOYO informativo sin reincorporar obligaciones PRINCIPAL
+    // cedidas a otra cuadrilla. El helper deduplica por ID/código.
+    equipos: [...normal, ...equiposAsignados,
+      ...equipos.filter(e => (scope.supportLocationIds || []).includes(e.locationId))], records, scope,
+    excludedEquipmentIds: arrastradosTotal.map(row => row.e.id)
+      .concat(pendingValidationFollowUp.map(r => r.equipmentId), realizadosHoyList.map(r => r.equipmentId)),
     excludedEquipmentCodes: arrastradosTotal.map(row => row.e.code),
   });
   // Fix 2026-10-09 ("REALIZADO ADELANTADO", §37/§32 del pedido) — sección
@@ -4164,14 +4998,9 @@ async function renderLubricadorHome() {
   // Apply the selected location after assignment priority, deduplication and
   // status classification. Sections and all four KPIs share these exact rows.
   const recordEquipment = row => equipos.find(e => e.id === row.equipmentId);
-  const participatingLocations = new Set([
-    ...followUpRows.map(row => row.e.locationId),
-    ...arrastradosTotal.map(row => row.e.locationId),
-    ...miTurnoTotal.map(row => row.e.locationId),
-    ...realizadosHoyList.map(row => recordEquipment(row)?.locationId),
-  ]);
-  filterLocations = [...principalLocations, ...(scope.supportLocationIds || [])
-    .filter(id => !principalLocations.includes(id) && participatingLocations.has(id))];
+  // Cobertura operativa, incluso sin trabajo/seguimiento visible hoy.
+  // No amplía responsabilidad normal ni agrega la ubicación legacy.
+  filterLocations = [...new Set([...principalLocations, ...(scope.supportLocationIds || [])])];
   if (!filterLocations.includes(locationFilter) || filterLocations.length < 2) locationFilter = '';
   const arrastradosVisibles = filterLocationRows(arrastradosTotal);
   const miTurnoVisible = filterLocationRows(miTurnoTotal);
@@ -4194,6 +5023,45 @@ async function renderLubricadorHome() {
     completedCount: realizadosHoyList.length,
     equipmentCodes: [...arrastradosTotal, ...miTurnoTotal].slice(0, 3).map(x => x.e.code),
   });
+
+  // Fix 2026-10-17 ("ELIMINAR PARPADEO EN SYNC INCREMENTAL"): firma barata
+  // de TODO lo que de verdad se ve en esta pantalla — nunca un timestamp
+  // efímero ("ahora"/reloj), eso cambiaría en cada sync aunque nada
+  // relevante haya cambiado. `rowSig` cubre equipmentId/estado/origen +
+  // (si aplica) la assignment real detrás de la tarjeta (id/occurrenceKey/
+  // _supportOperational) — exactamente los datos que deciden qué se
+  // pinta. Si la firma es idéntica a la última ya pintada, un repintado
+  // "silent" (sync incremental) NO toca el DOM: conserva scroll y
+  // cualquier interacción abierta. Una navegación real (options.silent
+  // ausente) SIEMPRE pinta, firma igual o no — sin cambio de
+  // comportamiento ahí.
+  const rowSig = (row) => {
+    const asg = row.assignment || assignmentByEquipoId.get(row.e?.id);
+    const master = masterLocationFor(row.e);
+    return [row.e?.id || null, row.s?.code || null, row.origen || null, row.days ?? null, row.severity?.key || null,
+      asg?.id || null, asg?.occurrenceKey || null, asg?._supportOperational === true,
+      master.locationId, master.state, master.label, row.occurrenceKey || null, row.shiftId || null];
+  };
+  const turnoSignature = JSON.stringify({
+    crewId: scope.crewId || null, locationFilter, filterLocations,
+    turno: turnoActual, syncStatus: lastSyncState.status, coverage: headerCoverage.label,
+    rows: [...arrastradosVisibles, ...miTurnoVisible, ...vencidosHorometroVisibles, ...realizadosAdelantadosVisibles, ...followUpVisible].map(rowSig),
+    realizados: realizadosHoyVisibles.map(r => r.id),
+    validacionesPendientes: pendingValidationFollowUp.map(r => [r.id, validationStatusForRecord(r, validationsHoy, ahoraValidacion, App.generalSettings)]),
+    panelTareas: panelAnomalyTasks.map(i => [i.id, i.priority, i.estado, i.overdue]),
+  });
+  // Fix 2026-10-17: muchos `await` quedaron atrás desde el último chequeo de
+  // reentrancia (loadAssignmentContext/computeAllStatuses/etc.) — si una
+  // invocación más nueva ya arrancó (y, por lo tanto, ya va a pintar con
+  // datos más frescos), esta vieja nunca debe pisarla con el resultado que
+  // calculó.
+  if (isStaleRun()) return;
+  const yaRenderizado = !!c.querySelector('.lub-welcome-card');
+  if (options.silent && yaRenderizado && turnoSignature === App._lubTurnoSignature) {
+    return; // nada visualmente relevante cambió — conserva DOM/scroll/interacción tal cual
+  }
+  App._lubTurnoSignature = turnoSignature;
+  const prevScrollY = options.silent && yaRenderizado ? window.scrollY : null;
 
   c.innerHTML = `
     <div class="lub-welcome-card">
@@ -4235,19 +5103,32 @@ async function renderLubricadorHome() {
     <section id="lub-pending-follow-up" aria-label="Pendientes y seguimiento">
       <h2 class="lub-section-head">PENDIENTES Y SEGUIMIENTO</h2>
       ${previousTurnVisible.length ? `<h3 class="lub-section-head">PENDIENTES DEL TURNO ANTERIOR (${previousTurnVisible.length})</h3><div class="lub-eq-list">${locationRowsHTML(previousTurnVisible, arrastradoRowHTML)}</div>` : ''}
-      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · ${followUpVisible.length}</h3><p class="field-hint">Sugeridos por tiempo desde el último engrase. No forman parte de la programación del turno.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary><div class="lub-follow-up-expanded">${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations)).join('')}</div></details>` : ''}</div></section>` : ''}
+      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · ${followUpVisible.length}</h3><p class="field-hint">Sugeridos por tiempo desde el último engrase. No forman parte de la programación del turno.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary><div class="lub-follow-up-expanded">${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}</div></details>` : ''}</div></section>` : ''}
       ${!previousTurnVisible.length && !followUpVisible.length ? '<p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p>' : ''}
     </section>
 
+    <!-- Solo tareas; los mensajes operativos viven en la campana. -->
+    <div class="lub-section-head" id="lub-panel-badge">
+      <span class="status-chip" style="--c:${panelManualTasks.length > 0 ? 'var(--amber)' : 'var(--text-dim)'}">${panelManualTasks.length} tarea${panelManualTasks.length === 1 ? '' : 's'} pendiente${panelManualTasks.length === 1 ? '' : 's'}</span>
+    </div>
+
+    ${(panelManualTasks.length || panelAnomalyTasks.length) ? `
+    <section id="lub-tasks-notifications" aria-label="Tareas operativas y anomalías">
+      ${panelManualTasks.length ? `<h3 class="lub-section-head">TAREAS OPERATIVAS (${panelManualTasks.length})</h3><div class="lub-eq-list">${panelManualTasks.map(manualTaskPanelItemHTML).join('')}</div>` : ''}
+      ${panelAnomalyTasks.length ? `<h3 class="lub-section-head">ANOMALÍAS ABIERTAS (${panelAnomalyTasks.length})</h3><div class="lub-eq-list">${panelAnomalyTasks.map(panelItemRowHTML).join('')}</div>` : ''}
+    </section>` : ''}
+
     ${miTurnoVisible.length ? `
     <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoVisible.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(miTurnoVisible, ({ e, s, asignado }) => eqButtonHTML(e, s, asignado))}</div>
+    <div class="lub-eq-list">${locationRowsHTML(miTurnoVisible, ({ e, s, asignado, assignmentId, occurrenceKey }) => eqButtonHTML(e, s, asignado, assignmentId, occurrenceKey))}</div>
     ` : ''}
 
     ${realizadosHoyVisibles.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyVisibles.length})</span></div>
     <div class="lub-eq-list">${locationRowsHTML(realizadosHoyVisibles, realizadoRowHTML, recordEquipment)}</div>
     ` : ''}
+
+    ${pendingValidationFollowUp.length ? `<section id="lub-pending-validations"><h3 class="lub-section-head">EN SEGUIMIENTO · VALIDACIÓN (${pendingValidationFollowUp.length})</h3><p class="field-hint">Engrases ya realizados. Se conserva el mismo registro hasta resolver su validación, aunque cambien los turnos.</p><div class="lub-eq-list">${pendingValidationFollowUp.map(realizadoRowHTML).join('')}</div></section>` : ''}
 
     ${realizadosAdelantadosVisibles.length ? `
     <div class="lub-section-head"><span class="status-chip" style="--c:#5B7FBF">REALIZADOS ADELANTADOS (${realizadosAdelantadosVisibles.length})</span></div>
@@ -4280,13 +5161,16 @@ async function renderLubricadorHome() {
     </div>
     ${colorLegendHTML()}
   `;
+  // Fix 2026-10-17: solo repintado "silent" (sync incremental) restaura el
+  // scroll — una navegación real empieza arriba, como siempre.
+  if (prevScrollY !== null) window.scrollTo(0, prevScrollY);
   $$('.crew-location-filter', c).forEach(b => b.addEventListener('click', () => {
     try { localStorage.setItem(filterKey, b.dataset.locationId); } catch (e) { /* optional preference */ }
     renderLubricadorHome();
   }));
-  $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
+  $$('.lub-arr-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));
   $$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
-  $$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id)));
+  $$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));
   $$('.lub-mt-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-real-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-real-val', c).forEach(b => b.addEventListener('click', async () => {
@@ -4295,9 +5179,39 @@ async function renderLubricadorHome() {
     const eq = equipos.find(x => x.id === b.dataset.eq);
     if (validation && eq) await openValidationDetailModal(validation, eq, rec ? rec.date : null);
   }));
+  $$('.lub-real-validate', c).forEach(b => b.addEventListener('click', () => {
+    const rec = records.find(r => r.id === b.dataset.rec);
+    const eq = equipos.find(e => e.id === b.dataset.eq);
+    if (rec && eq) openValidationModal(rec, eq, () => renderLubricadorHome());
+  }));
   $$('.lub-follow-up-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-follow-up-reg', c).forEach(b => b.addEventListener('click', () => handleOutOfPlanEquipoSelected(b.dataset.id)));
   $$('.lub-adelantado-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  // Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — cada
+  // acción va a la pantalla real que YA existe para ese tipo de evento;
+  // nunca un botón sin destino funcional (§9 del pedido).
+  $$('.lub-panel-action', c).forEach(b => b.addEventListener('click', async () => {
+    const action = b.dataset.panelAction;
+    const target = b.dataset.panelTarget;
+    const equipmentId = b.dataset.panelEquipment;
+    if (action === 'VER_ANOMALIA') {
+      const anomaly = anomaliesParaPanel.find(a => a.id === target);
+      if (anomaly) await openAnomalyForm(null, null, anomaly);
+    } else if (action === 'VALIDAR') {
+      const rec = records.find(r => r.id === target);
+      const eq = equipos.find(e => e.id === equipmentId);
+      if (rec && eq) openValidationModal(rec, eq, () => renderLubricadorHome());
+    } else if (action === 'COMPLETAR_TAREA') {
+      const task = manualTasksPanelData.find(t => t.id === target);
+      const eq = equipos.find(e => e.id === equipmentId);
+      if (task && eq) openCompleteManualTaskForm(task, eq);
+    } else { // VER_ASIGNACION / VER_EQUIPO — sin pantalla de detalle de
+      // assignment propia (confirmado por auditoría: no hay un log de
+      // eventos de reasignación separado), la ficha del equipo es el
+      // destino real más cercano, nunca un botón decorativo.
+      openEquipmentDetail(equipmentId);
+    }
+  }));
   $('#lub-fab-anomaly').addEventListener('click', () => openAnomalyForm());
   $('#lub-quick-qr').addEventListener('click', () => openQrScanner());
   // "Registrar engrase" (acción rápida, sin equipo preelegido): mismo
@@ -4315,7 +5229,7 @@ async function renderLubricadorHome() {
   // turnos — nunca otra ubicación.
   $('#lub-quick-matriz').addEventListener('click', () => {
     openLubricadorMatrizModal({
-      equipos: equiposForLubricadorMatriz(equipos, scope), plans: Object.values(plansByEquipoId), records,
+      equipos: equiposForLubricadorMatriz(equipos, scope), plans: Object.values(allPlansByEquipoId), records,
       locationName: (locations.find(l => l.id === scope.crewLocationId) || {}).name,
       coverage: { equipos, scope, locations },
     });
@@ -4424,7 +5338,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName, cove
         </tr></thead>
         <tbody>
           ${visibles.map(eq => `
-            <tr>
+            <tr data-equipment-id="${esc(eq.id)}">
               <td class="matriz-eq mono">${esc(eq.code)}</td>
               ${dias.map(d => {
                 const st = estadoCelda(eq, d, plans, records, hoy);
@@ -4455,7 +5369,7 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName, cove
 async function startLubricadorGreaseFlow(equipmentId, options) {
   const scope = await getCurrentOperationalScope();
   const equipment = await DB.get('equipment', equipmentId);
-  if (!canLubricadorExecuteEquipment({ scope, equipo: equipment })) {
+  if (!canLubricadorExecuteEquipment({ scope, equipo: equipment, assignments: await DB.allActive('lubrication_assignments') })) {
     showInAppToast('No tienes cobertura autorizada para ejecutar este equipo.'); return;
   }
   if (equipment && (scope.supportLocationIds || []).includes(equipment.locationId)) {
@@ -4562,7 +5476,7 @@ async function handleOutOfPlanEquipoSelected(equipmentId) {
   const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId) || null;
   const { assignments } = await loadAssignmentContext();
   const s = await statusFor(equipo);
-  const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date() }) : { kind: 'NONE' };
+  const existing = plan ? findExistingWorkForEquipment({ plan, assignments, statusCode: s.code, todayDate: new Date(), shiftId: currentShiftId() }) : { kind: 'NONE' };
 
   if (existing.kind !== 'NONE') {
     openModal('Este equipo ya tiene un engrase pendiente', `
@@ -4605,7 +5519,7 @@ async function renderLubricadorHistorial() {
   const todayStr = new Date().toDateString();
   const ahora = new Date(); // una sola vez por render — nunca fecha de sync/apertura de pantalla
   c.innerHTML = `
-    <h2 class="lub-heading">Mis últimos engrases</h2>
+    <h2 class="lub-heading">Historial</h2>
     <div class="lub-record-list">
       ${records.map(r => {
         const eq = equipos.find(e => e.id === r.equipmentId);
@@ -4614,7 +5528,7 @@ async function renderLubricadorHistorial() {
         const valStatus = validationStatusForRecord(r, validations, ahora, App.generalSettings);
         // Vencida: NO se ofrece "Validar" (no crear firma retroactiva desde
         // aquí una vez pasado el plazo, ver MAX_VALIDATION_SHIFTS).
-        const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
+        const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
           activasEsteRegistro.length === 0
             ? `<button type="button" class="btn btn-sm lub-validar-btn" data-rec="${r.id}" data-eq="${eq ? eq.id : ''}">Validar</button>`
             : activasEsteRegistro.length === 1
@@ -4754,15 +5668,18 @@ async function openEditGreaseRecordForm(record) {
     const editedRecord = { ...record, hourmeter: newHourmeter, greaseType: fd.greaseType,
       qty: parseFloat(fd.qty || 0), condition: fd.condition, notes: fd.notes,
       details: details.length ? newDetails : record.details, photos: newPhotos, photo: newPhotos[0] || null };
+    if (record.operationalSnapshot?.assignedOccurrenceKey && computeExecutionCompleteness(editedRecord.details)!==record.operationalSnapshot.executionCompleteness) {
+      showInAppToast('Continúa la asignación con un nuevo registro. La corrección conserva el resultado de esta ejecución.'); return;
+    }
     const equipmentAfter = isLatest ? stamp({ ...equipment, hourmeter: newHourmeter }, App.currentUser.name) : null;
-    const planAfter = isLatest && plan && canAdvanceHourCycle({ controlType: plan.controlType,
+    const planAfter = isLatest && !record.operationalSnapshot?.assignedOccurrenceKey && plan && canAdvanceHourCycle({ controlType: plan.controlType,
       completeness: computeExecutionCompleteness(editedRecord.details) })
       ? stamp({ ...plan, lastGreaseHour: newHourmeter }, App.currentUser.name) : null;
     const scope = await getCurrentOperationalScope();
     try {
       await queueLubricationExecution({ action: 'EDIT', record: stamp(editedRecord, App.currentUser.name), recordBefore,
         equipmentBefore: equipment, planBefore: plan, equipmentAfter, planAfter,
-        crewId: scope.kind === 'CREW_SCOPED' ? scope.crewId : record.operationalSnapshot?.crewId,
+        crewId: record.operationalSnapshot?.crewId || (scope.kind === 'CREW_SCOPED' ? scope.crewId : null),
         actorId: App.currentUser.id });
     } catch (error) {
       alert(error.message === 'CATALOG_SYNC_REQUIRED'
@@ -5054,15 +5971,42 @@ async function renderDashboard() {
   // Universo evaluable: equipos operativos (un equipo pausado no "debía"
   // engrasarse) con plan Día/Turno, ya filtrados por Ubicación/Familia
   // arriba (derivan de `equipos`).
-  const equiposDT = equipos.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');
+  const equiposDT = equipos.filter(e => {
+    const plan = planByEquipoId[e.id];
+    const dualConfigured = plan?.requiredShifts?.includes('shift_dia') && plan.requiredShifts.includes('shift_noche')
+      && !!plan.effectiveDate;
+    return e.status === 'Operativo' && (plan?.controlType === 'Día y turno de la semana' || dualConfigured);
+  });
   function turnoOk(plan, shiftId) { return !plan.shiftId || plan.shiftId === shiftId; }
-  function hechoEnFecha(equipmentId, plan, fechaStr) {
-    return records.some(r => r.equipmentId === equipmentId && new Date(r.date).toDateString() === fechaStr && turnoOk(plan, r.shiftId));
+  function isDualPlanOnDate(plan, dateISO) {
+    return Array.isArray(plan?.requiredShifts) && ['shift_dia', 'shift_noche'].every(id => plan.requiredShifts.includes(id))
+      && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+  }
+  function occurrencesForDate(e, date, shiftFilter = null) {
+    const plan = planByEquipoId[e.id];
+    if (!plan) return [];
+    const dateISO = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const dual = isDualPlanOnDate(plan, dateISO);
+    if ((plan.controlType === 'Día y turno de la semana' || !plan.controlType)
+      && !(plan.assignedDays || []).includes(WEEKDAY_NAMES[date.getDay()])) return [];
+    if (!dual && plan.controlType !== 'Día y turno de la semana' && plan.controlType) return [];
+    const shifts = dual ? ['shift_dia', 'shift_noche'] : (plan.shiftId ? [plan.shiftId] : [shiftFilter || turnoActual]);
+    return shifts.filter(id => !shiftFilter || id === shiftFilter).map(shiftId => ({ e, plan, date, dateISO, shiftId, dual }));
+  }
+  function occurrenceIsComplete(occurrence) {
+    const { e, plan, date, dateISO, shiftId, dual } = occurrence;
+    if (dual) return resolveOccurrenceState({ plan, operationalDate: dateISO, shiftId, records,
+      asOfDateISO: todayDateISO() }).state === 'COMPLETE';
+    return records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === date.toDateString()
+      && turnoOk(plan, r.shiftId));
   }
 
   // Hoy: equipos cuyo plan tiene HOY como día asignado.
-  const progHoy = equiposDT.filter(e => (planByEquipoId[e.id].assignedDays || []).includes(hoyWeekday));
-  const hechoHoy = progHoy.filter(e => hechoEnFecha(e.id, planByEquipoId[e.id], today));
+  const ocurrenciasHoy = equiposDT.flatMap(e => occurrencesForDate(e, nowTs));
+  const realizadasHoy = ocurrenciasHoy.filter(occurrenceIsComplete);
+  const pendientesHoyOcurrencias = ocurrenciasHoy.filter(occurrence => !occurrenceIsComplete(occurrence));
+  const progHoy = [...new Map(ocurrenciasHoy.map(o => [o.e.id, o.e])).values()];
+  const hechoHoy = [...new Map(realizadasHoy.map(o => [o.e.id, o.e])).values()];
   // "Pendientes hoy" (KPI principal nuevo, cierre Parte D §4/§24): MISMO
   // universo ya usado para "Cumplimiento Hoy" (progHoy/hechoHoy) — nunca
   // una fórmula nueva, solo la diferencia de dos listas ya calculadas.
@@ -5070,14 +6014,16 @@ async function renderDashboard() {
   // mezcla esto con lo próximo a vencer por horómetro) para que el número
   // de esta tarjeta y el de "Cumplimiento Hoy" sean SIEMPRE consistentes
   // entre sí (mismo denominador).
-  const pendientesHoyIds = new Set(progHoy.map(e => e.id)); hechoHoy.forEach(e => pendientesHoyIds.delete(e.id));
+  const pendientesHoyIds = new Set(pendientesHoyOcurrencias.map(o => o.e.id));
   const pendientesHoyList = progHoy.filter(e => pendientesHoyIds.has(e.id));
 
   // Turno actual: de lo programado hoy, lo que aplica al turno en curso
   // (plan sin turno fijo = aplica a ambos) y tiene un registro hecho
   // específicamente en ESE turno hoy (no en cualquier turno del día).
-  const progTurno = progHoy.filter(e => turnoOk(planByEquipoId[e.id], turnoActual));
-  const hechoTurno = progTurno.filter(e => records.some(r => r.equipmentId === e.id && new Date(r.date).toDateString() === today && r.shiftId === turnoActual));
+  const ocurrenciasTurno = ocurrenciasHoy.filter(o => o.shiftId === turnoActual);
+  const realizadasTurno = ocurrenciasTurno.filter(occurrenceIsComplete);
+  const progTurno = [...new Map(ocurrenciasTurno.map(o => [o.e.id, o.e])).values()];
+  const hechoTurno = [...new Map(realizadasTurno.map(o => [o.e.id, o.e])).values()];
 
   // Semana: días de Lunes a HOY (nunca días futuros de la semana — eso sería
   // proyectar); por cada equipo con plan Día/Turno se cuentan los días ya
@@ -5094,18 +6040,16 @@ async function renderDashboard() {
   for (let d = startOfWeek(nowTs); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));
   let progSemana = 0, hechoSemana = 0;
   equiposDT.forEach(e => {
-    const plan = planByEquipoId[e.id];
     diasTranscurridosSemana.forEach(d => {
-      if ((plan.assignedDays || []).includes(WEEKDAY_NAMES[d.getDay()])) {
-        progSemana++;
-        if (hechoEnFecha(e.id, plan, d.toDateString())) hechoSemana++;
-      }
+      const occurrences = occurrencesForDate(e, d);
+      progSemana += occurrences.length;
+      hechoSemana += occurrences.filter(occurrenceIsComplete).length;
     });
   });
 
   function cumplimientoPct(x, y) { return y ? Math.round((x / y) * 100) : null; }
-  const cumplHoy = { x: hechoHoy.length, y: progHoy.length, pct: cumplimientoPct(hechoHoy.length, progHoy.length) };
-  const cumplTurno = { x: hechoTurno.length, y: progTurno.length, pct: cumplimientoPct(hechoTurno.length, progTurno.length) };
+  const cumplHoy = { x: realizadasHoy.length, y: ocurrenciasHoy.length, pct: cumplimientoPct(realizadasHoy.length, ocurrenciasHoy.length) };
+  const cumplTurno = { x: realizadasTurno.length, y: ocurrenciasTurno.length, pct: cumplimientoPct(realizadasTurno.length, ocurrenciasTurno.length) };
   const cumplSemana = { x: hechoSemana, y: progSemana, pct: cumplimientoPct(hechoSemana, progSemana) };
 
   function planLabelFor(plan) {
@@ -5182,7 +6126,7 @@ async function renderDashboard() {
     ...pausados.map(e => ({ estado: 'Pausado', tone: 'neutral', e, motivo: 'Equipo pausado (no operativo)', plan: planLabelFor(planByEquipoId[e.id]), urgencia: '—', planObj: null })),
   ];
 
-  const allowedRoutes = PERMISSIONS[App.currentUser.role] || [];
+  const allowedRoutes = getAllowedRoutes(App.currentUser.role);
   // Rediseño estructural del Dashboard (cierre Parte D, pedido explícito):
   // Compact presentation: existing calculations above and action handlers below.
   // Filters retain their original scopes; all operational information is kept.
@@ -5799,13 +6743,13 @@ function buildCrewLubricationFollowUp({ equipos, records, scope, excludedEquipme
     .sort((a, b) => (b.days === null ? Infinity : b.days) - (a.days === null ? Infinity : a.days));
 }
 
-function lubricationFollowUpRowHTML({ e, last, days, severity }, locations) {
-  const location = locations.find(l => l.id === e.locationId)?.name || 'Sin ubicación';
+function lubricationFollowUpRowHTML({ e, last, days, severity }, locations, masterLocation) {
+  const location = masterLocation?.label || locations.find(l => l.id === e.locationId)?.name || 'Sin ubicación';
   return `<div class="lub-follow-up-row" data-equipment-id="${esc(e.id)}" data-age-severity="${severity.key}">
     <div class="lub-follow-up-heading"><span class="lub-follow-up-priority">${severity.label}</span><span class="lub-follow-up-age">${days === null ? 'Sin registro' : `<strong>${days}</strong> ${days === 1 ? 'día' : 'días'}`}</span></div>
     <div class="lub-eq-code">${esc(e.code)}</div>
     <div class="lub-eq-model">${esc(e.brand)} ${esc(e.model)}</div>
-    <div class="lub-follow-up-location dim">${esc(location)}</div>
+    <div class="lub-follow-up-location dim"${masterLocation ? ` data-master-location-state="${masterLocation.state}" title="${esc(masterLocation.detail)}"` : ''}>${esc(location)}</div>
     ${last ? `<div class="lub-follow-up-date"><span class="dim">Último engrase</span> <time datetime="${esc(last)}">${fmtDateOnly(last)} · ${fmtTime(last)}</time></div>` : ''}
     <div class="lub-arrastrado-actions"><button type="button" class="btn lub-follow-up-ver" data-id="${esc(e.id)}">Ver ficha</button><button type="button" class="btn btn-accent lub-follow-up-reg" data-id="${esc(e.id)}">Registrar engrase <span aria-hidden="true">→</span></button></div>
   </div>`;
@@ -5937,7 +6881,20 @@ async function renderEquipos() {
   if (canEdit) $('#eq-new')?.addEventListener('click', () => openEquipmentForm(null, types, locations));
 
   if (canEdit) {
-    $('#eq-print-all-qr').addEventListener('click', () => printAllQRCodes(equipos));
+    // S15 (auditoría pre-release 2026-10-21): imprimir el QR de TODOS los
+    // equipos puede disparar cientos de páginas por un clic accidental —
+    // confirmar con el conteo real antes de generar.
+    $('#eq-print-all-qr').addEventListener('click', () => {
+      openModal(`¿Imprimir QR de ${equipos.length} equipo(s)?`, `
+        <p>Se va a generar una página de impresión con el código QR de cada equipo listado.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="confirm-print-all-qr-cancel">Cancelar</button>
+          <button type="button" class="btn btn-accent" id="confirm-print-all-qr-confirm">${ic("print")}Imprimir</button>
+        </div>
+      `);
+      $('#confirm-print-all-qr-cancel').addEventListener('click', closeModal);
+      $('#confirm-print-all-qr-confirm').addEventListener('click', () => { closeModal(); printAllQRCodes(equipos); });
+    });
   }
 
   if (canEdit) {
@@ -6160,13 +7117,23 @@ async function openEquipmentDetail(id) {
   const planDet = s.plan || null;
   const ultimoRecordDet = ultimos[0] || null;
   const cuadrillasDet = await DB.allActive('cuadrillas');
+  // manual_tasks (0017, ACTIVE en producción) — tareas operativas de este
+  // equipo, cualquier estado (nunca solo PENDING: §10 del pedido pide
+  // historial/trazabilidad de cierre y cancelación en el detalle también).
+  // Visible para cualquier rol que llegue a esta Ficha: RLS/DB.all() ya
+  // garantizan que un LUBRICADOR/SUPERVISOR CREW_SCOPED solo tiene
+  // localmente las de su(s) cuadrilla(s) autorizada(s) — nunca un segundo
+  // filtro de alcance acá.
+  const manualTasksDet = (await DB.allActive('manual_tasks'))
+    .filter(t => t.equipmentId === id)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   const crewUltimoId = ultimoRecordDet ? resolveRecordCrewId(ultimoRecordDet).value : null;
   const crewUltimoDet = crewUltimoId ? (cuadrillasDet.find(c => c.id === crewUltimoId) || null) : null;
-  const occurrenceKeyHoyDet = planDet ? computeOccurrenceKey(planDet, { dateISO: todayDateISO() }) : null;
+  const occurrenceKeyHoyDet = planDet ? equipoOccurrenceKey(e, { [e.id]: planDet }) : null;
   const assignmentActivoDet = occurrenceKeyHoyDet ? findActivePendingAssignment(await DB.allActive('lubrication_assignments'), occurrenceKeyHoyDet) : null;
   const crewAsignadaDet = assignmentActivoDet ? (cuadrillasDet.find(c => c.id === assignmentActivoDet.assignedCrewId) || null) : null;
   const skipsDet = (await DB.allActive('lubrication_skips')).filter(sk => sk.equipmentId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const carryoverHoyDet = findCarriedOverSkipForToday(skipsDet, { equipmentId: id, dateISO: todayDateISO() });
+  const carryoverHoyDet = findCarriedOverSkipForToday(skipsDet, { equipmentId: id, dateISO: todayDateISO(), occurrenceKey: occurrenceKeyHoyDet });
   const ultimoSkipDet = skipsDet[0] || null;
   const validationsDet = await DB.allActive('grease_validations');
   const valStatusUltimoDet = ultimoRecordDet ? validationStatusForRecord(ultimoRecordDet, validationsDet, new Date(), App.generalSettings) : null;
@@ -6247,16 +7214,32 @@ async function openEquipmentDetail(id) {
     if (estado.tipo === 'futuro') return `${nombreDia} ${fechaCorta} — Programado${turnoSufijo}`;
     return `${nombreDia} ${fechaCorta} — No programado`;
   };
-  const semanaFichaHTML = (planDet && planDet.controlType === 'Día y turno de la semana' && (planDet.assignedDays || []).length) ? `
+  const fichaDualActiva = planDet && Array.isArray(planDet.requiredShifts)
+    && ['shift_dia', 'shift_noche'].every(id => planDet.requiredShifts.includes(id))
+    && !!planDet.effectiveDate && todayDateISO() >= planDet.effectiveDate;
+  const semanaFichaHTML = (planDet && ((planDet.controlType === 'Día y turno de la semana' && (planDet.assignedDays || []).length) || fichaDualActiva)) ? `
     <div class="ficha-semana">
       <div class="ficha-semana-titulo">Semana actual</div>
       <div class="ficha-week-grid">
         ${diasSemanaFicha.map(d => {
+          const diaLabel = (WEEKDAY_ABBR_DASH[WEEKDAY_NAMES[d.getDay()]] || '').toUpperCase();
+          if (fichaDualActiva) {
+            const estados = ['shift_dia', 'shift_noche'].map(shiftId => ({
+              shiftId, estado: estadoCelda(e, d, [planDet], todosRecordsDet, hoyFicha, shiftId)
+            }));
+            const title = estados.map(({ shiftId, estado }) => `${shiftId === 'shift_dia' ? 'Día' : 'Noche'}: ${tituloDiaFicha(estado, d)}`).join(' · ');
+            return `<div class="ficha-dia ficha-dia-dual" title="${esc(title)}" aria-label="${esc(title)}"><span>${esc(diaLabel)}</span>${estados.map(({ shiftId, estado }) => {
+              const color = DIA_FICHA_COLOR[estado.tipo] || 'var(--gray-status)';
+              const relleno = DIA_FICHA_RELLENO.has(estado.tipo);
+              const label = shiftId === 'shift_dia' ? 'D' : 'N';
+              return `<span class="ficha-turno-mini${relleno ? ' ficha-turno-mini-relleno' : ''}" style="--c:${color}" aria-label="${label}: ${esc(estado.tipo)}">${label}</span>`;
+            }).join('')}</div>`;
+          }
           const estado = estadoCelda(e, d, [planDet], todosRecordsDet, hoyFicha);
           const color = DIA_FICHA_COLOR[estado.tipo] || 'var(--gray-status)';
           const relleno = DIA_FICHA_RELLENO.has(estado.tipo);
           const titulo = tituloDiaFicha(estado, d);
-          return `<div class="ficha-dia${relleno ? ' ficha-dia-relleno' : ''}" style="--c:${color}" title="${esc(titulo)}" aria-label="${esc(titulo)}">${esc((WEEKDAY_ABBR_DASH[WEEKDAY_NAMES[d.getDay()]] || '').toUpperCase())}</div>`;
+          return `<div class="ficha-dia${relleno ? ' ficha-dia-relleno' : ''}" style="--c:${color}" title="${esc(titulo)}" aria-label="${esc(titulo)}">${esc(diaLabel)}</div>`;
         }).join('')}
       </div>
       <div class="ficha-week-legend">
@@ -6368,6 +7351,22 @@ async function openEquipmentDetail(id) {
       ${todosRecordsDet.length > ultimos.length ? `<button type="button" class="btn btn-sm" id="btn-view-hist-link" style="margin-top:8px">Ver historial completo</button>` : ''}
     </div>
 
+    ${manualTasksDet.length ? `
+    <div class="ficha-bloque">
+      <h4>${ic("clock")}Tareas operativas</h4>
+      ${manualTasksDet.slice(0, 5).map(t => {
+        const colorByStatus = { PENDING: STATUS_COLOR.AMARILLO, COMPLETED: STATUS_COLOR.VERDE, CANCELLED: STATUS_COLOR.GRIS };
+        const labelByStatus = { PENDING: 'PENDIENTE', COMPLETED: 'COMPLETADA', CANCELLED: 'CANCELADA' };
+        const tipoLabel = (MANUAL_TASK_TYPES.find(mt => mt.id === t.taskType) || {}).label || t.taskType || 'Otro';
+        return `<div class="ficha-fila manual-task-row" data-task="${esc(t.id)}" role="button" tabindex="0">
+          <span class="status-chip" style="--c:${colorByStatus[t.status] || STATUS_COLOR.GRIS}">${labelByStatus[t.status] || t.status}</span>
+          <span><b>${esc(t.title || tipoLabel)}</b> — ${esc((t.description || '').slice(0, 60))}</span>
+          <span class="dim">${fmtDate(t.createdAt)}</span>
+        </div>`;
+      }).join('')}
+      ${manualTasksDet.length > 5 ? `<div class="dim" style="padding:4px 0">y ${manualTasksDet.length - 5} más…</div>` : ''}
+    </div>` : ''}
+
     <div class="modal-actions">
       ${canRegisterOutOfPlan(App.currentUser.role) ? `<button class="btn btn-accent" id="btn-fuera-de-plan">${ic("plus")}Registrar fuera de plan</button>` : ''}
       <button class="btn" id="btn-view-qr">${ic("qr")}Código QR</button>
@@ -6378,6 +7377,8 @@ async function openEquipmentDetail(id) {
         <button class="btn" id="btn-reprogramar">${ic("clock")}Reprogramar esta semana</button>` : ''}
       ${canManageAssignments(App.currentUser.role) && (s.code === 'ROJO' || s.code === 'AMARILLO') ? `
         <button class="btn" id="btn-asignar-cuadrilla">${ic("clock")}Asignar a cuadrilla</button>` : ''}
+      ${canManageAssignments(App.currentUser.role) ? `
+        <button class="btn" id="btn-nueva-tarea">${ic("plus")}Nueva tarea de lubricación</button>` : ''}
       ${canMoveEquipment(App.currentUser.role) ? `
         <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
       ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
@@ -6385,6 +7386,15 @@ async function openEquipmentDetail(id) {
     </div>
   `, 'modal-ficha-equipo');
   $('#btn-view-hist-link')?.addEventListener('click', () => $('#btn-view-hist').click());
+  $('#btn-nueva-tarea')?.addEventListener('click', () => { closeModal(); openManualTaskForm(e); });
+  $$('.manual-task-row', $('.modal-body')).forEach(row => {
+    const open = () => {
+      const task = manualTasksDet.find(t => t.id === row.dataset.task);
+      if (task) openManualTaskDetailModal(task, e, cuadrillasDet);
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } });
+  });
   $('#btn-edit-eq')?.addEventListener('click', async () => {
     closeModal();
     const locations = await DB.allActive('locations');
@@ -6541,12 +7551,19 @@ async function openEquipmentDetail(id) {
    otra cuadrilla (responsabilidad temporal, NUNCA mueve el equipo — ver
    openMoveEquipmentLocationModal() para eso). Solo ADMIN/PLANIFICADOR/
    SUPERVISOR, ver canManageAssignments(). ---------- */
-async function openAssignGreaseModal(equipo) {
+async function openAssignGreaseModal(equipo, assignmentId = null) {
   const { assignments, cuadrillas, plansByEquipoId } = await loadAssignmentContext();
   const plan = plansByEquipoId[equipo.id];
   if (!plan) { alert('Este equipo no tiene un plan de engrase activo — no hay nada que asignar.'); return; }
   const occurrenceKey = equipoOccurrenceKey(equipo, plansByEquipoId);
-  const current = findActivePendingAssignment(assignments, occurrenceKey);
+  const manageable=assignments.filter(a=>a.equipmentId===equipo.id && a.status==='PENDING');
+  if (manageable.length>1 && !assignmentId) {
+    openModal('Selecciona la asignación',manageable.map(a=>`<button class="btn manage-support-assignment" data-assignment="${esc(a.id)}">${esc(a.occurrenceKey)}</button>`).join(''));
+    $$('.manage-support-assignment').forEach(button=>button.addEventListener('click',()=>openAssignGreaseModal(equipo,button.dataset.assignment)));
+    return;
+  }
+  const current = assignmentId ? manageable.find(a=>a.id===assignmentId) : findActivePendingAssignment(assignments, occurrenceKey) || (manageable.length===1 ? manageable[0] : null);
+  if (assignmentId && !current) { showInAppToast('La asignación ya no está pendiente.'); return; }
   const currentCrew = current ? cuadrillas.find(cq => cq.id === current.assignedCrewId) : null;
   const opciones = cuadrillas.filter(cq => cq.active !== false);
 
@@ -6573,7 +7590,7 @@ async function openAssignGreaseModal(equipo) {
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     if (!fd.crewId) { alert('Selecciona una cuadrilla.'); return; }
     try {
-      await assignGreaseToCrew(equipo, fd.crewId, fd.notes);
+      await assignGreaseToCrew(equipo, fd.crewId, fd.notes,current?.id || null);
       showInAppToast(`✓ ${esc(equipo.code)} asignado`);
       closeModal();
       navigate(App.route);
@@ -6587,6 +7604,285 @@ async function openAssignGreaseModal(equipo) {
     showInAppToast('✓ Asignación cancelada');
     closeModal();
     navigate(App.route);
+  });
+}
+
+/* ---------- manual_tasks (0017, ACTIVE en producción) — crear/reasignar/
+   cancelar una tarea operativa equipo+cuadrilla. MISMO rol-gate y MISMO
+   componente/modal para ADMINISTRADOR/PLANIFICADOR/SUPERVISOR (§3 del
+   pedido: "no duplicar tres formularios distintos") — reusa el selector de
+   cuadrilla de openAssignGreaseModal(). Completar (LUBRICADOR) es un flujo
+   APARTE, ver openCompleteManualTaskForm() más abajo: este formulario
+   nunca lo hace, ni al editar una tarea ya PENDING. ---------- */
+// `equipo` opcional (módulo "Tareas y mensajes", 2026-10-18): cuando viene
+// de la Ficha del equipo sigue fijo (sin cambios, §7 del pedido: "debe
+// abrir exactamente el mismo formulario reutilizable"); cuando viene del
+// módulo unificado (sin equipo preelegido) se agrega un selector "Equipo *"
+// — MISMO patrón ya usado en openAnomalyForm(). `onDone` opcional: el
+// caller (renderTareasYMensajes()) lo usa para refrescar su propia lista
+// sin que este formulario necesite saber nada de esa pantalla.
+async function openManualTaskForm(equipo, task = null, onDone = null) {
+  const actor = App.currentUser;
+  if (!canManageAssignments(actor.role)) { showInAppToast('No tienes permiso para crear tareas operativas.'); return; }
+  // ADMINISTRADOR/PLANIFICADOR administran cualquier tarea; SUPERVISOR solo
+  // las que él mismo creó (mismo criterio ya validado en 0017,
+  // manual_task_row_in_scope — nunca un gate más permisivo en el cliente).
+  if (task && actor.role === 'SUPERVISOR' && task.createdBy !== actor.id) {
+    showInAppToast('Solo quien creó esta tarea puede reasignarla o cancelarla.'); return;
+  }
+  const cuadrillas = await DB.allActive('cuadrillas');
+  const equipos = equipo ? null : await DB.allActive('equipment');
+  const tituloEquipo = equipo ? esc(equipo.code) : 'nueva tarea';
+
+  // Formulario simplificado (módulo "Tareas y Mensajes", lote UX
+  // 2026-10-19): visibles solo Equipo/Cuadrilla/Tipo/Descripción/
+  // Prioridad — Título y Fecha/hora límite (dueAt) quedan dentro de
+  // "Más opciones" (<details>, mismo patrón nativo ya usado en
+  // openPointForm()/registrar). dueAt NUNCA se elimina del modelo ni de
+  // la validación — solo se oculta como opción secundaria, igual que
+  // Título ya era opcional antes de este cambio.
+  openModal(task ? `Tarea · ${tituloEquipo}` : `Nueva tarea de lubricación · ${tituloEquipo}`, `
+    <form id="manual-task-form" class="form-grid">
+      ${equipo ? '' : `<label class="span-2">Equipo *
+        <select name="equipmentId" required ${task ? 'disabled' : ''}>
+          <option value="">— Selecciona —</option>
+          ${equipos.map(e => `<option value="${e.id}" ${task && task.equipmentId === e.id ? 'selected' : ''}>${esc(e.code)} · ${esc(e.brand || '')} ${esc(e.model || '')}</option>`).join('')}
+        </select>
+      </label>${task ? `<input type="hidden" name="equipmentId" value="${esc(task.equipmentId)}"/>` : ''}`}
+      <label>Cuadrilla *
+        <select name="crewId" required>
+          <option value="">— Selecciona —</option>
+          ${cuadrillas.map(cq => `<option value="${cq.id}" ${task && task.crewId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Tipo de tarea *
+        <select name="taskType" required>
+          ${MANUAL_TASK_TYPES.map(o => `<option value="${o.id}" ${task && task.taskType === o.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="span-2">Descripción / instrucción *<textarea required name="description" rows="3">${task ? esc(task.description || '') : ''}</textarea></label>
+      <label>Prioridad
+        <select name="priority">
+          ${MANUAL_TASK_PRIORITIES.map(o => `<option value="${o.id}" ${(task ? task.priority : 'MEDIA') === o.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+        </select>
+      </label>
+      <details class="span-2 reg-advanced">
+        <summary>Más opciones</summary>
+        <label class="span-2">Título (opcional)<input name="title" value="${task ? esc(task.title || '') : ''}" maxlength="120"/></label>
+        <label>Fecha/hora límite (opcional)<input type="datetime-local" name="dueAt" value="${task && task.dueAt ? esc(String(task.dueAt).slice(0, 16)) : ''}"/></label>
+      </details>
+      <div class="modal-actions span-2">
+        ${task && task.status === 'PENDING' ? `<button type="button" class="btn btn-danger" id="btn-cancel-manual-task">Cancelar tarea</button>` : ''}
+        <button type="submit" class="btn btn-accent">${ic("check")}${task ? 'Guardar cambios' : 'Crear tarea'}</button>
+      </div>
+    </form>
+  `);
+  $('#manual-task-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    if (!fd.equipmentId) { alert('Selecciona un equipo.'); return; }
+    if (!fd.crewId) { alert('Selecciona una cuadrilla.'); return; }
+    if (!fd.description || !fd.description.trim()) { alert('La descripción/instrucción es obligatoria.'); return; }
+    const dueAt = fd.dueAt ? new Date(fd.dueAt).toISOString() : null;
+    if (task) {
+      const row = { ...task, taskType: fd.taskType, priority: fd.priority, title: fd.title.trim() || null,
+        description: fd.description.trim(), dueAt };
+      if (fd.crewId !== task.crewId) row.previousCrewId = task.crewId;
+      row.crewId = fd.crewId;
+      // Nunca heredar la marca de congelamiento de una completación previa
+      // (ver buildManualTaskCompletionRow/sync.js) — este camino (ADMIN/
+      // PLANIFICADOR/SUPERVISOR-propia) tiene acceso total sin diff-check,
+      // así que `updatedAt` debe avanzar normal, no quedar pegado.
+      delete row.__freezeEmbeddedUpdatedAt;
+      await DB.put('manual_tasks', stamp(row, actor.name));
+      showInAppToast('✓ Tarea actualizada');
+    } else {
+      const row = stamp({ id: uid('mtask'), equipmentId: equipo ? equipo.id : fd.equipmentId, crewId: fd.crewId, taskType: fd.taskType,
+        title: fd.title.trim() || null, description: fd.description.trim(), priority: fd.priority, dueAt,
+        status: 'PENDING', createdBy: actor.id }, actor.name);
+      await DB.put('manual_tasks', row);
+      showInAppToast('✓ Tarea creada');
+    }
+    Sync.fullSync();
+    updateTareasMensajesNavBadge();
+    closeModal();
+    onDone?.();
+  });
+  $('#btn-cancel-manual-task')?.addEventListener('click', async () => {
+    if (!(await cancelManualTask(task))) return;
+    closeModal();
+    onDone?.();
+  });
+}
+
+// Permiso de administrar ESTA tarea (editar/reasignar/cancelar/eliminar) —
+// MISMO criterio en los 3 puntos de entrada (openManualTaskForm(),
+// openManualTaskDetailModal(), la fila compacta de renderTareasYMensajes())
+// para no duplicar la regla ni divergir de ella: ADMINISTRADOR/
+// PLANIFICADOR administran cualquiera; SUPERVISOR solo las que él mismo
+// creó (igual que 0017 manual_task_row_in_scope ya valida server-side —
+// nunca más permisivo en el cliente). LUBRICADOR nunca entra aquí.
+function canManageThisManualTask(task, actor = App.currentUser) {
+  return canManageAssignments(actor.role) && (actor.role !== 'SUPERVISOR' || task.createdBy === actor.id);
+}
+
+// Cancelar (lote "compactar + eliminación", 2026-10-19 — §4/§7/§8 del
+// pedido): SOLO PENDING, mismo permiso que editar. Reusado por el botón
+// "Cancelar tarea" del formulario de edición, el menú ⋮ de la fila
+// compacta y el footer del modal de detalle — una sola implementación.
+// Devuelve true si canceló, false si el usuario desistió o no tenía permiso.
+async function cancelManualTask(task) {
+  const actor = App.currentUser;
+  if (task.status !== 'PENDING' || !canManageThisManualTask(task, actor)) {
+    showInAppToast('No puedes cancelar esta tarea.'); return false;
+  }
+  if (!confirm('¿Cancelar esta tarea?')) return false;
+  const cancelledRow = { ...task, status: 'CANCELLED' };
+  delete cancelledRow.__freezeEmbeddedUpdatedAt;
+  await DB.put('manual_tasks', stamp(cancelledRow, actor.name));
+  await logAudit('TAREA_CANCELADA', `Tarea de ${esc(task.id)}`, actor.name);
+  Sync.fullSync();
+  updateTareasMensajesNavBadge();
+  showInAppToast('✓ Tarea cancelada');
+  return true;
+}
+
+// Eliminar (§7/§8 del pedido): SOFT DELETE vía `active:false` — MISMO
+// campo/convención ya usada en todo el resto del modelo (lubrication_
+// points, cuadrillas, locations, etc. — ver DB.allActive(): "rows.filter(r
+// => r.active !== false)"). NUNCA DELETE físico, nunca un campo nuevo:
+// `active` no existía antes en manual_tasks, pero 0017 (manual_task_row_
+// in_scope) no lo valida ni lo restringe — es vocabulario de cliente, como
+// title/priority ya lo eran (ver operational-scope.js) — por eso no hace
+// falta tocar RLS/migración. SOLO PENDING, mismo permiso que cancelar —
+// COMPLETED/CANCELLED nunca se eliminan por esta vía (conservan historial,
+// §7 del pedido). DB.allActive() excluye la fila de Bandeja/Historial de
+// inmediato; Enviados (consulta cruda, DB.all()) la sigue mostrando como
+// "Eliminada" para trazabilidad, igual que una tarea cancelada.
+async function deleteManualTask(task) {
+  const actor = App.currentUser;
+  if (task.status !== 'PENDING' || !canManageThisManualTask(task, actor)) {
+    showInAppToast('No puedes eliminar esta tarea.'); return false;
+  }
+  if (!confirm('¿Eliminar esta tarea pendiente?')) return false;
+  const row = { ...task, active: false };
+  delete row.__freezeEmbeddedUpdatedAt;
+  await DB.put('manual_tasks', stamp(row, actor.name));
+  await logAudit('TAREA_ELIMINADA', `Tarea de ${esc(task.id)}`, actor.name);
+  Sync.fullSync();
+  updateTareasMensajesNavBadge();
+  showInAppToast('✓ Tarea eliminada');
+  return true;
+}
+
+// Detalle/historial de una tarea operativa (§10 del pedido) — solo lectura
+// + reusa openManualTaskForm() para reasignar/cancelar (roles autorizados)
+// y openCompleteManualTaskForm() para que el LUBRICADOR complete la suya.
+async function openManualTaskDetailModal(task, equipo, cuadrillas) {
+  const actor = App.currentUser;
+  const crew = cuadrillas.find(cq => cq.id === task.crewId);
+  const tipoLabel = (MANUAL_TASK_TYPES.find(o => o.id === task.taskType) || {}).label || task.taskType || 'Otro';
+  const prioridadLabel = (MANUAL_TASK_PRIORITIES.find(o => o.id === task.priority) || {}).label || task.priority || '—';
+  const photos = photosOf(task);
+  const resolvedSrcs = photos.length ? await resolvePhotoThumbSrcs(task) : [];
+  const canManage = canManageThisManualTask(task, actor) && task.status === 'PENDING' && task.active !== false;
+  // S12 (auditoría pre-release 2026-10-21): ver nota en taskRowHTML.
+  const soloLecturaAjena = task.status === 'PENDING' && task.active !== false && canManageAssignments(actor.role) && !canManage;
+  const scope = await getCurrentOperationalScope();
+  const canComplete = actor.role === 'LUBRICADOR' && task.status === 'PENDING' && task.active !== false && scope.crewId === task.crewId;
+  const statusLabel = task.active === false ? 'Eliminada' : { PENDING: 'Pendiente', COMPLETED: 'Completada', CANCELLED: 'Cancelada' }[task.status] || task.status;
+  // 'users' solo existe localmente para roles GLOBAL (ADMIN/PLANIFICADOR/
+  // VISOR, ver localAuthorizationState() en db.js) — un LUBRICADOR/
+  // SUPERVISOR CREW_SCOPED nunca lo tiene, así que el fallback es el
+  // appUserId crudo (nunca un nombre inventado).
+  const users = await DB.allActive('users');
+  const nameFor = (appUserId) => appUserId === actor.id ? actor.name : (users.find(u => u.id === appUserId)?.name || appUserId || '—');
+  const TASK_STATUS_COLOR_MODAL = { PENDING: 'var(--amber)', COMPLETED: 'var(--green)', CANCELLED: 'var(--gray-status)' };
+
+  // Compactado (§9 del pedido): header con el estado a la derecha,
+  // descripción destacada, luego grid 2 columnas (nunca una lista vertical
+  // de filas sueltas, la causa real del "demasiado espacio vacío").
+  // Footer: Ver equipo siempre; Editar/Reasignar + Cancelar directos (solo
+  // PENDING+permiso); Eliminar queda en ⋮ (menos frecuente) — Completar
+  // (LUBRICADOR) va primero cuando aplica.
+  openModal(`Tarea · ${esc(equipo.code)}`, `
+    <div class="tym-detail-head" style="display:flex; justify-content:flex-end; margin-bottom:8px">
+      <span class="status-chip" style="--c:${task.active === false ? 'var(--gray-status)' : TASK_STATUS_COLOR_MODAL[task.status] || 'var(--text-dim)'}">${esc(statusLabel)}</span>
+    </div>
+    <p class="tym-detail-desc"><b>${esc(task.description || tipoLabel)}</b></p>
+    ${soloLecturaAjena ? `<p class="dim">Solo lectura — creada por ${esc(nameFor(task.createdBy))}, otro supervisor.</p>` : ''}
+    <div class="detail-grid" style="margin-top:10px">
+      <div><b>Equipo</b><div>${esc(equipo.code)} · ${esc(equipo.brand || '')} ${esc(equipo.model || '')}</div></div>
+      <div><b>Cuadrilla</b><div>${crew ? esc(crew.name) : esc(task.crewId)}</div></div>
+      <div><b>Prioridad</b><div>${esc(prioridadLabel)}</div></div>
+      <div><b>Solicitado por</b><div>${esc(nameFor(task.createdBy))}</div></div>
+      <div><b>Fecha</b><div>${fmtDate(task.createdAt)}</div></div>
+      <div><b>Tipo</b><div>${esc(tipoLabel)}</div></div>
+      ${task.dueAt ? `<div><b>Vence</b><div>${fmtDate(task.dueAt)}</div></div>` : ''}
+      ${task.status === 'COMPLETED' ? `
+        <div><b>Atendido por</b><div>${esc(nameFor(task.completedBy))}</div></div>
+        <div><b>Fecha cierre</b><div>${fmtDate(task.completedAt)}</div></div>` : ''}
+    </div>
+    ${task.status === 'COMPLETED' && task.completionComment ? `<p class="dim" style="margin-top:8px">${esc(task.completionComment)}</p>` : ''}
+    ${photos.length ? `<div style="margin-top:10px"><b>Foto(s) de evidencia</b>${photoThumbsHTML(task, 'Evidencia de cierre', resolvedSrcs)}</div>` : ''}
+    <div class="modal-actions">
+      ${canComplete ? `<button type="button" class="btn btn-accent" id="btn-complete-manual-task">${ic("check")}Completar tarea</button>` : ''}
+      <button type="button" class="btn" id="btn-ver-equipo-manual-task">${ic("qr")}Ver equipo</button>
+      ${canManage ? `<button type="button" class="btn" id="btn-manage-manual-task">${ic("edit")}Editar/Reasignar</button>` : ''}
+      ${canManage ? `<button type="button" class="btn" id="btn-cancel-manual-task-detail">Cancelar</button>` : ''}
+      ${canManage ? `<details class="tym-row-menu"><summary aria-label="Más acciones">⋮</summary><div class="tym-row-menu-items"><button type="button" class="tym-menu-item danger" id="btn-delete-manual-task-detail">Eliminar tarea</button></div></details>` : ''}
+    </div>
+  `);
+  wirePhotoThumbs($('.modal-body'));
+  $('#btn-complete-manual-task')?.addEventListener('click', () => { closeModal(); openCompleteManualTaskForm(task, equipo); });
+  $('#btn-manage-manual-task')?.addEventListener('click', () => { closeModal(); openManualTaskForm(equipo, task); });
+  $('#btn-ver-equipo-manual-task')?.addEventListener('click', () => { closeModal(); openEquipmentDetail(equipo.id); });
+  $('#btn-cancel-manual-task-detail')?.addEventListener('click', async () => { if (await cancelManualTask(task)) closeModal(); });
+  $('#btn-delete-manual-task-detail')?.addEventListener('click', async () => { if (await deleteManualTask(task)) closeModal(); });
+}
+
+// Completar una tarea operativa (§5 del pedido) — SOLO LUBRICADOR, SOLO
+// PENDING de su propia cuadrilla (mismo criterio ya validado en 0017,
+// manual_task_row_in_scope). Reusa el campo de fotos genérico
+// (photoFieldHTML/wirePhotoField/getSelectedPhotos, igual que anomalías) —
+// el pipeline de subida real es Sync.uploadPhotoIfNeeded('manual_tasks',
+// row, cfg), ya genérico sobre cualquier store, sin cambios de sync.js
+// para esto. buildManualTaskCompletionRow() (db.js) congela el `updatedAt`
+// embebido para que el RLS de cierre (que compara el payload completo
+// menos el allowlist de cierre) acepte la transición — ver ese comentario.
+async function openCompleteManualTaskForm(task, equipo, onDone = null) {
+  const actor = App.currentUser;
+  const scope = await getCurrentOperationalScope();
+  if (actor.role !== 'LUBRICADOR' || task.status !== 'PENDING' || scope.crewId !== task.crewId) {
+    showInAppToast('No puedes completar esta tarea.'); return;
+  }
+  openModal(`Completar tarea · ${esc(equipo.code)}`, `
+    <p class="dim">${esc(task.title || task.description || 'Tarea operativa')}</p>
+    <form id="complete-manual-task-form" class="form-grid">
+      <label class="span-2">Comentario / respuesta<textarea name="completionComment" rows="3" placeholder="Describe cómo quedó el trabajo (opcional)"></textarea></label>
+      ${photoFieldHTML()}
+      <div class="modal-actions span-2">
+        <button type="button" class="btn" id="btn-cancel-complete-manual-task">Cancelar</button>
+        <button type="submit" class="btn btn-accent">${ic("check")}Completar tarea</button>
+      </div>
+    </form>
+  `);
+  wirePhotoField($('#complete-manual-task-form'), equipo.code);
+  $('#btn-cancel-complete-manual-task').addEventListener('click', () => closeModal());
+  $('#complete-manual-task-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const photos = await getSelectedPhotos(ev.target);
+    const current = await DB.get('manual_tasks', task.id);
+    if (!current || current.status !== 'PENDING') { showInAppToast('Esta tarea ya no está pendiente.'); closeModal(); return; }
+    const row = buildManualTaskCompletionRow(current, { completedBy: actor.id, completionComment: fd.completionComment, photos });
+    await DB.put('manual_tasks', row);
+    Sync.fullSync();
+    updateTareasMensajesNavBadge();
+    showInAppToast('✓ Tarea completada');
+    closeModal();
+    if (App.route === 'turno') renderLubricadorHome();
+    onDone?.();
   });
 }
 
@@ -6778,11 +8074,14 @@ async function renderPlan() {
   // Planificador con las herramientas completas — configurar el plan de engrase es
   // literalmente su trabajo principal, no tenía sentido limitarlo a solo uno por uno.
   const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
-  // Asignar a cuadrilla es una acción DISTINTA de editar el plan (canEdit) —
-  // SUPERVISOR también puede asignar, aunque no configure planes (§AB).
-  const canAssign = canManageAssignments(App.currentUser.role);
-  const statusByEquipoId = {};
-  if (canAssign) (await computeAllStatuses(equipos)).forEach(({ e, s }) => { statusByEquipoId[e.id] = s; });
+  // "Asignar a cuadrilla" por fila se quitó de esta pantalla (regla
+  // "TRABAJO NORMAL por ubicación"): el trabajo normal ya sale solo de
+  // equipment.locationId + crew_locations (PRINCIPAL), sin necesitar una
+  // lubrication_assignment manual por equipo — ver classifyEquipmentWork()
+  // en operational-scope.js. La reasignación EXCEPCIONAL (apoyo
+  // extraordinario, reemplazo temporal, emergencia) sigue disponible en la
+  // Ficha del equipo ("Asignar a cuadrilla" ahí, ver openAssignGreaseModal())
+  // — nunca se eliminó el modelo de assignments, solo este acceso duplicado.
   let bulkMode = false;
   const selected = new Set();
 
@@ -6803,7 +8102,7 @@ async function renderPlan() {
     <div class="panel">
       <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
       <table class="data-table">
-        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Referencia</th><th>Puntos</th><th></th>${canAssign ? '<th></th>' : ''}</tr></thead>
+        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Turnos</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
         <tbody>
           ${(await Promise.all(equipos.map(async e => {
             const plan = plans.find(p => p.equipmentId === e.id);
@@ -6811,18 +8110,21 @@ async function renderPlan() {
             // completa por cada equipo: con 300 equipos eran 300 lecturas de 4.500 puntos).
             const points = plan ? (puntosPorPlan[plan.id] || []) : [];
             const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
-            const st = statusByEquipoId[e.id];
-            const puedeAsignar = canAssign && plan && st && (st.code === 'ROJO' || st.code === 'AMARILLO');
+            const configuredShifts = plan ? requiredShiftsForPlan(plan, plan.effectiveDate || todayDateISO()) : [];
+            const dualShiftPlan = configuredShifts.includes('shift_dia') && configuredShifts.includes('shift_noche') && !!plan?.effectiveDate;
+            const shiftsLabel = !plan ? '—' : dualShiftPlan
+              ? `Día + Noche · desde ${fmtDateOnly(new Date(`${plan.effectiveDate}T12:00:00`))}`
+              : configuredShifts.filter(Boolean).map(id => id === 'shift_dia' ? 'Día' : id === 'shift_noche' ? 'Noche' : '').filter(Boolean).join(' + ') || 'Flexible';
             return `<tr data-row-id="${e.id}">
               ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${e.id}"/></td>` : ''}
               <td class="mono">${esc(e.code)}</td>
               <td>${esc(e.brand)} ${esc(e.model)}</td>
               <td>${plan ? plan.controlType : '—'}</td>
               <td class="mono">${plan ? (isWeekday ? (plan.assignedDays || []).map(d => d.slice(0, 3)).join(', ') || 'sin días' : plan.frequency + ' h') : '—'}</td>
+              <td>${esc(shiftsLabel)}</td>
               <td class="mono">${plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—'}</td>
               <td>${points.length}</td>
               <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">${ic("edit")}Configurar</button></td>
-              ${canAssign ? `<td>${puedeAsignar ? `<button class="btn btn-sm" data-assign-eq="${e.id}">${ic("clock")}Asignar a cuadrilla</button>` : ''}</td>` : ''}
             </tr>`;
           }))).join('')}
         </tbody>
@@ -6846,12 +8148,6 @@ async function renderPlan() {
 
   $$('button[data-eq]', c).forEach(btn => {
     btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
-  });
-  $$('button[data-assign-eq]', c).forEach(btn => {
-    btn.addEventListener('click', () => {
-      const eq = equipos.find(x => x.id === btn.dataset.assignEq);
-      if (eq) openAssignGreaseModal(eq);
-    });
   });
 
   if (!canEdit) return;
@@ -6976,14 +8272,20 @@ async function printGreasePlan(rango, equipos, plans, types) {
   const nombreLoc = id => (locations.find(l => l.id === id) || {}).name || '';
 
   // ¿Se engrasó este equipo en esta fecha?
-  function seEngraso(equipmentId, fecha) {
-    const dStr = fecha.toDateString();
-    return records.some(r => r.equipmentId === equipmentId && new Date(r.date).toDateString() === dStr);
+  function seEngraso(equipmentId, fecha, shiftId = null) {
+    const dStr = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}`;
+    return records.some(r => r.equipmentId === equipmentId && (!shiftId || r.shiftId === shiftId)
+      && (r.operationalSnapshot?.operationalDate === dStr || (!r.operationalSnapshot?.operationalDate
+        && new Date(r.date).toDateString() === fecha.toDateString())));
   }
 
   // ¿Estaba programado este equipo para esta fecha?
   function estabaProgramado(eq, plan, fecha) {
     if (!plan) return false;
+    const dateISO = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}`;
+    if (plan.effectiveDate && dateISO >= plan.effectiveDate
+      && requiredShiftsForPlan(plan, dateISO).includes('shift_dia')
+      && requiredShiftsForPlan(plan, dateISO).includes('shift_noche')) return true;
     if (plan.controlType === 'Día y turno de la semana') {
       return (plan.assignedDays || []).includes(WEEKDAY_NAMES[fecha.getDay()]);
     }
@@ -6993,12 +8295,16 @@ async function printGreasePlan(rango, equipos, plans, types) {
     return (proximo - eq.hourmeter) <= (plan.alertYellowHours || 0);
   }
 
-  function celda(eq, plan, fecha) {
+  function celda(eq, plan, fecha, shiftId = null) {
     const futuro = fecha.getTime() > hoy.getTime();
-    if (seEngraso(eq.id, fecha)) return '<td class="ok">REALIZADO</td>';
+    const dateISO = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}`;
+    const requiredShifts = requiredShiftsForPlan(plan, dateISO);
+    const dual = !!shiftId && !!plan?.effectiveDate && dateISO >= plan.effectiveDate
+      && requiredShifts.includes('shift_dia') && requiredShifts.includes('shift_noche');
+    if (seEngraso(eq.id, fecha, shiftId)) return `<td class="ok">${dual ? (shiftId === 'shift_dia' ? 'DÍA' : 'NOCHE') + ' · ' : ''}REALIZADO</td>`;
     if (!estabaProgramado(eq, plan, fecha)) return '<td></td>';
-    if (futuro) return '<td class="prog">PROGRAMADO</td>';
-    return '<td class="no">NO REALIZADO</td>';
+    if (futuro) return `<td class="prog">${dual ? (shiftId === 'shift_dia' ? 'DÍA' : 'NOCHE') + ' · ' : ''}PROGRAMADO</td>`;
+    return `<td class="no">${dual ? (shiftId === 'shift_dia' ? 'DÍA' : 'NOCHE') + ' · ' : ''}NO REALIZADO</td>`;
   }
 
   function tablaTurno(titulo, listaEquipos, fechas) {
@@ -7016,7 +8322,7 @@ async function printGreasePlan(rango, equipos, plans, types) {
           ${listaEquipos.map(({ eq, plan }) => `
             <tr>
               <td class="eqcol"><b>${esc(eq.code)}</b>${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
-              ${fechas.map(d => celda(eq, plan, d)).join('')}
+              ${fechas.map(d => celda(eq, plan, d, listaEquipos.shiftId || null)).join('')}
             </tr>`).join('')}
         </tbody>
       </table>`;
@@ -7029,8 +8335,10 @@ async function printGreasePlan(rango, equipos, plans, types) {
     .filter(x => x.plan)
     .sort((a, b) => a.eq.code.localeCompare(b.eq.code, undefined, { numeric: true }));
 
-  const dia = conPlan.filter(x => x.eq.shiftId === 'shift_dia');
-  const noche = conPlan.filter(x => x.eq.shiftId === 'shift_noche');
+  const dia = conPlan.filter(x => requiredShiftsForPlan(x.plan, x.plan.effectiveDate || todayDateISO()).includes('shift_dia') || x.eq.shiftId === 'shift_dia');
+  const noche = conPlan.filter(x => requiredShiftsForPlan(x.plan, x.plan.effectiveDate || todayDateISO()).includes('shift_noche') || x.eq.shiftId === 'shift_noche');
+  dia.shiftId = 'shift_dia';
+  noche.shiftId = 'shift_noche';
 
   if (!conPlan.length) {
     alert('No hay equipos con plan de engrase configurado todavía. Configura al menos un plan antes de imprimir.');
@@ -7080,10 +8388,24 @@ async function printGreasePlan(rango, equipos, plans, types) {
 }
 
 /* ---------- Configurar el mismo plan de engrase para varios equipos a la vez ---------- */
-function openBulkPlanForm(equipmentIds) {
+async function openBulkPlanForm(equipmentIds) {
+  const equipmentRows = await Promise.all(equipmentIds.map(id => DB.get('equipment', id)));
   openModal(`Configurar plan para ${equipmentIds.length} equipo(s)`, `
     <p class="dim">Esto crea o actualiza el plan de cada equipo seleccionado con estos mismos valores. Si un equipo ya tenía un plan por horas, su horómetro de referencia se toma del horómetro actual de CADA equipo (no un valor compartido). Los puntos de engrase no se tocan aquí — agrégalos por equipo o con "Importar puntos de engrase desde Excel".</p>
     <form id="bulk-plan-form" class="form-grid">
+      <label class="span-2">Turno
+        <select name="shiftMode" id="bulk-plan-shift-mode">
+          <option value="KEEP">Conservar configuración de cada plan</option>
+          <option value="shift_dia">Turno Día</option>
+          <option value="shift_noche">Turno Noche</option>
+          <option value="dual">Día + Noche</option>
+        </select>
+        <span class="field-hint">"Turno Día"/"Turno Noche" también actualiza el turno de cada equipo seleccionado, para que coincida con "Mi Turno" del lubricador. "Día + Noche" genera las dos obligaciones desde la fecha efectiva — nunca aplica un solo turno.</span>
+      </label>
+      <label class="span-2 hidden" id="bulk-plan-effective-date-field">Fecha efectiva
+        <input type="date" name="effectiveDate"/>
+        <span class="field-hint">Aplica a cualquier tipo de equipo. Sin fecha nueva se conserva la del plan existente.</span>
+      </label>
       <label class="span-2">Tipo de control
         <select name="controlType" id="bulk-plan-control-type">
           ${['Horas de operación', 'Día y turno de la semana'].map(o => `<option>${o}</option>`).join('')}
@@ -7094,13 +8416,6 @@ function openBulkPlanForm(equipmentIds) {
         <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${App.generalSettings.defaultAlertYellowHours}"/></label>
       </div>
       <div id="bulk-weekday-fields" class="span-2 hidden">
-        <label>Turno
-          <select name="shiftId">
-            <option value="shift_dia">Turno Día</option>
-            <option value="shift_noche">Turno Noche</option>
-          </select>
-          <span class="field-hint">También actualiza el turno de cada equipo seleccionado, para que coincida con "Mi Turno" del lubricador.</span>
-        </label>
         <label>Días de engrase asignados
           <div class="weekday-picker">
             ${SCHEDULE_WEEKDAYS.map(d => `
@@ -7120,6 +8435,12 @@ function openBulkPlanForm(equipmentIds) {
     $('#bulk-hours-fields').classList.toggle('hidden', weekday);
     $('#bulk-weekday-fields').classList.toggle('hidden', !weekday);
   });
+  // Mismo criterio que el plan individual (openPlanForm): "Día + Noche"
+  // es la única opción que necesita fecha efectiva — un turno simple o
+  // "conservar" nunca la usan.
+  $('#bulk-plan-shift-mode').addEventListener('change', (e) => {
+    $('#bulk-plan-effective-date-field').classList.toggle('hidden', e.target.value !== 'dual');
+  });
 
   $('#bulk-plan-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -7127,10 +8448,20 @@ function openBulkPlanForm(equipmentIds) {
     const controlType = fd.get('controlType');
     const weekday = controlType === 'Día y turno de la semana';
     const assignedDays = fd.getAll('assignedDays');
-    const shiftId = fd.get('shiftId');
+    const shiftMode = fd.get('shiftMode');
+    const keepShift = shiftMode === 'KEEP';
+    const dualShiftChosen = shiftMode === 'dual';
     const frequency = parseFloat(fd.get('frequency')) || 0;
     const alertYellowHours = parseFloat(fd.get('alertYellowHours')) || App.generalSettings.defaultAlertYellowHours;
+    const dualShiftEffectiveDate = String(fd.get('effectiveDate') || '');
 
+    // Misma contradicción real que en el plan individual: "Día + Noche"
+    // elegido sin fecha efectiva nunca activa el doble turno de verdad
+    // (requiredShiftsForPlan() sigue usando un solo turno sin effectiveDate).
+    if (dualShiftChosen && !dualShiftEffectiveDate) {
+      alert('"Día + Noche" necesita una fecha efectiva — sin eso, los planes aplicados siguen funcionando con un solo turno.');
+      return;
+    }
     // Misma validación que en el plan individual: frecuencia 0 dejaría a TODOS los
     // equipos seleccionados marcados como vencidos de forma permanente.
     if (!weekday && (!frequency || frequency <= 0)) {
@@ -7145,17 +8476,30 @@ function openBulkPlanForm(equipmentIds) {
     const allPlans = await DB.allActive('lubrication_plans');
     let created = 0, updated = 0;
     for (const eqId of equipmentIds) {
-      const equipment = await DB.get('equipment', eqId);
+      const equipment = equipmentRows.find(row => row?.id === eqId) || await DB.get('equipment', eqId);
       let plan = allPlans.find(p => p.equipmentId === eqId);
+      // "Conservar" nunca toca turno/requiredShifts/effectiveDate de ESTE
+      // equipo; turno simple o dual elegido arriba aplica igual a todos
+      // los equipos del lote. Dual conserva el turno simple previo de
+      // cada plan como respaldo histórico (requiredShiftsForPlan() cae a
+      // él antes de effectiveDate) — un plan nuevo sin turno propio usa
+      // Día por defecto, igual que openPlanForm().
+      const resolvedShiftId = keepShift ? (plan?.shiftId || equipment.shiftId)
+        : dualShiftChosen ? (plan?.shiftId || equipment.shiftId || 'shift_dia')
+        : shiftMode;
+      const resolvedRequiredShifts = keepShift ? (plan?.requiredShifts || []) : dualShiftChosen ? [...REQUIRED_SHIFT_IDS] : [];
+      const resolvedEffectiveDate = keepShift ? (plan?.effectiveDate || '') : (dualShiftEffectiveDate || plan?.effectiveDate || '');
       const obj = { controlType };
       if (weekday) {
         obj.assignedDays = assignedDays;
-        obj.shiftId = shiftId;
+        obj.shiftId = resolvedShiftId;
         obj.frequency = plan ? plan.frequency : 0;
         obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
         obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
-        if (equipment.shiftId !== shiftId) {
-          try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId }); }
+        obj.requiredShifts = resolvedRequiredShifts;
+        obj.effectiveDate = resolvedEffectiveDate;
+        if (!keepShift && equipment.shiftId !== resolvedShiftId) {
+          try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId: resolvedShiftId }); }
           catch (error) {
             alert(error.message === 'CATALOG_SYNC_REQUIRED'
               ? 'Sincroniza los cambios pendientes del equipo antes de cambiar su turno.'
@@ -7168,6 +8512,18 @@ function openBulkPlanForm(equipmentIds) {
         obj.alertYellowHours = alertYellowHours;
         obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter; // cada equipo usa su propio horómetro
         obj.assignedDays = plan ? plan.assignedDays : [];
+        obj.shiftId = resolvedShiftId;
+        obj.requiredShifts = resolvedRequiredShifts;
+        obj.effectiveDate = resolvedEffectiveDate;
+        if (!keepShift && equipment.shiftId !== resolvedShiftId) {
+          try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId: resolvedShiftId }); }
+          catch (error) {
+            alert(error.message === 'CATALOG_SYNC_REQUIRED'
+              ? 'Sincroniza los cambios pendientes del equipo antes de cambiar su turno.'
+              : 'No se pudo preparar el cambio de turno. Intenta sincronizar y volver a guardar.');
+            return;
+          }
+        }
       }
       if (plan) { Object.assign(plan, obj); updated++; }
       else { plan = stamp({ id: uid('plan'), equipmentId: eqId, ...obj }, App.currentUser.name); allPlans.push(plan); created++; }
@@ -7267,6 +8623,16 @@ async function openPlanForm(equipmentId, planId, lubricants) {
   const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
   const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
   const assignedDays = (plan && plan.assignedDays) || [];
+  // Único selector de Turno (Turno Día / Turno Noche / Día + Noche),
+  // reemplaza el checkbox "Obligaciones Día y Noche" + el selector de
+  // Turno separado que solo existía dentro de weekday-fields. Un plan
+  // dual (requiredShifts = ['shift_dia','shift_noche']) no tiene "un"
+  // turno — nunca se ofrece como opción contradictoria con un turno
+  // simple seleccionable al mismo tiempo. Lee SIEMPRE plan.shiftId,
+  // nunca equipment.shiftId, salvo el fallback de un plan nuevo sin
+  // turno propio todavía (igual que antes).
+  const isDualConfigured = !!(plan?.requiredShifts?.includes('shift_dia') && plan.requiredShifts.includes('shift_noche'));
+  const currentSingleShiftId = plan?.shiftId || equipment.shiftId || 'shift_dia';
   // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md §7):
   // la miniatura de un punto puede venir de otro dispositivo (URL/path de
   // Storage, no base64 local) — se resuelve ANTES de armar el HTML, igual
@@ -7282,6 +8648,19 @@ async function openPlanForm(equipmentId, planId, lubricants) {
         <span class="field-hint">Usa "Día y turno de la semana" para equipos donde no se registra horómetro a diario — se controla por calendario en vez de por horas.</span>
       </label>
 
+      <label class="span-2">Turno
+        <select name="shiftMode" id="plan-shift-mode">
+          <option value="shift_dia" ${!isDualConfigured && currentSingleShiftId === 'shift_dia' ? 'selected' : ''}>Turno Día</option>
+          <option value="shift_noche" ${!isDualConfigured && currentSingleShiftId === 'shift_noche' ? 'selected' : ''}>Turno Noche</option>
+          <option value="dual" ${isDualConfigured ? 'selected' : ''}>Día + Noche</option>
+        </select>
+        <span class="field-hint">También actualiza el turno del equipo, para que coincida con "Mi Turno" del lubricador. "Día + Noche" genera las dos obligaciones desde la fecha efectiva — nunca aplica un solo turno.</span>
+      </label>
+      <label class="span-2 ${isDualConfigured ? '' : 'hidden'}" id="plan-effective-date-field">Fecha efectiva
+        <input type="date" name="effectiveDate" value="${esc(plan?.effectiveDate || '')}"/>
+        <span class="field-hint">Desde qué fecha entra en vigor "Día + Noche" — no se aplica retroactivamente. Cada obligación conserva su identidad hasta completarse.</span>
+      </label>
+
       <div id="hours-fields" class="span-2 form-grid ${isWeekday ? 'hidden' : ''}" style="padding:0">
         <label>Frecuencia (horas)<input required type="number" min="1" max="5000" name="frequency" value="${plan ? plan.frequency : 50}"/></label>
         <label>Horómetro del último engrase<input type="number" step="0.1" name="lastGreaseHour" value="${plan ? plan.lastGreaseHour : equipment.hourmeter}"/></label>
@@ -7289,13 +8668,6 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       </div>
 
       <div id="weekday-fields" class="span-2 ${isWeekday ? '' : 'hidden'}">
-        <label>Turno
-          <select name="shiftId">
-            <option value="shift_dia" ${equipment.shiftId === 'shift_dia' ? 'selected' : ''}>Turno Día</option>
-            <option value="shift_noche" ${equipment.shiftId === 'shift_noche' ? 'selected' : ''}>Turno Noche</option>
-          </select>
-          <span class="field-hint">También actualiza el turno del equipo, para que coincida con "Mi Turno" del lubricador.</span>
-        </label>
         <label>Días de engrase asignados
           <div class="weekday-picker">
             ${SCHEDULE_WEEKDAYS.map(d => `
@@ -7325,6 +8697,14 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     $('#hours-fields').classList.toggle('hidden', weekday);
     $('#weekday-fields').classList.toggle('hidden', !weekday);
   });
+  // "Día + Noche" decide SI la fecha efectiva tiene sentido — un plan dual
+  // no tiene "un" turno, tiene los dos, por eso el selector de Turno ya no
+  // ofrece un turno simple Y dual a la vez (antes era un checkbox +
+  // selector separados, la contradicción real reportada en el caso
+  // 05-0870). El valor real se sigue leyendo/escribiendo en el submit.
+  $('#plan-shift-mode').addEventListener('change', (e) => {
+    $('#plan-effective-date-field').classList.toggle('hidden', e.target.value !== 'dual');
+  });
   wirePhotoThumbs($('#points-list'));
 
   $('#plan-form').addEventListener('submit', async (ev) => {
@@ -7332,13 +8712,33 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     const fd = new FormData(ev.target);
     const controlType = fd.get('controlType');
     const weekday = controlType === 'Día y turno de la semana';
+    const shiftMode = fd.get('shiftMode');
+    const dualShiftChosen = shiftMode === 'dual';
+    const effectiveDateRaw = String(fd.get('effectiveDate') || '');
+    // "Día + Noche" elegido SIN fecha efectiva es exactamente la
+    // contradicción real reportada (caso 05-0870): requiredShiftsForPlan()
+    // nunca activa el doble turno sin effectiveDate — el resumen seguiría
+    // mostrando un solo turno aunque el selector diga lo contrario. Se
+    // bloquea aquí, nunca se guarda ese estado a medias.
+    if (dualShiftChosen && !effectiveDateRaw) {
+      alert('"Día + Noche" necesita una fecha efectiva — sin eso, el plan sigue funcionando con un solo turno aunque el selector diga lo contrario.');
+      return;
+    }
+    // Turno simple elegido: shiftMode YA es el id real (shift_dia/shift_noche).
+    // Dual elegido: conserva el turno simple previo del plan como respaldo
+    // histórico (requiredShiftsForPlan() cae a él antes de effectiveDate) —
+    // nunca se inventa ni se borra; un plan nuevo sin turno propio todavía
+    // usa Día como valor por defecto, igual que el selector lo muestra.
+    const resolvedShiftId = dualShiftChosen ? (plan?.shiftId || 'shift_dia') : shiftMode;
     const obj = { controlType };
     if (weekday) {
       obj.assignedDays = fd.getAll('assignedDays');
-      obj.shiftId = fd.get('shiftId');
+      obj.shiftId = resolvedShiftId;
       obj.frequency = plan ? plan.frequency : 0;
       obj.lastGreaseHour = plan ? plan.lastGreaseHour : equipment.hourmeter;
       obj.alertYellowHours = plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours;
+      obj.requiredShifts = dualShiftChosen ? [...REQUIRED_SHIFT_IDS] : [];
+      obj.effectiveDate = effectiveDateRaw;
       if (equipment.shiftId !== obj.shiftId) {
         try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId: obj.shiftId }); }
         catch (error) {
@@ -7374,6 +8774,18 @@ async function openPlanForm(equipmentId, planId, lubricants) {
         if (!confirm(`El horómetro del último engrase (${fmt(obj.lastGreaseHour)} h) es MAYOR que el horómetro actual del equipo (${fmt(equipment.hourmeter)} h).\n\nEso haría que el equipo parezca al día cuando quizá no lo está. ¿Seguro que los datos son correctos?`)) return;
       }
       obj.assignedDays = plan ? plan.assignedDays : [];
+      obj.shiftId = resolvedShiftId;
+      obj.requiredShifts = dualShiftChosen ? [...REQUIRED_SHIFT_IDS] : [];
+      obj.effectiveDate = effectiveDateRaw;
+      if (equipment.shiftId !== obj.shiftId) {
+        try { await DB.queueCatalogOperation('SHIFT', equipment, { shiftId: obj.shiftId }); }
+        catch (error) {
+          alert(error.message === 'CATALOG_SYNC_REQUIRED'
+            ? 'Sincroniza los cambios pendientes del equipo antes de cambiar su turno.'
+            : 'No se pudo preparar el cambio de turno. Intenta sincronizar y volver a guardar.');
+          return;
+        }
+      }
     }
     if (!plan) plan = stamp({ id: uid('plan'), equipmentId, ...obj }, App.currentUser.name);
     else Object.assign(plan, obj);
@@ -7643,16 +9055,35 @@ function wireMatrizScrollHint(wrap, context) {
   if (context?.dias) wireMatrixOccurrenceDetails(wrap, context);
 }
 
-// Presentation only: the state and its execution date come from estadoCelda.
-// No occurrence matching, writes or scheduling decisions live in this card.
-function wireMatrixOccurrenceDetails(wrap, { equipos, plans, records, dias, hoy }) {
+// Presentation only: the state and its execution date come from
+// estadoCelda()/estadoCeldaPorFila(). No occurrence matching, writes or
+// scheduling decisions live in this card.
+//
+// `rowShiftId` (corrección 2026-10-18 — cierre Matriz Semanal): el turno
+// de ESTA tabla concreta (Día/Noche), nunca `null` cuando la tabla está
+// separada por turno — ya no hay mini-botones [data-matrix-shift] dentro
+// de una celda (un equipo de doble turno tiene su propia FILA en cada
+// tabla, ver tablaTurno()/delDia/deNoche en renderMatrizSemanal()). El
+// modal de solo lectura del Lubricador (openLubricadorMatrizModal) sigue
+// sin pasar `rowShiftId` — su tabla nunca se separó por turno, mismo
+// comportamiento de siempre (shiftId=null, estadoCelda() legacy).
+//
+// `row.dataset.equipmentId` identifica la fila por el `id` real del
+// equipo (Problema 4/trazabilidad), nunca por el texto visible de la
+// celda — evita cualquier ambigüedad si dos equipos comparten código o
+// shortCode. Las filas que no lo tengan (vistas antiguas que aún no
+// lo agregan) caen al parseo de texto anterior, sin romper nada.
+function wireMatrixOccurrenceDetails(wrap, { equipos, plans, records, dias, hoy, assignments = [], skips = [], rowShiftId = null }) {
   $$('tbody tr', wrap).forEach(row => {
-    const code = row.cells[0].textContent.trim().split(' / ')[0];
-    const equipment = equipos.find(e => e.code === code);
+    const equipment = row.dataset.equipmentId
+      ? equipos.find(e => e.id === row.dataset.equipmentId)
+      : equipos.find(e => e.code === row.cells[0].textContent.trim().split(' / ')[0]);
     if (!equipment) return;
     Array.from(row.cells).slice(1).forEach((cell, index) => {
       const date = dias[index];
-      const state = estadoCelda(equipment, date, plans, records, hoy);
+      const state = rowShiftId
+        ? estadoCeldaPorFila(equipment, date, plans, records, hoy, rowShiftId, assignments, skips)
+        : estadoCelda(equipment, date, plans, records, hoy, null, assignments, skips);
       cell.removeAttribute('title');
       if (state.tipo === 'vacio' || (state.tipo === 'pausado' && !state.status)) return;
       const labels = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE HOY', futuro: 'PROGRAMADO MÁS ADELANTE', pausado: 'PAUSADO' };
@@ -7661,7 +9092,7 @@ function wireMatrixOccurrenceDetails(wrap, { equipos, plans, records, dias, hoy 
       cell.setAttribute('role', 'button');
       cell.setAttribute('aria-haspopup', 'dialog');
       cell.setAttribute('aria-label', `Ver detalle de ${equipment.code}, ${date.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}, ${labels[state.tipo]}`);
-      const show = () => openMatrixOccurrenceCard(cell, { equipment, date, state, plans, records });
+      const show = () => openMatrixOccurrenceCard(cell, { equipment, date, state, plans, records, shiftId: rowShiftId });
       cell.addEventListener('click', show);
       cell.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); show(); }
@@ -7670,7 +9101,7 @@ function wireMatrixOccurrenceDetails(wrap, { equipos, plans, records, dias, hoy 
   });
 }
 
-async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans, records }) {
+async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans, records, shiftId = null }) {
   document.querySelector('.matrix-occurrence-overlay')?._close?.();
   const overlay = document.createElement('div');
   overlay.className = 'matrix-occurrence-overlay';
@@ -7704,17 +9135,17 @@ async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans,
     if (!overlay.isConnected) return;
     const plan = plans.find(p => p.equipmentId === equipment.id);
     // Exact pointer supplied by estadoCelda, including early satisfaction.
-    const record = state.fecha ? records.find(r => r.equipmentId === equipment.id && r.date === state.fecha) : null;
+    const record = state.fecha ? records.find(r => r.equipmentId === equipment.id && r.date === state.fecha && (!shiftId || r.shiftId === shiftId)) : null;
     const locationName = id => locations.find(l => l.id === id)?.name || '—';
     const shiftName = id => id === 'shift_dia' ? 'Día' : id === 'shift_noche' ? 'Noche' : '—';
     const field = (label, value) => `<div><dt>${esc(label)}</dt><dd>${esc(value ?? '—')}</dd></div>`;
-    const labels = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE HOY', futuro: 'PROGRAMADO MÁS ADELANTE', pausado: 'PAUSADO' };
+    const labels = { hecho: 'REALIZADO', hecho_atrasado: 'REALIZADO ATRASADO', hecho_adelantado: 'REALIZADO ADELANTADO', no_realizado: 'NO REALIZADO', pendiente: 'PENDIENTE HOY', parcial: 'PARCIAL', skip: 'NO EJECUTADO', asignado: 'ASIGNADO', futuro: 'PROGRAMADO MÁS ADELANTE', pausado: 'PAUSADO' };
     const scheduledISO = toISODateUTCLocal(date);
-    const key = plan ? computeOccurrenceKey(plan, { dateISO: scheduledISO }) : null;
+    const key = plan ? computeOccurrenceKey(plan, { dateISO: scheduledISO, shiftId }) : null;
     const skip = key ? skips.find(s => s.equipmentId === equipment.id && s.occurrenceKey === key) : null;
     const status = record ? validationStatusForRecord(record, validations, new Date(), App.generalSettings) : null;
     const activeSignatures = record ? findActiveValidations(record.id, validations) : [];
-    const canViewConflict = status === VALIDATION_STATUS.CONFLICTO && (PERMISSIONS[App.currentUser.role] || []).includes('historial');
+    const canViewConflict = status === VALIDATION_STATUS.CONFLICTO && getAllowedRoutes(App.currentUser.role).includes('historial');
     let canRegister = !record && ['pendiente', 'no_realizado'].includes(state.tipo) && ['LUBRICADOR', 'ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'].includes(App.currentUser.role);
     if (canRegister && ['LUBRICADOR', 'SUPERVISOR'].includes(App.currentUser.role)) {
       const scope = await getCurrentOperationalScope();
@@ -7726,7 +9157,7 @@ async function openMatrixOccurrenceCard(anchor, { equipment, date, state, plans,
     const executionLocation = record ? resolveRecordCrewLocationId(record).value : null;
     const crewId = record ? resolveRecordCrewId(record).value : null;
     card.innerHTML = `<header><div><h3 class="matrix-occurrence-title">${esc(equipment.code)}</h3><p>${esc(equipment.brand)} ${esc(equipment.model)}</p><span class="matrix-state ${anchor.className.split(' ').find(c => c.startsWith('celda-')) || ''}">${labels[state.tipo]}</span></div><button type="button" class="icon-btn" data-action="close" aria-label="Cerrar detalle">✕</button></header>
-      <div class="matrix-occurrence-content"><h4>PROGRAMACIÓN</h4><dl>${field('Fecha programada', fmtDateOnly(date))}${field('Día', WEEKDAY_NAMES[date.getDay()])}${field('Turno programado', shiftName(plan?.shiftId || equipment.shiftId))}${field('Tipo de plan', plan?.controlType)}${field('Ubicación maestra', locationName(equipment.locationId))}</dl>
+      <div class="matrix-occurrence-content"><h4>PROGRAMACIÓN</h4><dl>${field('Fecha programada', fmtDateOnly(date))}${field('Día', WEEKDAY_NAMES[date.getDay()])}${field('Turno programado', shiftName(shiftId || plan?.shiftId || equipment.shiftId))}${field('Tipo de plan', plan?.controlType)}${field('Ubicación maestra', locationName(equipment.locationId))}</dl>
       ${record ? `<h4>EJECUCIÓN</h4><dl>${field('Fecha real', fmtDateOnly(record.date))}${field('Hora', fmtTime(record.date))}${field('Turno ejecutado', shiftName(record.shiftId))}${field('Lubricador', record.userName)}${field('Cuadrilla', crews.find(c => c.id === crewId)?.name)}${field('Ubicación de ejecución', locationName(executionLocation))}${field('Tipo de ejecución', resolveRecordExecutionType(record).value)}${field('Resultado', resolveRecordCompleteness(record))}${field('Cantidad de grasa', `${fmt(record.qty, 1)} ${GREASE_UNIT}`)}</dl><h4>VALIDACIÓN</h4>${validationBadgeHTML(status)}${canViewConflict ? '<button type="button" class="btn" data-action="conflict">Ver conflicto</button>' : ''}` : ''}
       ${state.tipo === 'pausado' ? `<p>Equipo ${esc(state.status)}</p>` : ''}
       ${skip ? `<h4>NO EJECUTADO</h4><p>${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</p>${skip.observation ? `<p>${esc(skip.observation)}</p>` : ''}` : ''}
@@ -7760,6 +9191,8 @@ async function renderMatrizSemanal() {
   const equipos = await DB.allActive('equipment');
   const plans = await DB.allActive('lubrication_plans');
   const records = await DB.allActive('lubrication_records');
+  const assignments = await DB.allActive('lubrication_assignments');
+  const skips = await DB.allActive('lubrication_skips');
   const types = await DB.allActive('equipment_types');
   const locations = await DB.allActive('locations');
   // TODAS (no solo activas) — solo para el modal "Equipos sin plan" de abajo
@@ -7789,9 +9222,22 @@ async function renderMatrizSemanal() {
   const filtroTurno = App.matrizTurno || '';
   const filtroTipo = App.matrizTipo || '';
   const filtroUbic = App.matrizUbic || '';
+  const semanaInicioISO = `${dias[0].getFullYear()}-${String(dias[0].getMonth() + 1).padStart(2, '0')}-${String(dias[0].getDate()).padStart(2, '0')}`;
+  const semanaFinISO = `${dias[6].getFullYear()}-${String(dias[6].getMonth() + 1).padStart(2, '0')}-${String(dias[6].getDate()).padStart(2, '0')}`;
 
+  // Filtro "Turno" (dropdown): usa plan.shiftId (vía planAppliesToShiftInWeek,
+  // que ya cae a requiredShiftsForPlan()[0]), NUNCA equipment.shiftId —
+  // corrección 2026-10-18, misma clase de bug que el caso real 05-0870
+  // (equipment.shiftId puede divergir del turno real configurado en el
+  // plan). Solo cae a equipment.shiftId cuando el equipo NO tiene plan (no
+  // hay otra fuente posible — ese equipo termina en `sinPlan` de todos
+  // modos, nunca en una fila real de la matriz).
   let visibles = equipos.filter(e => {
-    if (filtroTurno && e.shiftId !== filtroTurno) return false;
+    const plan = plans.find(p => p.equipmentId === e.id);
+    if (filtroTurno) {
+      if (plan) { if (!planAppliesToShiftInWeek(plan, filtroTurno, semanaInicioISO, semanaFinISO)) return false; }
+      else if (e.shiftId !== filtroTurno) return false;
+    }
     if (filtroTipo && e.typeId !== filtroTipo) return false;
     if (filtroUbic && e.locationId !== filtroUbic) return false;
     return true;
@@ -7804,12 +9250,29 @@ async function renderMatrizSemanal() {
   // Solo equipos con plan por día/turno (los que tienen días asignados)
   visibles = visibles.filter(e => {
     const p = plans.find(pl => pl.equipmentId === e.id);
-    return p && p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length;
-  }).sort((a, b) => (a.shiftId || '').localeCompare(b.shiftId || '') || a.code.localeCompare(b.code));
+    const dualActiveInWeek = p?.requiredShifts?.includes('shift_dia') && p.requiredShifts.includes('shift_noche')
+      && !!p.effectiveDate && p.effectiveDate <= semanaFinISO;
+    return p && ((p.controlType === 'Día y turno de la semana' && (p.assignedDays || []).length) || dualActiveInWeek);
+  }).sort((a, b) => a.code.localeCompare(b.code));
 
-  // estadoCelda() se movió a src/core/weekly-matrix.js (lógica pura, sin DOM
-  // ni IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
+  // estadoCelda()/estadoCeldaPorFila()/planAppliesToShiftInWeek() se
+  // movieron a src/core/weekly-matrix.js (lógica pura, sin DOM ni
+  // IndexedDB) — ver docs/MODULARIZATION.md. Aquí solo se le pasan los
   // datos ya cargados (plans, records, hoy).
+  //
+  // Corrección 2026-10-18 (cierre Matriz Semanal) — ROOT CAUSE del
+  // "doble turno en mini-celdas": antes, qué fila pertenecía a la tabla
+  // Día vs. Noche se decidía por `equipment.shiftId` (un solo valor por
+  // equipo) — un equipo de doble turno SOLO podía caer en UNA de las dos
+  // tablas, así que sus dos ocurrencias (Día + Noche) se comprimían como
+  // mini-botones dentro de esa única celda. Ahora la pertenencia a cada
+  // tabla es POR PLAN (planAppliesToShiftInWeek()): si el doble turno
+  // está activo en algún punto de la semana visible, el equipo obtiene
+  // una fila en AMBAS tablas (dos ocurrencias reales, cada una en su
+  // propia matriz, nunca combinadas); si no, la fila va SOLO en la tabla
+  // de su turno único real (plan.shiftId, nunca equipment.shiftId).
+  const delDia = visibles.filter(e => planAppliesToShiftInWeek(plans.find(p => p.equipmentId === e.id), 'shift_dia', semanaInicioISO, semanaFinISO));
+  const deNoche = visibles.filter(e => planAppliesToShiftInWeek(plans.find(p => p.equipmentId === e.id), 'shift_noche', semanaInicioISO, semanaFinISO));
 
   // "Hecho" para efectos de cumplimiento incluye las 3 variantes reales de
   // trabajo completado (a tiempo, atrasado en otro turno, o adelantado por
@@ -7820,21 +9283,33 @@ async function renderMatrizSemanal() {
   const esTipoHecho = tipo => TIPOS_HECHO.includes(tipo);
 
   // Resumen por turno (D/N) para el subtítulo del header azul — SOLO reusa
-  // estadoCelda()/la MISMA fórmula de cumplimiento ya usada arriba (hechas/
-  // (hechas+no_realizado+pendiente)), aplicada al subconjunto de ese turno.
-  // No es un cálculo nuevo, es el mismo agregado con un `lista` distinto.
-  function resumenTurno(lista) {
-    const contarT = tipo => lista.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
-    const hechasT = lista.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
+  // estadoCeldaPorFila()/la MISMA fórmula de cumplimiento ya usada arriba
+  // (hechas/(hechas+no_realizado+pendiente)), aplicada al subconjunto de
+  // ESE turno con el turno de ESA tabla (`rowShiftId`) — nunca `null`
+  // genérico, para que un equipo de doble turno cuente su ocurrencia Día
+  // en la tabla Día y su ocurrencia Noche en la tabla Noche, nunca ambas
+  // mezcladas en el mismo subtítulo.
+  function resumenTurno(lista, rowShiftId) {
+    const contarT = tipo => lista.reduce((n, eq) => n + dias.filter(d => estadoCeldaPorFila(eq, d, plans, records, hoy, rowShiftId, assignments, skips).tipo === tipo).length, 0);
+    const hechasT = lista.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCeldaPorFila(eq, d, plans, records, hoy, rowShiftId, assignments, skips).tipo)).length, 0);
     const yaVencidasT = hechasT + contarT('no_realizado') + contarT('pendiente');
     return { equipos: lista.length, pct: yaVencidasT ? Math.round((hechasT / yaVencidasT) * 100) : 100 };
   }
 
-  const tablaTurno = (titulo, lista) => {
+  // Corrección 2026-10-18 — NUNCA mini-celdas Día/Noche dentro de una
+  // celda: cada tabla (`rowShiftId` fijo: 'shift_dia' o 'shift_noche')
+  // pinta UNA sola celda por día, con el estado de ESA ocurrencia
+  // (estadoCeldaPorFila(), weekly-matrix.js) — un equipo de doble turno ya
+  // tiene su propia FILA en la otra tabla (ver delDia/deNoche arriba), no
+  // una mini-celda aquí. `data-equipment-id` (en vez de volver a parsear
+  // el código desde el texto de la celda) es la misma identidad real que
+  // usa wireMatrixOccurrenceDetails() para encontrar el equipo exacto de
+  // cada fila — sin ambigüedad aunque dos equipos compartan código visual.
+  const tablaTurno = (titulo, lista, rowShiftId) => {
     if (!lista.length) return '';
-    const r = resumenTurno(lista);
+    const r = resumenTurno(lista, rowShiftId);
     return `
-      <div class="matriz-wrap">
+      <div class="matriz-wrap" data-matrix-row-shift="${rowShiftId}">
         <div class="matriz-scroll-hint matriz-scroll-hint-left" aria-hidden="true"></div>
         <div class="matriz-scroll-hint matriz-scroll-hint-right" aria-hidden="true"></div>
         <table class="matriz">
@@ -7850,12 +9325,12 @@ async function renderMatrizSemanal() {
           </thead>
           <tbody>
             ${lista.map(eq => `
-              <tr>
+              <tr data-equipment-id="${esc(eq.id)}">
                 <td class="matriz-eq mono">${esc(eq.code)}${eq.shortCode ? ` / ${esc(eq.shortCode)}` : ''}</td>
                 ${dias.map(d => {
                   const esHoy = d.toDateString() === hoy.toDateString();
                   const hoyCls = esHoy ? ' is-today' : '';
-                  const s = estadoCelda(eq, d, plans, records, hoy);
+                  const s = estadoCeldaPorFila(eq, d, plans, records, hoy, rowShiftId, assignments, skips);
                   if (s.tipo === 'hecho') return `<td class="celda-hecho${hoyCls}">REALIZADO</td>`;
                   // Corrección real (lote occurrences/carryover): estas dos celdas
                   // NUNCA se habían wireado aquí — caían al <td> en blanco del
@@ -7866,6 +9341,9 @@ async function renderMatrizSemanal() {
                   if (s.tipo === 'hecho_adelantado') return `<td class="celda-hecho-adelantado${hoyCls}">REALIZADO ADELANTADO</td>`;
                   if (s.tipo === 'no_realizado') return `<td class="celda-no-realizado${hoyCls}">NO REALIZADO</td>`;
                   if (s.tipo === 'pendiente') return `<td class="celda-pendiente${hoyCls}">PENDIENTE HOY</td>`;
+                  if (s.tipo === 'parcial') return `<td class="celda-parcial${hoyCls}">PARCIAL</td>`;
+                  if (s.tipo === 'skip') return `<td class="celda-skip${hoyCls}">NO EJECUTADO</td>`;
+                  if (s.tipo === 'asignado') return `<td class="celda-asignado${hoyCls}">ASIGNADO</td>`;
                   if (s.tipo === 'pausado') return `<td class="celda-pausado${hoyCls}">PAUSADO</td>`;
                   if (s.tipo === 'futuro') return `<td class="celda-futuro${hoyCls}"></td>`;
                   return `<td class="${hoyCls.trim()}"></td>`;
@@ -7876,13 +9354,21 @@ async function renderMatrizSemanal() {
       </div>`;
   };
 
-  const delDia = visibles.filter(e => e.shiftId === 'shift_dia');
-  const deNoche = visibles.filter(e => e.shiftId === 'shift_noche');
-
-  // Conteos de la semana visible
-  const contar = tipo => visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo === tipo).length, 0);
-  const totalCeldas = visibles.reduce((n, eq) => n + dias.filter(d => estadoCelda(eq, d, plans, records, hoy).tipo !== 'vacio').length, 0);
-  const hechas = visibles.reduce((n, eq) => n + dias.filter(d => esTipoHecho(estadoCelda(eq, d, plans, records, hoy).tipo)).length, 0);
+  // Métricas por OCCURRENCE, nunca por equipmentId (Problema 5): se
+  // construyen a partir de las MISMAS filas que se muestran en pantalla
+  // (delDia/deNoche, ya calculadas arriba) — un equipo de doble turno
+  // activo aporta DOS ocurrencias por día (una fila en cada tabla), un
+  // equipo de un solo turno aporta UNA. Nunca una fuente de verdad
+  // separada que pueda desalinearse de lo que el usuario ve en las dos
+  // tablas.
+  const filasParaConteo = [
+    ...delDia.map(eq => ({ eq, shiftId: 'shift_dia' })),
+    ...deNoche.map(eq => ({ eq, shiftId: 'shift_noche' })),
+  ];
+  const todosLosEstados = filasParaConteo.flatMap(({ eq, shiftId }) => dias.map(d => estadoCeldaPorFila(eq, d, plans, records, hoy, shiftId, assignments, skips)));
+  const contar = tipo => todosLosEstados.filter(state => state.tipo === tipo).length;
+  const totalCeldas = todosLosEstados.filter(state => state.tipo !== 'vacio').length;
+  const hechas = todosLosEstados.filter(state => esTipoHecho(state.tipo)).length;
   const noRealizadas = contar('no_realizado');
   const pendientes = contar('pendiente');
   const futuras = contar('futuro');
@@ -7890,7 +9376,9 @@ async function renderMatrizSemanal() {
   // El cumplimiento se mide solo sobre lo que YA debió hacerse (lo de más adelante en
   // la semana todavía no cuenta en contra). Antes lo futuro bajaba el porcentaje
   // injustamente: un lunes marcaba 17% aunque no se hubiera incumplido nada.
-  const yaVencidas = hechas + noRealizadas + pendientes;
+  const parciales = contar('parcial');
+  const omitidas = contar('skip');
+  const yaVencidas = hechas + noRealizadas + pendientes + parciales + omitidas;
   const pct = yaVencidas ? Math.round((hechas / yaVencidas) * 100) : 100;
 
   c.innerHTML = `
@@ -7944,8 +9432,8 @@ async function renderMatrizSemanal() {
     </button>` : ''}
 
     ${visibles.length ? `
-      ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia)}
-      ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche)}
+      ${tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia, 'shift_dia')}
+      ${tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche, 'shift_noche')}
       <div class="mtz-legend-toggle-row">
         <button type="button" class="btn btn-sm" id="mtz-legend-toggle" aria-expanded="false" aria-controls="mtz-legend">Ver leyenda <span class="mtz-toggle-chevron">▾</span></button>
       </div>
@@ -7984,7 +9472,7 @@ async function renderMatrizSemanal() {
   // deslizar a ciegas para encontrarla. Nunca toca el layout de la tabla
   // (sigue siendo tabla, sigue siendo scroll horizontal).
   $$('.matriz-wrap').forEach((wrap) => {
-    wireMatrizScrollHint(wrap, { equipos, plans, records, dias, hoy });
+    wireMatrizScrollHint(wrap, { equipos, plans, records, dias, hoy, assignments, skips, rowShiftId: wrap.dataset.matrixRowShift || null });
     const hoyTh = wrap.querySelector('th.is-today');
     if (hoyTh) hoyTh.scrollIntoView({ block: 'nearest', inline: 'center' });
   });
@@ -7992,8 +9480,8 @@ async function renderMatrizSemanal() {
   $('#mtz-print').addEventListener('click', () => {
     const win = window.open('', '_blank');
     if (!win) { alert('El navegador bloqueó la ventana de impresión. Permite las ventanas emergentes e intenta de nuevo.'); return; }
-    const tablas = (delDia.length ? tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia) : '') +
-                   (deNoche.length ? tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche) : '');
+    const tablas = (delDia.length ? tablaTurno('PLAN DE ENGRASE (TURNO DÍA)', delDia, 'shift_dia') : '') +
+                   (deNoche.length ? tablaTurno('PLAN DE ENGRASE (TURNO NOCHE)', deNoche, 'shift_noche') : '');
     win.document.write(`<!DOCTYPE html><html><head><title>Plan de engrase semanal</title><style>
       /* Los navegadores QUITAN los colores de fondo al imprimir para ahorrar tinta.
          Estas dos reglas los fuerzan — sin ellas la hoja sale en blanco y negro. */
@@ -8063,7 +9551,7 @@ async function renderMatrizSemanal() {
     merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: nCols - 1 } });
     filas.push([]);
 
-    const bloque = (titulo, lista) => {
+    const bloque = (titulo, lista, rowShiftId) => {
       if (!lista.length) return;
       const filaTitulo = filas.length;
       const fila = [celda(titulo, {
@@ -8094,7 +9582,7 @@ async function renderMatrizSemanal() {
           border: bordes
         })];
         dias.forEach(d => {
-          const s = estadoCelda(eq, d, plans, records, hoy);
+          const s = estadoCeldaPorFila(eq, d, plans, records, hoy, rowShiftId, assignments, skips);
           if (s.tipo === 'hecho') {
             fila.push(celda('REALIZADO', {
               font: { bold: true, italic: true, sz: 9, color: { rgb: 'FFFFFF' } },
@@ -8141,8 +9629,8 @@ async function renderMatrizSemanal() {
       filas.push([]);
     };
 
-    bloque('PLAN DE ENGRASE (TURNO DÍA)', delDia);
-    bloque('PLAN DE ENGRASE (TURNO NOCHE)', deNoche);
+    bloque('PLAN DE ENGRASE (TURNO DÍA)', delDia, 'shift_dia');
+    bloque('PLAN DE ENGRASE (TURNO NOCHE)', deNoche, 'shift_noche');
     filas.push([celda('Leyenda: verde = realizado · rojo = NO realizado (le tocaba y no se hizo) · naranja = pendiente o programado · vacío = no le corresponde ese día',
       { font: { sz: 9, color: { rgb: '666666' } } })]);
 
@@ -8335,13 +9823,24 @@ function irAMisEngrasesTrasRegistrar() {
 }
 
 async function startGreaseFlow(equipmentId, target, options) {
-  const outOfPlan = !!(options && options.outOfPlan);
+  const operationScope=await getCurrentOperationalScope();
+  const pendingAssignments=(await DB.allActive('lubrication_assignments')).filter(a=>a.active!==false && a.status==='PENDING'
+    && a.equipmentId===equipmentId && (operationScope.kind==='GLOBAL' || a.assignedCrewId===operationScope.crewId));
+  const selectedAssignment=options?.assignmentId ? pendingAssignments.find(a=>a.id===options.assignmentId)
+    : pendingAssignments.length===1 ? pendingAssignments[0] : null;
+  if (options?.assignmentId && !selectedAssignment) { showInAppToast('La asignación ya no está disponible. Sincroniza para revisar su estado.'); return; }
+  if (pendingAssignments.length>1 && !selectedAssignment) {
+    openModal('Selecciona la asignación',pendingAssignments.map(a=>'<button class="btn support-assignment" data-assignment="'+esc(a.id)+'">'+esc(a.occurrenceKey)+'</button>').join(''));
+    $$('.support-assignment').forEach(button=>button.addEventListener('click',()=>{closeModal();startGreaseFlow(equipmentId,target,{...options,assignmentId:button.dataset.assignment});}));
+    return;
+  }
+  const outOfPlan = !selectedAssignment && !!(options && options.outOfPlan);
   trackRecentEquipment(equipmentId);
   const equipment = await DB.get('equipment', equipmentId);
   // Estado ANTES de engrasar: sirve para saber si el equipo venía vencido, dato que usa
   // el aviso de "solo avisar de engrases críticos".
   const estadoPrevio = (await statusFor(equipment)).code;
-  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId);
+  const plan = (await DB.allActive('lubrication_plans')).find(p => p.equipmentId === equipmentId && (!selectedAssignment || p.id===selectedAssignment.planId));
   const points = plan ? (await DB.allActive('lubrication_points')).filter(p => p.planId === plan.id) : [];
   const lubricants = await DB.allActive('lubricants');
   // Solo Planificador y Administrador pueden capturar un engrase con fecha pasada
@@ -8374,10 +9873,10 @@ async function startGreaseFlow(equipmentId, target, options) {
   // engrase se guarda igual y plan-compliance.js ya lo cuenta como
   // 'realizado_atrasado', no como incumplimiento).
   const todayISOReg = todayDateISO();
-  const occurrenceKeyHoy = plan ? computeOccurrenceKey(plan, { dateISO: todayISOReg }) : null;
-  const skipsActivosReg = await DB.allActive('lubrication_skips');
-  const carriedOverSkip = occurrenceKeyHoy ? findCarriedOverSkipForToday(skipsActivosReg, { equipmentId, dateISO: todayISOReg }) : null;
   const turnoActualReg = currentShiftId();
+  const occurrenceKeyHoy = selectedAssignment?.occurrenceKey || (plan ? equipoOccurrenceKey(equipment, { [equipment.id]: plan }) : null);
+  const skipsActivosReg = await DB.allActive('lubrication_skips');
+  const carriedOverSkip = occurrenceKeyHoy ? findCarriedOverSkipForToday(skipsActivosReg, { equipmentId, dateISO: todayISOReg, occurrenceKey: occurrenceKeyHoy }) : null;
   const turnoProgramadoReg = plan && plan.shiftId ? plan.shiftId : null;
   const turnoDistintoReg = !!(turnoProgramadoReg && turnoProgramadoReg !== turnoActualReg);
   const shiftLabel = (s) => s === 'shift_dia' ? 'Día' : 'Noche';
@@ -8391,7 +9890,7 @@ async function startGreaseFlow(equipmentId, target, options) {
   const ubicacionReg = equipment.locationId ? (await DB.get('locations', equipment.locationId)) : null;
   const assignmentsActivosReg = await DB.allActive('lubrication_assignments');
   const trabajoReg = findExistingWorkForEquipment({
-    plan, assignments: assignmentsActivosReg, statusCode: estadoPrevio, todayDate: new Date()
+    plan, assignments: assignmentsActivosReg, statusCode: estadoPrevio, todayDate: new Date(), shiftId: turnoActualReg
   });
   const TIPO_TRABAJO_LABELS = { ASSIGNED: 'Asignado', PLANNED: 'Planificado', NONE: plan ? 'Sin ocurrencia hoy' : 'Sin plan' };
   const tipoTrabajoLabelReg = outOfPlan ? 'Fuera de plan' : TIPO_TRABAJO_LABELS[trabajoReg.kind];
@@ -8834,6 +10333,23 @@ async function startGreaseFlow(equipmentId, target, options) {
       $('.btn-grease-submit').disabled = true;
       try {
       const fd = Object.fromEntries(new FormData(ev.target).entries());
+      // Un formulario abierto antes del cambio de turno/sync conserva la
+      // tarea original, pero no puede recrear un trabajo ya completado.
+      if (selectedAssignment) {
+        const fresh = (await DB.allActive('lubrication_assignments')).find(a => a.id === selectedAssignment.id);
+        const duplicate = (await DB.allActive('lubrication_records')).some(r => {
+          const snap = r.operationalSnapshot || {};
+          const key = snap.assignedOccurrenceKey || snap.satisfiedOccurrenceKey || snap.occurrenceKey;
+          return r.equipmentId === equipment.id && key === selectedAssignment.occurrenceKey
+            && snap.executionCompleteness !== 'PARTIAL'
+            && computeExecutionCompleteness(r.details) === 'COMPLETE' && Number(r.qty) > 0;
+        });
+        if (!fresh || fresh.status !== 'PENDING' || fresh.occurrenceKey !== selectedAssignment.occurrenceKey
+            || fresh.assignedCrewId !== selectedAssignment.assignedCrewId || duplicate) {
+          showInAppToast('La tarea ya fue realizada o cambió. Revisa el registro existente y su validación.');
+          return;
+        }
+      }
       const newHourmeter = parseFloat(fd.hourmeter);
       const marcadoRetro = !!$('#retro-check')?.checked && fd.retroDate;
       // Equipo SIN horómetro (o dañado/ilegible): el engrase se registra igual, sin
@@ -8924,7 +10440,15 @@ async function startGreaseFlow(equipmentId, target, options) {
       // engrase, no la de hoy (que es cuando se está capturando) — solo
       // importa para planes "Día y turno de la semana" (los de "Horas de
       // operación" no usan dateISO, ver computeOccurrenceKey()).
-      const occurrenceKeyDeEsteEngrase = plan ? computeOccurrenceKey(plan, { dateISO: esRetro ? fechaRegistro.slice(0, 10) : todayDateISO() }) : null;
+      const calendarDateDeEsteEngrase = esRetro ? fechaRegistro.slice(0, 10) : todayDateISO();
+      const dualShiftConfiguredDeEsteEngrase = !!(plan && Array.isArray(plan.requiredShifts)
+        && REQUIRED_SHIFT_IDS.every(id => plan.requiredShifts.includes(id))
+        && plan.effectiveDate);
+      const candidateOperationalDate = dualShiftConfiguredDeEsteEngrase
+        ? operationalDateForShift(fechaRegistro, turnoRegistro, App.generalSettings) : calendarDateDeEsteEngrase;
+      const dualShiftActiveDeEsteEngrase = dualShiftConfiguredDeEsteEngrase && candidateOperationalDate >= plan.effectiveDate;
+      const operationalDateDeEsteEngrase = dualShiftActiveDeEsteEngrase ? candidateOperationalDate : calendarDateDeEsteEngrase;
+      const occurrenceKeyDeEsteEngrase = selectedAssignment?.occurrenceKey || (plan ? computeOccurrenceKey(plan, { dateISO: operationalDateDeEsteEngrase, shiftId: turnoRegistro }) : null);
       const asignacionActivaDeEsteEngrase = occurrenceKeyDeEsteEngrase
         ? findActivePendingAssignment(await DB.allActive('lubrication_assignments'), occurrenceKeyDeEsteEngrase)
         : null;
@@ -8968,10 +10492,11 @@ async function startGreaseFlow(equipmentId, target, options) {
       // ese caso). completeGreaseAssignmentForOccurrence()/el avance normal
       // de plan.lastGreaseHour (más abajo) siguen sin cambios — esto solo
       // certifica una ocurrencia DISTINTA (la de mañana), nunca la de hoy.
-      const satisfiedOccurrenceKeyDeEsteEngrase = resolveEarlyOccurrenceSatisfaction({
+      const satisfiedOccurrenceKeyDeEsteEngrase = selectedAssignment ? (completenessDeEsteEngrase==='COMPLETE' ? selectedAssignment.occurrenceKey : null) : resolveEarlyOccurrenceSatisfaction({
         plan, completeness: completenessDeEsteEngrase,
         existingRecords: await DB.allActive('lubrication_records'),
-        todayDate: esRetro ? new Date(fechaRegistro) : new Date()
+        todayDate: esRetro ? new Date(fechaRegistro) : new Date(),
+        shiftId: turnoRegistro
       });
 
       const operationalSnapshot = buildExecutionSnapshot({
@@ -8984,9 +10509,12 @@ async function startGreaseFlow(equipmentId, target, options) {
         executionType: executionTypeDeEsteEngrase,
         outOfPlanReason: executionTypeDeEsteEngrase === 'OUT_OF_PLAN' ? (fd.outOfPlanReason || 'OTRO') : null,
         executionCompleteness: completenessDeEsteEngrase,
-        satisfiedOccurrenceKey: satisfiedOccurrenceKeyDeEsteEngrase
+        satisfiedOccurrenceKey: satisfiedOccurrenceKeyDeEsteEngrase,
+        occurrenceKey: occurrenceKeyDeEsteEngrase,
+        operationalDate: operationalDateDeEsteEngrase
       });
 
+      if (selectedAssignment) { operationalSnapshot.assignedOccurrenceKey=selectedAssignment.occurrenceKey; operationalSnapshot.executedAt=fechaRegistro; }
       const record = stamp({
         id: uid('greg'), equipmentId: equipment.id, planId: plan ? plan.id : null,
         date: fechaRegistro, shiftId: turnoRegistro, hourmeter: sinHorometro ? equipment.hourmeter : newHourmeter,
@@ -9016,15 +10544,15 @@ async function startGreaseFlow(equipmentId, target, options) {
           if (!esRetro || newHourmeter > equipment.hourmeter) {
             equipmentAfter = stamp({ ...equipment, hourmeter: newHourmeter }, App.currentUser.name);
           }
-          if (plan && canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })) {
+          if (plan && (!selectedAssignment || selectedAssignment.occurrenceKey===computeOccurrenceKey(plan,{dateISO:operationalDateDeEsteEngrase,shiftId:turnoRegistro})) && !dualShiftActiveDeEsteEngrase && canAdvanceHourCycle({ controlType: plan.controlType, completeness: completenessDeEsteEngrase })) {
             planAfter = stamp({ ...plan, lastGreaseHour: newHourmeter }, App.currentUser.name);
           }
-        } else if (sinHorometro && plan && plan.controlType === 'Horas de operación') {
+        } else if (sinHorometro && plan && (!selectedAssignment || selectedAssignment.occurrenceKey===computeOccurrenceKey(plan,{dateISO:operationalDateDeEsteEngrase,shiftId:turnoRegistro})) && !dualShiftActiveDeEsteEngrase && plan.controlType === 'Horas de operación') {
           planAfter = stamp({ ...plan, lastGreaseDateNoHm: fechaRegistro }, App.currentUser.name);
         }
-        const assignmentAfter = asignacionActivaDeEsteEngrase
+        const assignmentAfter = asignacionActivaDeEsteEngrase && completenessDeEsteEngrase==='COMPLETE'
           ? stamp(completeAssignmentIfPending([asignacionActivaDeEsteEngrase], {
-              occurrenceKey: occurrenceKeyDeEsteEngrase, recordId: record.id, now: nowISO()
+              occurrenceKey: occurrenceKeyDeEsteEngrase, recordId: record.id, now: nowISO(), completeness: completenessDeEsteEngrase
             }), App.currentUser.name) : null;
         const scope = await getCurrentOperationalScope();
         await queueLubricationExecution({ action: 'CREATE', record,
@@ -9230,8 +10758,16 @@ async function handleHourmeterExcelImport(file, equipos) {
 async function renderAnomalias() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
+  const run = (App._anomalyRenderGen = (App._anomalyRenderGen || 0) + 1);
+  const route = App.route, actorId = App.currentUser.id;
+  const isStaleRun = () => App._anomalyRenderGen !== run || App.route !== route
+    || App.currentUser?.id !== actorId || !c.isConnected || $('#app-content') !== c;
+  let drawGeneration = 0;
+  try {
   const anomalies = (await DB.allActive('anomalies')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  if (isStaleRun()) return;
   const equipos = await DB.allActive('equipment');
+  if (isStaleRun()) return;
 
   c.innerHTML = `
     <div class="layout-wide">
@@ -9252,12 +10788,20 @@ async function renderAnomalias() {
 
 
   async function draw(filter = '') {
+    if (isStaleRun()) return;
+    const drawRun = ++drawGeneration;
+    const table = c.querySelector('#anom-table');
+    const isStaleDraw = () => isStaleRun() || drawGeneration !== drawRun
+      || !table?.isConnected || c.querySelector('#anom-table') !== table;
     const rows = anomalies.filter(a => !filter || a.status === filter);
     // Gap de Storage privado cerrado (ver docs/STORAGE_PRIVACY_DESIGN.md
     // §7): las fotos de anomalías pueden venir de otro dispositivo — se
     // resuelven todas en paralelo antes de armar la tabla.
-    const photoSrcs = await Promise.all(rows.map(a => resolvePhotoThumbSrcs(a)));
-    $('#anom-table tbody').innerHTML = rows.map((a, i) => {
+    let photoSrcs;
+    try { photoSrcs = await Promise.all(rows.map(a => resolvePhotoThumbSrcs(a))); }
+    catch (error) { if (isStaleDraw()) return; throw error; }
+    if (isStaleDraw()) return;
+    table.querySelector('tbody').innerHTML = rows.map((a, i) => {
       const eq = equipos.find(e => e.id === a.equipmentId);
       return `<tr>
         <td><span class="dot" style="background:${CRIT_COLOR[a.criticality]}"></span> ${esc(a.criticality)}</td>
@@ -9277,8 +10821,8 @@ async function renderAnomalias() {
         </td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty-state">Sin anomalías registradas.</td></tr>';
-    wirePhotoThumbs($('#anom-table'));
-    makeTablesResponsive($('#anom-table').closest('.panel'));
+    wirePhotoThumbs(table);
+    makeTablesResponsive(table.closest('.panel'));
 
     $$('.anom-edit', c).forEach(b => b.addEventListener('click', async () => {
       openAnomalyForm(null, null, await DB.get('anomalies', b.dataset.id));
@@ -9309,9 +10853,13 @@ async function renderAnomalias() {
       renderAnomalias();
     }));
   }
-  draw();
   $('#anom-filter').addEventListener('change', (e) => draw(e.target.value));
   $('#btn-new-anom').addEventListener('click', () => openAnomalyForm());
+  await draw();
+  } catch (error) {
+    if (isStaleRun()) return;
+    throw error;
+  }
 }
 
 /* ---------- Anomalías automáticas por puntos no engrasados ----------
@@ -9405,15 +10953,17 @@ async function openAnomalyForm(equipmentId, equipmentLabel, existing) {
     const before = existing ? structuredClone(existing) : null;
     if (existing) fd.equipmentId = existing.equipmentId;
     const selectedEquipment = equipos.find(e => e.id === fd.equipmentId);
-    if (!canLubricadorExecuteEquipment({ scope, equipo: selectedEquipment })) {
+    if (!(existing && await DB.get('anomalies',existing.id)) && !canLubricadorExecuteEquipment({ scope, equipo: selectedEquipment, assignments: await DB.allActive('lubrication_assignments') })) {
       showInAppToast('El equipo está fuera de tu cobertura autorizada.'); return;
     }
     delete fd.photo;
     const newPhotos = await getSelectedPhotos(ev.target);
     fd.photos = newPhotos;
     fd.photo = newPhotos[0] || null; // compatibilidad con registros viejos
+    const supportAssignments=(await DB.allActive('lubrication_assignments')).filter(a=>a._supportOperational && a.equipmentId===selectedEquipment.id && a.assignedCrewId===scope.crewId && a.status==='PENDING');
+    if (!existing && supportAssignments.length>1) { showInAppToast('Registra la anomalía desde la ejecución de la asignación correspondiente.'); return; }
     const anomaly = existing ? { ...existing, ...fd } : stamp({ id: uid('anom'), status: 'Abierta',
-      capturedByUserId: actor.id, crewId: scope.crewId || null, ...fd }, actor.name);
+      capturedByUserId: actor.id, crewId: scope.crewId || null, supportAssignmentId:supportAssignments[0]?.id || null, ...fd }, actor.name);
     await queueAnomalyOperation(existing ? 'EDIT' : 'REPORT', stamp(anomaly, actor.name), before, null, scope.crewId);
     await logAudit(existing ? 'ANOMALIA_EDITADA' : 'ANOMALIA_CREADA', anomaly.component, App.currentUser.name);
     showInAppToast(existing ? '✓ Anomalía actualizada' : '✓ Anomalía reportada');
@@ -10180,7 +11730,7 @@ async function drawHistory(equipmentId) {
               // docs/GREASE_VALIDATION_AUDIT.md §14. Vencida (ya pasó el plazo de
               // MAX_VALIDATION_SHIFTS turnos): tampoco se ofrece "Validar" — no se
               // crea firma retroactiva normal desde Historial.
-              const valAction = valStatus === VALIDATION_STATUS.HISTORICO || valStatus === VALIDATION_STATUS.VENCIDA ? '' :
+              const valAction = valStatus === VALIDATION_STATUS.HISTORICO ? '' :
                 activasEsteRegistro.length === 0
                 ? `<button type="button" class="btn btn-sm hist-validar-btn" data-rec="${r.id}">Validar</button>`
                 : activasEsteRegistro.length === 1
@@ -11036,9 +12586,13 @@ async function renderReportes() {
     // (nunca fabrica un porcentaje falso como si fuera un dato real).
     const sujetos = records.filter(r => isRecordSubjectToValidation(r.date));
     if (!sujetos.length) {
+      // LUB-10 (auditoría pre-release 2026-10-21): el mensaje al usuario ya
+      // no menciona el nombre de la variable ni la ruta de doc interna —
+      // el detalle técnico (GREASE_VALIDATION_ENABLED_FROM, ver
+      // docs/GREASE_VALIDATION_AUDIT.md §14) queda solo en este comentario.
       area.innerHTML = GREASE_VALIDATION_ENABLED_FROM
         ? '<div class="empty-state">Ningún registro del período está sujeto a validación.</div>'
-        : '<div class="empty-state">Validación pendiente de activación — todavía no se definió la fecha/hora desde la cual un engrase queda sujeto a validación (GREASE_VALIDATION_ENABLED_FROM). Ver docs/GREASE_VALIDATION_AUDIT.md.</div>';
+        : '<div class="empty-state">Este reporte solo incluye validaciones registradas desde la fecha configurada para el sistema. Esa fecha todavía no ha sido definida.</div>';
       return;
     }
     // Mismas funciones centrales que Dashboard/Historial/Mis Engrases (no se
@@ -11943,8 +13497,16 @@ function downloadCSV(rows, filename) {
 /* ============================================================
    USUARIOS
    ============================================================ */
-async function renderUsuarios() {
-  const c = $('#app-content');
+// `container` (cierre bloque Configuración, 2026-10-18): por defecto
+// `$('#app-content')` — la pantalla completa de siempre, ruta 'usuarios'
+// (navigate()) — pero también puede ser un contenedor más chico, cuando
+// Configuración > Usuarios y accesos la embebe dentro de su propio tab
+// (ver renderConfig()). MISMA función, MISMOS datos/wiring, nunca una
+// reimplementación: todo el re-render interno (userForm, desactivar) usa
+// `c` consistentemente, así que refrescar después de Guardar nunca
+// reemplaza más que el contenedor que de verdad le corresponde.
+async function renderUsuarios(container) {
+  const c = container || $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
   // AUTH_MODE='supabase': pantalla completamente distinta (administra
   // personas reales vía la Edge Function manage-users, nunca el store
@@ -11988,7 +13550,10 @@ async function renderUsuarios() {
       <form id="user-form" class="form-grid">
         <label>Nombre completo<input required name="name" value="${esc(u.name)}"/></label>
         <label>Usuario<input required name="username" value="${esc(u.username)}"/></label>
-        <label>PIN (4 dígitos)<input required name="pin" maxlength="4" pattern="\\d{4}" value="${u.pin}"/></label>
+        <label>PIN (4 dígitos)
+          <input ${existing ? '' : 'required'} name="pin" maxlength="4" pattern="\\d{4}" value="" placeholder="${existing ? '••••' : ''}"/>
+          ${existing ? '<span class="field-hint">Dejar vacío para conservar el PIN actual.</span>' : ''}
+        </label>
         <label>Rol
           ${lockRoleToLubricador
             ? `<input type="text" disabled value="LUBRICADOR"/><input type="hidden" name="role" value="LUBRICADOR"/>`
@@ -12021,12 +13586,15 @@ async function renderUsuarios() {
     $('#user-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const fd = Object.fromEntries(new FormData(ev.target).entries());
+      // S2 (auditoría pre-release 2026-10-21): el PIN ya no se precarga en
+      // el formulario — vacío significa "sin cambios", nunca "borrar PIN".
+      if (existing && !fd.pin) delete fd.pin;
       const obj = existing ? Object.assign(existing, fd) : { id: uid('u'), ...fd, active: true };
       await DB.put('users', stamp(obj, App.currentUser.name));
       await logAudit(existing ? 'USUARIO_EDITADO' : 'USUARIO_CREADO', fd.username, App.currentUser.name);
       showInAppToast(existing ? '✓ Usuario actualizado' : '✓ Usuario creado');
       closeModal();
-      renderUsuarios();
+      renderUsuarios(c);
     });
   }
 
@@ -12040,11 +13608,24 @@ async function renderUsuarios() {
   $$('button[data-deactivate]', c).forEach(b => b.addEventListener('click', async () => {
     const u = await DB.get('users', b.dataset.deactivate);
     if (isSupervisor && u.role !== 'LUBRICADOR') return;
-    u.active = false;
-    await DB.put('users', stamp(u, App.currentUser.name));
-    await logAudit('USUARIO_DESACTIVADO', u.username, App.currentUser.name);
-    showInAppToast('✓ Usuario desactivado');
-    renderUsuarios();
+    // S1 (auditoría pre-release 2026-10-21): desactivar una cuenta real no
+    // debe quedar a un solo clic sin deshacer, igual que "Eliminar equipos".
+    openModal(`¿Desactivar a ${esc(u.name)}?`, `
+      <p>No podrá acceder al sistema hasta que sea reactivado.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="confirm-deactivate-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="confirm-deactivate-confirm">Desactivar</button>
+      </div>
+    `);
+    $('#confirm-deactivate-cancel').addEventListener('click', closeModal);
+    $('#confirm-deactivate-confirm').addEventListener('click', async () => {
+      closeModal();
+      u.active = false;
+      await DB.put('users', stamp(u, App.currentUser.name));
+      await logAudit('USUARIO_DESACTIVADO', u.username, App.currentUser.name);
+      showInAppToast('✓ Usuario desactivado');
+      renderUsuarios(c);
+    });
   }));
 }
 
@@ -12151,13 +13732,28 @@ async function renderUsuariosSupabase(c) {
     const u = users.find(x => x.app_user_id === b.dataset.role);
     if (u) roleFormSupabase(u, c);
   }));
-  $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', async () => {
+  $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', () => {
     const activeNow = b.dataset.active === 'true';
-    try {
-      await Auth.manageUsers('SET_ACTIVE', { app_user_id: b.dataset.toggle, active: !activeNow });
-      showInAppToast(activeNow ? '✓ Usuario desactivado' : '✓ Usuario activado');
-      renderUsuariosSupabase(c);
-    } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    async function doToggle() {
+      try {
+        await Auth.manageUsers('SET_ACTIVE', { app_user_id: b.dataset.toggle, active: !activeNow });
+        showInAppToast(activeNow ? '✓ Usuario desactivado' : '✓ Usuario activado');
+        renderUsuariosSupabase(c);
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+    }
+    // S1 (auditoría pre-release 2026-10-21): solo la dirección destructiva
+    // (desactivar) pide confirmación — reactivar no la necesita.
+    if (!activeNow) { doToggle(); return; }
+    const u = users.find(x => x.app_user_id === b.dataset.toggle);
+    openModal(`¿Desactivar a ${esc(u ? u.display_name : 'este usuario')}?`, `
+      <p>No podrá acceder al sistema hasta que sea reactivado.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="confirm-toggle-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="confirm-toggle-confirm">Desactivar</button>
+      </div>
+    `);
+    $('#confirm-toggle-cancel').addEventListener('click', closeModal);
+    $('#confirm-toggle-confirm').addEventListener('click', () => { closeModal(); doToggle(); });
   }));
   $$('button[data-reset]', c).forEach(b => b.addEventListener('click', () => resetPasswordFormSupabase(b.dataset.reset)));
 }
@@ -12462,7 +14058,15 @@ const DEFAULT_FAQ = [
   { id: 'faq1', question: '¿Qué significa cada color del semáforo?', answer: '🟢 Verde: al día. 🟡 Amarillo: próximo a vencer (o programado para hoy en equipos con control por día/turno). 🔴 Rojo: vencido, requiere atención. ⚪ Gris: equipo detenido o sin plan configurado.' },
   { id: 'faq2', question: '¿Qué hago si un punto de engrase no se puede lubricar?', answer: 'En el checklist, desmarca el punto y selecciona el motivo (grasera dañada, punto inaccesible, etc.). Queda registrado para que mantenimiento le dé seguimiento.' },
   { id: 'faq3', question: '¿Cuándo uso control "por horas" y cuándo "por día y turno"?', answer: 'Usa horas cuando el equipo tiene horómetro y se actualiza seguido. Usa "Día y turno de la semana" cuando no se registra horómetro a diario — el plan de la Mina Volcán es un ejemplo de esto.' },
-  { id: 'faq4', question: '¿La app funciona sin internet?', answer: 'Sí. Todo se guarda primero en el celular y se sincroniza solo cuando hay conexión.' }
+  { id: 'faq4', question: '¿La app funciona sin internet?', answer: 'Sí. Todo se guarda primero en el celular y se sincroniza solo cuando hay conexión.' },
+  // ONB-01 (auditoría pre-release 2026-10-21): términos que un Lubricador
+  // nuevo ve todos los días (Pendiente/Seguimiento/Historial) y dos
+  // estados de sincronización que antes solo se explicaban con el título
+  // del badge — ahora también en Ayuda, en una frase.
+  { id: 'faq5', question: '¿Qué significa "Pendiente"?', answer: 'Trabajo programado que todavía no se ha completado.' },
+  { id: 'faq6', question: '¿Qué significa "Seguimiento"?', answer: 'Equipo o engrase que requiere atención por tiempo, estado o validación pendiente.' },
+  { id: 'faq7', question: '¿Qué es el Historial?', answer: 'Los registros de engrase que ya realizaste, para consultarlos cuando los necesites.' },
+  { id: 'faq8', question: '¿Qué significa "Sincronizado con advertencia"?', answer: 'El ciclo de sincronización terminó, pero hay uno o más cambios que requieren revisión — tus datos no se perdieron.' }
 ];
 
 // Los puntos pueden venir como texto plano (formato viejo) o como {text, photo}
@@ -12536,6 +14140,7 @@ async function renderAyuda() {
 
   c.innerHTML = `
     <div class="ayuda-page">
+      ${App.currentUser.role === 'LUBRICADOR' ? '<button type="button" class="btn" id="lub-help-back-config">← Volver a Configuración</button>' : ''}
       <div class="panel">
         <div class="panel-head"><h3>Ayuda y soporte</h3></div>
         <div class="dim" style="padding:0 14px 14px">Consulta rápidamente cómo interpretar estados, registrar incidencias y trabajar sin conexión.</div>
@@ -12568,6 +14173,7 @@ async function renderAyuda() {
       </div>` : ''}
     </div>`;
   wirePhotoThumbs(c);
+  $('#lub-help-back-config')?.addEventListener('click', () => navigate('lubconfig'));
 
   $$('.ayuda-family-chip', c).forEach(chip => {
     chip.addEventListener('click', () => {
@@ -12894,11 +14500,14 @@ function wireSimpleListPanel(container, store, onChange) {
 
 /* ---------- Cuadrillas: panel dedicado (Configuración) ----------
    Distinto del genérico simpleListPanelHTML (solo nombre+activo): cada
-   cuadrilla tiene además `locationId` y `isDefault` (§C/§K del pedido) —
-   máximo una cuadrilla `isDefault:true` por ubicación, la que recibe el
-   trabajo normal (ver resolveDefaultCrewForLocation() en
-   operational-scope.js). Cambiar la ubicación de una cuadrilla queda en
-   auditoría (CREW_LOCATION_CHANGED).
+   cuadrilla tiene además `locationId`/`isDefault` legacy (§C/§K del
+   pedido original) — hoy solo sirven de fallback cuando una cuadrilla
+   todavía no tiene filas en `crew_locations` (ver
+   resolveCrewLocationCoverage()/resolveDefaultCrewForLocation() en
+   operational-scope.js). "Editar cuadrilla" (abajo) YA NO los expone:
+   ubicación(es)/PRINCIPAL/APOYO se administran solo desde "Cobertura"
+   (crew-coverage-form), que es la única fuente visual — evita la
+   duplicación de dos pantallas para lo mismo (auditoría 2026-10-18).
 
    `memberUserIds` (corrección arquitectónica 2026-10-02): reemplaza la
    vieja asignación cuadrilla<->dispositivo — la cuadrilla ahora autoriza
@@ -12914,7 +14523,7 @@ async function cuadrillasPanelHTML() {
   return `
     <div class="panel" data-cuadrillas-panel>
       <div class="panel-head"><h3>Cuadrillas de lubricación</h3></div>
-      <div class="dim" style="padding:0 14px 10px">Cobertura: PRINCIPAL recibe el trabajo programado; APOYO permite trabajo fuera de plan y asignaciones. Una cuadrilla puede ser principal en varias ubicaciones. Editar conserva la ubicación legacy; Cobertura administra las autorizaciones actuales. Los miembros autorizados pueden trabajar desde cualquier dispositivo.</div>
+      <div class="dim" style="padding:0 14px 10px">Cobertura: PRINCIPAL recibe el trabajo programado; APOYO permite trabajo fuera de plan y asignaciones. Una cuadrilla puede ser principal en varias ubicaciones. Editar administra solo nombre y miembros; ubicación(es) y rol se administran únicamente desde "Cobertura". Los miembros autorizados pueden trabajar desde cualquier dispositivo.</div>
       <table class="data-table">
         <thead><tr><th>Nombre</th><th>Ubicación</th><th>Rol</th><th>Miembros autorizados</th><th></th></tr></thead>
         <tbody>
@@ -12984,7 +14593,6 @@ function wireCuadrillasPanel(container, onChange) {
   }));
 
   async function openCuadrillaForm(cuadrilla) {
-    const locations = await DB.allActive('locations');
     const memberIdsActuales = (cuadrilla && cuadrilla.memberUserIds) || [];
 
     // Miembros autorizados: requiere la lista real de usuarios Auth
@@ -13015,62 +14623,34 @@ function wireCuadrillasPanel(container, onChange) {
     openModal(cuadrilla ? `Editar ${esc(cuadrilla.name)}` : 'Nueva cuadrilla', `
       <form id="cq-form">
         <label>Nombre<input required name="name" value="${cuadrilla ? esc(cuadrilla.name) : ''}"/></label>
-        <label>Ubicación
-          <select name="locationId">
-            <option value="">— Sin ubicación —</option>
-            ${locations.map(l => `<option value="${l.id}" ${cuadrilla && cuadrilla.locationId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="check-row" style="margin-top:8px">
-          <input type="checkbox" class="chk-done" name="isDefault" ${cuadrilla && cuadrilla.isDefault ? 'checked' : ''}/>
-          <span class="check-row-text">Cuadrilla principal de esta ubicación<br/><span class="field-hint" style="margin:0">Recibe automáticamente el trabajo planificado normal.</span></span>
-          <span class="check-row-mark">✓</span>
-        </label>
-        <span class="field-hint">Si la marcas como principal, se desmarca automáticamente cualquier otra cuadrilla que ya lo fuera en la misma ubicación — solo puede haber una.</span>
         <div style="margin-top:14px">
           <b>Miembros autorizados</b>
           <p class="field-hint" style="margin:2px 0 8px">Personas que pueden trabajar como esta cuadrilla, desde cualquier teléfono/tablet/PC compatible — nunca un dispositivo en particular.</p>
           ${miembrosFieldHTML}
         </div>
+        <p class="field-hint" style="margin-top:14px">Ubicaciones, PRINCIPAL/APOYO: usa el botón "Cobertura" en la lista de cuadrillas${cuadrilla ? '' : ' (después de guardar)'}.</p>
         <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar</button></div>
       </form>
     `);
     $('#cq-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const fd = Object.fromEntries(new FormData(ev.target).entries());
-      const locationId = fd.locationId || null;
-      const isDefault = !!fd.isDefault;
-      const anterior = cuadrilla ? await DB.get('cuadrillas', cuadrilla.id) : null;
-      const cambioUbicacion = !!anterior && anterior.locationId !== locationId;
       const memberUserIds = $$('.member-check', $('.modal-body')).filter(chk => chk.checked).map(chk => chk.value);
       const cambioMiembros = JSON.stringify([...memberIdsActuales].sort()) !== JSON.stringify([...memberUserIds].sort());
 
-      // Máximo una default por ubicación (§K): marcar esta desmarca las demás de esa ubicación.
-      if (isDefault && locationId) {
-        const todas = await DB.allActive('cuadrillas');
-        for (const otra of todas) {
-          if (otra.id !== (cuadrilla ? cuadrilla.id : null) && otra.locationId === locationId && otra.isDefault) {
-            otra.isDefault = false;
-            await DB.put('cuadrillas', stamp(otra, App.currentUser.name));
-          }
-        }
-      }
-
       const item = cuadrilla || { id: uid('cua'), active: true };
       item.name = fd.name.trim();
-      item.locationId = locationId;
-      item.isDefault = isDefault;
+      // Ubicación/rol (locationId/isDefault legacy) ya NO se editan aquí —
+      // crew_locations (botón "Cobertura") es la única fuente visual para
+      // eso. Se conservan tal cual en el documento para no romper
+      // compatibilidad con datos/migraciones existentes.
       // Sin conexión (usuariosElegibles nunca se cargó) se conserva la
       // lista actual tal cual — nunca se vacía por no haber podido mostrar
       // los checkboxes.
       item.memberUserIds = navigator.onLine ? memberUserIds : memberIdsActuales;
       await DB.put('cuadrillas', stamp(item, App.currentUser.name));
 
-      if (cambioUbicacion) {
-        const nombreAntes = locName2(locations, anterior.locationId);
-        const nombreDespues = locName2(locations, locationId);
-        await logAudit('CREW_LOCATION_CHANGED', `${esc(item.name)}: ${esc(nombreAntes)} → ${esc(nombreDespues)}`, App.currentUser.name);
-      } else if (cambioMiembros) {
+      if (cambioMiembros) {
         await logAudit('CREW_MEMBERSHIP_CHANGED', `cuadrilla "${esc(item.name)}": ${memberUserIds.length} miembro(s) autorizado(s)`, App.currentUser.name);
       } else {
         await logAudit('LISTA_ACTUALIZADA', `cuadrillas: "${esc(item.name)}" guardada`, App.currentUser.name);
@@ -13081,7 +14661,6 @@ function wireCuadrillasPanel(container, onChange) {
       onChange();
     });
   }
-  function locName2(locations, id) { return (locations.find(l => l.id === id) || {}).name || 'sin ubicación'; }
 
   panel.querySelector('#cq-add').addEventListener('click', () => openCuadrillaForm(null));
   panel.querySelectorAll('.cq-edit').forEach(btn => {
@@ -13103,6 +14682,819 @@ function wireCuadrillasPanel(container, onChange) {
       onChange();
     });
   });
+}
+
+/* ---------- broadcast_messages — mensajes operativos. Configuración YA NO
+   es el lugar principal para administrarlos (§6 del lote "Tareas y
+   mensajes" unificadas, 2026-10-18: "no debe ser el lugar principal para
+   enviar mensajes") — solo un puntero al módulo real
+   (renderTareasYMensajes(), navegación principal). Nunca un 2do formulario:
+   openBroadcastForm() sigue siendo la MISMA función top-level que usa el
+   módulo unificado. ---------- */
+async function broadcastPanelHTML() {
+  if (!canCreateBroadcast(App.currentUser.role)) return '';
+  return `
+    <div class="panel" data-broadcast-panel>
+      <div class="panel-head"><h3>Mensajes operativos</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Crear y administrar mensajes operativos (y tareas) ahora vive en un solo lugar: <b>Tareas y Mensajes</b>, en la navegación principal.</p>
+        <button type="button" class="btn btn-accent" id="bc-go-tareas-mensajes">${ic("list")}Ir a Tareas y Mensajes</button>
+      </div>
+    </div>`;
+}
+
+// Extraída a top-level (módulo "Tareas y mensajes", 2026-10-18) — antes
+// vivía SOLO dentro de wireBroadcastPanel() (Configuración), ahora la
+// reusan TAMBIÉN renderTareasYMensajes() y, en el futuro, cualquier otro
+// acceso rápido — nunca un 2do formulario. `onChange` opcional: el caller
+// decide cómo refrescar su propia lista tras guardar.
+async function openBroadcastForm(msg, onChange = () => {}) {
+    const actor = App.currentUser;
+    const cuadrillas = await DB.allActive('cuadrillas');
+    const locations = await DB.allActive('locations');
+    // Usuarios LUBRICADOR reales, SOLO si hay conexión — misma fuente/
+    // mismo límite que openCuadrillaForm() (Auth.manageUsers requiere red;
+    // sin conexión se conserva el targetId actual tal cual, nunca se inventa
+    // una lista local).
+    let lubricadores = [];
+    let usuariosErrorHTML = '';
+    if (navigator.onLine) {
+      try {
+        const res = await Auth.manageUsers('LIST_USERS');
+        lubricadores = (res.users || []).filter(u => u.role === 'LUBRICADOR');
+      } catch (e) { usuariosErrorHTML = `<p class="dim">No se pudo cargar la lista de usuarios: ${esc(manageUsersErrorMessage(e))}</p>`; }
+    } else {
+      usuariosErrorHTML = '<p class="dim">Sin conexión — no se puede cargar la lista de usuarios para elegir uno exacto.</p>';
+    }
+    const targetSelectorHTML = (targetType) => {
+      if (targetType === 'CREW') return `<label>Cuadrilla *<select name="targetId" required>${cuadrillas.map(cq => `<option value="${esc(cq.id)}" ${msg && msg.targetId === cq.id ? 'selected' : ''}>${esc(cq.name)}</option>`).join('')}</select></label>`;
+      if (targetType === 'LOCATION') return `<label>Ubicación *<select name="targetId" required>${locations.map(l => `<option value="${esc(l.id)}" ${msg && msg.targetId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>`;
+      if (targetType === 'USER') return lubricadores.length
+        ? `<label>Usuario (lubricador) *<select name="targetId" required>${lubricadores.map(u => `<option value="${esc(u.app_user_id)}" ${msg && msg.targetId === u.app_user_id ? 'selected' : ''}>${esc(u.display_name)}${u.active ? '' : ' (inactivo)'}</option>`).join('')}</select></label>`
+        : usuariosErrorHTML || '<p class="dim">Todavía no hay lubricadores reales — créalos primero en Configuración → Usuarios.</p>';
+      return '';
+    };
+
+    // Envío rápido (lote UX 2026-10-19, §1-§8 del pedido): visibles SOLO
+    // Enviar a (+ selector condicional) y Mensaje — Título/Prioridad/
+    // Vigencia quedan en "Más opciones", cerrado por defecto. Único
+    // obligatorio real: message (+ targetId cuando el target lo exige, ya
+    // validado por el <select required> de targetSelectorHTML()). Nunca
+    // se inventa un título artificial: si queda vacío, se guarda `null` y
+    // toda card usa broadcastDisplayTitle() (operational-scope.js) para
+    // mostrar las primeras palabras del mensaje — mensajes viejos con
+    // título real siguen mostrando ESE título, sin cambio. Prioridad
+    // default INFORMATIVA, validFrom default "ahora" SOLO al crear (nunca
+    // se reescribe un validFrom existente al editar), validUntil default
+    // null/sin vencimiento — misma semántica backend de siempre.
+    openModal(msg ? `Editar mensaje · ${esc(broadcastDisplayTitle(msg))}` : 'Nuevo mensaje operativo', `
+      <form id="broadcast-form" class="form-grid">
+        <label>Enviar a *
+          <select name="targetType" id="bc-target-type" ${msg ? 'disabled' : ''}>${BROADCAST_TARGET_TYPES.map(o => `<option value="${o.id}" ${(msg ? msg.targetType : 'ALL_LUBRICATORS') === o.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
+        </label>
+        ${msg ? `<input type="hidden" name="targetType" value="${esc(msg.targetType)}"/>` : ''}
+        <div class="span-2" id="bc-target-selector">${targetSelectorHTML(msg ? msg.targetType : 'ALL_LUBRICATORS')}</div>
+        <label class="span-2">Mensaje *<textarea required name="message" rows="3">${msg ? esc(msg.message || '') : ''}</textarea></label>
+        <details class="span-2 reg-advanced">
+          <summary>Más opciones</summary>
+          <label class="span-2">Título (opcional)<input name="title" maxlength="120" value="${msg ? esc(msg.title || '') : ''}"/></label>
+          <label>Prioridad
+            <select name="priority">${BROADCAST_PRIORITIES.map(o => `<option value="${o.id}" ${(msg ? msg.priority : 'INFORMATIVA') === o.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
+          </label>
+          <label>Válido desde (opcional)<input type="date" name="validFrom" value="${msg && msg.validFrom ? esc(String(msg.validFrom).slice(0, 10)) : ''}"/></label>
+          <label>Válido hasta (opcional)<input type="date" name="validUntil" value="${msg && msg.validUntil ? esc(String(msg.validUntil).slice(0, 10)) : ''}"/></label>
+        </details>
+        <div class="modal-actions span-2">
+          <button type="button" class="btn" id="btn-cancel-broadcast">Cancelar</button>
+          <button type="submit" class="btn btn-accent">${ic("check")}${msg ? 'Guardar cambios' : 'Enviar'}</button>
+        </div>
+        ${msg && canManageThisBroadcast(msg, actor) && !msg.retiredAt && msg.active !== false ? `
+        <div class="modal-actions span-2 broadcast-form-retire-row">
+          <button type="button" class="btn btn-danger" id="btn-retire-broadcast">Retirar mensaje</button>
+        </div>` : ''}
+      </form>
+    `);
+    // Si ya existe (editar), targetType queda fijo (disabled no envía el
+    // valor en FormData — se manda aparte por el <input type="hidden">
+    // de arriba) — reasignar el destinatario de un mensaje ya publicado no
+    // está pedido (§1: el formulario de creación define el target; cambiar
+    // de ALL_LUBRICATORS a CREW a mitad de camino cambiaría quién lo vio,
+    // sin pedirlo explícito no se habilita acá).
+    $('#bc-target-type')?.addEventListener('change', (ev) => {
+      $('#bc-target-selector').innerHTML = targetSelectorHTML(ev.target.value);
+    });
+    $('#btn-cancel-broadcast')?.addEventListener('click', () => closeModal());
+    // Separada de "Guardar cambios" a propósito (§10 del pedido: "no
+    // mezclar editar/cancelar" — ya corregido en el lote anterior; ahora
+    // tampoco se mezcla editar con retirar). Nunca pide los campos del
+    // formulario: retireBroadcast() solo toca retiredAt.
+    $('#btn-retire-broadcast')?.addEventListener('click', async () => {
+      if (!(await retireBroadcast(msg))) return;
+      closeModal();
+      onChange();
+    });
+    $('#broadcast-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = Object.fromEntries(new FormData(ev.target).entries());
+      if (!fd.message.trim()) { alert('El mensaje es obligatorio.'); return; }
+      if (fd.targetType !== 'ALL_LUBRICATORS' && !fd.targetId) { alert('Selecciona el destinatario exacto.'); return; }
+      const title = (fd.title || '').trim() || null;
+      const validUntil = fd.validUntil ? new Date(fd.validUntil + 'T23:59:59').toISOString() : null;
+      if (msg) {
+        const validFrom = fd.validFrom ? new Date(fd.validFrom + 'T00:00:00').toISOString() : msg.validFrom || null;
+        const row = { ...msg, title, message: fd.message.trim(), priority: fd.priority, validFrom, validUntil };
+        await DB.put('broadcast_messages', stamp(row, actor.name));
+        showInAppToast('✓ Mensaje actualizado');
+      } else {
+        const validFrom = fd.validFrom ? new Date(fd.validFrom + 'T00:00:00').toISOString() : nowISO();
+        const row = stamp({ id: uid('bcast'), title, message: fd.message.trim(), priority: fd.priority || 'INFORMATIVA',
+          targetType: fd.targetType, targetId: fd.targetType === 'ALL_LUBRICATORS' ? null : fd.targetId,
+          validFrom, validUntil, createdBy: actor.id }, actor.name);
+        await DB.put('broadcast_messages', row);
+        showInAppToast('✓ Mensaje enviado');
+      }
+      Sync.fullSync();
+      closeModal();
+      onChange();
+    });
+}
+
+// Permiso de administrar ESTE mensaje (editar/retirar/eliminar) — MISMO
+// criterio en openBroadcastForm() y en la fila compacta de
+// renderTareasYMensajes(): ADMINISTRADOR/PLANIFICADOR administran
+// cualquiera; SUPERVISOR solo los que él mismo creó (igual que 0018
+// broadcast_row_in_scope ya valida server-side vía UPDATE — nunca más
+// permisivo en el cliente; DELETE físico sigue sin existir en el cliente,
+// esto es siempre un UPDATE con active:false, dentro del mismo permiso de
+// UPDATE que 0018 ya concede). LUBRICADOR nunca entra aquí.
+function canManageThisBroadcast(msg, actor = App.currentUser) {
+  return canCreateBroadcast(actor.role) && (actor.role !== 'SUPERVISOR' || msg.createdBy === actor.id);
+}
+
+// Retirar (lote "compactar + eliminación", 2026-10-19 — §5/§6/§8 del
+// pedido): campo NUEVO `retiredAt` (informativo, nunca validado por 0017/
+// 0018 — vocabulario de cliente, igual que title/priority ya lo eran) en
+// vez de sobrescribir validFrom/validUntil — así el mensaje "mantiene
+// trazabilidad" EXACTA de su vigencia original, nunca se pierde ese dato.
+// isVigente()/isBroadcastVigente()/computeTasksMensajesBadgeCount() ya
+// tratan retiredAt como "no vigente" — deja de mostrarse a lubricadores y
+// de contar en el badge de inmediato. El creador lo sigue viendo en
+// Enviados (consulta cruda, nunca DB.allActive()) etiquetado "RETIRADO".
+async function retireBroadcast(msg) {
+  const actor = App.currentUser;
+  if (msg.retiredAt || msg.active === false || !canManageThisBroadcast(msg, actor)) {
+    showInAppToast('No puedes retirar este mensaje.'); return false;
+  }
+  if (!confirm('¿Retirar este mensaje?\nLos lubricadores dejarán de verlo.')) return false;
+  const row = { ...msg, retiredAt: nowISO() };
+  await DB.put('broadcast_messages', stamp(row, actor.name));
+  await logAudit('MENSAJE_RETIRADO', `Mensaje de ${esc(actor.name)}`, actor.name);
+  Sync.fullSync();
+  updateTareasMensajesNavBadge();
+  showInAppToast('✓ Mensaje retirado');
+  return true;
+}
+
+// Eliminar (§6/§8 del pedido): SOFT DELETE vía `active:false` — MISMO
+// campo/convención que el resto del modelo (ver deleteManualTask() arriba
+// y DB.allActive()). "Desaparece de vistas operativas normales" para
+// TODOS (incluido el lubricador que ya lo tenía en Bandeja); Enviados
+// (consulta cruda) lo sigue mostrando como "ELIMINADO" para trazabilidad.
+// Funciona sobre un mensaje ya retirado o todavía activo por igual.
+async function deleteBroadcast(msg) {
+  const actor = App.currentUser;
+  if (msg.active === false || !canManageThisBroadcast(msg, actor)) {
+    showInAppToast('No puedes eliminar este mensaje.'); return false;
+  }
+  if (!confirm('¿Eliminar este mensaje?\nDejará de aparecer en las vistas normales.')) return false;
+  const row = { ...msg, active: false };
+  await DB.put('broadcast_messages', stamp(row, actor.name));
+  await logAudit('MENSAJE_ELIMINADO', `Mensaje de ${esc(actor.name)}`, actor.name);
+  Sync.fullSync();
+  updateTareasMensajesNavBadge();
+  showInAppToast('✓ Mensaje eliminado');
+  return true;
+}
+
+function wireBroadcastPanel(container) {
+  const panel = container.querySelector('[data-broadcast-panel]');
+  if (!panel) return;
+  panel.querySelector('#bc-go-tareas-mensajes')?.addEventListener('click', () => navigate('tareas-mensajes'));
+}
+
+// "Marcar como leída" (§4 del pedido) — SOLO LUBRICADOR, solo su PROPIO
+// recibo (broadcast_message_reads: id="<messageId>:<userId>", ownership ya
+// validado por 0017). Un recibo existente se actualiza (re-marcar no
+// duplica, misma fila); uno nuevo se crea — ambos casos son el MISMO
+// DB.put genérico ya usado por manual_tasks/cuadrillas, sin RPC ni
+// mecanismo paralelo. `Sync.fullSync()` lo sube igual que cualquier otro
+// store directo — persiste offline y sincroniza sin duplicar al reconectar
+// (mismo pipeline ya probado en manual-tasks-sync.test.js).
+async function markBroadcastAsRead(messageId) {
+  const actor = App.currentUser;
+  if (actor.role !== 'LUBRICADOR') return;
+  const receiptId = `${messageId}:${actor.id}`;
+  const existing = await DB.get('broadcast_message_reads', receiptId);
+  const row = stamp({ ...(existing || {}), id: receiptId, messageId, userId: actor.id, readAt: nowISO() }, actor.name);
+  await DB.put('broadcast_message_reads', row);
+  Sync.fullSync();
+  await updateTareasMensajesNavBadge();
+}
+
+// Badge ÚNICO del módulo "Tareas y Mensajes" (§9 del lote 2026-10-18) —
+// tareas accionables pendientes (manual_tasks, alcance real ya aplicado
+// por DB.allActive()/RLS) + mensajes vigentes no leídos (SOLO para
+// LUBRICADOR: quien ENVÍA un broadcast nunca tiene un recibo de lectura
+// de sí mismo — ADMIN/PLANIFICADOR/SUPERVISOR no tienen "no leído" que
+// contar, solo tareas pendientes). Anomalías quedan FUERA a propósito —
+// tienen su propia pantalla/badge, nunca se mezclan en este número.
+// La campana recibe el subtotal unread de ESTE cálculo; Mi Turno no
+// construye avisos. messagesOnly permite consultar el mismo subtotal.
+async function computeTasksMensajesBadgeCount({ messagesOnly = false, onUnreadCount = null } = {}) {
+  const manualTasks = messagesOnly ? [] : await DB.allActive('manual_tasks');
+  const pendingTasks = manualTasks.filter(t => t.status === 'PENDING').length;
+  if (!App.currentUser || App.currentUser.role !== 'LUBRICADOR') return pendingTasks;
+  const broadcasts = await DB.allActive('broadcast_messages');
+  const reads = await DB.allActive('broadcast_message_reads');
+  const readIds = new Set(reads.filter(r => r.userId === App.currentUser.id).map(r => r.messageId));
+  const todayISO = todayDateISO();
+  const unread = broadcasts.filter(m => {
+    // Retirado (lote "compactar + eliminación", 2026-10-19): nunca cuenta,
+    // igual que vencido; DB.allActive() ya aplica alcance/autorización.
+    if (m.active === false || m.retiredAt) return false;
+    if (m.validFrom && todayISO < String(m.validFrom).slice(0, 10)) return false;
+    if (m.validUntil && todayISO > String(m.validUntil).slice(0, 10)) return false;
+    return !readIds.has(m.id);
+  }).length;
+  if (onUnreadCount) onUnreadCount(unread);
+  return pendingTasks + unread;
+}
+
+// Actualiza TODOS los puntos donde este badge puede estar visible a la vez
+// (sidebar de escritorio Y lub-bottom-nav — nunca ambos shells montados
+// juntos en la práctica, pero el selector cubre cualquiera de los dos sin
+// necesidad de saber cuál está activo). Nunca lanza si no hay ninguno en
+// el DOM todavía (pantalla de login, bootstrap en curso, etc.).
+async function updateTareasMensajesNavBadge() {
+  if (!App.currentUser) return;
+  const refresh = App._tasksMensajesBadgeRefresh = (App._tasksMensajesBadgeRefresh || 0) + 1;
+  const actorId = App.currentUser.id;
+  let unreadCount = 0;
+  let count = 0;
+  try { count = await computeTasksMensajesBadgeCount({ onUnreadCount: value => { unreadCount = value; } }); } catch (e) { return; } // nunca rompe la nav por un dato transitorio
+  if (App.currentUser?.id !== actorId || refresh !== App._tasksMensajesBadgeRefresh) return;
+  // Con campana, Tareas conserva solo su subtotal de tareas pendientes.
+  // Los mensajes tienen un único indicador visible: la campana superior.
+  const navCount = App.currentUser.role === 'LUBRICADOR' ? count - unreadCount : count;
+  $$('[data-nav-badge="tareas-mensajes"]').forEach(el => {
+    el.textContent = navCount > 99 ? '99+' : String(navCount);
+    el.classList.toggle('hidden', navCount === 0);
+  });
+  if (typeof refreshLubNotificationBell === 'function') await refreshLubNotificationBell(unreadCount);
+}
+
+/* ============================================================
+   TAREAS Y MENSAJES — módulo unificado (2026-10-18)
+   ============================================================
+   ÚNICO acceso principal para manual_tasks/broadcast_messages — visible a
+   los 4 roles operativos (nunca VISOR, cero acceso a ambos stores por
+   RLS). Funciona en AMBOS shells sin saberlo (pinta sobre #app-content,
+   igual que cualquier otro renderX() — ver navigate()/bootLubricador()).
+   Reusa TAL CUAL, sin reimplementar nada: openManualTaskForm()/
+   openCompleteManualTaskForm()/openManualTaskDetailModal()/
+   openBroadcastForm()/markBroadcastAsRead(). Configuración/Ficha del
+   equipo/Mi Turno conservan accesos rápidos que abren estos MISMOS
+   formularios — esta pantalla es la única que lista/administra todo.
+   Tarjetas (nunca tablas anchas, §11 del pedido) reusando las MISMAS
+   clases visuales que Mi Turno (.lub-arrastrado-card/.lub-eq-list) —
+   cero CSS nuevo para las tarjetas en sí. */
+async function renderTareasYMensajes(options = {}) {
+  const c = $('#app-content');
+  if (!c) return;
+  if (!options.silent) c.innerHTML = '<div class="loading">Cargando tareas y mensajes…</div>';
+
+  const actor = App.currentUser;
+  const isManager = canManageAssignments(actor.role); // ADMIN/PLANIFICADOR/SUPERVISOR
+  const canMessage = canCreateBroadcast(actor.role);
+  const activeTab = options.activeTab || 'pendientes';
+  const enviadosFilter = options.enviadosFilter || 'all';
+  const selectedKind = options.selectedKind || null;
+  const selectedId = options.selectedId || null;
+  // focusId (§7/§9 del pedido "push real"): deep link desde una
+  // notificación tocada — enfoca la fila/card exacta SIN abrir ningún
+  // modal (LUBRICADOR ya es inline; el manager usa el panel de detalle
+  // normal si hace falta). Busca en AMBAS pestañas (el ítem puede haber
+  // cambiado de estado entre que se mandó el push y se sincronizó) y
+  // cambia de pestaña sola si hace falta.
+  const focusId = options.focusId || null;
+  const applyTymFocus = () => {
+    if (!focusId) return;
+    const target = $(`[data-tym-id="${CSS.escape(focusId)}"]`, c);
+    if (!target) return;
+    const panel = target.closest('[data-tym-panel]');
+    if (panel && panel.classList.contains('hidden')) {
+      $(`.tym-tab[data-tab="${panel.dataset.tymPanel}"]`, c)?.click();
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('tym-focus-flash');
+    setTimeout(() => target.classList.remove('tym-focus-flash'), 2400);
+  };
+
+  // DB.all() crudo (incluye active:false) UNA vez — DB.allActive() ya es
+  // solo ese mismo filtro (`r.active !== false`) aplicado acá en memoria,
+  // así Enviados puede mostrar eliminados/retirados con su estado real sin
+  // una 2da lectura. active NUNCA existió antes en estos 2 stores ni lo
+  // valida 0017/0018 (vocabulario de cliente, igual que title/priority) —
+  // ver deleteManualTask()/deleteBroadcast()/retireBroadcast() arriba.
+  // `users`/`scope` (lote "patrón Inbox", 2026-10-19): el panel de
+  // detalle necesita "Solicitado por"/"Completar tarea" igual que el
+  // modal ya existente (openManualTaskDetailModal) — MISMA fuente, nunca
+  // un nombre inventado ni un alcance nuevo.
+  const [manualTasksRaw, broadcastsRaw, reads, equipos, cuadrillas, locations, users] = await Promise.all([
+    DB.all('manual_tasks'), DB.all('broadcast_messages'), DB.allActive('broadcast_message_reads'),
+    DB.allActive('equipment'), DB.allActive('cuadrillas'), DB.allActive('locations'), DB.allActive('users'),
+  ]);
+  const scope = actor.role === 'LUBRICADOR' ? await getCurrentOperationalScope() : null;
+  if (!$('#app-content')) return; // la pantalla cambió mientras cargaba
+  const manualTasks = manualTasksRaw.filter(t => t.active !== false);
+  const broadcasts = broadcastsRaw.filter(m => m.active !== false);
+  const myReadIds = new Set(reads.filter(r => r.userId === actor.id).map(r => r.messageId));
+  const todayISO = todayDateISO();
+  const isVigente = (m) => {
+    // Retirado (lote "compactar + eliminación", 2026-10-19): nunca
+    // vigente, sin tocar validFrom/validUntil — misma regla que
+    // isBroadcastVigente() (tasks-notifications-panel.js) y
+    // computeTasksMensajesBadgeCount(), nunca reimplementada distinto.
+    if (m.retiredAt) return false;
+    if (m.validFrom && todayISO < String(m.validFrom).slice(0, 10)) return false;
+    if (m.validUntil && todayISO > String(m.validUntil).slice(0, 10)) return false;
+    return true;
+  };
+
+  // Bandeja = lo que requiere atención; Enviados (manager)/Historial
+  // (lubricador) = lo demás. Un ítem vive en una sola de las dos listas —
+  // nunca aparece dos veces en la MISMA pestaña (§11.6/§11.7 del pedido):
+  // Bandeja decide por estado (PENDING / vigente-no-leído), el complemento
+  // exacto va al otro lado. Enviados es la única excepción deliberada: ahí
+  // se lista TODO lo creado por el actor, CRUDO (incluye retirado/
+  // eliminado, con su estado real — §11 del pedido), porque es una vista
+  // "lo que yo envié", no "lo que falta".
+  const taskNeedsAttention = (t) => t.status === 'PENDING';
+  const msgNeedsAttention = (m) => isVigente(m) && (actor.role !== 'LUBRICADOR' || !myReadIds.has(m.id));
+  const bandejaTasks = manualTasks.filter(taskNeedsAttention);
+  const bandejaMsgs = broadcasts.filter(msgNeedsAttention);
+  // Retirado: deja de mostrarse TAMBIÉN en el Historial del lubricador
+  // (§6 del pedido: "deja de mostrarse a lubricadores", sin excepción de
+  // pestaña) — el creador sigue viéndolo, pero solo en su propio Enviados.
+  const tasksClosed = manualTasks.filter(t => !taskNeedsAttention(t)).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const msgsClosed = broadcasts.filter(m => !msgNeedsAttention(m) && !m.retiredAt).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const tasksSentByMe = manualTasksRaw.filter(t => t.createdBy === actor.id).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const msgsSentByMe = broadcastsRaw.filter(m => m.createdBy === actor.id).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  // Orden de Bandeja (§5 del pedido), MEZCLANDO tareas y mensajes en una
+  // sola lista — nunca backend, puro orden en memoria sobre datos ya
+  // cargados: 1) críticas/importantes (tarea prioridad ALTA, mensaje
+  // CRITICA/IMPORTANTE) 2) tareas vencidas (dueAt ya pasado) 3) tareas
+  // pendientes normales 4) mensajes no leídos (el resto, INFORMATIVA).
+  // Dentro del mismo grupo: vencidas por fecha límite más antigua primero
+  // (más urgente), el resto por más reciente primero.
+  const now = new Date();
+  const bandejaRank = (it) => it.kind === 'TAREA'
+    ? (it.data.priority === 'ALTA' ? 1 : (it.data.dueAt && new Date(it.data.dueAt) < now ? 2 : 3))
+    : (['CRITICA', 'IMPORTANTE'].includes(it.data.priority) ? 1 : 4);
+  const bandejaItems = [
+    ...bandejaTasks.map(t => ({ kind: 'TAREA', data: t })),
+    ...bandejaMsgs.map(m => ({ kind: 'MENSAJE', data: m })),
+  ].sort((a, b) => {
+    const ra = bandejaRank(a), rb = bandejaRank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 2) return new Date(a.data.dueAt) - new Date(b.data.dueAt);
+    return new Date(b.data.createdAt || 0) - new Date(a.data.createdAt || 0);
+  });
+
+  const eq = (id) => equipos.find(e => e.id === id);
+  const crew = (id) => cuadrillas.find(x => x.id === id);
+  const loc = (id) => locations.find(l => l.id === id);
+  const tipoLabel = (tt) => (MANUAL_TASK_TYPES.find(o => o.id === tt) || {}).label || tt || 'Otro';
+  const prioLabelTask = (p) => (MANUAL_TASK_PRIORITIES.find(o => o.id === p) || {}).label || p || '—';
+  const prioLabelMsg = (p) => (BROADCAST_PRIORITIES.find(o => o.id === p) || {}).label || p || '—';
+  const targetLabel = (m) => {
+    if (m.targetType === 'ALL_LUBRICATORS') return 'Todos los lubricadores';
+    if (m.targetType === 'CREW') return 'Cuadrilla: ' + (crew(m.targetId)?.name || m.targetId || '—');
+    if (m.targetType === 'LOCATION') return 'Ubicación: ' + (loc(m.targetId)?.name || m.targetId || '—');
+    if (m.targetType === 'USER') return 'Usuario exacto';
+    return m.targetType || '—';
+  };
+  // 'users' solo existe localmente para roles GLOBAL (ver openManualTaskDetailModal()
+  // / localAuthorizationState() en db.js) — fallback al appUserId crudo, nunca inventado.
+  const nameFor = (appUserId) => appUserId === actor.id ? actor.name
+    : (users.find(u => u.id === appUserId)?.name || appUserId || '—');
+  // Fecha/hora corta (§3 del pedido): hora si es hoy, fecha corta si no —
+  // nunca un timestamp largo en la lista (eso queda para el panel de detalle).
+  const shortWhen = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toDateString() === new Date().toDateString() ? fmtTime(iso) : fmtDateOnly(iso);
+  };
+  const TASK_STATUS_COLOR = { PENDING: 'var(--amber)', COMPLETED: 'var(--green)', CANCELLED: 'var(--gray-status)' };
+  const TASK_STATUS_LABEL = { PENDING: 'Pendiente', COMPLETED: 'Completada', CANCELLED: 'Cancelada' };
+  // Eliminada (soft delete, active:false) PISA cualquier `status` para la
+  // ETIQUETA — el campo `status` en sí NUNCA se toca al eliminar (§7 del
+  // pedido: nunca DELETE físico, el dato de fondo se conserva intacto).
+  const taskStatus = (t) => t.active === false
+    ? { label: 'Eliminada', color: 'var(--gray-status)' }
+    : { label: TASK_STATUS_LABEL[t.status], color: TASK_STATUS_COLOR[t.status] };
+  const msgStatus = (m) => {
+    if (m.active === false) return { label: 'ELIMINADO', color: 'var(--gray-status)' };
+    if (m.retiredAt) return { label: 'RETIRADO', color: 'var(--gray-status)' };
+    if (actor.role === 'LUBRICADOR' && myReadIds.has(m.id)) return { label: 'LEÍDO', color: 'var(--green)' };
+    if (!isVigente(m)) return { label: 'VENCIDO', color: 'var(--gray-status)' };
+    return { label: 'ACTIVO', color: 'var(--amber)' };
+  };
+
+  // Menú ⋮ genérico: <details> nativo, mismo patrón ya usado en toda la
+  // app (reg-advanced/pt-more/hist-tabs) — cero JS de posicionamiento.
+  // Cada item dispara un solo [data-tym-action] delegado más abajo.
+  const kebabMenuHTML = (items) => !items.length ? '' : `
+    <details class="tym-row-menu">
+      <summary aria-label="Más acciones">⋮</summary>
+      <div class="tym-row-menu-items">
+        ${items.map(it => `<button type="button" class="tym-menu-item${it.danger ? ' danger' : ''}" data-tym-action="${esc(it.action)}" data-id="${esc(it.id)}">${esc(it.label)}</button>`).join('')}
+      </div>
+    </details>`;
+
+  // Fila compacta tipo Inbox (lote "patrón Inbox/List+Detail", 2026-10-19 —
+  // §3 del pedido): SOLO tipo/título/línea de contexto/hora corta/estado/
+  // indicador/chevron — CERO botones dentro de la fila (ni primario ni ⋮).
+  // Toda la fila es un <button> clicable que abre el panel de detalle
+  // (desktop) o la pantalla de detalle completa (móvil) — mismo HTML en
+  // ambos casos, resuelto por CSS (ver .tym-layout en styles.css).
+  const tymRowHTML = ({ kind, id, title, statusLabel, statusColor, meta, showDot, extraClass = '' }) => `
+    <button type="button" class="tym-row${extraClass}" data-kind="${esc(kind)}" data-id="${esc(id)}" data-tym-id="${esc(id)}">
+      <div class="tym-row-main">
+        <div class="tym-row-top">
+          ${showDot ? '<span class="tym-row-dot" aria-hidden="true">●</span>' : ''}
+          <span class="status-chip chip-origen" style="--c:var(--text-dim)">${esc(kind)}</span>
+          <span class="tym-row-title">${title}</span>
+          <span class="status-chip" style="--c:${statusColor}">${esc(statusLabel)}</span>
+        </div>
+        <div class="tym-row-sub dim">${meta.filter(Boolean).join(' · ')}</div>
+      </div>
+      <span class="tym-row-chevron" aria-hidden="true">›</span>
+    </button>`;
+
+  const taskRowHTML = (t) => {
+    const equipo = eq(t.equipmentId);
+    const st = taskStatus(t);
+    // S12 (auditoría pre-release 2026-10-21): un SUPERVISOR ve tareas de
+    // otros supervisores en su bandeja (alcance de cuadrilla), pero solo
+    // puede actuar sobre las propias (canManageThisManualTask) — sin esto,
+    // la fila se ve igual a una que sí puede editar.
+    const soloLectura = t.status === 'PENDING' && t.active !== false && canManageAssignments(actor.role) && !canManageThisManualTask(t, actor);
+    return tymRowHTML({
+      kind: 'TAREA', id: t.id,
+      title: `${equipo ? esc(equipo.code) + ' · ' : ''}${esc(t.title || tipoLabel(t.taskType))}`,
+      statusLabel: st.label, statusColor: st.color, showDot: st.color === 'var(--amber)',
+      meta: [esc(crew(t.crewId)?.name || '—'), esc(prioLabelTask(t.priority)), shortWhen(t.dueAt || t.createdAt), soloLectura ? 'Solo lectura' : null],
+    });
+  };
+
+  const msgRowHTML = (m) => {
+    const read = myReadIds.has(m.id);
+    const st = msgStatus(m);
+    // S12 (auditoría pre-release 2026-10-21): mismo caso que taskRowHTML,
+    // para mensajes broadcast creados por otro SUPERVISOR.
+    const soloLectura = !m.retiredAt && m.active !== false && canCreateBroadcast(actor.role) && !canManageThisBroadcast(m, actor);
+    return tymRowHTML({
+      kind: 'MENSAJE', id: m.id,
+      title: `📢 ${esc(broadcastDisplayTitle(m))}`,
+      statusLabel: st.label, statusColor: st.color, showDot: st.color === 'var(--amber)',
+      extraClass: actor.role === 'LUBRICADOR' && read ? ' broadcast-read' : '',
+      meta: [esc(targetLabel(m)), esc(prioLabelMsg(m.priority)), shortWhen(m.createdAt), soloLectura ? 'Solo lectura' : null],
+    });
+  };
+
+  const pendientesItemHTML = (it) => it.kind === 'TAREA' ? taskRowHTML(it.data) : msgRowHTML(it.data);
+
+  // Enviados (manager) e Historial (lubricador): UNA sola lista mezclada,
+  // nunca subsecciones separadas por tipo (§9/§10 del pedido) — los
+  // filtros Todos/Tareas/Mensajes de Enviados son solo CSS (.hidden) sobre
+  // esta misma lista, nunca una 2da consulta.
+  const enviadosItems = [...tasksSentByMe.map(t => ({ kind: 'TAREA', data: t })), ...msgsSentByMe.map(m => ({ kind: 'MENSAJE', data: m }))]
+    .sort((a, b) => new Date(b.data.createdAt || 0) - new Date(a.data.createdAt || 0));
+  const historialItems = [...tasksClosed.map(t => ({ kind: 'TAREA', data: t })), ...msgsClosed.map(m => ({ kind: 'MENSAJE', data: m }))]
+    .sort((a, b) => new Date(b.data.updatedAt || b.data.createdAt || 0) - new Date(a.data.updatedAt || a.data.createdAt || 0));
+
+  // LUBRICADOR (lote "eliminar clicks innecesarios", 2026-10-19 — §1 del
+  // pedido): la fila clicable + panel/pantalla de detalle de arriba es
+  // EXCLUSIVA del manager — para LUBRICADOR "la fila/card debe ser
+  // autosuficiente", nunca un "Ver" que solo repite lo que ya cabe en la
+  // lista. Reusa las MISMAS clases visuales ya probadas (lub-arrastrado-
+  // card/lub-eq-head/lub-record-meta/lub-arrastrado-actions/lub-eq-list,
+  // reg-advanced) — cero componente nuevo para el contenedor, solo las
+  // líneas de datos (.tym-lub-lines) y la densidad propias de esta vista.
+  if (actor.role === 'LUBRICADOR') {
+    const infoLine = (label, value) => value ? `<div class="tym-lub-line"><b>${esc(label)}:</b> ${value}</div>` : '';
+    // Fotos SOLO de tareas completadas que de verdad tienen evidencia —
+    // resueltas una vez acá (mismo patrón que openPlanForm()/openManualTaskDetailModal(),
+    // nunca una URL local reusada entre dispositivos).
+    const photoSrcsById = {};
+    for (const it of historialItems) {
+      if (it.kind === 'TAREA' && photosOf(it.data).length) photoSrcsById[it.data.id] = await resolvePhotoThumbSrcs(it.data);
+    }
+    if (!$('#app-content')) return;
+
+    const lubTaskCardHTML = (t) => {
+      const equipo = eq(t.equipmentId);
+      const st = taskStatus(t);
+      const crewObj = crew(t.crewId);
+      const isPending = t.status === 'PENDING' && t.active !== false;
+      const isCompleted = t.status === 'COMPLETED';
+      const photos = isCompleted ? photosOf(t) : [];
+      return `
+        <div class="lub-arrastrado-card lub-pending-card" data-tym-id="${esc(t.id)}">
+          <div class="lub-eq-head">
+            <span class="status-chip chip-origen" style="--c:var(--text-dim)">TAREA</span>
+            <span class="lub-eq-code">${equipo ? esc(equipo.code) + ' · ' : ''}${esc(tipoLabel(t.taskType))}</span>
+            <span class="status-chip" style="--c:${st.color}">${esc(st.label)}</span>
+          </div>
+          <div class="dim">${esc(t.description || '')}</div>
+          <div class="lub-record-meta dim"><span>${esc(crewObj?.name || '—')}</span><span>${esc(prioLabelTask(t.priority))}</span></div>
+          <div class="tym-lub-lines">
+            ${infoLine('Solicitada', fmtDate(t.createdAt))}
+            ${t.dueAt ? infoLine('Vence', fmtDate(t.dueAt)) : ''}
+            ${isCompleted ? infoLine('Completada', fmtDate(t.completedAt)) : ''}
+            ${isCompleted ? infoLine('Atendida por', esc(nameFor(t.completedBy))) : ''}
+            ${isCompleted && t.completionComment ? infoLine('Respuesta', esc(t.completionComment)) : ''}
+          </div>
+          ${photos.length ? `
+            <details class="reg-advanced">
+              <summary>📷 ${photos.length} evidencia${photos.length > 1 ? 's' : ''} — Ver evidencia</summary>
+              <div class="tym-lub-evidence-body">${photoThumbsHTML(t, 'Evidencia de cierre', photoSrcsById[t.id] || [])}</div>
+            </details>` : ''}
+          ${isPending ? `<div class="lub-arrastrado-actions"><button type="button" class="btn btn-accent tym-lub-complete" data-id="${esc(t.id)}">${ic("check")}Completar</button></div>` : ''}
+        </div>`;
+    };
+    const lubMsgCardHTML = (m) => {
+      const st = msgStatus(m);
+      const read = myReadIds.has(m.id);
+      const canMarkRead = !read && m.active !== false && !m.retiredAt;
+      return `
+        <div class="lub-arrastrado-card lub-pending-card${read ? ' broadcast-read' : ''}" data-tym-id="${esc(m.id)}">
+          <div class="lub-eq-head">
+            <span class="status-chip chip-origen" style="--c:var(--text-dim)">MENSAJE</span>
+            <span class="lub-eq-code">📢 ${esc(broadcastDisplayTitle(m))}</span>
+            <span class="status-chip" style="--c:${st.color}">${esc(st.label)}</span>
+          </div>
+          <div class="dim">${esc(m.message || '')}</div>
+          <div class="lub-record-meta dim"><span>${esc(targetLabel(m))}</span><span>${esc(prioLabelMsg(m.priority))}</span></div>
+          <div class="tym-lub-lines">${infoLine('Fecha', fmtDate(m.createdAt))}</div>
+          ${canMarkRead ? `<div class="lub-arrastrado-actions"><button type="button" class="btn btn-accent tym-lub-markread" data-id="${esc(m.id)}">${ic("check")}Marcar leído</button></div>` : ''}
+        </div>`;
+    };
+    const lubItemHTML = (it) => it.kind === 'TAREA' ? lubTaskCardHTML(it.data) : lubMsgCardHTML(it.data);
+    const lubListHTML = (items, emptyText) => items.length
+      ? `<div class="lub-eq-list">${items.map(lubItemHTML).join('')}</div>`
+      : `<p class="field-hint">${esc(emptyText)}</p>`;
+
+    c.innerHTML = `
+      <div class="tym-list-head"><span class="dim">Tareas y Mensajes</span></div>
+      <div class="tym-tabs" role="tablist">
+        <button type="button" class="tym-tab${activeTab === 'pendientes' ? ' active' : ''}" data-tab="pendientes" role="tab" aria-selected="${activeTab === 'pendientes'}">Pendientes${bandejaItems.length ? ` (${bandejaItems.length})` : ''}</button>
+        <button type="button" class="tym-tab${activeTab === 'historial' ? ' active' : ''}" data-tab="historial" role="tab" aria-selected="${activeTab === 'historial'}">Historial</button>
+      </div>
+      <div data-tym-panel="pendientes" class="${activeTab === 'pendientes' ? '' : 'hidden'}">${lubListHTML(bandejaItems, 'Sin tareas pendientes ni mensajes nuevos.')}</div>
+      <div data-tym-panel="historial" class="${activeTab === 'historial' ? '' : 'hidden'}">${lubListHTML(historialItems, 'Sin tareas completadas ni mensajes leídos todavía.')}</div>
+    `;
+
+    const lubCurrentTab = () => $('.tym-tab.active', c)?.dataset.tab || 'pendientes';
+    $$('.tym-tab', c).forEach(tab => tab.addEventListener('click', () => {
+      $$('.tym-tab', c).forEach(t => { t.classList.toggle('active', t === tab); t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
+      $$('[data-tym-panel]', c).forEach(p => p.classList.toggle('hidden', p.dataset.tymPanel !== tab.dataset.tab));
+    }));
+    $$('.tym-lub-complete', c).forEach(btn => btn.addEventListener('click', () => {
+      const task = manualTasksRaw.find(t => t.id === btn.dataset.id);
+      const equipo = task && eq(task.equipmentId);
+      if (task && equipo) openCompleteManualTaskForm(task, equipo, () => renderTareasYMensajes({ silent: true, activeTab: lubCurrentTab() }));
+    }));
+    $$('.tym-lub-markread', c).forEach(btn => btn.addEventListener('click', async () => {
+      await markBroadcastAsRead(btn.dataset.id);
+      renderTareasYMensajes({ silent: true, activeTab: lubCurrentTab() });
+    }));
+    applyTymFocus();
+    return;
+  }
+
+  const rowListHTML = (items, emptyText) => items.length
+    ? `<div class="tym-row-list">${items.map(pendientesItemHTML).join('')}</div>`
+    : `<p class="field-hint">${esc(emptyText)}</p>`;
+
+  const secondTab = isManager ? 'enviados' : 'historial';
+  const secondTabLabel = isManager ? 'Enviados' : 'Historial';
+  const secondTabHTML = isManager
+    ? `<div class="tym-enviados-filters">
+        <button type="button" class="tym-filter-chip${enviadosFilter === 'all' ? ' active' : ''}" data-enviados-filter="all">Todos</button>
+        <button type="button" class="tym-filter-chip${enviadosFilter === 'tareas' ? ' active' : ''}" data-enviados-filter="tareas">Tareas</button>
+        <button type="button" class="tym-filter-chip${enviadosFilter === 'mensajes' ? ' active' : ''}" data-enviados-filter="mensajes">Mensajes</button>
+      </div>${rowListHTML(enviadosItems, 'Todavía no creaste ninguna tarea ni enviaste ningún mensaje.')}`
+    : rowListHTML(historialItems, 'Sin tareas completadas ni mensajes leídos todavía.');
+
+  // Panel de detalle (§4/§5 del pedido) — localizar el ítem seleccionado en
+  // los arrays CRUDOS (manualTasksRaw/broadcastsRaw): puede venir de
+  // Enviados (retirado/eliminado), nunca solo de la lista activa.
+  let detailHTML = '';
+  if (selectedKind === 'TAREA' && selectedId) {
+    const task = manualTasksRaw.find(t => t.id === selectedId);
+    if (task) detailHTML = await buildTaskDetailPaneHTML(task);
+  } else if (selectedKind === 'MENSAJE' && selectedId) {
+    const msg = broadcastsRaw.find(m => m.id === selectedId);
+    if (msg) detailHTML = buildMsgDetailPaneHTML(msg);
+  }
+  if (!$('#app-content')) return; // pudo cambiar de pantalla mientras resolvía fotos
+
+  // --- helpers de detalle (definidos acá: cierran sobre actor/eq/crew/etc.) ---
+  async function buildTaskDetailPaneHTML(task) {
+    const equipo = eq(task.equipmentId);
+    const crewObj = crew(task.crewId);
+    const st = taskStatus(task);
+    const tipo = tipoLabel(task.taskType);
+    const photos = photosOf(task);
+    const resolvedSrcs = photos.length ? await resolvePhotoThumbSrcs(task) : [];
+    const canManage = canManageThisManualTask(task, actor) && task.status === 'PENDING' && task.active !== false;
+    // S12 (auditoría pre-release 2026-10-21): ver nota en taskRowHTML.
+    const soloLecturaAjena = task.status === 'PENDING' && task.active !== false && canManageAssignments(actor.role) && !canManage;
+    const canComplete = actor.role === 'LUBRICADOR' && task.status === 'PENDING' && task.active !== false && scope?.crewId === task.crewId;
+    return `
+      <div class="tym-detail-headbar">
+        <button type="button" class="tym-detail-back" id="tym-detail-close" aria-label="Cerrar"></button>
+        <div class="tym-detail-headtext">
+          <span class="dim tym-detail-kind">TAREA</span>
+          <span class="tym-detail-title">${equipo ? esc(equipo.code) : esc(task.equipmentId)}</span>
+        </div>
+        <span class="status-chip" style="--c:${st.color}">${esc(st.label)}</span>
+      </div>
+      <div class="tym-detail-body">
+        <p class="tym-detail-desc"><b>${esc(task.description || tipo)}</b></p>
+        ${soloLecturaAjena ? `<p class="dim">Solo lectura — creada por ${esc(nameFor(task.createdBy))}, otro supervisor.</p>` : ''}
+        <div class="detail-grid" style="margin-top:10px">
+          <div><b>Equipo</b><div>${equipo ? esc(equipo.code) + ' · ' + esc(equipo.brand || '') + ' ' + esc(equipo.model || '') : '—'}</div></div>
+          <div><b>Cuadrilla</b><div>${crewObj ? esc(crewObj.name) : esc(task.crewId)}</div></div>
+          <div><b>Prioridad</b><div>${esc(prioLabelTask(task.priority))}</div></div>
+          <div><b>Solicitado por</b><div>${esc(nameFor(task.createdBy))}</div></div>
+          <div><b>Fecha</b><div>${fmtDate(task.createdAt)}</div></div>
+          <div><b>Tipo</b><div>${esc(tipo)}</div></div>
+          ${task.dueAt ? `<div><b>Vence</b><div>${fmtDate(task.dueAt)}</div></div>` : ''}
+          ${task.status === 'COMPLETED' ? `
+            <div><b>Atendido por</b><div>${esc(nameFor(task.completedBy))}</div></div>
+            <div><b>Fecha cierre</b><div>${fmtDate(task.completedAt)}</div></div>` : ''}
+        </div>
+        ${task.status === 'COMPLETED' && task.completionComment ? `<p class="dim" style="margin-top:8px"><b>Respuesta:</b> ${esc(task.completionComment)}</p>` : ''}
+        ${photos.length ? `<div style="margin-top:10px"><b>Evidencia</b>${photoThumbsHTML(task, 'Evidencia de cierre', resolvedSrcs)}</div>` : ''}
+      </div>
+      <div class="modal-actions tym-detail-actions">
+        ${canComplete ? `<button type="button" class="btn btn-accent" id="tym-detail-complete" data-id="${esc(task.id)}">${ic("check")}Completar tarea</button>` : ''}
+        <button type="button" class="btn" id="tym-detail-ver-equipo" data-id="${esc(task.equipmentId)}">${ic("qr")}Ver equipo</button>
+        ${canManage ? `<button type="button" class="btn" id="tym-detail-edit" data-id="${esc(task.id)}">${ic("edit")}Editar/Reasignar</button>` : ''}
+        ${canManage ? `<button type="button" class="btn" id="tym-detail-cancel" data-id="${esc(task.id)}">Cancelar</button>` : ''}
+        ${canManage ? kebabMenuHTML([{ label: 'Eliminar tarea', action: 'delete-task', id: task.id, danger: true }]) : ''}
+      </div>`;
+  }
+
+  function buildMsgDetailPaneHTML(msg) {
+    const st = msgStatus(msg);
+    const read = myReadIds.has(msg.id);
+    const ownedActive = canManageThisBroadcast(msg, actor) && msg.createdBy === actor.id && !msg.retiredAt && msg.active !== false;
+    // S12 (auditoría pre-release 2026-10-21): ver nota en taskRowHTML.
+    const soloLecturaAjena = !msg.retiredAt && msg.active !== false && canCreateBroadcast(actor.role) && !canManageThisBroadcast(msg, actor);
+    const vigenciaText = `${msg.validFrom ? fmtDateOnly(msg.validFrom) : 'sin inicio fijo'} → ${msg.validUntil ? fmtDateOnly(msg.validUntil) : 'sin vencimiento'}`;
+    return `
+      <div class="tym-detail-headbar">
+        <button type="button" class="tym-detail-back" id="tym-detail-close" aria-label="Cerrar"></button>
+        <div class="tym-detail-headtext">
+          <span class="dim tym-detail-kind">MENSAJE</span>
+          <span class="tym-detail-title">${esc(broadcastDisplayTitle(msg))}</span>
+        </div>
+        <span class="status-chip" style="--c:${st.color}">${esc(st.label)}</span>
+      </div>
+      <div class="tym-detail-body">
+        <p class="tym-detail-desc">${esc(msg.message || '')}</p>
+        ${soloLecturaAjena ? `<p class="dim">Solo lectura — enviado por ${esc(nameFor(msg.createdBy))}, otro supervisor.</p>` : ''}
+        <div class="detail-grid" style="margin-top:10px">
+          <div><b>Destinatario</b><div>${esc(targetLabel(msg))}</div></div>
+          <div><b>Prioridad</b><div>${esc(prioLabelMsg(msg.priority))}</div></div>
+          <div><b>Autor</b><div>${esc(nameFor(msg.createdBy))}</div></div>
+          <div><b>Fecha</b><div>${fmtDate(msg.createdAt)}</div></div>
+          <div><b>Vigencia</b><div>${esc(vigenciaText)}</div></div>
+          <div><b>Estado</b><div>${esc(st.label)}</div></div>
+        </div>
+      </div>
+      <div class="modal-actions tym-detail-actions">
+        ${actor.role === 'LUBRICADOR' && !read && msg.active !== false && !msg.retiredAt ? `<button type="button" class="btn btn-accent" id="tym-detail-markread" data-id="${esc(msg.id)}">${ic("check")}Marcar leído</button>` : ''}
+        ${ownedActive ? `<button type="button" class="btn btn-accent" id="tym-detail-msg-edit" data-id="${esc(msg.id)}">${ic("edit")}Editar</button>` : ''}
+        ${ownedActive ? kebabMenuHTML([{ label: 'Retirar mensaje', action: 'retire-msg', id: msg.id }, { label: 'Eliminar mensaje', action: 'delete-msg', id: msg.id, danger: true }]) : ''}
+      </div>`;
+  }
+
+  c.innerHTML = `
+    <div class="tym-layout${selectedId ? ' tym-has-selection' : ''}">
+      <div class="tym-list-pane">
+        <div class="tym-list-head">
+          <span class="dim">Tareas y Mensajes</span>
+          ${isManager ? `
+          <details class="tym-create-menu">
+            <summary class="btn btn-accent" aria-label="Crear">${ic("plus")}Crear ▾</summary>
+            <div class="tym-row-menu-items">
+              <button type="button" class="tym-menu-item" id="tym-new-task">Nueva tarea</button>
+              ${canMessage ? `<button type="button" class="tym-menu-item" id="tym-new-message">Nuevo mensaje</button>` : ''}
+            </div>
+          </details>` : ''}
+        </div>
+        <div class="tym-tabs" role="tablist">
+          <button type="button" class="tym-tab${activeTab === 'pendientes' ? ' active' : ''}" data-tab="pendientes" role="tab" aria-selected="${activeTab === 'pendientes'}">Pendientes${bandejaItems.length ? ` (${bandejaItems.length})` : ''}</button>
+          <button type="button" class="tym-tab${activeTab === secondTab ? ' active' : ''}" data-tab="${secondTab}" role="tab" aria-selected="${activeTab === secondTab}">${esc(secondTabLabel)}</button>
+        </div>
+        <div data-tym-panel="pendientes" class="${activeTab === 'pendientes' ? '' : 'hidden'}">
+          ${rowListHTML(bandejaItems, 'Sin tareas pendientes ni mensajes nuevos.')}
+        </div>
+        <div data-tym-panel="${secondTab}" class="${activeTab === secondTab ? '' : 'hidden'}">${secondTabHTML}</div>
+      </div>
+      <div class="tym-detail-pane">${detailHTML}</div>
+    </div>
+  `;
+
+  const currentNavState = () => ({
+    activeTab: $('.tym-tab.active', c)?.dataset.tab || 'pendientes',
+    enviadosFilter: $('.tym-filter-chip.active', c)?.dataset.enviadosFilter || 'all',
+  });
+  const openDetail = (kind, id) => renderTareasYMensajes({ silent: true, ...currentNavState(), selectedKind: kind, selectedId: id });
+  const closeDetail = () => renderTareasYMensajes({ silent: true, ...currentNavState() });
+
+  $$('.tym-tab', c).forEach(tab => tab.addEventListener('click', () => {
+    $$('.tym-tab', c).forEach(t => { t.classList.toggle('active', t === tab); t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
+    $$('[data-tym-panel]', c).forEach(p => p.classList.toggle('hidden', p.dataset.tymPanel !== tab.dataset.tab));
+  }));
+  $$('.tym-filter-chip', c).forEach(chip => chip.addEventListener('click', () => {
+    $$('.tym-filter-chip', c).forEach(b => b.classList.toggle('active', b === chip));
+    const f = chip.dataset.enviadosFilter;
+    $$('[data-tym-panel="enviados"] .tym-row', c).forEach(row => {
+      const show = f === 'all' || (f === 'tareas' && row.dataset.kind === 'TAREA') || (f === 'mensajes' && row.dataset.kind === 'MENSAJE');
+      row.classList.toggle('hidden', !show);
+    });
+  }));
+  $('#tym-new-task')?.addEventListener('click', () => openManualTaskForm(null, null, () => renderTareasYMensajes({ silent: true, ...currentNavState() })));
+  $('#tym-new-message')?.addEventListener('click', () => openBroadcastForm(null, () => renderTareasYMensajes({ silent: true, ...currentNavState() })));
+  $$('.tym-row[data-id]', c).forEach(row => row.addEventListener('click', () => openDetail(row.dataset.kind, row.dataset.id)));
+  $('#tym-detail-close')?.addEventListener('click', closeDetail);
+  $('#tym-detail-ver-equipo')?.addEventListener('click', (ev) => openEquipmentDetail(ev.currentTarget.dataset.id));
+  $('#tym-detail-edit')?.addEventListener('click', (ev) => {
+    const task = manualTasksRaw.find(t => t.id === ev.currentTarget.dataset.id);
+    const equipo = task && eq(task.equipmentId);
+    if (task && equipo) openManualTaskForm(equipo, task, () => renderTareasYMensajes({ silent: true, ...currentNavState() }));
+  });
+  $('#tym-detail-cancel')?.addEventListener('click', async (ev) => {
+    const task = manualTasksRaw.find(t => t.id === ev.currentTarget.dataset.id);
+    if (task && await cancelManualTask(task)) closeDetail();
+  });
+  $('#tym-detail-complete')?.addEventListener('click', (ev) => {
+    const task = manualTasksRaw.find(t => t.id === ev.currentTarget.dataset.id);
+    const equipo = task && eq(task.equipmentId);
+    if (task && equipo) openCompleteManualTaskForm(task, equipo, () => renderTareasYMensajes({ silent: true, ...currentNavState() }));
+  });
+  $('#tym-detail-markread')?.addEventListener('click', async (ev) => {
+    await markBroadcastAsRead(ev.currentTarget.dataset.id);
+    closeDetail();
+  });
+  $('#tym-detail-msg-edit')?.addEventListener('click', (ev) => {
+    const msg = broadcastsRaw.find(m => m.id === ev.currentTarget.dataset.id);
+    if (msg) openBroadcastForm(msg, () => renderTareasYMensajes({ silent: true, ...currentNavState() }));
+  });
+  // Menús ⋮: abrir uno cierra los demás (nunca 2 abiertos a la vez) —
+  // nativo vía evento 'toggle' de <details>, sin JS de posicionamiento.
+  $$('.tym-row-menu', c).forEach(d => d.addEventListener('toggle', () => {
+    if (d.open) $$('.tym-row-menu', c).forEach(o => { if (o !== d) o.removeAttribute('open'); });
+  }));
+  // Acciones del menú ⋮ — cancelManualTask()/deleteManualTask()/
+  // retireBroadcast()/deleteBroadcast() (definidas junto a sus formularios)
+  // hacen el confirm()/permiso/DB.put/Sync/badge; acá solo se decide A CUÁL
+  // ítem corresponde cada click y se cierra el panel al terminar.
+  $$('[data-tym-action]', c).forEach(btn => btn.addEventListener('click', async () => {
+    const id = btn.dataset.id;
+    const action = btn.dataset.tymAction;
+    if (action === 'cancel-task' || action === 'delete-task') {
+      const task = manualTasksRaw.find(t => t.id === id);
+      if (!task) return;
+      const ok = action === 'cancel-task' ? await cancelManualTask(task) : await deleteManualTask(task);
+      if (ok) closeDetail();
+      return;
+    }
+    if (action === 'retire-msg' || action === 'delete-msg') {
+      const msg = broadcastsRaw.find(m => m.id === id);
+      if (!msg) return;
+      const ok = action === 'retire-msg' ? await retireBroadcast(msg) : await deleteBroadcast(msg);
+      if (ok) closeDetail();
+    }
+  }));
+  applyTymFocus();
 }
 
 /* ---------- Respaldo completo: exportar / restaurar todos los datos ---------- */
@@ -13404,16 +15796,28 @@ function notifCardHTML(clave, titulo, descripcion, cfg, conHora, conSoloSiHay, c
 let _configCategoryApply = null;
 let _configResizeListenerWired = false;
 const CONFIG_DEFAULT_CATEGORY = 'general';
+// Sección activa de Configuración, a nivel de módulo (NUNCA local a
+// wireConfigCategoryNav): renderConfig() se re-invoca después de cada
+// Guardar (cuadrilla, cobertura, ubicaciones, notificaciones, etc.) y
+// reconstruye `#config-root` desde cero — si esta variable viviera dentro
+// de wireConfigCategoryNav(), cada llamada la reiniciaría a `null` y
+// Guardar "expulsaría" al usuario a la primera categoría (General). Al
+// vivir aquí, sobrevive la reconstrucción y renderConfig() vuelve a dejar
+// la MISMA categoría visible — solución centralizada para todas las
+// secciones de Configuración, no un hack por botón.
+let _activeConfigCategory = null; // null = sin categoría elegida (estado inicial real en móvil: lista de categorías)
 function wireConfigCategoryNav(container, categoryKeys) {
-  let active = null; // null = sin categoría elegida (estado inicial real en móvil: lista de categorías)
-
   function isDesktopTabs() {
     return typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
   }
 
   function apply() {
     const desktop = isDesktopTabs();
-    const effective = active || (desktop ? CONFIG_DEFAULT_CATEGORY : null);
+    // Si la categoría recordada ya no existe en esta tanda (p.ej. "Seguridad"
+    // se oculta cuando Quick Unlock deja de estar disponible), cae al
+    // comportamiento de siempre en vez de dejar la pantalla en blanco.
+    const rememberedValid = categoryKeys.includes(_activeConfigCategory);
+    const effective = (rememberedValid && _activeConfigCategory) || (desktop ? CONFIG_DEFAULT_CATEGORY : null);
     // .hidden (clase, styles.css:1037 `display:none !important`) — NUNCA el
     // atributo HTML `hidden` nativo: `.config-mobile-menu`/`.config-category`
     // ya traen su propio `display` en styles.css con la MISMA especificidad
@@ -13436,7 +15840,7 @@ function wireConfigCategoryNav(container, categoryKeys) {
 
   function select(key) {
     if (!categoryKeys.includes(key)) return;
-    active = key;
+    _activeConfigCategory = key;
     apply();
   }
 
@@ -13458,7 +15862,7 @@ function wireConfigCategoryNav(container, categoryKeys) {
     });
   });
   $$('.config-mobile-item', container).forEach(b => b.addEventListener('click', () => select(b.dataset.category)));
-  container.querySelector('#config-mobile-back')?.addEventListener('click', () => { active = null; apply(); });
+  container.querySelector('#config-mobile-back')?.addEventListener('click', () => { _activeConfigCategory = null; apply(); });
 
   _configCategoryApply = apply;
   if (!_configResizeListenerWired) {
@@ -13475,6 +15879,15 @@ async function renderConfig() {
   const cfg = (await DB.getConfig()) || {};
   const log = (await DB.all('audit_log')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 50);
   const pending = await Sync.pendingCount();
+  // Auditoría de sincronización (2026-10-20, §19 "DIAGNÓSTICO") — bug real
+  // encontrado leyendo esta pantalla: `cfg.lastPull` (nivel raíz) ya no
+  // existe desde el refactor multi-cuenta — el pull ahora se registra DENTRO
+  // de `cfg.accountSyncStates[key].lastPull` (ver sync.js pullAll()). El
+  // viejo `cfg.lastPull` siempre es `undefined`, así que "Última descarga"
+  // mostraba "nunca" sin importar cuántas sincronizaciones reales hubiera
+  // habido. getAccountSyncState() es la misma función que sync.js usa
+  // internamente — nunca se reimplementa el cálculo de cuenta activa aquí.
+  const accountSync = await Sync.getAccountSyncState();
   const notif = mergeNotifSettings(await DB.get('settings', 'notifications'));
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
@@ -13497,7 +15910,7 @@ async function renderConfig() {
     { key: 'seguridad', label: 'Seguridad', omit: !quickUnlockAvailable },
     { key: 'operacion', label: 'Operación' },
     { key: 'organizacion', label: 'Organización' },
-    { key: 'usuarios', label: 'Usuarios y acceso' },
+    { key: 'usuarios', label: 'Usuarios y accesos' },
     { key: 'notificaciones', label: 'Notificaciones' },
     { key: 'sincronizacion', label: 'Sincronización' },
     { key: 'administracion', label: 'Administración' },
@@ -13562,13 +15975,7 @@ async function renderConfig() {
     </div>
       </div>
       <div class="config-category hidden" id="config-cat-usuarios" data-category="usuarios" role="tabpanel" aria-labelledby="config-tab-usuarios">
-    <div class="panel config-narrow">
-      <div class="panel-head"><h3>Usuarios</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Cuentas, roles y estado activo/inactivo. Se administran desde la pantalla de Usuarios — los permisos no cambian desde aquí.</p>
-        <button type="button" class="btn btn-accent" id="btn-config-go-usuarios">${ic("users")}Ir a Usuarios</button>
-      </div>
-    </div>
+    <div id="config-usuarios-embed"></div>
       </div>
       <div class="config-category hidden" id="config-cat-notificaciones" data-category="notificaciones" role="tabpanel" aria-labelledby="config-tab-notificaciones">
     <div class="panel" id="notif-panel">
@@ -13592,6 +15999,7 @@ async function renderConfig() {
           ${notifCardHTML('cumplimiento', '📊 Resumen de cumplimiento', 'Resumen diario con el porcentaje de cumplimiento de la flota.', notif.cumplimiento, true, false)}
           ${notifCardHTML('anomalias', '⚠ Anomalías nuevas', 'Aviso inmediato cuando alguien reporta una anomalía. Si llegan varias seguidas se agrupan en una sola.', notif.anomalias, false, false)}
           ${notifCardHTML('resumenSemanal', '📅 Resumen semanal (lunes)', 'Cada lunes: engrases de la semana, cumplimiento y qué fue lo que más falló.', notif.resumenSemanal, true, false)}
+          ${notifCardHTML('validaciones', '🖊 Validaciones PENDIENTES', 'Avisa al lubricador si su cuadrilla tiene engrases ya realizados a la espera de firma. Se conserva el mismo registro hasta validarse, nunca desaparece por antigüedad.', notif.validaciones, false, false)}
 
           <div class="modal-actions" style="justify-content:flex-start; margin-top:16px">
             <button type="submit" class="btn btn-accent">${ic("save")}Guardar notificaciones</button>
@@ -13620,6 +16028,7 @@ async function renderConfig() {
         `}
       </div>
     </div>
+    ${await broadcastPanelHTML()}
       </div>
       <div class="config-category hidden" id="config-cat-sincronizacion" data-category="sincronizacion" role="tabpanel" aria-labelledby="config-tab-sincronizacion">
     <div class="panel config-narrow">
@@ -13643,7 +16052,7 @@ async function renderConfig() {
             <select name="syncIntervalSeconds" ${App.currentUser.role !== 'ADMINISTRADOR' ? 'disabled' : ''}>
               ${SYNC_INTERVAL_OPTIONS.map(s => `<option value="${s}" ${App.generalSettings.syncIntervalSeconds === s ? 'selected' : ''}>${syncIntervalLabel(s)}</option>`).join('')}
             </select>
-            <span class="field-hint">También se sincroniza al recuperar conexión y después de operaciones importantes.</span>
+            <span class="field-hint">También se sincroniza al recuperar conexión y después de operaciones importantes.${App.currentUser.role !== 'ADMINISTRADOR' ? ' Solo el Administrador puede cambiar este ajuste.' : ''}</span>
           </label>
           ${App.currentUser.role === 'ADMINISTRADOR' ? `
           <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
@@ -13651,8 +16060,20 @@ async function renderConfig() {
           </div>` : ''}
         </form>
         <div id="sync-status" class="dim" style="margin-top:10px">
-          ${cfg.url ? `Servidor conectado. Última descarga: ${cfg.lastPull ? fmtDate(cfg.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
+          ${cfg.url ? `Servidor conectado. Última descarga: ${accountSync.lastPull ? fmtDate(accountSync.lastPull) : 'nunca'} · Pendientes por subir: ${pending}` : 'Aún no hay servidor remoto configurado — todo funciona solo en este dispositivo.'}
         </div>
+        ${cfg.url ? `
+        <details class="reg-advanced" style="margin-top:10px">
+          <summary>Diagnóstico de sincronización</summary>
+          <div class="form-grid" style="margin-top:8px">
+            <div><span class="dim">Estado</span><div id="diag-estado">${$('#conn-badge')?.textContent?.trim() || (navigator.onLine ? 'SINCRONIZADO' : 'SIN INTERNET · GUARDANDO LOCAL')}</div></div>
+            <div><span class="dim">Conectividad</span><div>${navigator.onLine ? 'En línea' : 'Sin conexión'}</div></div>
+            <div><span class="dim">Última sincronización completa</span><div>${lastSyncState.at ? fmtDate(lastSyncState.at) : 'aún no en esta sesión'}</div></div>
+            <div><span class="dim">Último pull (datos bajados)</span><div>${accountSync.lastPull ? fmtDate(accountSync.lastPull) : 'nunca'}</div></div>
+            <div><span class="dim">Cambios pendientes por subir</span><div>${pending}</div></div>
+            <div><span class="dim">Conflictos sin resolver</span><div>${lastSyncState.conflicts || 0}</div></div>
+          </div>
+        </details>` : ''}
       </div>
     </div>
       </div>
@@ -13706,7 +16127,14 @@ async function renderConfig() {
     </div>`;
 
   wireConfigCategoryNav(c, CONFIG_CATEGORIES.map(cat => cat.key));
-  $('#btn-config-go-usuarios')?.addEventListener('click', () => navigate('usuarios'));
+  // Usuarios y accesos (cierre bloque Configuración, 2026-10-18): ya NO es
+  // un botón que redirige a la pantalla separada 'usuarios' — reusa
+  // renderUsuarios() de verdad, apuntado a su propio contenedor dentro de
+  // esta categoría. Guardar/editar/desactivar un usuario desde aquí
+  // refresca SOLO ese contenedor (renderUsuarios(c) internamente), nunca
+  // renderConfig() completo — por diseño no puede sacar al usuario de la
+  // categoría activa, porque ni siquiera toca #config-root.
+  await renderUsuarios($('#config-usuarios-embed'));
 
   await renderTrash();
   renderStorageStats();
@@ -13779,6 +16207,7 @@ async function renderConfig() {
   wireCuadrillasPanel(c, () => renderConfig());
   wireSimpleListPanel(c, 'locations', () => renderConfig());
   wireSimpleListPanel(c, 'equipment_types', () => renderConfig());
+  wireBroadcastPanel(c);
 
   $('#btn-enable-push')?.addEventListener('click', async () => {
     if (!confirm('Se te va a pedir permiso para mostrar notificaciones. ¿Continuar?')) return;
@@ -13898,7 +16327,8 @@ async function renderConfig() {
       engraseRealizado: leerTipo('engraseRealizado', false),
       cumplimiento: leerTipo('cumplimiento', true),
       anomalias: leerTipo('anomalias', false),
-      resumenSemanal: leerTipo('resumenSemanal', true)
+      resumenSemanal: leerTipo('resumenSemanal', true),
+      validaciones: leerTipo('validaciones', false)
     };
 
     // Aviso útil: si un tipo queda activo pero sin ningún rol, nunca le llegaría a nadie
@@ -13933,7 +16363,7 @@ async function renderConfig() {
   });
   $('#btn-sync-now').addEventListener('click', async () => {
     $('#sync-status').textContent = 'Sincronizando…';
-    await Sync.fullSync();
+    await Sync.fullSync('manual');
     renderConfig();
   });
 }

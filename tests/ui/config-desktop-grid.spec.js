@@ -35,19 +35,24 @@ const appSource = readSource(APP_JS_PATH);
 const WIRE_NAV_SRC = `
   const $ = (sel, el = document) => el.querySelector(sel);
   const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
-  // _configCategoryApply/_configResizeListenerWired son "let" a nivel de
-  // módulo en app.js (se reasignan dentro de wireConfigCategoryNav) —
-  // extractDeclaration() solo extrae function/const, así que se declaran
-  // aquí igual que en el archivo real; el CUERPO de la función sí es el
-  // real, extraído sin reimplementar nada.
+  // _configCategoryApply/_configResizeListenerWired/_activeConfigCategory
+  // son "let" a nivel de módulo en app.js (se reasignan dentro de
+  // wireConfigCategoryNav) — extractDeclaration() solo extrae
+  // function/const, así que se declaran aquí igual que en el archivo real;
+  // el CUERPO de la función sí es el real, extraído sin reimplementar nada.
+  // _activeConfigCategory persiste la categoría elegida ENTRE llamadas
+  // (renderConfig() se reconstruye tras cada Guardar) — si viviera dentro
+  // de wireConfigCategoryNav(), cada llamada la resetearía a null y
+  // Guardar expulsaría al usuario de la categoría activa.
   let _configCategoryApply = null;
   let _configResizeListenerWired = false;
+  let _activeConfigCategory = null;
   ${extractDeclaration(appSource, 'CONFIG_DEFAULT_CATEGORY')}
   ${extractDeclaration(appSource, 'wireConfigCategoryNav')}
 `;
 
 const CATEGORIES = ['general', 'seguridad', 'operacion', 'organizacion', 'usuarios', 'notificaciones', 'sincronizacion', 'administracion'];
-const LABELS = { general: 'General', seguridad: 'Seguridad', operacion: 'Operación', organizacion: 'Organización', usuarios: 'Usuarios y acceso', notificaciones: 'Notificaciones', sincronizacion: 'Sincronización', administracion: 'Administración' };
+const LABELS = { general: 'General', seguridad: 'Seguridad', operacion: 'Operación', organizacion: 'Organización', usuarios: 'Usuarios y accesos', notificaciones: 'Notificaciones', sincronizacion: 'Sincronización', administracion: 'Administración' };
 
 // Mismas clases/ids/estructura reales que renderConfig() (app.js) genera —
 // incluye el wrapper .config-desktop-grid > (.config-tabs + .config-content)
@@ -125,7 +130,7 @@ async function setup(page) {
 test('existen las 8 categorías correctas, en nav vertical y en la lista móvil', async ({ page }) => {
   await setup(page);
   const tabLabels = await page.locator('.config-tab').allTextContents();
-  expect(tabLabels).toEqual(['General', 'Seguridad', 'Operación', 'Organización', 'Usuarios y acceso', 'Notificaciones', 'Sincronización', 'Administración']);
+  expect(tabLabels).toEqual(['General', 'Seguridad', 'Operación', 'Organización', 'Usuarios y accesos', 'Notificaciones', 'Sincronización', 'Administración']);
   const menuLabels = (await page.locator('.config-mobile-item').allTextContents()).map(t => t.replace('›', '').trim());
   expect(menuLabels).toEqual(tabLabels);
 });
@@ -299,4 +304,55 @@ test('J) handlers (Guardar/Agregar/etc.) siguen funcionando después de navegar 
   await page.locator('#btn-theme-test').click();
 
   expect(clicks, 'los 3 handlers siguen wireados tras varios cambios de categoría').toBe(3);
+});
+
+// K) Simplificar Configuración > Organización (auditoría 2026-10-18) —
+// ROOT CAUSE NAVEGACIÓN: `active` vivía DENTRO de wireConfigCategoryNav(),
+// así que cada vez que renderConfig() reconstruía #config-root (Guardar
+// cuadrilla, cobertura, ubicaciones, notificaciones, etc. — ver
+// wireCuadrillasPanel(c, () => renderConfig()) en app.js) la variable
+// volvía a `null` y la pantalla caía a General (desktop) o a la lista de
+// categorías (móvil). Simula exactamente eso: reconstruye el fixture
+// (como hace renderConfig()) y vuelve a llamar wireConfigCategoryNav()
+// sobre el DOM nuevo — la categoría activa debe sobrevivir, en desktop Y
+// en móvil, para CUALQUIER categoría (no solo Organización).
+async function rerenderLikeRenderConfig(page) {
+  await page.evaluate((html) => { document.getElementById('config-root').outerHTML = html; }, configFixture());
+  await page.evaluate((categories) => { window.__wireConfigCategoryNav(document.getElementById('config-root'), categories); }, CATEGORIES);
+}
+
+test('K) 1440px — Guardar (reconstrucción de #config-root) NO expulsa de Organización a General', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await setup(page);
+  await page.locator('#config-tab-organizacion').click();
+  await expect(page.locator('#config-cat-organizacion')).toBeVisible();
+
+  await rerenderLikeRenderConfig(page); // == lo que hace renderConfig() tras Guardar
+
+  await expect(page.locator('#config-cat-organizacion')).toBeVisible();
+  await expect(page.locator('#config-cat-general')).toBeHidden();
+  await expect(page.locator('#config-tab-organizacion')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('K) la sección activa se conserva para CUALQUIER categoría tras reconstruir (solución general, no un caso especial de Organización)', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await setup(page);
+  for (const k of ['notificaciones', 'sincronizacion', 'administracion']) {
+    await page.locator(`#config-tab-${k}`).click();
+    await rerenderLikeRenderConfig(page);
+    await expect(page.locator(`#config-cat-${k}`), `"${k}" debe seguir visible tras reconstruir`).toBeVisible();
+  }
+});
+
+test('K) mobile 390px — Guardar NO regresa a la lista de categorías; la categoría abierta sigue abierta', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page);
+  await page.locator('.config-mobile-item[data-category="organizacion"]').click();
+  await expect(page.locator('#config-cat-organizacion')).toBeVisible();
+
+  await rerenderLikeRenderConfig(page);
+
+  await expect(page.locator('#config-cat-organizacion')).toBeVisible();
+  await expect(page.locator('#config-mobile-menu')).toBeHidden();
+  await expect(page.locator('#config-mobile-back')).toBeVisible();
 });

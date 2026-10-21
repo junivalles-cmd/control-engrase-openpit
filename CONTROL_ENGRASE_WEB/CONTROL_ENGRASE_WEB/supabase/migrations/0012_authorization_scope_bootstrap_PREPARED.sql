@@ -1,7 +1,31 @@
--- PREPARED ONLY. Do not run this file against production.
+-- MANUAL-PRODUCTION-PREPARED. Additive bootstrap BEFORE 0013 / cutover.
+-- Preparation is not execution authorization; apply manually as postgres only
+-- after validating the preconditions below. Never auto-apply this file.
 -- Phase 2D-1 only: pre-0008 scope resolution and minimal Auth bootstrap.
 -- This does NOT install row policies, change app_store_permissions, remove
 -- the legacy policy, or grant access to crew_locations.
+-- Requires the existing Auth/profile baseline, auth.uid(), anon/authenticated
+-- roles, and USAGE on public for authenticated. Install as the owner of both
+-- app_profiles and engrase_sync (production: postgres), with RLS enabled and
+-- FORCE RLS disabled. The DO block checks ownership and FORCE RLS only;
+-- validate RLS, baseline columns/keys and function ACLs separately.
+-- app_profiles.auth_user_id must be unique; app_user_id must be non-null and
+-- unique. engrase_sync uses unique (store,id), text ids and jsonb payloads.
+-- If either helper already exists, stop and inspect its owner/ACL/dependencies:
+-- CREATE OR REPLACE preserves existing ownership and non-revoked grants.
+-- This rollout assumes 0009/0010 validated, 0008 and 0013+ absent; 0007 and
+-- 0011 are NOT dependencies of 0012. No device defines authorization scope.
+--
+-- Postconditions: both helpers owned by postgres, SECURITY DEFINER with
+-- search_path=pg_catalog; resolver has no PUBLIC/anon/authenticated EXECUTE;
+-- bootstrap has authenticated EXECUTE but no PUBLIC/anon EXECUTE. Audit other
+-- explicit/inherited API grants too. Validate each real profile's scope.
+-- rowScopeEnforced remains false: 0012 alone does NOT enable safe first pull
+-- or sync. Validate 0012, then separately review/apply/validate 0013 (which
+-- adds restrictive policies, changes LUBRICADOR/equipment can_read, and sets
+-- readiness true). Do not reapply 0012 after 0013: it resets readiness false.
+-- Keeping the legacy ALL/true policy preserves existing anonymous exposure
+-- wherever anon has table grants. This is NOT a completed security cutover.
 --
 -- Real data model used here:
 --   app_profiles(auth_user_id, app_user_id, display_name, role, active)
@@ -12,6 +36,10 @@
 --
 -- SECURITY DEFINER is required because membership rows are in the generic
 -- engrase_sync table; this function returns identifiers only, never payloads.
+-- The authenticated wrapper accepts no user id; auth.uid() binds it to the
+-- verified request JWT. The internal resolver must remain inaccessible to API
+-- roles. The MD5 fingerprint detects context changes; it is not a credential,
+-- signature, permission-matrix digest, or proof that row RLS is installed.
 begin;
 
 do $precondition$

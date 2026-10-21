@@ -1,0 +1,21 @@
+{
+  "type": "LOCAL_POSTGRES_RLS_REAL_SYNC_CODE_MOCKED_STORAGE",
+  "result": "PASS",
+  "finalPersistedPayload": {
+    "id": "TEST0017_PIPELINE_TASK",
+    "photo": "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PIPELINE_TASK_0.jpg",
+    "title": "Pipeline RLS contract",
+    "crewId": "crew-b",
+    "photos": [
+      "http://127.0.0.1:55321/storage/v1/object/public/engrase-photos/manual_tasks/TEST0017_PIPELINE_TASK_0.jpg"
+    ],
+    "status": "COMPLETED",
+    "createdBy": "supervisor",
+    "completedAt": "2026-10-18T12:00:00Z",
+    "completedBy": "other-lub",
+    "equipmentId": "eq-a",
+    "photoUploaded": true,
+    "completionComment": "Dummy evidence"
+  },
+  "localPhotoPreserved": true
+}

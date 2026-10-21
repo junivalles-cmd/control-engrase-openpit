@@ -57,6 +57,10 @@ test-results/
 .env.*
 *.local
 
+# ---- Caché local del CLI de Supabase (project-ref, pooler-url, etc. —
+# nunca una fuente de verdad, se regenera con "supabase link") ----
+supabase/.temp/
+
 # ---- Logs y archivos temporales ----
 *.log
 *.tmp

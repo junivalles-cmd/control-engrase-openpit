@@ -36,8 +36,9 @@ describe('colaAtencion — orden fijo por prioridad', () => {
 });
 
 describe('§15 — no double count: "Pendientes hoy" y "Próximos" son mutuamente excluyentes', () => {
-  it('"Pendientes hoy" reusa EXACTAMENTE el universo de "Cumplimiento Hoy" (progHoy/hechoHoy) — mismo denominador, nunca una fórmula nueva', () => {
-    expect(src).toContain('const pendientesHoyIds = new Set(progHoy.map(e => e.id)); hechoHoy.forEach(e => pendientesHoyIds.delete(e.id));');
+  it('"Pendientes hoy" deriva de las ocurrencias todavía abiertas del mismo universo usado por Cumplimiento Hoy', () => {
+    expect(src).toContain('const pendientesHoyOcurrencias = ocurrenciasHoy.filter(occurrence => !occurrenceIsComplete(occurrence));');
+    expect(src).toContain('const pendientesHoyIds = new Set(pendientesHoyOcurrencias.map(o => o.e.id));');
     expect(src).toContain('const pendientesHoyList = progHoy.filter(e => pendientesHoyIds.has(e.id));');
   });
 

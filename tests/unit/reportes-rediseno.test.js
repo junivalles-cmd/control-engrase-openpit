@@ -275,7 +275,11 @@ describe('Validación de engrases en Reportes — análisis del período, respet
     const iFn = src.indexOf('function drawValidacionSeccion');
     const iPct = src.indexOf('pctValidado', iFn);
     const ramaSinSujetos = src.slice(iFn, iPct);
-    expect(ramaSinSujetos).toContain('Validación pendiente de activación');
+    // LUB-10 (auditoría pre-release 2026-10-21): el texto ya no nombra
+    // GREASE_VALIDATION_ENABLED_FROM ni una ruta de doc interna — sigue
+    // distinguiendo los dos casos (fecha no definida vs. sin registros),
+    // solo con lenguaje operativo.
+    expect(ramaSinSujetos).toContain('Esa fecha todavía no ha sido definida');
     expect(ramaSinSujetos).toContain('Ningún registro del período está sujeto a validación');
     expect(ramaSinSujetos).not.toContain('0%');
   });

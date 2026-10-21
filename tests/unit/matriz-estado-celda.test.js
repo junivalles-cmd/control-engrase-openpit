@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { loadWeeklyMatrixLogic } from '../helpers/loadLubricationLogic.js';
 
-const { estadoCelda } = loadWeeklyMatrixLogic();
+const { estadoCelda, estadosCeldaPorTurno } = loadWeeklyMatrixLogic();
 
 // Miércoles 2026-01-14 — mismo día de referencia que matriz-semanal.test.js,
 // para mantener consistencia entre ambas suites.
@@ -20,6 +20,16 @@ const equipo = { id: 'e1' };
 function fecha(y, m, d) { const f = new Date(y, m, d); f.setHours(0, 0, 0, 0); return f; }
 
 describe('estadoCelda() — Matriz Semanal, celda equipo x día', () => {
+  it('doble turno: un registro DAY no oculta NIGHT y cada subestado mantiene su propia identidad', () => {
+    const day = fecha(2026, 9, 13);
+    const plan = { id: 'pex', equipmentId: 'e1', controlType: 'Horas de operación', effectiveDate: '2026-10-13', requiredShifts: ['shift_dia','shift_noche'] };
+    const records = [{ id: 'rday', equipmentId: 'e1', date: '2026-10-13T08:00:00', shiftId: 'shift_dia', qty: 1, details: [],
+      operationalSnapshot: { operationalDate: '2026-10-13', occurrenceKey: 'pex:2026-10-13:shift_dia' } }];
+    expect(estadoCelda(equipo, day, [plan], records, day, 'shift_dia').tipo).toBe('hecho');
+    expect(estadoCelda(equipo, day, [plan], records, day, 'shift_noche').tipo).toBe('pendiente');
+    expect(estadosCeldaPorTurno(equipo, day, [plan], records, day).map(x => [x.shiftId, x.state.tipo]))
+      .toEqual([['shift_dia','hecho'], ['shift_noche','pendiente']]);
+  });
   it('1. no corresponde ese día (no está en assignedDays) -> vacio', () => {
     const plans = [{ equipmentId: 'e1', assignedDays: ['Jueves'] }]; // hoy es Miércoles
     const r = estadoCelda(equipo, HOY, plans, [], HOY);

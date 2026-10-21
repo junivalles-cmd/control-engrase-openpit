@@ -286,7 +286,7 @@ describe('CORRECCIÓN CENTRAL — baseline REAL activado (rollout: inicio del pr
     const pendSrc = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'isRecordPendingValidation');
     expect(pendSrc).toContain('isRecordSubjectToValidation(record.date)');
     expect(pendSrc).toContain('findActiveValidations(record.id, validations).length !== 0');
-    expect(pendSrc).toContain('isValidationExpired(record.date, now, shiftBoundaries)');
+    expect(pendSrc).toContain('return true;');
     const conflictSrc = extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH), 'isRecordInConflict');
     expect(conflictSrc).toContain('isRecordSubjectToValidation(record.date)');
     expect(conflictSrc).toContain('hasValidationConflict(record.id, validations)');
@@ -329,7 +329,7 @@ describe('Flujo end-to-end con el baseline REAL activado (fecha de registro DESP
     const record = { id: 'greg_1', date: DESPUES_DIA };
     const now = new Date('2026-09-29T07:00:00'); // Día del día siguiente = 3er turno
     expect(validationStatusForRecord(record, [], now, SHIFTS)).toBe('VALIDACION_VENCIDA');
-    expect(isRecordPendingValidation(record, [], now, SHIFTS)).toBe(false);
+    expect(isRecordPendingValidation(record, [], now, SHIFTS)).toBe(true);
   });
 
   it('H) 2+ firmas activas mantiene PRIORIDAD de conflicto aunque el plazo ya haya vencido', () => {
@@ -466,10 +466,10 @@ describe('PLAZO DE VALIDACIÓN con baseline de fixture ACTIVO (módulo cargado c
     expect(mod.validationStatusForRecord(record, [], now, SHIFTS)).toBe('VALIDACION_VENCIDA');
   });
 
-  it('D) vencida → isRecordPendingValidation() es false e isRecordValidationExpired() es true (la UI usa esto para ocultar "Validar")', () => {
+  it('D) vencida permanece pendiente de resolver; plazo vencido no elimina la accion Validar', () => {
     const record = { id: 'greg_1', date: '2026-09-24T09:00:00' };
     const now = new Date('2026-09-25T07:00:00');
-    expect(mod.isRecordPendingValidation(record, [], now, SHIFTS)).toBe(false);
+    expect(mod.isRecordPendingValidation(record, [], now, SHIFTS)).toBe(true);
     expect(mod.isRecordValidationExpired(record, [], now, SHIFTS)).toBe(true);
   });
 
@@ -512,7 +512,7 @@ describe('PLAZO DE VALIDACIÓN con baseline de fixture ACTIVO (módulo cargado c
   });
 });
 
-describe('D) UI — un registro vencido NO ofrece "Validar" (ni crea firma retroactiva) en Historial ni Mis Engrases', () => {
+describe('D) UI — un registro vencido permite validar el MISMO registro posteriormente en Historial ni Mis Engrases', () => {
   const appSrc = readSource(APP_JS_PATH);
   const lubHistorialSrc = extractDeclaration(appSrc, 'renderLubricadorHistorial');
   // drawHistory() es la función real que dibuja la tabla de engrases por
@@ -522,12 +522,12 @@ describe('D) UI — un registro vencido NO ofrece "Validar" (ni crea firma retro
   // limpio).
   const drawHistorySrc = extractDeclaration(appSrc, 'drawHistory');
 
-  it('renderLubricadorHistorial() ("Mis Engrases"): valAction excluye VALIDACION_VENCIDA además de HISTORICO', () => {
-    expect(lubHistorialSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA/);
+  it('renderLubricadorHistorial() ("Mis Engrases"): valAction excluye solo HISTORICO, conserva la accion en vencidas', () => {
+    expect(lubHistorialSrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
   });
 
-  it('drawHistory() (tabla de Historial por equipo): valAction excluye VALIDACION_VENCIDA además de HISTORICO', () => {
-    expect(drawHistorySrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \|\| valStatus === VALIDATION_STATUS\.VENCIDA/);
+  it('drawHistory() (tabla de Historial por equipo): valAction excluye solo HISTORICO, conserva la accion en vencidas', () => {
+    expect(drawHistorySrc).toMatch(/valStatus === VALIDATION_STATUS\.HISTORICO \? '' :/);
   });
 
   it('ambas pantallas pasan `ahora`/App.generalSettings reales a validationStatusForRecord() — nunca horarios inventados', () => {

@@ -22,9 +22,18 @@
 import { describe, it, expect } from 'vitest';
 import { loadPlanComplianceLogic } from '../helpers/loadLubricationLogic.js';
 
-const { evaluateRecordCompliance, findPreviousRecord, computeFleetCompliance } = loadPlanComplianceLogic();
+const { evaluateRecordCompliance, findPreviousRecord, computeFleetCompliance, computeProgramadoRealizadoPeriodo } = loadPlanComplianceLogic();
 
 describe('Plan Día/Turno — cumplimiento', () => {
+  it('doble turno efectivo: día realizado y noche pendiente cuentan 1/2, no 1/1', () => {
+    const day = new Date(2026, 9, 13);
+    const plan = { id: 'pex', equipmentId: 'e1', controlType: 'Horas de operación', requiredShifts: ['shift_dia','shift_noche'], effectiveDate: '2026-10-13' };
+    const records = [{ id: 'rday', equipmentId: 'e1', date: '2026-10-13T08:00:00', shiftId: 'shift_dia', operationalSnapshot: { operationalDate: '2026-10-13' } }];
+    const result = computeProgramadoRealizadoPeriodo([{ id: 'e1' }], records, { e1: plan }, [day]);
+    expect(result.general).toEqual({ programados: 2, realizados: 1 });
+    expect(result.porTurno.shift_dia).toEqual({ programados: 1, realizados: 1 });
+    expect(result.porTurno.shift_noche).toEqual({ programados: 1, realizados: 0 });
+  });
   // 2026-09-24 es jueves.
   const planDiaTurno = {
     id: 'p1', controlType: 'Día y turno de la semana',

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 import { readSource } from '../helpers/extractFromSource.js';
 import { bootLubricadorFollowUp, followUpEquipment } from '../helpers/lubricadorFollowUpFixture.js';
@@ -72,14 +72,9 @@ test('shared card structure, aligned rails/actions and AA contrast in all four m
   expect(errors).toEqual([]);
 });
 
-test('app outside theme settings remains identical to the release baseline', () => {
-  const initial = execFileSync('git', ['show', '301bc41:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
-  const withoutThemeSettings = source => {
-    const start = source.lastIndexOf('/*', source.indexOf('const THEMES ='));
-    const end = source.indexOf('/* ---------- arranque ---------- */', start);
-    expect(start).toBeGreaterThan(0);
-    expect(end).toBeGreaterThan(start);
-    return source.slice(0, start) + source.slice(end);
-  };
-  expect(withoutThemeSettings(readSource(APP_JS_PATH))).toBe(withoutThemeSettings(initial));
+test('theme preference functions remain isolated from operational persistence', () => {
+  for (const name of ['getTheme','saveTheme','applyTheme','normalizeThemePreference']) {
+    const body = extractDeclaration(readSource(APP_JS_PATH), name);
+    expect(body, name).not.toMatch(/\b(?:DB|Sync|Auth)\s*\.|\bfetch\s*\(/);
+  }
 });

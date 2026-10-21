@@ -32,6 +32,54 @@ begin
       'public.resolve_authorization_scope(uuid)'
     ]) as required(signature) where to_regprocedure(required.signature) is null) then
     raise exception 'One or more required release RPC/bootstrap functions are missing'; end if;
+  -- Recheck the real 0007 catalog policies at the cutover boundary. 0015
+  -- checked them before changing the matrix; fail if they were later removed
+  -- or weakened. Do not recreate or replace guards here.
+  if exists (
+    with expected(policyname,cmd,using_parts,check_parts) as (values
+      ('push_tokens_select_owner_only','SELECT',array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[],array[]::text[]),
+      ('push_tokens_insert_owner_only','INSERT',array[]::text[],array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+      ('push_tokens_update_owner_only','UPDATE',array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[],array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+      ('push_tokens_no_hard_delete','DELETE',array[$q$store<>'push_tokens'$q$]::text[],array[]::text[])
+    ), actual as (
+      select e.*,p.permissive,p.roles,p.cmd as actual_cmd,
+        lower(regexp_replace(coalesce(p.qual,''),'[[:space:]]','','g')) as using_sql,
+        lower(regexp_replace(coalesce(p.with_check,''),'[[:space:]]','','g')) as check_sql
+      from expected e left join pg_catalog.pg_policies p
+        on p.schemaname='public' and p.tablename='engrase_sync' and p.policyname=e.policyname
+    )
+    select 1 from actual a
+    where a.permissive is distinct from 'RESTRICTIVE' or a.actual_cmd is distinct from a.cmd
+       or cardinality(a.roles) is distinct from 1
+       or not ('authenticated'=any(coalesce(a.roles,array[]::name[])))
+       or exists(select 1 from unnest(a.using_parts) as req(fragment) where position(req.fragment in a.using_sql)=0)
+       or exists(select 1 from unnest(a.check_parts) as req(fragment) where position(req.fragment in a.check_sql)=0)
+  ) then raise exception 'Cutover requires all four intact 0007 authenticated restrictive owner guards'; end if;
+  if not exists (
+    select 1 from pg_catalog.pg_proc p
+    where p.oid=to_regprocedure('public.get_authorization_context()')
+      and position($q$jsonb_set(c,'{context,rowscopeenforced}','true'::jsonb,false)$q$
+        in lower(regexp_replace(pg_catalog.pg_get_functiondef(p.oid),'[[:space:]]','','g'))) > 0
+  ) then raise exception 'Cutover requires 0013 rowScopeEnforced=true bootstrap implementation'; end if;
+  if (select count(*) from pg_catalog.pg_policies where schemaname='public' and tablename='engrase_sync'
+      and policyname in ('authorization_scope_select','authorization_scope_insert','authorization_scope_update','authorization_scope_delete')
+      and permissive='RESTRICTIVE' and cardinality(roles)=1 and 'authenticated'=any(roles)
+      and case policyname
+        when 'authorization_scope_select' then coalesce(qual,'') ilike '%authorization_private.authorization_row_in_scope%'
+        when 'authorization_scope_insert' then coalesce(with_check,'') ilike '%authorization_private.authorization_row_in_scope%'
+        when 'authorization_scope_update' then coalesce(qual,'') ilike '%authorization_private.authorization_row_in_scope%'
+          and coalesce(with_check,'') ilike '%authorization_private.authorization_row_in_scope%'
+        when 'authorization_scope_delete' then coalesce(qual,'') ilike '%authorization_private.authorization_row_in_scope%'
+        else false end) <> 4 then
+    raise exception 'Cutover requires all four 0013 authenticated row-scope policies'; end if;
+  if not exists(select 1 from pg_catalog.pg_proc p where p.oid=to_regprocedure(
+      'authorization_private.authorization_row_in_scope(text,text,jsonb,text,jsonb)')
+      and pg_catalog.pg_get_functiondef(p.oid) ilike '%auth.uid() is null%'
+      and has_function_privilege('authenticated',p.oid,'EXECUTE')
+      and not has_function_privilege('anon',p.oid,'EXECUTE')
+      and not exists(select 1 from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+        where acl.grantee=0 and acl.privilege_type='EXECUTE')) then
+    raise exception 'Cutover requires the 0013 row-scope classifier'; end if;
   if exists(select 1 from unnest(array[
       'engrase_sync: leer según matriz','engrase_sync: crear según matriz','engrase_sync: actualizar según matriz',
       'authorization_scope_select','authorization_scope_insert','authorization_scope_update','authorization_scope_delete',

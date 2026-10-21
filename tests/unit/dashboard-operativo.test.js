@@ -369,25 +369,30 @@ describe('Rediseño — "Equipos que requieren atención" como cola operativa (r
   });
 });
 
-describe('KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — realizados/programados, SOLO Día/Turno', () => {
-  it('el universo evaluable son equipos OPERATIVOS con plan "Día y turno de la semana" — Horas queda excluido a propósito', () => {
-    expect(src).toContain("const equiposDT = equipos.filter(e => e.status === 'Operativo' && (planByEquipoId[e.id] || {}).controlType === 'Día y turno de la semana');");
+describe('KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — conteo por ocurrencia', () => {
+  it('el universo evaluable incluye planes semanales y planes con doble turno desde su fecha efectiva', () => {
+    expect(src).toContain('const equiposDT = equipos.filter(e => {');
+    expect(src).toContain("plan?.controlType === 'Día y turno de la semana' || dualConfigured");
+    expect(src).toContain("&& !!plan.effectiveDate;");
   });
 
   it('nunca declara avgInterval ni multiplica/divide horómetro por tiempo (prohibido explícitamente, no proyección)', () => {
     expect(src).not.toMatch(/avgInterval|hourmeter\s*[*/]/);
   });
 
-  it('"Hoy": programado = plan.assignedDays incluye el día real de hoy; hecho = registro real de hoy con turno acorde al plan', () => {
-    expect(src).toContain("const progHoy = equiposDT.filter(e => (planByEquipoId[e.id].assignedDays || []).includes(hoyWeekday));");
-    expect(src).toContain('const hechoHoy = progHoy.filter(e => hechoEnFecha(e.id, planByEquipoId[e.id], today));');
+  it('"Hoy": el denominador y el numerador vienen de la lista de ocurrencias del día; DAY y NIGHT se cuentan por separado', () => {
+    expect(src).toContain('function occurrencesForDate(e, date, shiftFilter = null)');
+    expect(src).toContain('const ocurrenciasHoy = equiposDT.flatMap(e => occurrencesForDate(e, nowTs));');
+    expect(src).toContain('const realizadasHoy = ocurrenciasHoy.filter(occurrenceIsComplete);');
+    expect(src).toContain('const cumplHoy = { x: realizadasHoy.length, y: ocurrenciasHoy.length');
     expect(src).toContain('function turnoOk(plan, shiftId) { return !plan.shiftId || plan.shiftId === shiftId; }');
   });
 
-  it('"Turno actual": subconjunto de lo programado hoy cuyo turno coincide con currentShiftId(), hecho EN ese turno específico', () => {
+  it('"Turno actual": filtra la lista central de ocurrencias por el shiftId real', () => {
     expect(src).toContain('const turnoActual = currentShiftId();');
-    expect(src).toContain('const progTurno = progHoy.filter(e => turnoOk(planByEquipoId[e.id], turnoActual));');
-    expect(src).toContain("r.shiftId === turnoActual");
+    expect(src).toContain('const ocurrenciasTurno = ocurrenciasHoy.filter(o => o.shiftId === turnoActual);');
+    expect(src).toContain('const realizadasTurno = ocurrenciasTurno.filter(occurrenceIsComplete);');
+    expect(src).toContain('const cumplTurno = { x: realizadasTurno.length, y: ocurrenciasTurno.length');
   });
 
   it('"Semana": solo días YA TRANSCURRIDOS desde el Lunes hasta hoy (nunca días futuros) — sin proyección', () => {

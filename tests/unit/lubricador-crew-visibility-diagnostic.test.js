@@ -11,15 +11,21 @@
 // resolveOperationalScope()/classifyEquipmentWork() ya están correctamente
 // implementados y ya tenían cobertura equivalente (CASO 1/3/7/C en
 // operational-scope.test.js, usando "Volcán" como ejemplo). El bug real
-// encontrado es VISUAL: el checkbox "Cuadrilla principal de esta ubicación"
-// en el formulario "Editar cuadrilla" (y el de "Miembros autorizados") no
-// renderizaba ningún indicador visible (faltaba <span class="check-row-mark">,
-// requerido por la regla CSS ".check-row input.chk-done { opacity:0 }") —
-// un administrador no podía confirmar visualmente si 76-08 quedó marcada
-// como principal. Esto explica con alta probabilidad cómo 76-08 pudo quedar
-// sin marcar aunque el admin creyera haberla marcado. Corregido en app.js
-// (cuadrillasPanelHTML()/wireCuadrillasPanel()) — este archivo prueba ambas
-// partes: el fix visual Y el trazado completo del caso real.
+// encontrado en su momento era VISUAL: el checkbox "Cuadrilla principal de
+// esta ubicación" en el formulario "Editar cuadrilla" no renderizaba ningún
+// indicador visible. Corregido entonces en app.js.
+//
+// SUPERSEDIDO (corrección arquitectónica 2026-10-02, commit f467782 — ver
+// docs/OPERATIONAL_SCOPE.md): ese mismo checkbox/campo isDefault del
+// formulario "Editar cuadrilla" fue retirado por diseño — PRINCIPAL/APOYO
+// ahora se administra solo desde el botón "Cobertura" (crew_locations, un
+// <select> por ubicación, nunca un checkbox), documentado en el propio
+// app.js ("Ubicación/rol (locationId/isDefault legacy) ya NO se editan
+// aquí"). Las 2 pruebas HALLAZGO 1 que describían el checkbox/FormData viejo
+// se retiraron (limpieza técnica 2026-10-19) — el campo isDefault SIGUE
+// existiendo como fallback legacy real (ver pruebas de arriba), solo cambió
+// DÓNDE se edita. "Miembros autorizados" y la tabla PRINCIPAL/APOYO siguen
+// vigentes y se prueban abajo sin cambios.
 
 import { describe, it, expect } from 'vitest';
 import { loadOperationalScopeLogic } from '../helpers/loadLubricationLogic.js';
@@ -155,13 +161,13 @@ describe('§9 del pedido — refresco tras cambios de ADMIN, nunca depende de di
   });
 });
 
-describe('HALLAZGO 1 — fix visual: el checkbox "Cuadrilla principal" y "Miembros autorizados" ahora son visibles (faltaba .check-row-mark)', () => {
-  it('el checkbox "Cuadrilla principal de esta ubicación" (isDefault) ahora incluye el indicador visual .check-row-mark', () => {
-    const idx = appSource.indexOf('name="isDefault"');
-    const block = appSource.slice(idx, idx + 450);
-    expect(block).toContain('<span class="check-row-mark">✓</span>');
-  });
-
+describe('HALLAZGO 1 — fix visual: "Miembros autorizados" y la tabla PRINCIPAL/APOYO siguen vigentes', () => {
+  // Las 2 pruebas que describían el checkbox "Cuadrilla principal"/FormData
+  // isDefault del formulario "Editar cuadrilla" se retiraron aquí (limpieza
+  // técnica 2026-10-19): ese checkbox fue retirado por diseño en la
+  // corrección arquitectónica 2026-10-02 (commit f467782) — PRINCIPAL/APOYO
+  // se administra desde "Cobertura" (crew_locations) desde entonces, nunca
+  // una regresión. Ver comentario del archivo.
   it('los checkboxes de "Miembros autorizados" (member-check) ahora incluyen el indicador visual .check-row-mark', () => {
     const idx = appSource.indexOf('member-check');
     const block = appSource.slice(idx, idx + 300);
@@ -173,11 +179,5 @@ describe('HALLAZGO 1 — fix visual: el checkbox "Cuadrilla principal" y "Miembr
     expect(src).toContain('PRINCIPAL');
     expect(src).toContain('APOYO');
     expect(src).not.toContain("cq.isDefault ? '✓' : '—'");
-  });
-
-  it('el guardado real sigue leyendo isDefault como booleano desde el FormData (fix es solo visual, la lógica de guardado NO se tocó)', () => {
-    const src = extractDeclaration(appSource, 'wireCuadrillasPanel');
-    expect(src).toContain('const isDefault = !!fd.isDefault;');
-    expect(src).toContain('item.isDefault = isDefault;');
   });
 });

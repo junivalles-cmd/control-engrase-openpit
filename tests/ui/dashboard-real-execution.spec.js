@@ -53,6 +53,9 @@ const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'getLubricationAgeSeverity', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  // LOGIC-P0-01 (auditoría pre-release 2026-10-21): renderDashboard() ahora
+  // llama getAllowedRoutes() en vez de leer PERMISSIONS[role] directo.
+  'getAllowedRoutes',
   'wireDashboardEquipmentRows',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
@@ -81,6 +84,7 @@ async function bootPage(page, {
         route: 'dashboard', currentUser: ${JSON.stringify(currentUser)},
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
       };
+      window.Auth = { isSupabaseMode: () => false };
       window.navigate = () => {};
       window.__startGreaseFlowCalls = [];
       window.startGreaseFlow = (id) => window.__startGreaseFlowCalls.push(id);

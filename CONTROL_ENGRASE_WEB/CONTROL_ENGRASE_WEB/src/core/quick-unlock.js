@@ -36,6 +36,18 @@ const QUICK_UNLOCK_ITERATIONS = 100000;
 const QUICK_UNLOCK_MAX_ATTEMPTS = 5;
 const QUICK_UNLOCK_LOCKOUT_MS = 5 * 60 * 1000;
 
+// Simplificación para uso en campo (2026-10-20, "Quick Unlock para uso en
+// campo") — ANTES esta pantalla aparecía en CUALQUIER reapertura fría de
+// la app (reinstalación de proceso en Android por presión de memoria, F5
+// en Web), sin importar cuán reciente fuera el último uso real — alta
+// fricción para un Lubricador que abre/cierra la app docenas de veces por
+// turno. Ahora solo se exige PIN tras 4 HORAS de inactividad REAL (sin
+// ningún tap/tecla/scroll/navegación/acción operativa — ver
+// resetInactivityTimer() en app.js, que actualiza `lastActivityAt` en
+// cada una) o al pulsar "Bloquear" manualmente — nunca por eventos
+// técnicos (minimizar, F5, cámara, sync, foreground, push/deeplink).
+const QUICK_UNLOCK_INACTIVITY_MS = 4 * 60 * 60 * 1000;
+
 // 4 o 6 dígitos exactos, nada más — el mismo formato para configurar y
 // para desbloquear.
 function isValidPinFormat(pin) {
@@ -132,6 +144,32 @@ const QuickUnlock = {
   // catálogos siguen intactos).
   async disable() {
     await DB.setQuickUnlock(null);
+  },
+
+  // Persiste el instante de la última actividad REAL de esta identidad en
+  // ESTE dispositivo (app.js la llama, con throttle, desde
+  // resetInactivityTimer() en cada tap/tecla/scroll/navegación/acción
+  // operativa — nunca por eventos técnicos). Vive en el MISMO registro
+  // `auth_quick_unlock` (ya persistido en IndexedDB, ya scoped por
+  // appUserId) — nunca un store nuevo. No-op silencioso si esta identidad
+  // todavía no configuró PIN (nada que proteger con una ventana de gracia).
+  async recordActivity(appUserId) {
+    const rec = await DB.getQuickUnlock();
+    if (!rec || rec.appUserId !== appUserId) return;
+    await DB.setQuickUnlock({ ...rec, lastActivityAt: nowISO() });
+  },
+
+  // ¿Esta identidad tuvo actividad real hace menos de
+  // QUICK_UNLOCK_INACTIVITY_MS? Sin `lastActivityAt` registrado (primera
+  // vez que se configura el PIN, o un registro de una versión anterior
+  // sin este campo) se asume que NO hay ventana de gracia — nunca se
+  // inventa una actividad que no se registró de verdad; mejor pedir PIN
+  // una vez de más que saltarlo sin evidencia real.
+  async isWithinInactivityGrace(appUserId) {
+    const rec = await DB.getQuickUnlock();
+    if (!rec || rec.appUserId !== appUserId || !rec.lastActivityAt) return false;
+    const elapsed = Date.now() - new Date(rec.lastActivityAt).getTime();
+    return Number.isFinite(elapsed) && elapsed >= 0 && elapsed < QUICK_UNLOCK_INACTIVITY_MS;
   },
 
   async isLockedOut(appUserId) {

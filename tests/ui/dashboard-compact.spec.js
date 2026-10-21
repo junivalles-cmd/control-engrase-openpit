@@ -66,6 +66,22 @@ test('all operational values and filter scopes match the release before redesign
   }
   await before.close();
 });
+
+test('dashboard counts effective excavator DAY and NIGHT as two daily compliance opportunities', async ({ page }) => {
+  const today = '2026-10-10';
+  const plans = fixture.plans.map(plan => plan.equipmentId === 'e1'
+    ? { ...plan, controlType: 'Horas de operación', requiredShifts: ['shift_dia', 'shift_noche'], effectiveDate: today }
+    : plan);
+  const records = [{ id: 'dual-day', equipmentId: 'e1', planId: 'p-e1', date: `${today}T11:00:00`, shiftId: 'shift_dia', qty: 2,
+    details: [], operationalSnapshot: { operationalDate: today, occurrenceKey: `p-e1:${today}:shift_dia`, executionCompleteness: 'COMPLETE' } }];
+  await render(page, false, { equipos: [fixture.equipos[0]], plans: plans.filter(plan => plan.equipmentId === 'e1'), records });
+  const todayCard = page.locator('.dash-compliance-card').filter({ hasText: 'Hoy' });
+  await expect(todayCard).toContainText('50%');
+  await expect(todayCard).toContainText('1 de 2 programados');
+  const dayCard = page.locator('.dash-compliance-card').filter({ hasText: 'Turno Día' });
+  await expect(dayCard).toContainText('1 de 1 programados');
+});
+
 test('responsive order, touch targets, themes and reduced desktop scroll', async ({ page, context }, testInfo) => {
   await render(page);
   const width = page.viewportSize().width;

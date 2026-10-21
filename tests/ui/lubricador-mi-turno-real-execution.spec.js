@@ -32,12 +32,15 @@ const scopeSource = readSource(OPERATIONAL_SCOPE_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 
 const shiftsSrc = extractDeclaration(shiftsSource, 'currentShiftId');
-const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
+const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'dualShiftStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
-  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'resolveRecordExecutionType',
+  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'EXECUTION_COMPLETENESS', 'REQUIRED_SHIFT_IDS', 'requiredShiftsForPlan',
+  'operationalDateForShift', 'resolveOccurrenceState', 'previousShiftOccurrence', 'computeExecutionCompleteness',
+  'findActivePendingAssignment', 'resolveRecordExecutionType',
   'resolveRecordCompleteness', 'findCarriedOverSkipForToday', 'ROLES_CREW_SCOPED', 'getAuthorizedCrews',
   'resolveDefaultCrewForLocation', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'equiposForLubricadorMatriz', 'computeOccurrenceKey',
+  'parseOccurrenceKeyDate', // Fix 2026-10-17 ("FECHA VISUAL DE ASIGNACIÓN ATRASADA") — usado dentro de renderLubricadorHome()
   'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
@@ -65,6 +68,22 @@ const ASSIGNMENT_COVERAGE = [
   { id: 'cl:crew1:l2', crew_id: 'crew1', location_id: 'l2', role: 'APOYO', active: true },
 ];
 
+test('PRE-0008: grant puntual legacy (occurrenceKey de semanas atrás) persiste como PENDIENTE DEL TURNO ANTERIOR, nunca desaparece; CANCEL lo retira',async({page})=>{
+  await page.clock.install({time:new Date('2026-10-16T08:00:00')});
+  const equipo={id:'support-real-shaped',code:'05-0870',brand:'CAT',model:'fixture',status:'Operativo',locationId:'l2'};
+  const plan={id:'support-plan',equipmentId:equipo.id,controlType:'Día y turno de la semana',assignedDays:['Viernes'],shiftId:await page.evaluate(()=>new Date().getHours()>=18?'shift_noche':'shift_dia')};
+  const assignment={id:'legacy-support',equipmentId:equipo.id,planId:plan.id,assignedCrewId:'crew1',occurrenceKey:'support-plan:2026-09-30',status:'PENDING',active:true,assignmentType:null,_supportOperational:true};
+  await bootPage(page,{equipos:[equipo],plans:[plan],assignments:[assignment],crewLocations:[]});
+  await page.evaluate(()=>renderLubricadorHome());
+  // occurrenceKey de 2026-09-30 (>2 semanas antes del reloj instalado) — regla
+  // de doble turno (E/G): una PENDING vieja NUNCA desaparece, se clasifica
+  // como arrastre ("Pendientes del turno anterior"), nunca se descarta por
+  // antigüedad ni se mezcla con "MI TURNO" (reservado al trabajo del turno actual).
+  await expect(seccion(page,'ATRASADOS')).toContainText('05-0870');
+  await page.evaluate(async()=>{__mockData.lubrication_assignments[0].status='CANCELLED';__mockData.lubrication_assignments[0]._supportOperational=false;await renderLubricadorHome();});
+  await expect(page.locator('.lub-eq-code',{hasText:'05-0870'})).toHaveCount(0);
+});
+
 function weekdayName(d) {
   return ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][d.getDay()];
 }
@@ -84,6 +103,21 @@ function isoDateOnly(n) {
 }
 
 async function bootPage(page, { equipos = [], plans = [], records = [], skips = [], assignments = [], validations = [], crewLocations = [] } = {}) {
+  // page.setContent() a secas deja la página en about:blank (origen opaco) —
+  // localStorage lanza SecurityError ahí (silenciado por el try/catch de
+  // abajo, dejando la selección de cuadrilla SIN persistir). Mismo fix ya
+  // usado en lubricador-config.spec.js/qr-grease-register-management.spec.js:
+  // se bloquea toda request real y se navega a la baseURL (origen http real)
+  // antes de inyectar el contenido de prueba.
+  await page.route('**/*', (route) => {
+    if (route.request().resourceType() === 'document') {
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body></body></html>' });
+    } else {
+      route.continue();
+    }
+  });
+  await page.route('https://fonts.googleapis.com/**',route=>route.fulfill({status:200,contentType:'text/css',body:''}));
+  await page.goto('/');
   await page.setContent('<div id="app-content"></div>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
@@ -92,7 +126,15 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
         route: 'turno', currentUser: { id: 'lub1', name: 'Lubricador de prueba', role: 'LUBRICADOR' },
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
       };
+      // Fix 2026-10-17 ("coherencia ubicación/cuadrilla"): renderLubricadorHome()
+      // ahora exige una selección de cuadrilla EXPLÍCITA de esta sesión incluso
+      // con 1 sola cuadrilla autorizada (antes se auto-seleccionaba en silencio).
+      // Este archivo prueba el trabajo DENTRO de Mi Turno, no el selector en sí
+      // (eso lo cubre tests/ui/mi-turno-selected-crew.spec.js) — se simula la
+      // confirmación ya hecha, igual que un usuario real que ya eligió 'crew1'.
+      try { localStorage.setItem('engrase_session_crew', JSON.stringify({ userId: 'lub1', crewId: 'crew1' })); } catch (e) {}
       let lastSyncState = { status: 'ok' };
+      window.Sync={getAccountSyncState:async()=>({bootstrapComplete:true}),fullSync:async()=>{}};
       window.navigate = () => {};
       window.openModal = () => {}; window.closeModal = () => {};
       window.openAnomalyForm = () => {}; window.openQrScanner = () => {};
@@ -339,8 +381,20 @@ test('B — un registro COMPLETE se usa como el "último engrase" real (ignora u
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('T-41');
-  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('1 día'); // refleja el COMPLETE de ayer, no el PARTIAL de hace 20 días
+  // Regla E de doble turno (grease-validation.js: isRecordPendingValidation
+  // ya NO excluye "vencida") — ambos registros de T-41 (hace 1 día y hace
+  // 20 días) quedan fuera del plazo de validación, así que el equipo
+  // entero sale de "REQUIEREN SEGUIMIENTO" (antigüedad) y pasa a "EN
+  // SEGUIMIENTO · VALIDACIÓN" (ambos registros, cada uno pendiente de
+  // firmar, nunca ocultos por antigüedad). El criterio original de esta
+  // prueba ("latest COMPLETE gana sobre PARTIAL más viejo" en
+  // buildCrewLubricationFollowUp) sigue probado en
+  // tests/unit/lubrication-follow-up.test.js.
+  await expect(page.locator('.lub-section-head:has-text("EN SEGUIMIENTO")')).toContainText('(2)');
+  const pending = page.locator('#lub-pending-validations');
+  await expect(pending).toContainText('T-41');
+  await expect(pending).toContainText('Ana G.');
+  await expect(pending).toContainText('Pedro L.');
 });
 
 test('C — un equipo con SOLO un registro PARTIAL permanece en Alertas (un PARTIAL nunca limpia la alerta)', async ({ page }) => {
@@ -901,9 +955,14 @@ test('O-A — plan programado HOY + COMPLETE fuera de plan AYER que satisfizo es
   expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
   expect(await page.locator('.lub-section-head:has-text("REALIZADOS (")').count()).toBe(0); // "Realizados hoy" (no adelantados) oculta, nunca una tarjeta en 0
   // Q del pedido: sin duplicados — '20-5530' aparece UNA sola vez en toda
-  // las secciones formales. El seguimiento informativo por antigüedad puede coexistir.
+  // las secciones formales. El seguimiento informativo PUEDE coexistir —
+  // regla E de doble turno (grease-validation.js): el registro de AYER ya
+  // pasó el plazo de validación ("vencida" ya no se oculta), así que el
+  // seguimiento real que coexiste es "EN SEGUIMIENTO · VALIDACIÓN"
+  // (nunca "REQUIEREN SEGUIMIENTO" por antigüedad — ese excluye equipos ya
+  // cubiertos por su propia tarjeta de validación pendiente).
   await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: '20-5530' })).toHaveCount(1);
-  await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('20-5530');
+  await expect(page.locator('#lub-pending-validations')).toContainText('20-5530');
 });
 
 test('O-B/P — PARTIAL ayer NUNCA satisface hoy: sigue pendiente en MI TURNO, nunca en "Realizados Adelantados"', async ({ page }) => {
@@ -1064,7 +1123,10 @@ test('ASIGNADO-D — una occurrence ya satisfecha (adelantado) nunca vuelve a ap
   expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
   expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
   await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: 'A-02' })).toHaveCount(1);
-    await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('A-02');
+  // Regla E de doble turno: el registro ya pasó el plazo de validación —
+  // coexiste con "EN SEGUIMIENTO · VALIDACIÓN", no con "REQUIEREN
+  // SEGUIMIENTO" (ver comentario de O-A, misma causa).
+  await expect(page.locator('#lub-pending-validations')).toContainText('A-02');
   await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
 });
 
@@ -1107,7 +1169,8 @@ for (const tipo of ['PLANNED', 'ASSIGNED', 'OUT_OF_PLAN']) {
     expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
     expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
     await expect(seccion(page, 'REALIZADOS ADELANTADOS').locator('.lub-eq-code', { hasText: 'A-02' })).toHaveCount(1);
-    await expect(seccion(page, 'REQUIEREN SEGUIMIENTO')).toContainText('A-02');
+    // Regla E de doble turno — ver comentario de O-A, misma causa.
+    await expect(page.locator('#lub-pending-validations')).toContainText('A-02');
     await expect(page.locator('.lub-section-head:has-text("REALIZADOS ADELANTADOS")')).toContainText('(1)');
     await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
   });
@@ -1163,5 +1226,205 @@ test('§0.8/§0.9/§0.10 — la card de Mi Turno NO es clicable fuera de sus bot
   await card.locator('.lub-mt-ver').click();
   expect(await page.evaluate(() => window.__detailCalls)).toEqual(['e1']);
 
+  expect(errors).toEqual([]);
+});
+
+// Desbloqueado: classifyEquipmentWork({selectedCrewOnly:true}) forzaba
+// "normal" a [] para CUALQUIER equipo sin asignación manual — bug real
+// (no finalizado) de la misma sesión, ya corregido en operational-scope.js
+// (ver su comentario). Equipo de plan dual puro, SIN asignación — camino
+// "normal" real, el mismo que ya prueba dualShiftStatusFor/
+// resolveOccurrenceState en tests/unit/double-shift-lifecycle.test.js.
+test('doble turno: el COMPLETE de DAY no oculta la obligación NIGHT actual', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-13T20:00:00') });
+  const equipo = { id: 'exc1', code: 'EXC-1', brand: 'CAT', model: '336', status: 'Operativo', locationId: 'l1' };
+  const plan = { id: 'dual1', equipmentId: 'exc1', controlType: 'Horas de operación', frequency: 250,
+    lastGreaseHour: 100, requiredShifts: ['shift_dia', 'shift_noche'], effectiveDate: '2026-10-13' };
+  const recordDay = { id: 'r-day', equipmentId: 'exc1', date: '2026-10-13T08:00:00', createdAt: '2026-10-13T08:00:00',
+    userName: 'Lubricador', qty: 2, shiftId: 'shift_dia', details: [],
+    operationalSnapshot: { occurrenceKey: 'dual1:2026-10-13:shift_dia', operationalDate: '2026-10-13', executionCompleteness: 'COMPLETE' } };
+  await bootPage(page, { equipos: [equipo], plans: [plan], records: [recordDay] });
+  await page.evaluate(() => window.renderLubricadorHome());
+  const current = seccion(page, 'MI TURNO').locator('.lub-eq-btn', { hasText: 'EXC-1' });
+  await expect(current).toBeVisible();
+  await expect(current).toContainText('PENDIENTE TURNO NOCHE');
+  await expect(seccion(page, 'REALIZADOS')).toContainText('DÍA');
+  await expect(seccion(page, 'PENDIENTES DEL TURNO ANTERIOR').locator('.lub-eq-code', { hasText: 'EXC-1' })).toHaveCount(0);
+});
+
+// Desbloqueado — ver comentario del test anterior.
+test('doble turno: el turno anterior pendiente y NIGHT actual coexisten como ocurrencias distintas', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-13T20:00:00') });
+  const equipo = { id: 'exc1', code: 'EXC-1', brand: 'CAT', model: '336', status: 'Operativo', locationId: 'l1' };
+  const plan = { id: 'dual1', equipmentId: 'exc1', controlType: 'Horas de operación', frequency: 250,
+    lastGreaseHour: 100, requiredShifts: ['shift_dia', 'shift_noche'], effectiveDate: '2026-10-13' };
+  await bootPage(page, { equipos: [equipo], plans: [plan] });
+  await page.evaluate(() => window.renderLubricadorHome());
+  await expect(seccion(page, 'PENDIENTES DEL TURNO ANTERIOR').locator('.lub-eq-code', { hasText: 'EXC-1' })).toHaveCount(1);
+  await expect(seccion(page, 'MI TURNO').locator('.lub-eq-btn', { hasText: 'EXC-1' })).toContainText('PENDIENTE TURNO NOCHE');
+  await expect(page.locator('.lub-pending-context', { hasText: 'Turno Día' })).toHaveCount(1);
+});
+
+// ============================================================
+// Lote POST-0014 (2026-10-17) — auditoría dirigida de dos bugs reales
+// reportados con captura (05-0870 mostrando "Jue 15/10" en vez de su fecha
+// real de asignación, 30/09; y parpadeo de Mi Turno en cada sync
+// incremental). Ver docs de la auditoría — aquí solo las pruebas, la
+// decisión de implementación vive en app.js/operational-scope.js.
+// ============================================================
+
+test('FIX "FECHA VISUAL DE ASIGNACIÓN ATRASADA": una assignment vieja (cross-crew/cross-location) muestra SU fecha real (occurrenceKey), NUNCA la recalculada contra "hoy" (mostRecentAssignedDate())', async ({ page }) => {
+  // "Hoy" = sábado 17/10 — el Jueves más reciente contra HOY es 15/10, que
+  // es exactamente la fecha incorrecta reportada en producción. La
+  // assignment real quedó fijada el 30/09 (miércoles) — mucho antes.
+  await page.clock.install({ time: new Date('2026-10-17T10:00:00') });
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  const equipo = { id: 'e1', code: '05-0870', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l2' };
+  const plan = { id: 'plan_mskx6bbstrbbsz', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'], shiftId: 'shift_dia' };
+  const assignment = {
+    id: 'asg_muoqddz6p24k34', equipmentId: 'e1', planId: plan.id, assignedCrewId: 'crew1',
+    occurrenceKey: 'plan_mskx6bbstrbbsz:2026-09-30', status: 'PENDING', active: true,
+  };
+  await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos: [equipo], plans: [plan], assignments: [assignment] });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+
+  const card = seccion(page, 'ATRASADOS').locator('.lub-pending-card', { hasText: '05-0870' });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('30/09'); // fecha real de la assignment (occurrenceKey)
+  await expect(card).not.toContainText('15/10'); // NUNCA la recalculada contra "hoy"
+  await expect(card).toContainText('Turno Día');
+});
+
+test('FIX "FECHA VISUAL DE ASIGNACIÓN ATRASADA": un equipo normal (SIN assignment) sigue usando el cálculo de siempre del plan — sin cambio de comportamiento', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-17T10:00:00') });
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  // Mismo plan/assignedDays que el caso anterior, pero SIN assignment —
+  // trabajo normal de la propia cuadrilla, en su propia ubicación. Debe
+  // seguir mostrando la fecha RECALCULADA (15/10), nunca una fecha fija.
+  const equipo = { id: 'e1', code: 'NORMAL-15', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' };
+  const plan = { id: 'plan-normal', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'], shiftId: 'shift_dia' };
+  await bootPage(page, { equipos: [equipo], plans: [plan] });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+
+  const card = seccion(page, 'ATRASADOS').locator('.lub-pending-card', { hasText: 'NORMAL-15' });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('15/10'); // SIN assignment: sigue siendo mostRecentAssignedDate() contra hoy
+});
+
+test('FIX "CHIP SUPPORT_OTHER_LOCATION": "APOYO · <UBICACIÓN>" aparece SOLO para una assignment cross-location real (_supportOperational===true + ubicación distinta de la principal) — nunca para trabajo normal, nunca sin ese grant, y un equipo de otra ubicación sin asignar nunca aparece', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-17T10:00:00') });
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  const equipoApoyo = { id: 'e-apoyo', code: '05-0870', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l2' };
+  const planApoyo = { id: 'plan-apoyo', equipmentId: 'e-apoyo', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'], shiftId: 'shift_dia' };
+  const asgApoyo = {
+    id: 'asg-apoyo', equipmentId: 'e-apoyo', planId: planApoyo.id, assignedCrewId: 'crew1',
+    occurrenceKey: 'plan-apoyo:2026-09-30', status: 'PENDING', active: true, _supportOperational: true,
+  };
+
+  // Misma ubicación APOYO, misma forma de assignment, pero SIN el grant real
+  // (_supportOperational ausente) — sigue siendo trabajo visible (l2 ya es
+  // APOYO autorizada de crew1 por cobertura), pero sin el chip.
+  const equipoSinGrant = { id: 'e-sin-grant', code: 'SIN-GRANT', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l2' };
+  const planSinGrant = { id: 'plan-sin-grant', equipmentId: 'e-sin-grant', controlType: 'Día y turno de la semana', assignedDays: ['Jueves'], shiftId: 'shift_dia' };
+  const asgSinGrant = {
+    id: 'asg-sin-grant', equipmentId: 'e-sin-grant', planId: planSinGrant.id, assignedCrewId: 'crew1',
+    occurrenceKey: 'plan-sin-grant:2026-09-30', status: 'PENDING', active: true,
+  };
+
+  // Trabajo normal (sin assignment) en la ubicación PRINCIPAL de la propia
+  // cuadrilla — nunca debe mostrar el chip.
+  const hoyWeekday = weekdayName(new Date('2026-10-17T10:00:00'));
+  const equipoNormal = { id: 'e-normal', code: 'NORMAL-1', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' };
+  const planNormal = { id: 'plan-normal', equipmentId: 'e-normal', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] };
+
+  // Equipo de una ubicación que esta cuadrilla NO tiene autorizada de
+  // ninguna forma (ni PRINCIPAL ni APOYO) y SIN assignment — equivalente a
+  // "equipo de Mojón sin asignar, visto por la cuadrilla de Volcán": nunca
+  // debe aparecer en ninguna sección.
+  const equipoOtraUbicacion = { id: 'e-otra', code: 'MOJON-NOASIGNADO', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l3' };
+
+  await bootPage(page, {
+    crewLocations: ASSIGNMENT_COVERAGE,
+    equipos: [equipoApoyo, equipoSinGrant, equipoNormal, equipoOtraUbicacion],
+    plans: [planApoyo, planSinGrant, planNormal],
+    assignments: [asgApoyo, asgSinGrant],
+  });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+
+  const cardApoyo = seccion(page, 'ATRASADOS').locator('.lub-pending-card', { hasText: '05-0870' });
+  await expect(cardApoyo).toBeVisible();
+  await expect(cardApoyo).toContainText('APOYO · RAJO SUR');
+
+  const cardSinGrant = seccion(page, 'ATRASADOS').locator('.lub-pending-card', { hasText: 'SIN-GRANT' });
+  await expect(cardSinGrant).toBeVisible();
+  await expect(cardSinGrant).not.toContainText('APOYO ·');
+
+  const cardNormal = page.locator('.lub-eq-btn', { hasText: 'NORMAL-1' });
+  await expect(cardNormal).toBeVisible();
+  await expect(cardNormal).not.toContainText('APOYO ·');
+
+  // Equipo de otra ubicación, sin asignar: invisible en TODA la pantalla —
+  // nunca cambia ubicación maestra/authorizedLocationIds, solo deja de
+  // mostrarse porque nunca estuvo en el scope de esta cuadrilla.
+  await expect(page.locator('.lub-eq-code', { hasText: 'MOJON-NOASIGNADO' })).toHaveCount(0);
+});
+
+test('FIX "ELIMINAR PARPADEO EN SYNC INCREMENTAL": un repintado silent SIN cambios relevantes no toca el DOM (nunca "Cargando tu turno…", nunca reemplaza el contenido)', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'T-60', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'MI TURNO')).toContainText('T-60');
+
+  // Marca el DOM actual a mano: si renderLubricadorHome({silent:true}) de
+  // verdad reemplaza #app-content, este marcador desaparece (el template
+  // real nunca lo escribe).
+  await page.evaluate(() => document.querySelector('.lub-welcome-card').setAttribute('data-marker', 'untouched'));
+  await page.evaluate(() => window.renderLubricadorHome({ silent: true }));
+
+  await expect(page.locator('#app-content')).not.toContainText('Cargando tu turno…');
+  expect(await page.locator('.lub-welcome-card').getAttribute('data-marker')).toBe('untouched'); // el DOM NO se tocó
+  await expect(seccion(page, 'MI TURNO')).toContainText('T-60');
+  expect(errors).toEqual([]);
+});
+
+test('FIX "ELIMINAR PARPADEO EN SYNC INCREMENTAL": un repintado silent CON un cambio relevante SÍ actualiza el contenido, sin mostrar "Cargando tu turno…" en ningún momento', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+  const hoyWeekday = weekdayName(new Date());
+  const equipos = [{ id: 'e1', code: 'T-61', brand: 'CAT', model: 'D8T', status: 'Operativo', locationId: 'l1' }];
+  const plans = [{ id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: [hoyWeekday] }];
+
+  await bootPage(page, { equipos, plans });
+  await page.evaluate(() => window.renderLubricadorHome());
+  expect(errors).toEqual([]);
+  await expect(seccion(page, 'MI TURNO')).toContainText('T-61');
+
+  await page.evaluate(() => document.querySelector('.lub-welcome-card').setAttribute('data-marker', 'untouched'));
+  await page.evaluate(() => {
+    // Mismo patrón que los tests "local-first" de arriba: simula el
+    // DB.put() real de un engrase COMPLETE guardado localmente, y un sync
+    // incremental que acaba de traer ESE mismo cambio (silent:true).
+    window.__mockData.lubrication_records.push({
+      id: 'r-nuevo', equipmentId: 'e1', date: new Date().toISOString(), createdAt: new Date().toISOString(),
+      userName: 'Lubricador de prueba', qty: 2.0, shiftId: 'shift_dia',
+    });
+    return window.renderLubricadorHome({ silent: true });
+  });
+
+  await expect(page.locator('#app-content')).not.toContainText('Cargando tu turno…'); // NUNCA, ni en silent con cambio
+  await expect(seccion(page, 'REALIZADOS')).toContainText('T-61'); // el cambio real SÍ se refleja
+  expect(await enCuantasSeccionesDeTrabajo(page, 'T-61')).toBe(1);
+  // Hubo algo real que actualizar -> el DOM SÍ se reemplazó (el marcador manual no sobrevive).
+  expect(await page.locator('.lub-welcome-card').getAttribute('data-marker')).toBeNull();
   expect(errors).toEqual([]);
 });

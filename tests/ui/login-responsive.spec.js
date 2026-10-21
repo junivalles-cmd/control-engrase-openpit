@@ -64,20 +64,28 @@ test('pantalla de login: sin scroll horizontal, controles táctiles válidos, si
   if (smallTargets.length) console.log(`[${testInfo.project.name}] controles < 44px:`, smallTargets);
 
   // Criterio 4: elementos interactivos que se solapan más del 50% del área del más chico.
+  // Excepción documentada: .pw-toggle (botón ojo mostrar/ocultar contraseña,
+  // pulido UX global 2026-10-19 §8) vive A PROPÓSITO encima de su <input
+  // type="password"> hermano — mismo patrón estándar de cualquier campo de
+  // contraseña (Gmail, etc.), nunca un solapamiento accidental. Cualquier
+  // OTRO par de elementos interactivos solapados sigue fallando normalmente.
   const overlaps = await page.evaluate(() => {
     const els = Array.from(document.querySelectorAll('button, a, input, select'))
       .filter((el) => el.offsetParent !== null)
-      .map((el) => ({ sel: el.className || el.tagName, r: el.getBoundingClientRect() }));
+      .map((el) => ({ sel: el.className || el.tagName, isPwToggle: el.classList.contains('pw-toggle'), pwField: el.closest('.pw-field'), r: el.getBoundingClientRect() }));
     const found = [];
     for (let i = 0; i < els.length; i++) {
       for (let j = i + 1; j < els.length; j++) {
-        const a = els[i].r, b = els[j].r;
+        const elA = els[i], elB = els[j];
+        const isOwnPwToggle = elA.pwField && elB.pwField && elA.pwField === elB.pwField && (elA.isPwToggle || elB.isPwToggle);
+        if (isOwnPwToggle) continue;
+        const a = elA.r, b = elB.r;
         const ix = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
         const iy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
         const overlapArea = ix * iy;
         const minArea = Math.min(a.width * a.height, b.width * b.height);
         if (minArea > 0 && overlapArea / minArea > 0.5) {
-          found.push({ a: els[i].sel, b: els[j].sel });
+          found.push({ a: elA.sel, b: elB.sel });
         }
       }
     }

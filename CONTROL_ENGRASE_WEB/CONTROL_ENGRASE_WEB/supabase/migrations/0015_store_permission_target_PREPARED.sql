@@ -8,6 +8,45 @@ begin
      or to_regprocedure('public.record_lubrication_skip(text,text,timestamptz,text,text,text,text,timestamptz,text,text,text,text)') is null then
     raise exception '0015 requires the 0014 assignment/skip gateways';
   end if;
+  if not exists (
+    select 1 from pg_catalog.pg_class c
+    where c.oid='public.engrase_sync'::regclass and c.relrowsecurity and not c.relforcerowsecurity
+  ) then
+    raise exception '0015 requires engrase_sync RLS enabled and FORCE RLS disabled';
+  end if;
+  -- Require the actual 0007 catalog policies, not a migration filename or
+  -- ledger entry. Verify table, command, restrictive mode, exact audience,
+  -- and essential owner predicates before enabling generic push-token RIU.
+  if exists (
+    with expected(policyname,cmd,using_parts,check_parts) as (values
+      ('push_tokens_select_owner_only','SELECT',
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[],
+        array[]::text[]),
+      ('push_tokens_insert_owner_only','INSERT',
+        array[]::text[],
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+      ('push_tokens_update_owner_only','UPDATE',
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[],
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+      ('push_tokens_no_hard_delete','DELETE',
+        array[$q$store<>'push_tokens'$q$]::text[],array[]::text[])
+    ), actual as (
+      select e.*,p.permissive,p.roles,p.cmd as actual_cmd,
+        lower(regexp_replace(coalesce(p.qual,''),'[[:space:]]','','g')) as using_sql,
+        lower(regexp_replace(coalesce(p.with_check,''),'[[:space:]]','','g')) as check_sql
+      from expected e left join pg_catalog.pg_policies p
+        on p.schemaname='public' and p.tablename='engrase_sync' and p.policyname=e.policyname
+    )
+    select 1 from actual a
+    where a.permissive is distinct from 'RESTRICTIVE'
+       or a.actual_cmd is distinct from a.cmd
+       or cardinality(a.roles) is distinct from 1
+       or not ('authenticated'=any(coalesce(a.roles,array[]::name[])))
+       or exists(select 1 from unnest(a.using_parts) as req(fragment) where position(req.fragment in a.using_sql)=0)
+       or exists(select 1 from unnest(a.check_parts) as req(fragment) where position(req.fragment in a.check_sql)=0)
+  ) then
+    raise exception '0015 requires all four exact-scope 0007 restrictive owner guards on public.engrase_sync for authenticated';
+  end if;
   if (select count(*) from public.app_store_permissions
       where role in ('ADMINISTRADOR','PLANIFICADOR','SUPERVISOR','LUBRICADOR')
         and store in ('anomalies','audit_log','cuadrillas','equipment','equipment_types','grease_validations','locations','lubricants',

@@ -8,7 +8,7 @@ async function boot(page, role = 'PLANIFICADOR') {
   await page.addScriptTag({ content: readSource(DB_JS_PATH) });
   await page.addScriptTag({ content: `
     window.App={currentUser:{id:'u1',name:'Fixture',role:${JSON.stringify(role)}}};
-    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getProfile:()=>({appUserId:'u1',role:${JSON.stringify(role)}}),
+    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getProfile:()=>({appUserId:'u1',role:${JSON.stringify(role)},authorizationFingerprint:'fixture-fingerprint'}),
       getSession:()=>({accessToken:'fixture-user-jwt'}),getSessionEpoch:()=>1};
     window.classifyAuthStatus=s=>s===401?'AUTH_REQUIRED':s===403?'AUTH_FORBIDDEN':null;
     window.__requests=[];window.__rpcFailure=null;
@@ -27,6 +27,7 @@ async function boot(page, role = 'PLANIFICADOR') {
   await page.evaluate(async () => {
     await openDB();
     await DB.setConfig({ url: 'https://fixture.test', anonKey: 'public-key' });
+    await DB.setAuthorizationContext('u1',{appUserId:'u1',active:true,scopeType:'GLOBAL',authorizedCrewIds:[],authorizedLocationIds:[],rowScopeEnforced:true});
     const version = '2026-10-12T12:00:00Z';
     await DB.put('equipment', { id: 'e1', code: 'E1', model: 'M1', locationId: 'loc1', updatedAt: version, _pushedVersion: version });
   });

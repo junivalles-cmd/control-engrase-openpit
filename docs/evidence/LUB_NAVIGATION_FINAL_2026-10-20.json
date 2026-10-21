@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-20",
+  "verdict": "LUB_NAVIGATION_FINAL_READY",
+  "navigation": ["Mi Turno", "Tareas", "Anomalías", "Historial"],
+  "routes": ["turno", "tareas-mensajes", "anomalias", "historial"],
+  "help": {
+    "entry": "Configuración > Ayuda",
+    "renderer": "renderAyuda",
+    "return": "Volver a Configuración",
+    "mainNavigationEntry": false
+  },
+  "history": { "renderer": "renderLubricadorHistorial", "routeUnchanged": true, "heading": "Historial" },
+  "responsiveWidths": [390, 412, 600, 768, 1024, 1366],
+  "responsive": { "equalItemWidths": true, "tapTargetsAtLeast44": true, "unclippedLabels": true, "noHorizontalOverflow": true },
+  "tests": {
+    "unitPassed": 1845,
+    "directedUiUniqueScenariosPassed": 342,
+    "finalUiRerunPassed": 36,
+    "finalUiRerunFailed": 0,
+    "fixtureRepairs": ["Include existing sync watchdog dependencies", "Reuse current IndexedDB shell fixture; isolate fixture asset requests from DNS"],
+    "typecheck": "PASS",
+    "build": "PASS",
+    "verifyDist": "PASS",
+    "pushDeeplinkRegression": "PASS with controlled fixtures; no new live push sent"
+  },
+  "android": {
+    "device": "Samsung SM-X135G",
+    "install": "adb install -r PASS",
+    "existingLubricadorSessionPreserved": true,
+    "navigationAndHelpRoundTrip": "PASS after waiting for each view to finish rendering",
+    "errorsDuringCompletedViewRoundTrip": [],
+    "viewportWidthCssPixels": 457,
+    "sourceDistAndroidAppJsHashesEqual": true,
+    "apkPath": "CONTROL_ENGRASE_APP_ANDROID/android/app/build/outputs/apk/debug/app-debug.apk",
+    "apkSha256": "6f520b15f107a8207bb8d03ca8ef73539a1d8af125fa33aaf1ab9e6656363ad7",
+    "installedApkHashMatches": true,
+    "apkBytes": 9854480,
+    "apkTimestampUtc": "2026-10-20T23:17:24.3734227Z"
+  },
+  "filesChangedForThisNavigationTask": [
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/sw.js",
+    "tests/helpers/lubNotificationBellFixture.js",
+    "tests/ui/lubricador-final-navigation.spec.js",
+    "tests/ui/lubricador-shell-boot-regression.spec.js",
+    "tests/ui/mis-engrases-flow.spec.js",
+    "docs/evidence/LUB_NAVIGATION_FINAL_2026-10-20.json"
+  ],
+  "separatePendingE2eWork": {
+    "verdict": "NOT_READY",
+    "priorBroadUiBaseline": { "passed": 6215, "failed": 643, "skipped": 16 },
+    "realAdministrativeRoleSessions": "PENDING",
+    "realPhoto": "PENDING",
+    "realEndToEndRoles": "PENDING",
+    "fastNavigationObservation": "One null innerHTML error was observed when leaving Anomalías before its asynchronous draw completed; sequential navigation after completed rendering passed. No business logic fix included in this navigation-only task."
+  },
+  "businessLogicChanges": false,
+  "backendChanges": false,
+  "commitCreated": false
+}

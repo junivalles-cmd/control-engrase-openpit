@@ -18,7 +18,7 @@ import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import {
   APP_JS_PATH, LUBRICATION_STATUS_JS_PATH, WEEKLY_MATRIX_JS_PATH,
-  OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH,
+  OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH, SHIFTS_JS_PATH,
 } from '../helpers/loadLubricationLogic.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
@@ -29,13 +29,14 @@ const matrixSource = readSource(WEEKLY_MATRIX_JS_PATH);
 const scopeSource = readSource(OPERATIONAL_SCOPE_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 
-const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
+const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'dualShiftStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const matrixSrc = extractDeclaration(matrixSource, 'estadoCelda');
 const scopeNames = [
   'ASSIGNMENT_STATUS', 'ROLES_CAN_MANAGE_ASSIGNMENTS', 'ROLES_CAN_MOVE_EQUIPMENT', 'ROLES_CAN_REGISTER_OUT_OF_PLAN',
   'canManageAssignments', 'canMoveEquipment', 'canRegisterOutOfPlan',
-  'EXECUTION_TYPE', 'resolveRecordExecutionType', 'resolveRecordCompleteness', 'resolveRecordOutOfPlanReason',
+  'EXECUTION_TYPE', 'EXECUTION_COMPLETENESS', 'REQUIRED_SHIFT_IDS', 'requiredShiftsForPlan', 'operationalDateForShift', 'resolveOccurrenceState', 'computeExecutionCompleteness',
+  'resolveRecordExecutionType', 'resolveRecordCompleteness', 'resolveRecordOutOfPlanReason',
   'resolveRecordCrewId', 'findActivePendingAssignment', 'findCarriedOverSkipForToday', 'computeOccurrenceKey', 'toISODateUTCLocal',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
@@ -51,9 +52,10 @@ const appNames = [
   '$', '$$', 'esc', 'ic', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'todayDateISO', 'GREASE_UNIT', 'STATUS_COLOR', 'CRIT_COLOR',
   'WEEKDAY_ABBR_DASH', 'NO_EXECUTION_REASON_LABELS', 'openModal', 'closeModal', 'trackRecentEquipment',
   'photosOf', 'photoIndicatorHTML', 'photoThumbHTML', 'evidenceValueAttr', 'validationBadgeHTML',
-  'openEquipmentDetail',
+  'equipoOccurrenceKey', 'openEquipmentDetail',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
+const shiftsSrc = extractDeclaration(readSource(SHIFTS_JS_PATH), 'currentShiftId');
 
 async function bootPage(page, {
   equipos = [], plans = [], records = [], assignments = [], skips = [], locations = [], cuadrillas = [],
@@ -95,6 +97,7 @@ async function bootPage(page, {
         get: async (store, id) => (window.__mockData[store] || []).find(r => r.id === id) || null,
       };
       ${statusSrc}
+      ${shiftsSrc}
       ${matrixSrc}
       ${scopeSrc}
       ${validationSrc}
@@ -224,6 +227,27 @@ test('I — plan por HORAS no muestra una semana falsa (sin .ficha-semana/.ficha
   await expect(page.locator('.ficha-week-grid')).toHaveCount(0);
   await expect(page.locator('#modal-overlay')).toContainText('Cada 250 h');
   await expect(page.locator('#modal-overlay')).toContainText('Turno programado');
+});
+
+test('I2 — la Ficha representa DAY y NIGHT de un plan excavadora en ocurrencias independientes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 820 });
+  await page.clock.install({ time: new Date(HOY_FIJO) });
+  const plan = { id: 'plan-dual', equipmentId: 'e1', controlType: 'Horas de operación', frequency: 250,
+    lastGreaseHour: 0, requiredShifts: ['shift_dia', 'shift_noche'], effectiveDate: MAR };
+  const records = [recordAt('day-done', MAR, { shiftId: 'shift_dia', qty: 2,
+    operationalSnapshot: { occurrenceKey: `plan-dual:${MAR}:shift_dia`, operationalDate: MAR } })];
+  await bootPage(page, { equipos: [EQUIPO], plans: [plan], records });
+  await page.evaluate(() => window.openEquipmentDetail('e1'));
+  await expect(page.locator('.ficha-semana')).toBeVisible();
+  const martes = page.locator('.ficha-dia-dual').filter({ hasText: 'MAR' });
+  await expect(martes).toHaveAttribute('aria-label', /Día:.*Realizado.*Noche:.*No realizado/i);
+  await expect(martes.locator('.ficha-turno-mini')).toHaveCount(2);
+  await expect(martes.locator('.ficha-turno-mini').nth(0)).toHaveClass(/ficha-turno-mini-relleno/);
+  await expect(martes.locator('.ficha-turno-mini').nth(1)).toHaveClass(/ficha-turno-mini-relleno/);
+  await expect(martes.locator('.ficha-turno-mini').nth(0)).toHaveCSS('--c', '#3FB950');
+  await expect(martes.locator('.ficha-turno-mini').nth(1)).toHaveCSS('--c', '#E5484D');
+  const overflow = await page.locator('.ficha-week-grid').evaluate(el => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
 });
 
 test('J/K — la Ficha nunca muestra el listado de puntos ni el conteo "Puntos", y nunca consulta lubrication_points', async ({ page }) => {

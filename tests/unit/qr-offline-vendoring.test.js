@@ -126,8 +126,8 @@ describe('G) Service Worker — jsQR/generador de QR ya no son "mejor esfuerzo" 
     expect(cdnBlockMatch[1]).toMatch(/jspdf/i);
   });
 
-  it('el número de versión del cache (CACHE) se actualizó de nuevo (v69) — fuerza a los clientes a re-cachear con el generador de QR nuevo', () => {
-    expect(swSource).toMatch(/const CACHE = 'engrase-openpit-v69'/);
+  it('el cache conserva una versión posterior a la incorporación del generador QR (v69)', () => {
+    expect(Number(swSource.match(/const CACHE = 'engrase-openpit-v(\d+)'/)[1])).toBeGreaterThanOrEqual(69);
   });
 });
 

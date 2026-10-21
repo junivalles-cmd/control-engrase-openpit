@@ -115,7 +115,7 @@ test('REGRESIÓN corregida: dentro del shell del Lubricador, irAMisEngrasesTrasR
   const navigateCalls = await page.evaluate(() => window.__navigateCalls);
   expect(navigateCalls).toBe(0); // NUNCA el router de escritorio dentro del shell del Lubricador
 
-  await expect(page.locator('h2.lub-heading')).toHaveText('Mis últimos engrases');
+  await expect(page.locator('h2.lub-heading')).toHaveText('Historial');
   await expect(page.locator('.lub-record-card')).toHaveCount(3);
 
   const route = await page.evaluate(() => window.App.route);

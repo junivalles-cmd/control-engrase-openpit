@@ -64,6 +64,7 @@ async function bootConfig(page, {
   });
   await page.goto('/');
   await page.setContent('<main id="app-content" class="lub-content"></main>');
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `

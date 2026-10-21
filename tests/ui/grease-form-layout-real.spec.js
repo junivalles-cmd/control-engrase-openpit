@@ -13,6 +13,12 @@
 // Las reglas se extraen de producción; no se reimplementan en la fixture.
 
 import { test, expect } from '@playwright/test';
+const pageErrors = new WeakMap();
+test.beforeEach(({page}) => {
+  const errors = []; pageErrors.set(page, errors);
+  page.on('pageerror', e => errors.push(e.stack || e.message));
+});
+test.afterEach(({page}) => expect(pageErrors.get(page)).toEqual([]));
 import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import {
@@ -29,7 +35,7 @@ const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
-  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason',
+  'operationalDateForShift', 'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'resolveRecordExecutionType', 'resolveRecordOutOfPlanReason',
   'resolveRecordCompleteness', 'findExistingWorkForEquipment', 'findCarriedOverSkipForToday',
   'findActivePendingAssignment', 'computeOccurrenceKey', 'toISODateUTCLocal', 'canRegisterOutOfPlan',
   'ROLES_CAN_REGISTER_OUT_OF_PLAN', 'OUT_OF_PLAN_REASONS',
@@ -37,7 +43,7 @@ const scopeNames = [
   'findNextApplicableOccurrence', 'resolveEarlyOccurrenceSatisfaction', 'buildExecutionSnapshot', 'canAdvanceHourCycle',
   'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveCrewLocationCoverage', 'resolveOperationalScope', 'completeAssignmentIfPending',
 ];
-const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
+const scopeSrc = scopeSource;
 const validationNames = [
   'VALIDATION_STATUS', 'VALIDATION_BADGE', 'GREASE_VALIDATION_ENABLED_FROM', 'MAX_VALIDATION_SHIFTS',
   'isRecordSubjectToValidation', 'statusForSignerRole', 'findActiveValidations', 'hasValidationConflict',
@@ -51,7 +57,7 @@ const appNames = [
   'NO_EXECUTION_REASON_LABELS', 'MAX_PHOTOS', 'trackRecentEquipment', 'photoFieldHTML', 'getPhotoFieldPhotos',
   'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'fileToCompressedDataURL', 'stampEquipmentEvidencePhoto', 'startGreaseFlow',
   'getSelectedPhotos', 'getSelectedCrewId', 'getCurrentOperationalScope', 'shouldBlockCompleteChecklistWithoutGrease',
-  'confirmHourmeterChange', 'createAutoAnomalies',
+  'confirmHourmeterChange', 'createAutoAnomalies', 'equipoOccurrenceKey',
 ];
 const appSrc = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const persistenceSrc = ['uid', 'nowISO', 'stamp', 'queueLubricationExecution'].map(n => extractDeclaration(readSource(DB_JS_PATH), n)).join('\n');

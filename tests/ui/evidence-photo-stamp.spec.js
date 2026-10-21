@@ -4,7 +4,7 @@ import { readSource, extractDeclaration } from '../helpers/extractFromSource.js'
 import { APP_JS_PATH, DB_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const declarations = (file, names) => names.map(n => extractDeclaration(readSource(file), n)).join('\n');
-const db = declarations(DB_JS_PATH, ['DB_NAME', 'DB_VERSION', 'STORES', 'LOCAL_STORES', 'openDB', 'tx', 'DB', 'uid', 'nowISO', 'stamp', 'logAudit', 'queueAnomalyOperation']);
+const db = readSource(DB_JS_PATH);
 const app = declarations(APP_JS_PATH, ['$', '$$', 'esc', 'fmtDate', 'openModal', 'closeModal', 'MAX_PHOTOS', 'photoFieldHTML', 'getPhotoFieldPhotos',
   'renderPhotoStrip', 'addPhotoToField', 'wirePhotoField', 'preloadPhotosIntoField', 'getSelectedPhotos', 'photosOf',
   'fileToCompressedDataURL', 'stampEquipmentEvidencePhoto', 'pickPhotoNative', 'openAnomalyForm']);
@@ -18,11 +18,12 @@ async function boot(page) {
   });
   await page.goto('/');
   await page.addStyleTag({ path: path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css') });
-  await page.addScriptTag({ content: `let _db = null; ${db}\n${app}
+  await page.addScriptTag({ content: `${db}\n${app}
     const App = { currentUser: { id: 'fixture', name: 'Personal name must never appear', role: 'ADMINISTRADOR' }, route: 'other' };
     const ic = () => ''; const showInAppToast = () => {}; const wirePhotoThumbs = () => {};
     const getCurrentOperationalScope = async () => ({ kind: 'GLOBAL', role: 'ADMINISTRADOR' });
     const canLubricadorExecuteEquipment = () => true; // Scope guard is tested in evidence-gateway/operational-scope.
+    window.Auth = {isSupabaseMode:()=>true,isAuthenticated:()=>true,getProfile:()=>({appUserId:'fixture',authorizationFingerprint:'fixture'})};
     window.testDB = DB; window.openAnomaly = openAnomalyForm;
     window.__texts = [];
     const originalText = CanvasRenderingContext2D.prototype.fillText;
@@ -42,6 +43,7 @@ async function boot(page) {
       return { width: image.width, height: image.height, white, dark };
     };
     window.ready = openDB().then(async () => {
+      await DB.setAuthorizationContext('fixture',{appUserId:'fixture',authUserId:'auth-fixture',authorizationFingerprint:'fixture',scopeType:'GLOBAL',active:true});
       await DB.put('equipment',{id:'e1',code:'E-TEST',brand:'Fixture',model:'One'});
       await DB.put('equipment',{id:'e2',code:'E-OTHER',brand:'Fixture',model:'Two'});
     });` });
@@ -69,6 +71,7 @@ test('gallery anomaly evidence has permanent pixels before IndexedDB, offline, w
   expect(texts[0]).toMatch(/^E-TEST · \d{4}-\d{2}-\d{2} · \d{2}:\d{2}:\d{2}$/);
   await page.locator('textarea[name="description"]').fill('Fixture evidence');
   await page.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(async () => (await testDB.all('anomalies')).length)).toBe(1);
   const rows = await page.evaluate(() => window.testDB.all('anomalies'));
   expect(rows).toHaveLength(1);
   expect(rows[0].photos).toEqual([photo]);
@@ -101,6 +104,7 @@ for (const width of [360, 390, 412]) {
     const button = await page.locator('button[type="submit"]').boundingBox();
     expect(button.y + button.height).toBeLessThanOrEqual(360);
     await page.locator('button[type="submit"]').click();
+    await expect.poll(() => page.evaluate(async () => (await testDB.all('anomalies')).length)).toBe(1);
     const [anomaly] = await page.evaluate(() => testDB.all('anomalies'));
     expect(anomaly).toMatchObject({ equipmentId: 'e1', description: 'Descripción única', component: 'Fuga de grasa', criticality: 'Media', photos: [], photo: null });
     expect(anomaly.createdAt).toBeTruthy();
@@ -118,13 +122,19 @@ test('editing keeps already stamped pixels; changing equipment cannot mislabel e
   await expect(page.locator('select[name="equipmentId"]')).toHaveValue('e1');
   await page.locator('textarea[name="description"]').fill('Initial');
   await page.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(async () => (await testDB.all('anomalies')).length)).toBe(1);
   await page.evaluate(async () => {
+    // El gateway permite editar una versión ya reconocida, no una operación
+    // todavía pendiente. Los ACK reales se prueban en evidence-gateway.
+    const row = (await testDB.all('anomalies'))[0];
+    await testDB.put('anomalies', {...row, _evidenceOperationId:null, _pushedVersion:row.updatedAt});
     App.currentUser.name = 'Otro editor de prueba';
     return window.openAnomaly('e1', null, (await window.testDB.all('anomalies'))[0]);
   });
   await expect(page.locator('.val-info')).toContainText('Personal name must never appear');
   await page.locator('textarea[name="description"]').fill('Edited');
   await page.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(async () => (await testDB.all('anomalies'))[0]?.description)).toBe('Edited');
   expect(await page.evaluate(() => window.__texts.length)).toBe(1);
   expect((await page.evaluate(() => window.testDB.all('anomalies')))[0].photo).toBe(photo);
 });

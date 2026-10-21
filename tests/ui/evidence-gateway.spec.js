@@ -9,7 +9,7 @@ async function boot(page) {
   await page.addScriptTag({content:`
     window.App={currentUser:{id:'u1',name:'Fixture',role:'LUBRICADOR'}};
     window.__authenticated=true;window.__epoch=1;window.__requests=[];window.__failure=null;window.__logoutInResponse=false;
-    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>__authenticated,getProfile:()=>({appUserId:'u1'}),getSession:()=>({accessToken:'fixture-jwt'}),getSessionEpoch:()=>__epoch};
+    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>__authenticated,getProfile:()=>({appUserId:'u1',authorizationFingerprint:'fixture-fingerprint'}),getSession:()=>({accessToken:'fixture-jwt'}),getSessionEpoch:()=>__epoch};
     window.classifyAuthStatus=s=>s===401?'AUTH_REQUIRED':s===403?'AUTH_FORBIDDEN':null;
     window.fetch=async(url,options)=>{
       __requests.push({url,method:options.method,body:typeof options.body==='string'?options.body:null,headers:options.headers});
@@ -38,6 +38,7 @@ async function boot(page) {
   await page.addScriptTag({content:extractDeclaration(readSource(GREASE_VALIDATION_JS_PATH),'findActiveValidations')});
   await page.evaluate(async()=>{
     await openDB();await DB.setConfig({url:'https://fixture.test',anonKey:'public-key'});
+    await DB.setAuthorizationContext('u1',{appUserId:'u1',active:true,scopeType:'CREW_SCOPED',authorizedCrewIds:['c1'],authorizedLocationIds:['loc1'],rowScopeEnforced:true});
     window.__version='2026-10-12T12:00:00Z';
     window.__equipment={id:'e1',locationId:'loc1',hourmeter:100,updatedAt:__version,_pushedVersion:__version};
     window.__record={id:'r1',equipmentId:'e1',userId:'u1',date:__version,qty:1,hourmeter:100,photos:[],details:[],updatedAt:__version,_pushedVersion:__version,operationalSnapshot:{crewId:'c1'}};
@@ -140,7 +141,7 @@ test('logout/token expiry and account change never dispatch an intent without it
   const result=await page.evaluate(async()=>{
     await queueAnomalyOperation('REPORT',__anomaly);__authenticated=false;
     const loggedOut=await Sync.pushAll();__authenticated=true;Auth.getProfile=()=>({appUserId:'other'});
-    await Sync.pushAll();Auth.getProfile=()=>({appUserId:'u1'});__failure={http:401,body:{}};
+    await Sync.pushAll();Auth.getProfile=()=>({appUserId:'u1',authorizationFingerprint:'fixture-fingerprint'});__failure={http:401,body:{}};
     const expired=await Sync.pushAll();return {loggedOut,expired,requests:__requests,queue:await DB.getEvidenceOperations()};
   });
   expect(result.loggedOut.reason).toBe('AUTH_REQUIRED');expect(result.expired.reason).toBe('AUTH_REQUIRED');expect(result.requests).toHaveLength(1);expect(result.queue).toHaveLength(1);

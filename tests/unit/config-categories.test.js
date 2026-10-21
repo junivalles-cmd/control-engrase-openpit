@@ -1,11 +1,14 @@
 // tests/unit/config-categories.test.js
 //
-// Configuración — tabs/categorías (lote dashboard+config UX). Prueba por
+// Configuración — tabs/categorías (lote dashboard+config UX) + cierre
+// bloque Configuración (2026-10-18, mover Usuarios adentro). Prueba por
 // patrón de fuente (mismo método que registrar-engrase-inicial.test.js)
 // las partes de renderConfig() que requieren DB/Auth reales y por eso no se
 // cubren en el fixture estático de tests/ui/config-desktop-grid.spec.js:
-//   D) "Usuarios y acceso" abre la pantalla Usuarios YA existente (navigate),
-//      nunca una reimplementación ni un módulo duplicado.
+//   D) "Usuarios y accesos" EMBEBE renderUsuarios() de verdad (misma
+//      función, mismo wiring) dentro de su propio contenedor — nunca un
+//      redirect a otra pantalla, nunca una reimplementación ni un módulo
+//      duplicado.
 //   E) Cuadrillas/Ubicaciones/Categorías siguen llamando exactamente las
 //      mismas funciones reales de siempre (cuadrillasPanelHTML/
 //      simpleListPanelHTML/wireCuadrillasPanel/wireSimpleListPanel) — el
@@ -18,21 +21,36 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 const appSource = readSource(APP_JS_PATH);
 const renderConfigSrc = extractDeclaration(appSource, 'renderConfig');
 const wireNavSrc = extractDeclaration(appSource, 'wireConfigCategoryNav');
+const navigateSrc = extractDeclaration(appSource, 'navigate');
 
-describe('D) "Usuarios y acceso" — enlace a la pantalla Usuarios real, nunca un módulo duplicado', () => {
-  it('renderConfig() llama navigate(\'usuarios\') — la misma ruta real que ya usa el menú lateral (PERMISSIONS/MENU)', () => {
-    expect(renderConfigSrc).toContain("navigate('usuarios')");
+describe('D) "Usuarios y accesos" — embebe renderUsuarios() real dentro de Configuración, sin duplicar pantalla', () => {
+  it('renderConfig() ya NO redirige a la pantalla separada (sin navigate(\'usuarios\'), sin botón "Ir a Usuarios")', () => {
+    expect(renderConfigSrc).not.toContain("navigate('usuarios')");
+    expect(renderConfigSrc).not.toContain('btn-config-go-usuarios');
   });
 
-  it('no reimplementa listado/edición de usuarios dentro de Configuración (sin tabla de usuarios ni fetch a manageUsers en este bloque)', () => {
-    // La categoría "usuarios" de renderConfig() es solo un panel con un
-    // botón — nunca debe aparecer Auth.manageUsers('LIST_USERS') ni un
-    // <table> de usuarios dentro de renderConfig() (eso sigue siendo
-    // exclusivo de renderUsuarios(), una función aparte).
+  it('renderConfig() llama a renderUsuarios() real, apuntado a su propio contenedor embebido (nunca una reimplementación)', () => {
+    expect(renderConfigSrc).toContain("await renderUsuarios($('#config-usuarios-embed'))");
+    expect(renderConfigSrc).toContain('id="config-usuarios-embed"');
+  });
+
+  it('el contenedor embebido vive dentro de config-cat-usuarios (no se reimplementa tabla/fetch propios en renderConfig)', () => {
+    // La categoría "usuarios" de renderConfig() es solo el contenedor —
+    // la tabla y Auth.manageUsers('LIST_USERS') siguen viviendo
+    // exclusivamente dentro de renderUsuarios()/renderUsuariosSupabase(),
+    // funciones aparte, nunca copiadas aquí.
     const usuariosCategoryMatch = renderConfigSrc.match(/config-cat-usuarios[\s\S]*?config-cat-notificaciones/);
     expect(usuariosCategoryMatch).not.toBeNull();
+    expect(usuariosCategoryMatch[0]).toContain('config-usuarios-embed');
     expect(usuariosCategoryMatch[0]).not.toContain('manageUsers');
     expect(usuariosCategoryMatch[0]).not.toContain('<table');
+  });
+
+  it('navigate(\'usuarios\') redirige a Configuración > Usuarios y accesos para quien también tiene "config" (nunca una pantalla duplicada); quien no tiene "config" sigue yendo a la pantalla separada de siempre', () => {
+    expect(navigateSrc).toContain("route === 'usuarios'");
+    expect(navigateSrc).toContain("includes('config')");
+    expect(navigateSrc).toContain("_activeConfigCategory = 'usuarios'");
+    expect(navigateSrc).toContain("route = 'config'");
   });
 });
 
@@ -71,7 +89,7 @@ describe('Categorías — set completo y omisión correcta de "Seguridad" sin Qu
     expect(renderConfigSrc).toContain("{ key: 'seguridad', label: 'Seguridad', omit: !quickUnlockAvailable }");
     expect(renderConfigSrc).toContain("{ key: 'operacion', label: 'Operación' }");
     expect(renderConfigSrc).toContain("{ key: 'organizacion', label: 'Organización' }");
-    expect(renderConfigSrc).toContain("{ key: 'usuarios', label: 'Usuarios y acceso' }");
+    expect(renderConfigSrc).toContain("{ key: 'usuarios', label: 'Usuarios y accesos' }");
     expect(renderConfigSrc).toContain("{ key: 'notificaciones', label: 'Notificaciones' }");
     expect(renderConfigSrc).toContain("{ key: 'sincronizacion', label: 'Sincronización' }");
     expect(renderConfigSrc).toContain("{ key: 'administracion', label: 'Administración' }");

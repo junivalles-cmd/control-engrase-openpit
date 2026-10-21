@@ -38,11 +38,11 @@ describe('printGreasePlan() — domingo es un día más, igual que Lunes-Sábado
     expect(src).not.toContain('colspan="8"');
   });
 
-  it('cada fila usa fechas.map(d => celda(eq, plan, d)) para TODOS los días — domingo pasa por la MISMA función que el resto, sin caso especial', () => {
+  it('cada fila usa una sola pasada por fechas y conserva el contexto de turno cuando se imprime una vista por turno', () => {
     const iTbody = src.indexOf('<tbody>');
     const iFinTabla = src.indexOf('</table>', iTbody);
     const tbodySrc = src.slice(iTbody, iFinTabla);
-    expect(tbodySrc).toContain('${fechas.map(d => celda(eq, plan, d)).join(\'\')}');
+    expect(tbodySrc).toContain('${fechas.map(d => celda(eq, plan, d, listaEquipos.shiftId || null)).join(\'\')}');
     // Antes había una 2da ocurrencia de fechas.map SOLO para Lun-Sáb seguida
     // de una celda domingo aparte — ahora hay una única pasada por fila.
     expect((tbodySrc.match(/fechas\.map/g) || []).length).toBe(1);

@@ -28,10 +28,14 @@ async function bootPage(page, { lubShell = true, route = 'turno' } = {}) {
   await page.setContent(lubShell ? '<div class="lub-shell"><div id="app-content"></div></div>' : '<div id="app-content"></div>');
   await page.addScriptTag({
     content: `
-      window.App = { route: ${JSON.stringify(route)}, lubricadorGreaseFlowActive: false };
+      window.App = { currentUser:{id:'fixture',role:'${lubShell ? 'LUBRICADOR' : 'ADMINISTRADOR'}'}, route: ${JSON.stringify(route)}, lubricadorGreaseFlowActive: false };
       let lastSyncState = { status: 'idle' };
+      let _syncWatchdogTimer = null;
+      ${extractDeclaration(appSource, 'armSyncWatchdog')}
+      window.updateTareasMensajesNavBadge = () => {};
       window.__calls = { renderAnomalias: 0, renderLubricadorHistorial: 0, renderLubricadorHome: 0, navigate: 0, refreshLocalNotifications: 0 };
       function renderAnomalias() { window.__calls.renderAnomalias++; }
+      function renderTareasYMensajes() {}
       function renderLubricadorHistorial() { window.__calls.renderLubricadorHistorial++; }
       function renderLubricadorHome() { window.__calls.renderLubricadorHome++; }
       function navigate() { window.__calls.navigate++; }

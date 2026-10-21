@@ -3,7 +3,9 @@ import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH, LUBRICATION_STATUS_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH, WEEKLY_MATRIX_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
-const names = ['$', '$$', 'esc', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'GREASE_UNIT', 'PERMISSIONS', 'NO_EXECUTION_REASON_LABELS', 'photosOf', 'resolveEvidenceSrc', 'resolvePhotoThumbSrcs', 'photoThumbHTML', 'evidenceValueAttr', 'validationBadgeHTML', 'wireMatrixOccurrenceDetails', 'openMatrixOccurrenceCard', 'wireMatrizScrollHint', 'openLubricadorMatrizModal', 'renderMatrizSemanal'];
+// getAllowedRoutes (LOGIC-P0-01, auditoría pre-release 2026-10-21): openMatrixOccurrenceCard()
+// ahora lo usa en vez de leer PERMISSIONS[role] directo.
+const names = ['$', '$$', 'esc', 'fmtDate', 'fmtDateOnly', 'fmtTime', 'GREASE_UNIT', 'PERMISSIONS', 'getAllowedRoutes', 'NO_EXECUTION_REASON_LABELS', 'photosOf', 'resolveEvidenceSrc', 'resolvePhotoThumbSrcs', 'photoThumbHTML', 'evidenceValueAttr', 'validationBadgeHTML', 'wireMatrixOccurrenceDetails', 'openMatrixOccurrenceCard', 'wireMatrizScrollHint', 'openLubricadorMatrizModal', 'renderMatrizSemanal'];
 const app = names.map(n => extractDeclaration(readSource(APP_JS_PATH), n)).join('\n');
 const core = [LUBRICATION_STATUS_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, GREASE_VALIDATION_JS_PATH, WEEKLY_MATRIX_JS_PATH].map(readSource).join('\n');
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l8sAAAAASUVORK5CYII=';
@@ -11,9 +13,11 @@ const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCA
 async function boot(page, role = 'ADMINISTRADOR', authorized = true) {
   await page.setContent('<main id="app-content"></main>');
   await page.evaluate(()=>{document.documentElement.dataset.mode='light';document.documentElement.dataset.theme='amarillo-cat';});
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css') });
   await page.addScriptTag({ content: `${core}\n${app}
     const App={currentUser:{id:'u',role:${JSON.stringify(role)}},generalSettings:{shiftDayStart:6,shiftNightStart:18}};
+    const Auth={isSupabaseMode:()=>false};
     const eq={id:'e',code:'A11',brand:'Caterpillar',model:'745C',locationId:'master',shiftId:'shift_noche',status:'Operativo'};
     const plan={id:'p',equipmentId:'e',controlType:'Día y turno de la semana',assignedDays:WEEKDAY_NAMES,shiftId:'shift_noche'};
     const days=Array.from({length:7},(_,i)=>new Date(2026,9,5+i)); const today=new Date(2026,9,10);
@@ -137,6 +141,64 @@ test('actual admin matrix wires its occurrence cells and removes native tooltip'
   await expect(page.locator('td[role=button]')).toHaveCount(7);
   await expect(page.locator('table.matriz td[title]')).toHaveCount(0);
   await page.locator('td[role=button]').first().click(); await expect(card(page)).toContainText('PROGRAMACIÓN');
+});
+
+test('admin matrix splits a dual-shift equipment into one row per table (Día/Noche) — never mini-cells inside a single row', async ({ page }) => {
+  await boot(page);
+  await page.evaluate(async () => {
+    const f = window.fixture;
+    const now = new Date();
+    const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    // equipment.shiftId a propósito queda en 'shift_dia' (turno global, puede
+    // divergir) — la pertenencia a cada tabla la decide el PLAN
+    // (planAppliesToShiftInWeek()), nunca equipment.shiftId.
+    f.eq.shiftId = 'shift_dia';
+    f.plan.controlType = 'Horas de operación';
+    f.plan.requiredShifts = ['shift_dia', 'shift_noche'];
+    f.plan.effectiveDate = todayISO;
+    f.records.splice(0, f.records.length, {
+      id: 'dual-day', equipmentId: f.eq.id, date: `${todayISO}T08:30:00`, shiftId: 'shift_dia',
+      userName: 'Ana', qty: 2, details: [], operationalSnapshot: {
+        operationalDate: todayISO, occurrenceKey: `p:${todayISO}:shift_dia`,
+      },
+    });
+    f.data.equipment = [f.eq];
+    f.data.lubrication_plans = [f.plan];
+    f.data.lubrication_records = f.records;
+    App.matrizOffset = 0;
+    await renderMatrizSemanal();
+  });
+
+  // Nunca mini-celdas Día/Noche dentro de una celda — en ningún lado de la matriz.
+  await expect(page.locator('.matrix-occurrence-shift')).toHaveCount(0);
+  await expect(page.locator('.matrix-dual-cell')).toHaveCount(0);
+
+  // Una fila en la tabla Día, otra fila (ocurrencia distinta) en la tabla Noche.
+  const diaTable = page.locator('table.matriz', { hasText: 'TURNO DÍA' });
+  const nocheTable = page.locator('table.matriz', { hasText: 'TURNO NOCHE' });
+  await expect(diaTable.locator('tbody tr')).toHaveCount(1);
+  await expect(nocheTable.locator('tbody tr')).toHaveCount(1);
+  await expect(diaTable.locator('tbody tr')).toContainText('A11');
+  await expect(nocheTable.locator('tbody tr')).toContainText('A11');
+
+  const todayIndexIn = async (table) => {
+    const header = table.locator('th.is-today');
+    return header.evaluate(el => [...el.parentElement.children].indexOf(el));
+  };
+  const todayCellDia = diaTable.locator('tbody tr').first().locator('td').nth(await todayIndexIn(diaTable));
+  const todayCellNoche = nocheTable.locator('tbody tr').first().locator('td').nth(await todayIndexIn(nocheTable));
+
+  await expect(todayCellDia).toHaveText('REALIZADO');
+  await expect(todayCellNoche).toHaveText('PENDIENTE HOY');
+
+  await todayCellDia.click();
+  await expect(card(page)).toContainText('REALIZADO');
+  await expect(card(page)).toContainText('Día');
+  await page.keyboard.press('Escape');
+
+  await todayCellNoche.click();
+  await expect(card(page)).toContainText('PENDIENTE');
+  await expect(card(page)).toContainText('Noche');
 });
 
 test('partial result and compact validation use existing helpers; photos and data remain unchanged',async({page})=>{

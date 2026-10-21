@@ -72,6 +72,7 @@ async function bootPage(page, plans = [], validations = []) {
         <main id="app-content" class="app-content"></main>
       </div>
     </div>`);
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `

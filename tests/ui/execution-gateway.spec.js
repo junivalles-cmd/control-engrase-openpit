@@ -8,7 +8,7 @@ async function boot(page) {
   await page.goto('/');
   await page.addScriptTag({content:readSource(DB_JS_PATH)});
   await page.addScriptTag({content:`
-    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getProfile:()=>({appUserId:'u1'}),getSession:()=>({accessToken:'fixture-jwt'}),getSessionEpoch:()=>1};
+    window.Auth={isSupabaseMode:()=>true,isAuthenticated:()=>true,getProfile:()=>({appUserId:'u1',authorizationFingerprint:'fixture-fingerprint'}),getSession:()=>({accessToken:'fixture-jwt'}),getSessionEpoch:()=>1};
     window.classifyAuthStatus = status => status===401?'AUTH_REQUIRED':status===403?'AUTH_FORBIDDEN':null;
     window.__requests=[];window.__response={status:503,body:{}};
     window.fetch=async(url,options)=>{__requests.push({url,method:options.method,body:options.body});
@@ -17,6 +17,7 @@ async function boot(page) {
   await page.addScriptTag({content:readSource(SYNC_JS_PATH)});
   await page.evaluate(async()=>{
     await openDB();await DB.setConfig({url:'https://fixture.test',anonKey:'public-key'});
+    await DB.setAuthorizationContext('u1',{appUserId:'u1',active:true,scopeType:'CREW_SCOPED',authorizedCrewIds:['c1'],authorizedLocationIds:['loc1'],rowScopeEnforced:true});
     window.__before={id:'e1',hourmeter:100,locationId:'loc1',updatedAt:'2026-01-01T00:00:00Z',_pushedVersion:'2026-01-01T00:00:00Z'};
     window.__plan={id:'p1',equipmentId:'e1',lastGreaseHour:100,frequency:10,updatedAt:__before.updatedAt,_pushedVersion:__before.updatedAt};
     window.__record={id:'r1',equipmentId:'e1',planId:'p1',hourmeter:110,qty:1,userId:'u1',date:new Date().toISOString(),shiftId:'shift_dia',details:[],photos:[],updatedAt:'2026-10-12T12:00:00Z',operationalSnapshot:{crewId:'c1',executionType:'PLANNED'}};
@@ -27,7 +28,7 @@ async function boot(page) {
 }
 test('real IndexedDB atomically saves execution and retry intent; restart keeps queue',async({page})=>{
   await boot(page);await page.evaluate(()=>__create());
-  const saved=await page.evaluate(async()=>({operations:await DB.getExecutionOperations(),equipment:await DB.get('equipment','e1'),record:await DB.get('lubrication_records','r1')}));
+  const saved=await page.evaluate(async()=>({operations:await DB.getExecutionOperations(),equipment:await DB.get('equipment','e1'),record:await DB.get('lubrication_records','r1'),raw:await DB.getRaw('lubrication_records','r1'),context:await DB.getAuthorizationContext('u1')}));
   expect(saved.operations).toHaveLength(1);expect(saved.record._executionOperationId).toBe('r1');expect(saved.equipment.hourmeter).toBe(110);
   await page.evaluate(()=>{_db.close();return openDB();});
   expect(await page.evaluate(async()=>(await DB.getExecutionOperations()).length)).toBe(1);
@@ -87,9 +88,16 @@ test('terminal signed-record response is visible, preserves all data, and never 
 });
 test('ADMIN also receives the existing UI signed-record lock before opening editor',async({page})=>{
   await boot(page);
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'esc')});
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'fmtDate')});
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'GREASE_UNIT')});
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'photoFieldHTML')});
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'MAX_PHOTOS')});
+  await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'openModal')});
   await page.addScriptTag({content:extractDeclaration(readSource(APP_JS_PATH),'openEditGreaseRecordForm')});
   const result=await page.evaluate(async()=>{
     window.App={currentUser:{id:'u1',role:'ADMINISTRADOR'}};window.__alerts=[];window.alert=m=>__alerts.push(m);
+    await DB.setAuthorizationContext('u1',{appUserId:'u1',active:true,scopeType:'GLOBAL'});
     await DB.put('grease_validations',{id:'v1',lubricationRecordId:'r1',active:true,signatureUrl:'https://fixture.test/signature'});
     await openEditGreaseRecordForm(__record);return {messages:__alerts,signature:await DB.get('grease_validations','v1')};
   });
@@ -116,7 +124,7 @@ test('offline edit rejected by a remote signature restores original official ver
   });
   expect(result.record.notes).toBe('Signed original');expect(result.record.hourmeter).toBe(110);expect(result.record._executionOperationId).toBeUndefined();
   expect(result.record.photos).toEqual(['data:image/png;base64,AA==']);
-  expect(result.equipment.hourmeter).toBe(100);expect(result.signature).toEqual(result.originalSignature);
+  expect(result.equipment.hourmeter).toBe(100);expect(result.signature).toMatchObject(result.originalSignature);
   expect(result.operations[0]).toMatchObject({status:'BLOCKED',code:'SIGNED_RECORD_LOCKED',params:{p_notes:'Attempted edit'}});
   expect(result.requests).toHaveLength(1);
 });

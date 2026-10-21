@@ -37,6 +37,7 @@ const RECORD = {
 
 async function bootPage(page) {
   await page.setContent('<div id="app-content"></div>');
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({
     content: `
@@ -94,6 +95,23 @@ async function drawSignature(page) {
 async function storedValidations(page) {
   return page.evaluate(() => window.__stores.grease_validations);
 }
+
+test('late validation in a later day/shift signs the original tractor record offline; does not create another execution', async ({ page, context }) => {
+  await page.clock.install({ time: new Date('2026-10-21T09:00:00') });
+  await bootPage(page);
+  const record = { ...RECORD, id: 'same-tractor-record', date: '2026-10-16T20:00:00', shiftId: 'shift_noche' };
+  await page.evaluate(record => { __stores.lubrication_records = [record]; App.currentUser.role = 'SUPERVISOR'; }, record);
+  await page.evaluate(({ record, equipment }) => openValidationModal(record, equipment), { record, equipment: { ...EQUIPMENT, typeId: 'tractor' } });
+  await page.locator('#val-reason-preset').selectOption('Validación posterior por encargado');
+  await drawSignature(page); await context.setOffline(true);
+  await page.locator('#val-confirm').click();
+  await expect(page.locator('#val-confirm')).toHaveCount(0);
+  const validations = await storedValidations(page);
+  expect(validations).toHaveLength(1); expect(validations[0].lubricationRecordId).toBe('same-tractor-record');
+  expect(new Date(validations[0].signedAt).getTime()).toBeGreaterThan(new Date(record.date).getTime() + 86400000);
+  const records = await page.evaluate(() => __stores.lubrication_records);
+  expect(records).toHaveLength(1); expect(records[0]).toEqual(record);
+});
 
 for (const width of [360, 390, 412]) {
   test(`${width}px: validación de firmante externo conserva controles de 44px sin overflow`, async ({ page }) => {

@@ -17,12 +17,26 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const appSource = readSource(APP_JS_PATH);
 
-describe('D — NO existe logout automático cada 30 minutos de inactividad (resetInactivityTimer())', () => {
-  const src = extractDeclaration(appSource, 'resetInactivityTimer');
+// Simplificación para campo (2026-10-20, "Quick Unlock para uso en campo"):
+// el umbral pasó de 30 minutos fijos a QUICK_UNLOCK_INACTIVITY_MS (4h,
+// constante única en quick-unlock.js) y resetInactivityTimer() ya no llama
+// a lockApp() directamente — agenda fireInactivityLock(), que primero
+// confirma que no hay un formulario/flujo abierto (§3 "no interrumpir
+// trabajo activo") antes de bloquear. El criterio de esta prueba sigue
+// intacto: en ningún punto de esa cadena debe aparecer logout().
+describe('D — NO existe logout automático por inactividad (resetInactivityTimer()/fireInactivityLock())', () => {
+  const srcReset = extractDeclaration(appSource, 'resetInactivityTimer');
+  const srcFire = extractDeclaration(appSource, 'fireInactivityLock');
 
-  it('el timer de inactividad llama lockApp(), nunca logout()', () => {
-    expect(src).toContain('lockApp();');
-    expect(src).not.toContain('logout();');
+  it('el timer de inactividad agenda fireInactivityLock(), nunca logout() directo', () => {
+    expect(srcReset).toContain('inactivityTimer = setTimeout(fireInactivityLock, QUICK_UNLOCK_INACTIVITY_MS);');
+    expect(srcReset).not.toContain('logout();');
+  });
+
+  it('fireInactivityLock() termina en lockApp(), nunca logout() — y nunca bloquea con un formulario/flujo abierto', () => {
+    expect(srcFire).toContain('lockApp();');
+    expect(srcFire).not.toContain('logout();');
+    expect(srcFire).toContain('isSafeToAutoLock()');
   });
 });
 
@@ -59,8 +73,8 @@ describe('F/G — lockApp() (Bloquear) nunca llama Auth.signOut()/QuickUnlock.di
     expect(src).not.toContain('QuickUnlock.disable()');
   });
 
-  it('vuelve al mismo gate real (renderAuthGateSupabase()) que ofrece Quick Unlock al arrancar', () => {
-    expect(src).toContain('renderAuthGateSupabase();');
+  it('vuelve al mismo gate real (renderAuthGateSupabase()) que ofrece Quick Unlock al arrancar — SIEMPRE forzando el PIN (nunca la ventana de gracia de 4h)', () => {
+    expect(src).toContain('renderAuthGateSupabase({ forcePin: true });');
   });
 });
 

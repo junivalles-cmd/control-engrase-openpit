@@ -85,6 +85,14 @@
      usa de verdad dentro de la app Android/Capacitor (ver isNative() en
      app.js); en la versión web no hace nada. -->
 <script src="src/core/widget-snapshot.js"></script>
+<!-- Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — puro,
+     mismo patrón que operational-scope.js/weekly-matrix.js. DESPUÉS de
+     grease-validation.js/operational-scope.js: usa sus funciones
+     (isRecordPendingValidation()/isRecordValidationExpired()/
+     parseOccurrenceKeyDate()) ya cargadas como globales, nunca las
+     reimplementa. -->
+<script src="src/core/tasks-notifications-panel.js"></script>
+<script src="src/core/lubricador-notifications.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

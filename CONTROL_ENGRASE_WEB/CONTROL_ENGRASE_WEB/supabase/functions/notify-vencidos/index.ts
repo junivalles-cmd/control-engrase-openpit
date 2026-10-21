@@ -35,6 +35,20 @@ const ONESIGNAL_APP_ID = Deno.env.get("ONESIGNAL_APP_ID") ?? "";
 const ONESIGNAL_REST_API_KEY = Deno.env.get("ONESIGNAL_REST_API_KEY") ?? "";
 
 const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const OPERATIONAL_TIME_ZONE = "America/Managua";
+
+function operationalDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: OPERATIONAL_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hourCycle: "h23", weekday: "short",
+  }).formatToParts(date);
+  const value = (type) => parts.find((part) => part.type === type)?.value;
+  const weekdayIndex = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[value("weekday")];
+  return {
+    dateISO: `${value("year")}-${value("month")}-${value("day")}`,
+    hour: Number(value("hour")), weekdayIndex,
+  };
+}
 
 async function getStoreRows(store: string) {
   const res = await fetch(
@@ -75,7 +89,7 @@ async function getNotifSettings() {
 // un horario distinto inventado aquí (§4: "usar esa función como fuente
 // central", este es el equivalente Deno porque no se puede importar el
 // archivo del navegador).
-async function getCurrentNotificationShift(): Promise<"DAY" | "NIGHT"> {
+async function getCurrentNotificationShift(now = new Date()): Promise<"DAY" | "NIGHT"> {
   let shiftDayStart = 6, shiftNightStart = 18;
   try {
     const res = await fetch(
@@ -88,7 +102,7 @@ async function getCurrentNotificationShift(): Promise<"DAY" | "NIGHT"> {
       if (g) { shiftDayStart = g.shiftDayStart ?? shiftDayStart; shiftNightStart = g.shiftNightStart ?? shiftNightStart; }
     }
   } catch (_) { /* si falla, usa los defaults */ }
-  const h = new Date().getHours();
+  const h = operationalDateParts(now).hour;
   return (h >= shiftDayStart && h < shiftNightStart) ? "DAY" : "NIGHT";
 }
 
@@ -134,6 +148,42 @@ function avisosPausados(eq: any) {
   return eq.avisosPausadosHasta && new Date(eq.avisosPausadosHasta).getTime() > Date.now();
 }
 
+// DAY y NIGHT son ocurrencias separadas: solo un snapshot con identidad
+// exacta de fecha operacional y turno puede resolver esta obligación.
+function findRecordForNotificationOccurrence(records, { equipmentId, operationalDate, shiftId, occurrenceKey }) {
+  return (records || []).find((record) => {
+    if (record.equipmentId !== equipmentId) return false;
+    const assigned = record.operationalSnapshot?.assignedOccurrenceKey;
+    if (assigned) return assigned === occurrenceKey && record.operationalSnapshot.satisfiedOccurrenceKey === occurrenceKey
+      && Number(record.qty) > 0 && (record.details || []).every(point => point.done);
+    return record.shiftId === shiftId && (record.operationalSnapshot?.occurrenceKey === occurrenceKey
+      || (record.operationalSnapshot?.operationalDate === operationalDate && record.operationalSnapshot?.shiftId === shiftId));
+  });
+}
+
+function getOutstandingDualOccurrences({ plan, equipment, records, operationalDate }) {
+  const required = ["shift_dia", "shift_noche"];
+  const configured = Array.isArray(plan?.requiredShifts)
+    && required.every((id) => plan.requiredShifts.includes(id))
+    && !!plan.effectiveDate && operationalDate >= plan.effectiveDate;
+  if (!configured || !plan.id || !equipment?.id) return [];
+  return required.flatMap((shiftId) => {
+    const occurrenceKey = `${plan.id}:${operationalDate}:${shiftId}`;
+    const done = findRecordForNotificationOccurrence(records, {
+      equipmentId: equipment.id, operationalDate, shiftId, occurrenceKey,
+    });
+    return done ? [] : [{ equipment, shiftId, operationalDate, occurrenceKey }];
+  });
+}
+
+function localDateISO(date) { return operationalDateParts(date).dateISO; }
+function notificationEquipment(item) { return item.equipment || item; }
+function notificationCode(item) {
+  const eq = notificationEquipment(item);
+  const shift = item.shiftId === "shift_dia" ? " · TURNO DÍA" : item.shiftId === "shift_noche" ? " · TURNO NOCHE" : "";
+  return `${eq.code}${shift}`;
+}
+
 // Deduplicación (§30) — clave durable = tipo + destinatario + DÍA de hoy
 // (esta función es un cron que corre como mucho una vez por ventana
 // relevante al día: si se reintenta/reprograma el mismo día, la MISMA
@@ -172,11 +222,13 @@ serve(async (_req) => {
       getStoreRows("lubrication_records"), getDispositivos(),
     ]);
     const turnoActual = await getCurrentNotificationShift();
-    const hoyISO = new Date().toISOString().slice(0, 10);
-
     const hoy = new Date();
-    const nombreHoy = DIAS[hoy.getDay()];
-    const inicioHoy = new Date(hoy); inicioHoy.setHours(0, 0, 0, 0);
+    const hoyPartes = operationalDateParts(hoy);
+    const hoyISO = hoyPartes.dateISO;
+    const nombreHoy = DIAS[hoyPartes.weekdayIndex];
+    // Iteración de calendario operacional en UTC para que la zona horaria
+    // del runtime Edge no desplace el día de negocio.
+    const inicioHoy = new Date(`${hoyISO}T00:00:00.000Z`);
 
     const vencidos: any[] = [];
     const porEngrasar: any[] = [];
@@ -191,16 +243,35 @@ serve(async (_req) => {
         const dias: string[] = plan.assignedDays || [];
         if (!dias.length) continue;
         const leTocaHoy = dias.includes(nombreHoy);
+        const dualDaily = Array.isArray(plan.requiredShifts)
+          && ["shift_dia", "shift_noche"].every((id) => plan.requiredShifts.includes(id))
+          && !!plan.effectiveDate && hoyISO >= plan.effectiveDate;
+        if (dualDaily) {
+          if (leTocaHoy) porEngrasar.push(...getOutstandingDualOccurrences({ plan, equipment: eq, records, operationalDate: hoyISO }));
+          // Cada turno vencido del último día programado se reporta por separado.
+          for (let atras = 1; atras <= 7; atras++) {
+            const d = new Date(inicioHoy); d.setUTCDate(d.getUTCDate() - atras);
+            if (!dias.includes(DIAS[d.getUTCDay()])) continue;
+            const dateISO = localDateISO(d);
+            vencidos.push(...getOutstandingDualOccurrences({ plan, equipment: eq, records, operationalDate: dateISO }));
+            break;
+          }
+          continue;
+        }
         const hechoHoy = records.some((r: any) =>
-          r.equipmentId === eq.id && new Date(r.date) >= inicioHoy && new Date(r.date) <= hoy);
+          r.equipmentId === eq.id && (r.operationalSnapshot?.assignedOccurrenceKey
+            ? r.operationalSnapshot.assignedOccurrenceKey === `${plan.id}:${hoyISO}` && r.operationalSnapshot.satisfiedOccurrenceKey === `${plan.id}:${hoyISO}` && Number(r.qty)>0 && (r.details || []).every((point:any)=>point.done)
+            : new Date(r.date) >= inicioHoy && new Date(r.date) <= hoy));
         if (leTocaHoy && !hechoHoy) { porEngrasar.push(eq); continue; }
 
         // ¿El día asignado más reciente quedó sin hacer?
         for (let atras = 1; atras <= 7; atras++) {
-          const d = new Date(inicioHoy); d.setDate(d.getDate() - atras);
-          if (!dias.includes(DIAS[d.getDay()])) continue;
-          const finDia = new Date(d); finDia.setHours(23, 59, 59, 999);
-          const hecho = records.some((r: any) => r.equipmentId === eq.id && new Date(r.date) >= d);
+          const d = new Date(inicioHoy); d.setUTCDate(d.getUTCDate() - atras);
+          if (!dias.includes(DIAS[d.getUTCDay()])) continue;
+          const finDia = new Date(d); finDia.setUTCHours(23, 59, 59, 999);
+          const hecho = records.some((r: any) => r.equipmentId === eq.id && (r.operationalSnapshot?.assignedOccurrenceKey
+            ? r.operationalSnapshot.assignedOccurrenceKey === `${plan.id}:${localDateISO(d)}` && r.operationalSnapshot.satisfiedOccurrenceKey === `${plan.id}:${localDateISO(d)}` && Number(r.qty)>0 && (r.details || []).every((point:any)=>point.done)
+            : new Date(r.date) >= d));
           if (!hecho) vencidos.push(eq);
           break; // solo interesa el día asignado más reciente
         }
@@ -232,25 +303,46 @@ serve(async (_req) => {
         // las jefaturas, todo lo que su rol/turno/disponibilidad permitan.
         const esLub = rolesDisp.includes("LUBRICADOR") && rolesDisp.length === 1;
         const suyos = esLub
-          ? lista.filter((eq) =>
-              (!disp.shiftId || eq.shiftId === disp.shiftId) &&
-              (!disp.locationId || !eq.locationId || eq.locationId === disp.locationId) &&
-              (!disp.cuadrillaId || !eq.cuadrillaId || eq.cuadrillaId === disp.cuadrillaId))
+          ? lista.filter((item) => {
+              const eq = notificationEquipment(item);
+              const itemShift = item.shiftId || eq.shiftId;
+              return (!disp.shiftId || itemShift === disp.shiftId) &&
+                (!disp.locationId || !eq.locationId || eq.locationId === disp.locationId) &&
+                (!disp.cuadrillaId || !eq.cuadrillaId || eq.cuadrillaId === disp.cuadrillaId);
+            })
           : lista;
 
         if (cfg.soloSiHay && !suyos.length) continue;
+        // Un grupo de DAY no reclama ni deduplica NIGHT (y viceversa).
+        // Para planes legacy se conserva el agrupamiento diario anterior.
+        const grupos = new Map();
+        for (const item of suyos) {
+          const shiftId = item.shiftId || "none";
+          const operationalDate = item.operationalDate || hoyISO;
+          const key = `${shiftId}|${operationalDate}`;
+          if (!grupos.has(key)) grupos.set(key, { shiftId, operationalDate, items: [] });
+          grupos.get(key).items.push(item);
+        }
+        for (const grupo of grupos.values()) {
+          const recipient = disp.userId || disp.token;
+          const nuevos = [];
+          for (const item of grupo.items) {
+            const occurrenceIdentity = item.occurrenceKey || "legacy";
+            const dedupeKey = `${etiqueta}|${occurrenceIdentity}|${recipient}|${grupo.operationalDate}`;
+            const reclamado = await claimDedupeKey(dedupeKey, {
+              userId: disp.userId, etiqueta, dia: grupo.operationalDate,
+              shiftId: grupo.shiftId === "none" ? null : grupo.shiftId,
+              occurrenceKey: item.occurrenceKey || null,
+            });
+            if (reclamado) nuevos.push(item);
+          }
+          if (!nuevos.length) continue;
 
-        // Dedupe (§30): tipo + destinatario (userId, o el propio token si
-        // no hay userId) + día — un reintento del cron el MISMO día no
-        // reenvía.
-        const dedupeKey = `${etiqueta}|none|${disp.userId || disp.token}|${hoyISO}`;
-        const reclamado = await claimDedupeKey(dedupeKey, { userId: disp.userId, etiqueta, dia: hoyISO });
-        if (!reclamado) continue;
-
-        const codigos = suyos.slice(0, 5).map((e: any) => e.code).join(", ");
-        const extra = suyos.length > 5 ? ` y ${suyos.length - 5} más` : "";
-        const n = await sendPush([disp.token], titulo(suyos.length, codigos), cuerpo(suyos.length, codigos + extra));
-        if (n) enviados.push(`${etiqueta}->${disp.ultimoUsuario || disp.token.slice(0, 6)}`);
+          const codigos = nuevos.slice(0, 5).map(notificationCode).join(", ");
+          const extra = nuevos.length > 5 ? ` y ${nuevos.length - 5} más` : "";
+          const n = await sendPush([disp.token], titulo(nuevos.length, codigos), cuerpo(nuevos.length, codigos + extra));
+          if (n) enviados.push(`${etiqueta}->${disp.ultimoUsuario || disp.token.slice(0, 6)}`);
+        }
       }
     }
 

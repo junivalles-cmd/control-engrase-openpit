@@ -1,10 +1,24 @@
--- PREPARED ONLY. Never run against production without a separately approved rollout.
--- Adds authenticated row-level scope to the generic engrase_sync transport.
--- Existing permissive app_store_permissions policies remain responsible for
--- store/operation grants; these RESTRICTIVE policies intersect those grants.
--- This does not apply 0003, use crew_locations, or change operational data.
--- It adds only the LUBRICADOR/equipment read bit required for scoped first pull.
+-- MANUAL-PRODUCTION-PREPARED: additive authenticated matrix + row scope.
+-- Apply the COMPLETE transaction manually as postgres after 0009/0010/0012
+-- PASS and the read-only preflight. No automatic execution authorization.
+-- Independent restrictive matrix policies prevent legacy PUBLIC ALL/true
+-- from widening authenticated store/action permissions, including after
+-- 0014 replaces the SELECT row-scope policy. Legacy anon risk remains.
+-- PRE-0008 only: crew_locations is denied for EVERY authenticated role.
+-- No 0003/0007/0008/0011/0014/0015 installation, legacy removal or data repair.
+-- Adds only four target-compatible READ bits: equipment/LUBRICADOR and
+-- settings/PLANIFICADOR,SUPERVISOR,LUBRICADOR. Preconditions require all four
+-- prior values=false; rollback can restore them explicitly without guessing.
 -- Keep authorization_private outside the Supabase/PostgREST exposed schemas.
+-- This is a deployment precondition, NOT enforced by CREATE SCHEMA/REVOKE.
+-- Validate actual Data API exposed schemas; missing SQL config is not proof.
+-- settings is shared read data; its actions remain bounded by the matrix.
+-- notification_dispatch_log is unknown/denied for scoped users;
+-- audit_log SELECT/DELETE is also denied for scoped users. users is owner-only.
+-- Missing links filter rows (including tombstones), not a SQL first-pull error.
+-- Existing caches can retain stale children when their parents are deleted.
+-- Readiness=true commits atomically with ALL eight policies and READ changes.
+-- Validate policy ACLs, live scopes and expected omissions after installation.
 begin;
 
 do $preconditions$
@@ -22,6 +36,29 @@ begin
   if to_regclass('public.app_store_permissions') is null then
     raise exception '0013 requires app_store_permissions';
   end if;
+  if exists (
+    select 1 from pg_catalog.pg_class c
+    where c.oid in ('public.app_profiles'::regclass,'public.app_store_permissions'::regclass)
+      and (c.relforcerowsecurity or c.relowner<>(select oid from pg_catalog.pg_roles where rolname=current_user))
+  ) then raise exception 'Installer must own profiles and matrix; FORCE RLS must be disabled'; end if;
+  -- Lock the changed rows before inspecting the prior values, so concurrent
+  -- matrix administration cannot invalidate the asserted rollback baseline.
+  perform 1 from public.app_store_permissions
+    where (store='equipment' and role='LUBRICADOR')
+       or (store='settings' and role in ('PLANIFICADOR','SUPERVISOR','LUBRICADOR'))
+    for update;
+  if exists (select 1 from public.app_store_permissions
+      where (store='equipment' and role='LUBRICADOR')
+         or (store='settings' and role in ('PLANIFICADOR','SUPERVISOR','LUBRICADOR'))
+      group by store,role having count(*)<>1 or bool_or(can_read is distinct from false))
+     or (select count(*) from public.app_store_permissions
+      where (store='equipment' and role='LUBRICADOR')
+         or (store='settings' and role in ('PLANIFICADOR','SUPERVISOR','LUBRICADOR')))<>4 then
+    raise exception '0013 requires exactly four known prior READ=false bits; inspect existing installation/drift';
+  end if;
+  if to_regprocedure('authorization_private.authorization_store_action_allowed(text,text,boolean)') is not null then
+    raise exception 'Repaired 0013 already exists; do not overwrite protection or rollback baseline';
+  end if;
   if not exists (select 1 from pg_catalog.pg_policies where schemaname='public'
       and tablename='engrase_sync' and policyname='engrase_sync: leer según matriz') then
     raise exception '0013 requires the existing SELECT matrix policy';
@@ -35,10 +72,46 @@ $preconditions$;
 create schema if not exists authorization_private;
 revoke all on schema authorization_private from public,anon;
 grant usage on schema authorization_private to authenticated;
+revoke create on schema authorization_private from authenticated;
+
+-- Central matrix semantics, using the real active Auth profile (not caller
+-- context). UPDATE_USING matches the old-row matrix policy; UPDATE_CHECK
+-- matches its new-row deleted/can_delete versus not-deleted/can_update rule.
+create function authorization_private.authorization_store_action_allowed(
+  p_store text, p_action text, p_deleted boolean
+) returns boolean
+language sql stable security definer set search_path=pg_catalog as $matrix$
+  select auth.uid() is not null and p_store<>'crew_locations' and exists (
+    select 1 from public.app_profiles a
+    join public.app_store_permissions m on m.role=a.role and m.store=p_store
+    where a.auth_user_id=auth.uid() and a.active=true
+      and a.role in ('ADMINISTRADOR','PLANIFICADOR','SUPERVISOR','LUBRICADOR')
+      and case p_action
+        when 'SELECT' then m.can_read
+        when 'INSERT' then m.can_insert
+        when 'UPDATE_USING' then m.can_update or m.can_delete
+        when 'UPDATE_CHECK' then (p_deleted and m.can_delete) or (not p_deleted and m.can_update)
+        when 'DELETE' then m.can_delete
+        else false end
+  );
+$matrix$;
+revoke all on function authorization_private.authorization_store_action_allowed(text,text,boolean) from public,anon,authenticated;
+grant execute on function authorization_private.authorization_store_action_allowed(text,text,boolean) to authenticated;
+
+create policy authorization_store_select on public.engrase_sync as restrictive
+  for select to authenticated using (authorization_private.authorization_store_action_allowed(store,'SELECT',deleted));
+create policy authorization_store_insert on public.engrase_sync as restrictive
+  for insert to authenticated with check (authorization_private.authorization_store_action_allowed(store,'INSERT',deleted));
+create policy authorization_store_update on public.engrase_sync as restrictive
+  for update to authenticated
+  using (authorization_private.authorization_store_action_allowed(store,'UPDATE_USING',deleted))
+  with check (authorization_private.authorization_store_action_allowed(store,'UPDATE_CHECK',deleted));
+create policy authorization_store_delete on public.engrase_sync as restrictive
+  for delete to authenticated using (authorization_private.authorization_store_action_allowed(store,'DELETE',deleted));
 
 -- Stable row classifier. Missing/ambiguous relationships fail closed. It
--- evaluates the same PRE-0008 membership/location context as 0012 and never
--- trusts client-supplied scope ids as authority.
+-- evaluates the same PRE-0008 context as 0012. Policies supply server-derived
+-- context; this boolean classifier must never be exposed as an API RPC.
 create or replace function authorization_private.authorization_row_in_scope(
   p_store text, p_id text, p_payload jsonb, p_action text, p_context jsonb
 ) returns boolean
@@ -58,6 +131,7 @@ declare
   own_row boolean;
 begin
   if auth.uid() is null or p_store is null or p_id is null or p_payload is null then return false; end if;
+  if p_store='crew_locations' then return false; end if;
   result := p_context;
   if result->>'status' is distinct from 'AUTHORIZED' then return false; end if;
   ctx := result->'context';
@@ -81,12 +155,12 @@ begin
     return own_row;
   end if;
 
-  -- Global roles receive all rows admitted by the existing store matrix.
+  -- Global rows still require the independent restrictive store matrix gate.
   if is_global then return true; end if;
 
   -- Shared reference data with no per-crew ownership. The ordinary matrix
   -- policy still decides whether this role may read the store at all.
-  if p_store in ('shifts','equipment_types','lubricants') then return true; end if;
+  if p_store in ('shifts','equipment_types','lubricants','settings') then return true; end if;
 
   if p_store='cuadrillas' then
     return crews ? p_id;
@@ -94,11 +168,17 @@ begin
     return locations ? p_id;
   elsif p_store='equipment' then
     return locations ? (p_payload->>'locationId');
-  elsif p_store in ('lubrication_plans','lubrication_points') then
+  elsif p_store='lubrication_plans' then
     equipment_id := p_payload->>'equipmentId';
     if equipment_id is null then return false; end if;
     select e.payload->>'locationId' into location_id from public.engrase_sync e
       where e.store='equipment' and e.id=equipment_id and not e.deleted;
+    return location_id is not null and locations ? location_id;
+  elsif p_store='lubrication_points' then
+    select e.payload->>'locationId' into location_id
+    from public.engrase_sync p join public.engrase_sync e
+      on e.store='equipment' and e.id=p.payload->>'equipmentId' and not e.deleted
+    where p.store='lubrication_plans' and p.id=p_payload->>'planId' and not p.deleted;
     return location_id is not null and locations ? location_id;
   elsif p_store in ('lubrication_records','lubrication_skips','anomalies') then
     equipment_id := p_payload->>'equipmentId';
@@ -175,11 +255,11 @@ create policy authorization_scope_delete on public.engrase_sync as restrictive
       (select public.get_authorization_context()))
   );
 
--- The existing matrix denied LUBRICADOR equipment reads entirely, which
--- makes scoped Mi Turno/QR first-pull impossible. This adds only SELECT;
--- the restrictive row policy above limits it to authorized locations.
+-- Only target-compatible READ bits: equipment for Mi Turno/QR and shared
+-- operational settings for the three non-admin roles. No write bits change.
 update public.app_store_permissions set can_read=true
-  where store='equipment' and role='LUBRICADOR';
+  where (store='equipment' and role='LUBRICADOR')
+     or (store='settings' and role in ('PLANIFICADOR','SUPERVISOR','LUBRICADOR'));
 
 -- Set the readiness bit only in the same transaction as the restrictive
 -- policies. If any statement fails, both the policies and this bit roll back.
@@ -193,5 +273,7 @@ $bootstrap$;
 revoke all on function public.get_authorization_context() from public,anon;
 grant execute on function public.get_authorization_context() to authenticated;
 comment on function authorization_private.authorization_row_in_scope(text,text,jsonb,text,jsonb) is
-  'Non-API PRE-0008 row classifier used by restrictive engrase_sync policies; global roles remain bounded by app_store_permissions; scoped users are limited to legacy crew/location scope.';
+  'Non-API PRE-0008 row classifier; independent restrictive matrix policies bound all roles. Points resolve planId to plan to equipment. crew_locations denied.';
+comment on function authorization_private.authorization_store_action_allowed(text,text,boolean) is
+  'Non-API active Auth profile matrix gate. Restrictive policies prevent legacy permissive bypass; UPDATE preserves deleted/can_delete semantics.';
 commit;

@@ -32,7 +32,7 @@ describe('updateConnBadge() — SIEMPRE fija aria-label/title con el texto compl
     expect(connSrc).toContain("text = 'SINCRONIZANDO…';");
     expect(connSrc).toContain("text = 'SIN CONEXIÓN CON EL SERVIDOR';");
     expect(connSrc).toContain("text = 'ERROR DE SINCRONIZACIÓN';");
-    expect(connSrc).toContain('text = `SINCRONIZADO PARCIAL (${lastSyncState.errors.length} con error)`;');
+    expect(connSrc).toContain('text = `SINCRONIZADO CON ADVERTENCIA (${pendientes} pendiente${pendientes === 1 ? \'\' : \'s\'})`;');
     expect(connSrc).toContain("text = lastSyncState.status === 'AUTH_REQUIRED' ? 'SESIÓN REQUERIDA' : 'SIN PERMISO PARA SINCRONIZAR';");
     expect(connSrc).toContain("text = 'SINCRONIZADO';");
   });

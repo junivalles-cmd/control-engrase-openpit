@@ -38,13 +38,15 @@ export function loadNotificationIdentityLogic() {
   ];
   const chunks = names.map((n) => extractDeclaration(source, n));
   // LOCAL_NOTIF_IDS es un const global (no una función) que a su vez
-  // referencia los 11 NOTIF_ID_* individuales — hay que traerlos también,
+  // referencia los NOTIF_ID_* individuales — hay que traerlos también,
   // o el array literal lanzaría ReferenceError al evaluarse.
   const constNames = [
     'NOTIF_ID_DAILY_TASKS', 'NOTIF_ID_COMPLIANCE', 'NOTIF_ID_WEEKDAY_PLAN',
     'NOTIF_ID_VENCIDOS', 'NOTIF_ID_POR_ENGRASAR', 'NOTIF_ID_VENCIDOS_REC',
     'NOTIF_ID_POR_ENGRASAR_REC', 'NOTIF_ID_SEMANAL', 'NOTIF_ID_ESCALADO',
-    'NOTIF_ID_ASSIGNED', 'NOTIF_ID_ASSIGNED_REC', 'LOCAL_NOTIF_IDS',
+    'NOTIF_ID_ASSIGNED', 'NOTIF_ID_ASSIGNED_REC',
+    'NOTIF_ID_VALIDATION', 'NOTIF_ID_VALIDATION_REC', 'NOTIF_ID_DUAL_SHIFT_BASE',
+    'LOCAL_DUAL_SHIFT_NOTIF_IDS', 'LOCAL_NOTIF_IDS',
   ];
   const constChunks = constNames.map((n) => extractDeclaration(source, n));
   const body = `${constChunks.join('\n\n')}\n\n${chunks.join('\n\n')}\n\nreturn { oneSignalHandle, bindOneSignalIdentity, clearOneSignalIdentity, disablePushForCurrentUser, cancelAllLocalNotifications };`;

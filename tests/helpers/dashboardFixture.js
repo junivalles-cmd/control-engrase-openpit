@@ -16,14 +16,17 @@ const scopeSource = readSource(OPERATIONAL_SCOPE_JS_PATH);
 const validationSource = readSource(GREASE_VALIDATION_JS_PATH);
 
 const shiftsSrc = extractDeclaration(shiftsSource, 'currentShiftId');
-const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'weekdayStatusFor', 'statusFor'];
+const statusNames = ['fmt', 'WEEKDAY_NAMES', 'mostRecentAssignedDate', 'dualShiftStatusFor', 'weekdayStatusFor', 'statusFor'];
 const statusSrc = statusNames.map(n => extractDeclaration(statusSource, n)).join('\n\n');
 const scopeNames = [
-  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'resolveRecordExecutionType', 'findCarriedOverSkipForToday',
+  'EXECUTION_TYPE', 'ASSIGNMENT_STATUS', 'REQUIRED_SHIFT_IDS', 'EXECUTION_COMPLETENESS',
+  'resolveRecordExecutionType', 'findCarriedOverSkipForToday',
   // Scope por cuadrilla del SUPERVISOR en Dashboard (hardening pre-release
   // 2026-10-08) — MISMAS funciones reales ya usadas por renderLubricadorHome().
   'ROLES_CREW_SCOPED', 'getAuthorizedCrews', 'resolveDefaultCrewForLocation',
   'resolveCrewLocationCoverage', 'resolveOperationalScope', 'classifyEquipmentWork', 'computeOccurrenceKey', 'toISODateUTCLocal',
+  'operationalDateForShift', 'requiredShiftsForPlan', 'computeExecutionCompleteness',
+  'findActivePendingAssignment', 'resolveOccurrenceState',
 ];
 const scopeSrc = scopeNames.map(n => extractDeclaration(scopeSource, n)).join('\n\n');
 const validationNames = [
@@ -38,6 +41,9 @@ const appNames = [
   '$', '$$', 'esc', 'fmtDate', 'todayDateISO', 'SCHEDULE_WEEKDAYS', 'STATUS_COLOR', 'WEEKDAY_ABBR_DASH',
   'NO_EXECUTION_REASON_LABELS', 'PERMISSIONS', 'computeAllStatuses', 'colorPorCumplimiento',
   'dashHeroCard', 'dashActivityCard', 'dashComplianceCard', 'tiempoExcepcionRowHTML', 'renderDashboard',
+  // LOGIC-P0-01 (auditoría pre-release 2026-10-21): renderDashboard() ahora
+  // llama getAllowedRoutes() en vez de leer PERMISSIONS[role] directo.
+  'getAllowedRoutes',
   'wireDashboardEquipmentRows',
   'openModal', 'closeModal', 'dashListRowActionsHTML', 'wireDashListActions',
   'tiempoPendienteDesde', 'pendienteValidacionRowHTML',
@@ -62,13 +68,23 @@ export async function bootDashboard(page, {
   await page.addStyleTag(css ? { content: css } : { path: STYLES_PATH });
   const dateHelpers = ['fmtDateOnly', 'fmtTime'].filter(n => source.includes(`const ${n} =`));
   if (source.includes('function getLubricationAgeSeverity(')) dateHelpers.push('getLubricationAgeSeverity');
-  const injectedAppSrc = [...appNames, ...dateHelpers].filter(n => n !== 'wireDashboardEquipmentRows' || source.includes('function wireDashboardEquipmentRows(')).map(n => extractDeclaration(source, n)).join("\n\n");
+  // getAllowedRoutes (LOGIC-P0-01) no existe en el baseline congelado
+  // (oldSource, commit histórico pre-redesign) — igual que
+  // wireDashboardEquipmentRows, se extrae solo si el `source` actual la trae.
+  const injectedAppSrc = [...appNames, ...dateHelpers]
+    .filter(n => n !== 'wireDashboardEquipmentRows' || source.includes('function wireDashboardEquipmentRows('))
+    .filter(n => n !== 'getAllowedRoutes' || source.includes('function getAllowedRoutes('))
+    .map(n => extractDeclaration(source, n)).join("\n\n");
   await page.addScriptTag({
     content: `
       window.App = {
         route: 'dashboard', currentUser: ${JSON.stringify(currentUser)},
         generalSettings: { shiftDayStart: 6, shiftNightStart: 18, complianceTarget: 85 },
       };
+      // getAllowedRoutes() (LOGIC-P0-01) solo filtra 'usuarios' para
+      // SUPERVISOR en modo Supabase — legacy preserva el comportamiento
+      // PERMISSIONS[role] de siempre, que es lo que estas pruebas esperan.
+      window.Auth = { isSupabaseMode: () => false };
       window.navigate = () => {};
       window.__startGreaseFlowCalls = [];
       window.startGreaseFlow = (id) => window.__startGreaseFlowCalls.push(id);

@@ -39,6 +39,7 @@ test('switching authorized crew recalculates local follow-up without changing eq
   const errors = await bootLubricadorFollowUp(page);
   await page.evaluate(async () => {
     await DB.put('cuadrillas', { id: 'C2', name: 'Segunda ficticia', locationId: 'O', active: true, memberUserIds: ['U1'] });
+    await DB.put('crew_locations', {id:'CO',crew_id:'C2',location_id:'O',role:'PRINCIPAL',active:true});
     setSelectedCrewId('U1', 'C1');
     return renderLubricadorHome();
   });

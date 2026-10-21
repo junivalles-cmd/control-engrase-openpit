@@ -64,7 +64,70 @@ const ROLES_CAN_REGISTER_OUT_OF_PLAN = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERV
 // del usuario — el resto (ADMINISTRADOR/PLANIFICADOR/VISOR) es GLOBAL.
 const ROLES_CREW_SCOPED = ['LUBRICADOR', 'SUPERVISOR'];
 
+// manual_tasks (0017, ACTIVE en producción) — crean/reasignan/cancelan los
+// MISMOS 3 roles que ya administran asignaciones (reusa
+// ROLES_CAN_MANAGE_ASSIGNMENTS, nunca un segundo gate paralelo).
+// `taskType`/`priority` son texto libre del lado del servidor (sin enum,
+// ver 0017) — estos catálogos son SOLO la lista inicial que ofrece el
+// formulario de creación, nunca una restricción real: "OTRO" + `title`
+// cubre cualquier caso no listado.
+const MANUAL_TASK_TYPES = [
+  { id: 'ENGRASE', label: 'Engrasar equipo' },
+  { id: 'REVISAR_NIVEL_LUBRICANTE', label: 'Revisar nivel de lubricante' },
+  { id: 'REVISAR_PUNTO_ENGRASE', label: 'Revisar punto de engrase' },
+  { id: 'OTRO', label: 'Otro' },
+];
+const MANUAL_TASK_PRIORITIES = [
+  { id: 'ALTA', label: 'Alta' },
+  { id: 'MEDIA', label: 'Media' },
+  { id: 'BAJA', label: 'Baja' },
+];
+
+// broadcast_messages — ADMINISTRADOR/PLANIFICADOR/SUPERVISOR publican
+// (módulo unificado "Tareas y mensajes", 2026-10-18: reversión explícita
+// del criterio original de 0017 — "SUPERVISOR crea manual_tasks, nunca un
+// broadcast general" — ahora también puede enviar mensajes operativos).
+// DEPENDENCIA: el RLS actualmente ACTIVE es 0017, que todavía EXCLUYE a
+// SUPERVISOR de broadcast_messages por completo. 0018_supervisor_
+// broadcast_permissions_PREPARED.sql (preparada, NO aplicada) es la que
+// habilita esto en el servidor. Mientras 0018 no se aplique, un SUPERVISOR
+// que use este botón va a ver su mensaje creado LOCALMENTE pero el push al
+// servidor será denegado (AUTH_FORBIDDEN, igual que cualquier otro rechazo
+// de RLS ya documentado) — la fila queda dirty hasta que 0018 se aplique,
+// nunca se pierde. `priority`/`targetType` son vocabulario del CLIENTE
+// (broadcast_row_in_scope no valida `priority`; `targetType` SÍ lo valida
+// el servidor pero como texto plano, estos 4 valores son exactamente los
+// que esa función reconoce — no agregar un 5to sin tocar 0017/0018).
+const ROLES_CAN_CREATE_BROADCAST = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'];
+const BROADCAST_PRIORITIES = [
+  { id: 'INFORMATIVA', label: 'Informativa' },
+  { id: 'IMPORTANTE', label: 'Importante' },
+  { id: 'CRITICA', label: 'Crítica' },
+];
+const BROADCAST_TARGET_TYPES = [
+  { id: 'ALL_LUBRICATORS', label: 'Todos los lubricadores' },
+  { id: 'CREW', label: 'Cuadrilla' },
+  { id: 'LOCATION', label: 'Ubicación' },
+  { id: 'USER', label: 'Usuario' },
+];
+
+// Envío rápido de mensajes (lote UX 2026-10-19): título deja de ser
+// obligatorio al crear un broadcast. En vez de inventar un título
+// artificial cuando falta, toda tarjeta/notificación que muestre un
+// broadcast usa este ÚNICO punto de verdad — las primeras palabras del
+// mensaje — nunca su propio recorte. Mensajes antiguos con `title` real
+// siguen mostrándolo exactamente igual (nunca se reemplaza un título
+// existente).
+function broadcastDisplayTitle(m, { maxWords = 8 } = {}) {
+  if (m && m.title) return m.title;
+  const words = String((m && m.message) || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'Mensaje operativo';
+  const snippet = words.slice(0, maxWords).join(' ');
+  return words.length > maxWords ? `${snippet}…` : snippet;
+}
+
 function canManageAssignments(role) { return ROLES_CAN_MANAGE_ASSIGNMENTS.includes(role); }
+function canCreateBroadcast(role) { return ROLES_CAN_CREATE_BROADCAST.includes(role); }
 function canMoveEquipment(role) { return ROLES_CAN_MOVE_EQUIPMENT.includes(role); }
 function canMoveCrew(role) { return ROLES_CAN_MOVE_CREW.includes(role); }
 function canManageCrewMembership(role) { return ROLES_CAN_MANAGE_CREW_MEMBERSHIP.includes(role); }
@@ -87,6 +150,108 @@ function canRegisterOutOfPlan(role) { return ROLES_CAN_REGISTER_OUT_OF_PLAN.incl
        assignment artificial primero. */
 const EXECUTION_TYPE = { PLANNED: 'PLANNED', ASSIGNED: 'ASSIGNED', OUT_OF_PLAN: 'OUT_OF_PLAN' };
 const EXECUTION_COMPLETENESS = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL' };
+const REQUIRED_SHIFT_IDS = ['shift_dia', 'shift_noche'];
+
+// Central policy resolver for shift-scoped calendar occurrences. Plans may
+// declare requiredShifts and an effectiveDate; before that date their legacy
+// shiftId semantics remain in force. Equipment classification is descriptive
+// only; it never decides shift obligations or pending-task persistence.
+function isExcavatorEquipment(equipment, equipmentTypes = []) {
+  const type = (equipmentTypes || []).find(t => t.id === equipment?.typeId);
+  return /excavadora/i.test(String(type?.name || type?.label || type?.description || ''));
+}
+
+function requiredShiftsForPlan(plan, operationalDateISO) {
+  if (!plan || !Array.isArray(plan.requiredShifts) || !plan.requiredShifts.length) {
+    return plan?.shiftId ? [plan.shiftId] : [null];
+  }
+  if (plan.requiredShifts.length > 1 && (!plan.effectiveDate || !operationalDateISO || operationalDateISO < plan.effectiveDate)) {
+    return plan.shiftId ? [plan.shiftId] : [null];
+  }
+  return [...new Set(plan.requiredShifts.filter(id => REQUIRED_SHIFT_IDS.includes(id)))];
+}
+
+function requiredShiftsForEquipmentPlan({ equipment, equipmentTypes = [], plan, operationalDateISO }) {
+  // Solo la configuracion del plan define las obligaciones. La familia,
+  // codigo o tipo del equipo nunca activa ni limita la persistencia.
+  return requiredShiftsForPlan(plan, operationalDateISO);
+}
+
+function operationalDateForShift(date, shiftId, settings = {}) {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) throw new Error('Fecha/hora operacional no válida.');
+  const dayStart = Number(settings.shiftDayStart ?? 6);
+  const nightStart = Number(settings.shiftNightStart ?? 18);
+  if (!Number.isFinite(dayStart) || !Number.isFinite(nightStart) || dayStart < 0 || dayStart > 23 || nightStart < 0 || nightStart > 23 || dayStart === nightStart) {
+    throw new Error('Configuración de turnos no válida.');
+  }
+  const hour = value.getHours() + value.getMinutes() / 60;
+  // Night duty starts on the calendar date on which the configured night
+  // shift begins; its after-midnight portion belongs to that same operation.
+  if (shiftId === 'shift_noche' && hour < dayStart) value.setDate(value.getDate() - 1);
+  return toISODateUTCLocal(value);
+}
+
+function generateOccurrences({ plan, startDateISO, endDateISO }) {
+  if (!plan || !startDateISO || !endDateISO) return [];
+  const start = new Date(`${startDateISO}T12:00:00`);
+  const end = new Date(`${endDateISO}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const occurrences = [];
+  const weeklyPlan = plan.controlType === 'Día y turno de la semana' || (!plan.controlType && Array.isArray(plan.assignedDays));
+  for (const date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
+    const dateISO = toISODateUTCLocal(date);
+    const effectiveDual = Array.isArray(plan.requiredShifts) && REQUIRED_SHIFT_IDS.every(id => plan.requiredShifts.includes(id))
+      && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+    if (weeklyPlan
+      && !(plan.assignedDays || []).includes(WEEKDAY_NAMES[date.getDay()])) continue;
+    if (!effectiveDual && !weeklyPlan) continue;
+    for (const shiftId of requiredShiftsForPlan(plan, dateISO)) {
+      occurrences.push({ planId: plan.id, equipmentId: plan.equipmentId, operationalDate: dateISO, shiftId,
+        occurrenceKey: computeOccurrenceKey(plan, { dateISO, shiftId }) });
+    }
+  }
+  return occurrences;
+}
+
+function resolveOccurrenceState({ plan, operationalDate, shiftId, records = [], assignments = [], skips = [], asOfDateISO = operationalDate }) {
+  if (!plan || !operationalDate || !REQUIRED_SHIFT_IDS.includes(shiftId)) return { state: 'INVALID' };
+  const shifts = requiredShiftsForPlan(plan, operationalDate);
+  const dualDaily = Array.isArray(plan.requiredShifts) && REQUIRED_SHIFT_IDS.every(id => plan.requiredShifts.includes(id))
+    && !!plan.effectiveDate && operationalDate >= plan.effectiveDate;
+  if (!dualDaily && !shifts.includes(shiftId)) return { state: 'NOT_SCHEDULED' };
+  if ((plan.controlType === 'Día y turno de la semana' || !plan.controlType)
+      && !(plan.assignedDays || []).includes(WEEKDAY_NAMES[new Date(`${operationalDate}T12:00:00`).getDay()])) return { state: 'NOT_SCHEDULED' };
+  const occurrenceKey = computeOccurrenceKey(plan, { dateISO: operationalDate, shiftId });
+  const matchingRecords = (records || []).filter(row => {
+    if (row.active === false || row.equipmentId !== plan.equipmentId || (row.planId && row.planId !== plan.id)) return false;
+    const snap = row.operationalSnapshot || {};
+    // La identidad programada manda sobre el turno REAL de captura.
+    const key = snap.assignedOccurrenceKey || snap.satisfiedOccurrenceKey || snap.occurrenceKey;
+    return key ? key === occurrenceKey : snap.operationalDate === operationalDate && row.shiftId === shiftId;
+  });
+  const completeRecord = matchingRecords.find(row => row.operationalSnapshot?.executionCompleteness !== EXECUTION_COMPLETENESS.PARTIAL
+    && computeExecutionCompleteness(row.details) === EXECUTION_COMPLETENESS.COMPLETE && Number(row.qty) > 0);
+  if (completeRecord) return {state:'COMPLETE',occurrenceKey,record:completeRecord,operationalDate,shiftId};
+  const record = matchingRecords[0];
+  if (record) {
+    return { state: 'PARTIAL', occurrenceKey, record, operationalDate, shiftId };
+  }
+  const skip = (skips || []).find(row => row.equipmentId === plan.equipmentId && row.occurrenceKey === occurrenceKey);
+  if (skip) return { state: 'SKIPPED', occurrenceKey, skip, operationalDate, shiftId };
+  const assignment = findActivePendingAssignment(assignments, occurrenceKey);
+  if (assignment) return { state: 'ASSIGNED', occurrenceKey, assignment, operationalDate, shiftId };
+  const state = operationalDate < asOfDateISO ? 'MISSED' : operationalDate > asOfDateISO ? 'FUTURE' : 'PENDING';
+  return { state, occurrenceKey, operationalDate, shiftId };
+}
+
+function previousShiftOccurrence({ operationalDate, shiftId }) {
+  if (!operationalDate || !REQUIRED_SHIFT_IDS.includes(shiftId)) return null;
+  if (shiftId === 'shift_noche') return { operationalDate, shiftId: 'shift_dia' };
+  const previous = new Date(`${operationalDate}T12:00:00`);
+  previous.setDate(previous.getDate() - 1);
+  return { operationalDate: toISODateUTCLocal(previous), shiftId: 'shift_noche' };
+}
 // Fix 2026-10-09 ("CROSS-LOCATION", §18 del pedido): "SUPPORT_OTHER_LOCATION"
 // agregado a la lista de motivos — valor de aplicación, nunca requiere
 // migración de schema (engrase_sync.payload es jsonb genérico, ver
@@ -126,7 +291,7 @@ function toISODateUTCLocal(d) {
    real) — nunca más lejos. CASO N (tests/unit/operational-scope.test.js)
    y docs/OPERATIONAL_SCOPE.md se actualizaron a propósito junto con este
    cambio, no quedaron rotos por accidente. */
-function findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate }) {
+function findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate, shiftId }) {
   if (!plan || plan.controlType !== 'Día y turno de la semana') return null;
   const dias = plan.assignedDays || [];
   if (!dias.length) return null;
@@ -136,20 +301,26 @@ function findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, tod
     d.setDate(d.getDate() + i);
     const nombreDia = WEEKDAY_NAMES[d.getDay()];
     if (!dias.includes(nombreDia)) continue;
-    const yaHecho = (existingRecords || []).some(r => new Date(r.date).toDateString() === d.toDateString());
-    if (!yaHecho) candidatas.push(toISODateUTCLocal(d));
+    const dateISO = toISODateUTCLocal(d);
+    const dual = requiredShiftsForPlan(plan, dateISO).length > 1;
+    const yaHecho = (existingRecords || []).some(r => {
+      if (dual && shiftId && r.shiftId !== shiftId) return false;
+      return r.operationalSnapshot?.operationalDate === dateISO || new Date(r.date).toDateString() === d.toDateString();
+    });
+    if (!yaHecho) candidatas.push(dateISO);
   }
   if (candidatas.length !== 1) return null;
-  return { occurrenceKey: computeOccurrenceKey(plan, { dateISO: candidatas[0] }), dateISO: candidatas[0] };
+  return { occurrenceKey: computeOccurrenceKey(plan, { dateISO: candidatas[0], shiftId }), dateISO: candidatas[0], shiftId: shiftId || null };
 }
 
 // Punto de entrada único (§12: "no copiar lógica en varias pantallas") —
 // despacha por tipo de plan. "Horas de operación" nunca es ambiguo: el
 // ciclo vigente siempre es UNO solo (ver computeOccurrenceKey).
-function findNextApplicableOccurrence({ plan, existingRecords, todayDate }) {
+function findNextApplicableOccurrence({ plan, existingRecords, todayDate, shiftId }) {
   if (!plan) return null;
+  existingRecords=(existingRecords || []).filter(r=>!r.operationalSnapshot?.assignedOccurrenceKey);
   if (plan.controlType === 'Día y turno de la semana') {
-    return findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate });
+    return findNextApplicableOccurrenceForWeekdayPlan({ plan, existingRecords, todayDate, shiftId });
   }
   return { occurrenceKey: computeOccurrenceKey(plan, {}), dateISO: null };
 }
@@ -173,9 +344,9 @@ function findNextApplicableOccurrence({ plan, existingRecords, todayDate }) {
 // findMatchingGreaseRecordForOccurrence() leen satisfiedOccurrenceKey para
 // ese controlType (los 3 descartan el plan ANTES de llegar a leerlo) —
 // confirmado leyendo esos 3 call sites, nunca asumido.
-function resolveEarlyOccurrenceSatisfaction({ plan, completeness, existingRecords, todayDate }) {
+function resolveEarlyOccurrenceSatisfaction({ plan, completeness, existingRecords, todayDate, shiftId }) {
   if (completeness !== EXECUTION_COMPLETENESS.COMPLETE) return null;
-  const found = findNextApplicableOccurrence({ plan, existingRecords, todayDate });
+  const found = findNextApplicableOccurrence({ plan, existingRecords, todayDate, shiftId });
   return found ? found.occurrenceKey : null;
 }
 
@@ -199,16 +370,22 @@ function canAdvanceHourCycle({ controlType, completeness }) {
    `statusCode` (ROJO/AMARILLO/VERDE/GRIS) ya viene resuelto por el caller
    (statusFor(), lubrication-status.js) — este módulo no recalcula el
    semáforo, evita duplicar esa lógica. */
-function findExistingWorkForEquipment({ plan, assignments, statusCode, todayDate }) {
+function findExistingWorkForEquipment({ plan, assignments, statusCode, todayDate, shiftId }) {
   if (!plan) return { kind: 'NONE' };
-  const dateISO = toISODateUTCLocal(todayDate);
-  const occurrenceKey = computeOccurrenceKey(plan, { dateISO });
+  const dateISO = shiftId ? operationalDateForShift(todayDate, shiftId) : toISODateUTCLocal(todayDate);
+  const occurrenceKey = computeOccurrenceKey(plan, { dateISO, shiftId });
   const activeAssignment = findActivePendingAssignment(assignments, occurrenceKey);
-  if (activeAssignment) return { kind: 'ASSIGNED', assignment: activeAssignment, occurrenceKey };
+  const carriedAssignment = activeAssignment || (assignments || []).find(a => a.active !== false && a.status === 'PENDING'
+    && a.equipmentId === plan.equipmentId && (a.planId === plan.id || String(a.occurrenceKey || '').startsWith(plan.id + ':')));
+  if (carriedAssignment) return { kind: 'ASSIGNED', assignment: carriedAssignment, occurrenceKey: carriedAssignment.occurrenceKey };
 
-  if (plan.controlType === 'Día y turno de la semana') {
-    const nombreDia = WEEKDAY_NAMES[todayDate.getDay()];
-    if ((plan.assignedDays || []).includes(nombreDia)) return { kind: 'PLANNED', occurrenceKey };
+  const dualDaily = Array.isArray(plan.requiredShifts) && REQUIRED_SHIFT_IDS.every(id => plan.requiredShifts.includes(id))
+    && !!plan.effectiveDate && dateISO >= plan.effectiveDate;
+  if (dualDaily || plan.controlType === 'Día y turno de la semana') {
+    if (dualDaily) return { kind: 'PLANNED', occurrenceKey, shiftId: shiftId || null, dateISO };
+    const nombreDia = WEEKDAY_NAMES[new Date(`${dateISO}T12:00:00`).getDay()];
+    const shiftMatches = !plan.shiftId || !shiftId || plan.shiftId === shiftId;
+    if ((plan.assignedDays || []).includes(nombreDia) && shiftMatches) return { kind: 'PLANNED', occurrenceKey, shiftId: shiftId || plan.shiftId || null, dateISO };
     return { kind: 'NONE' };
   }
   if (statusCode === 'ROJO' || statusCode === 'AMARILLO') return { kind: 'PLANNED', occurrenceKey };
@@ -231,8 +408,14 @@ function findExistingWorkForEquipment({ plan, assignments, statusCode, todayDate
        automática, sin colisionar con la ya completada. Clave estable:
        `${planId}:h:${lastGreaseHour ?? 0}`.
    Determinista y estable: mismos insumos -> misma clave, siempre. */
-function computeOccurrenceKey(plan, { dateISO } = {}) {
+function computeOccurrenceKey(plan, { dateISO, shiftId } = {}) {
   if (!plan || !plan.id) throw new Error('computeOccurrenceKey requiere un plan con id.');
+  const isShiftScoped = Array.isArray(plan.requiredShifts) && plan.requiredShifts.length > 1
+    && !!plan.effectiveDate && !!dateISO && dateISO >= plan.effectiveDate;
+  if (isShiftScoped) {
+    if (!shiftId || !REQUIRED_SHIFT_IDS.includes(shiftId)) throw new Error('computeOccurrenceKey: falta un turno válido para la ocurrencia dual.');
+    return `${plan.id}:${dateISO}:${shiftId}`;
+  }
   if (plan.controlType === 'Día y turno de la semana') {
     if (!dateISO) throw new Error('computeOccurrenceKey: falta dateISO para un plan por día/turno.');
     return `${plan.id}:${dateISO}`;
@@ -240,6 +423,30 @@ function computeOccurrenceKey(plan, { dateISO } = {}) {
   // 'Horas de operación' (o cualquier otro controlType futuro que no sea por día): por ciclo de horómetro.
   const base = plan.lastGreaseHour ?? 0;
   return `${plan.id}:h:${base}`;
+}
+
+/* ============================================================
+   FECHA/TURNO DE UNA OCURRENCIA YA IDENTIFICADA (fix 2026-10-17,
+   "FECHA VISUAL DE ASIGNACIÓN ATRASADA")
+   ============================================================
+   Lee fecha/turno de un occurrenceKey YA EXISTENTE — nunca recalcula
+   "cuál es la ocurrencia vigente hoy" (eso es mostRecentAssignedDate()/
+   weekdayStatusFor(), en lubrication-status.js, y solo aplica cuando NO
+   hay una lubrication_assignment persistida para ese equipo). Una
+   assignment fija su ocurrencia al crearse (computeOccurrenceKey(), ver
+   arriba) — esa identidad NUNCA cambia aunque pasen semanas; la UI debe
+   LEER esa fecha desde la propia clave, nunca reconstruirla contra "hoy".
+   Formatos soportados (los únicos que computeOccurrenceKey() genera con
+   fecha discreta):
+     - legacy / "Día y turno de la semana" sin turno dual: `${planId}:${YYYY-MM-DD}`
+     - dual DÍA/NOCHE: `${planId}:${YYYY-MM-DD}:shift_dia` o `:shift_noche`
+   `${planId}:h:${lastGreaseHour}` ("Horas de operación", sin fecha
+   discreta) devuelve null a propósito — ahí no hay nada que mostrar como
+   "Pendiente desde", sin cambio de comportamiento. */
+function parseOccurrenceKeyDate(occurrenceKey) {
+  const match = String(occurrenceKey || '').match(/:(\d{4}-\d{2}-\d{2})(?::(shift_dia|shift_noche))?$/);
+  if (!match) return null;
+  return { dateISO: match[1], shiftId: match[2] || null, date: new Date(`${match[1]}T12:00:00`) };
 }
 
 /* ============================================================
@@ -368,7 +575,25 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
    `equipoOccurrenceKeyFn(equipo)` la provee el caller (depende del plan
    vigente de ese equipo, ya resuelto aparte — este módulo no conoce
    lubrication_plans/estadoCelda en detalle, para no duplicar esa lógica). */
-function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn }) {
+function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn, selectedCrewOnly = false }) {
+  // `selectedCrewOnly` (histórico): una versión forzaba "normal" a [] para
+  // cualquier scope CREW_SCOPED, exigiendo una lubrication_assignment para
+  // CUALQUIER equipo — eso rompía los ~19 tests de
+  // tests/ui/crew-location-coverage.spec.js (cobertura multiubicación real,
+  // PRINCIPAL+APOYO, editor de cobertura, Matriz por ubicación) y el trabajo
+  // normal diario de cualquier cuadrilla sin asignación manual (la inmensa
+  // mayoría — las asignaciones son solo para reasignar manualmente a OTRA
+  // cuadrilla). La coherencia ubicación/cuadrilla real YA la resuelven, para
+  // CUALQUIER cantidad de ubicaciones por cuadrilla (nunca una sola
+  // `crewLocationId`): `normal` más abajo vía `scope.principalLocationIds`
+  // + `resolveDefaultCrewForLocation()`; `assignedAquí` vía
+  // `scope.allAuthorizedLocationIds` (unión PRINCIPAL+APOYO, ver
+  // resolveCrewLocationCoverage()) — ambos ya multiubicación desde antes de
+  // esta sesión. `selectedCrewOnly` solo conserva este guard: la pantalla
+  // de Mi Turno (Lubricador) nunca cae a la vista global de jefaturas
+  // (scope.kind !== 'CREW_SCOPED' más abajo) solo porque todavía no hay
+  // cuadrilla elegida.
+  if (selectedCrewOnly && scope?.kind !== 'CREW_SCOPED') return { normal: [], assigned: [] };
   const pendientes = (assignments || []).filter(a => a.active !== false && a.status === ASSIGNMENT_STATUS.PENDING);
   const porOccurrence = new Map(pendientes.map(a => [a.occurrenceKey, a]));
 
@@ -398,8 +623,14 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
 
   const authorizedLocations = scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean);
   const equipmentById = new Map((equipos || []).map(e => [e.id, e]));
-  const assignedAquí = pendientes.filter(a => a.assignedCrewId === scope.crewId
-    && authorizedLocations.includes(equipmentById.get(a.equipmentId)?.locationId));
+  const assignedAquí = pendientes.filter(a => {
+    const equipment = equipmentById.get(a.equipmentId);
+    if (a.assignedCrewId !== scope.crewId || !equipment || (!authorizedLocations.includes(equipment.locationId) && a._supportOperational!==true)) return false;
+    // PENDING conserva SU occurrenceKey, aunque cambie el turno o la fecha.
+    // La clasificacion visual decide actual/arrastre; nunca filtra por la
+    // clave recalculada del turno actual ni crea otra asignacion.
+    return true;
+  });
   const idsAsignados = new Set(assignedAquí.map(a => a.equipmentId));
   // El equipo puede aparecer en "normal" (misma cuadrilla, asignación
   // redundante) — se excluye de "normal" para no duplicarlo, queda solo en
@@ -496,7 +727,8 @@ function cancelAssignment(assignment, { now }) {
 // Se llama SIEMPRE que se guarda un lubrication_record — completa la
 // assignment activa de esa occurrence si existe (§R). Si no hay ninguna
 // (trabajo normal, sin asignación manual), no hace nada — devuelve null.
-function completeAssignmentIfPending(existing, { occurrenceKey, recordId, now }) {
+function completeAssignmentIfPending(existing, { occurrenceKey, recordId, now, completeness = 'COMPLETE' }) {
+  if (completeness !== 'COMPLETE') return null;
   const asg = findActivePendingAssignment(existing, occurrenceKey);
   if (!asg) return null;
   return { ...asg, status: ASSIGNMENT_STATUS.COMPLETED, completedAt: now, completedRecordId: recordId };
@@ -515,7 +747,7 @@ function completeAssignmentIfPending(existing, { occurrenceKey, recordId, now })
    registros viejos que no lo tienen). */
 function buildExecutionSnapshot({
   equipmentLocationId, crewId, crewLocationId, performedByUserId, shiftId, assignmentId,
-  executionType, outOfPlanReason, executionCompleteness, satisfiedOccurrenceKey
+  executionType, outOfPlanReason, executionCompleteness, satisfiedOccurrenceKey, occurrenceKey, operationalDate
 }) {
   return {
     equipmentLocationIdAtExecution: equipmentLocationId || null,
@@ -524,6 +756,8 @@ function buildExecutionSnapshot({
     crewLocationIdAtExecution: crewLocationId || null,
     performedByUserId: performedByUserId || null,
     shiftId: shiftId || null,
+    occurrenceKey: occurrenceKey || null,
+    operationalDate: operationalDate || null,
     assignmentId: assignmentId || null,
     // El caller decide PLANNED/ASSIGNED/OUT_OF_PLAN según por qué flujo entró
     // (Mi Turno normal / assignment activa / botón "+ Engrase fuera de
@@ -637,9 +871,9 @@ function buildNoExecutionRecord({
 // entra (carryover) — nunca oculta el motivo real. Si hubiera más de uno
 // (no debería pasar en un día normal), toma el más reciente sin romperse.
 // `skips` ya viene filtrado a activos por el caller (DB.allActive).
-function findCarriedOverSkipForToday(skips, { equipmentId, dateISO }) {
+function findCarriedOverSkipForToday(skips, { equipmentId, dateISO, occurrenceKey }) {
   const delDia = (skips || []).filter(s => s.equipmentId === equipmentId &&
-    (s.date || '').slice(0, 10) === dateISO);
+    (occurrenceKey ? s.occurrenceKey === occurrenceKey : (s.date || '').slice(0, 10) === dateISO));
   if (!delDia.length) return null;
   return delDia.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
 }
@@ -696,6 +930,9 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
 
   const yaVinculados = new Set((skips || []).filter(s => s.linkedRecordId).map(s => s.linkedRecordId));
   const fechaOcurrenciaStr = occurrenceDate.toDateString();
+  const identity = String(occurrenceKey || '').match(/:(\d{4}-\d{2}-\d{2}):(shift_dia|shift_noche)$/);
+  const expectedDateISO = identity?.[1] || null;
+  const expectedShiftId = identity?.[2] || null;
   // Candidato elegible: mismo equipo, COMPLETE, no vinculado ya a otro
   // skip, y (mismo día de calendario que la ocurrencia) O (OUT_OF_PLAN
   // cuya propia satisfiedOccurrenceKey YA apunta exactamente a esta
@@ -706,9 +943,14 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
     if (r.equipmentId !== plan.equipmentId) return false;
     if (yaVinculados.has(r.id)) return false;
     if (computeExecutionCompleteness(r.details) !== EXECUTION_COMPLETENESS.COMPLETE) return false;
+    if (expectedShiftId && r.shiftId !== expectedShiftId) return false;
     const esOutOfPlan = resolveRecordExecutionType(r).value === EXECUTION_TYPE.OUT_OF_PLAN;
     if (esOutOfPlan) {
       return !!(r.operationalSnapshot && r.operationalSnapshot.satisfiedOccurrenceKey === occurrenceKey);
+    }
+    if (expectedDateISO) {
+      return r.operationalSnapshot?.operationalDate === expectedDateISO
+        || new Date(r.date).toDateString() === occurrenceDate.toDateString();
     }
     return new Date(r.date).toDateString() === fechaOcurrenciaStr;
   });
@@ -721,10 +963,11 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
 /* ============================================================
    QR — permiso de ejecución fuera de scope (§AO)
    ============================================================ */
-function canLubricadorExecuteEquipment({ scope, equipo, assignments }) {
+function canLubricadorExecuteEquipment({ scope, equipo, assignments = [] }) {
   if (!scope || !equipo) return false;
   if (scope.kind === 'GLOBAL') return ['ADMINISTRADOR', 'PLANIFICADOR'].includes(scope.role);
   if (scope.kind !== 'CREW_SCOPED' || !scope.crewId) return false;
-  // Assignments select work; they never grant another location or resolve an ambiguous scope.
+  if (assignments.some(a=>a._supportOperational===true && a.active!==false && a.status==='PENDING'
+      && a.equipmentId===equipo.id && a.assignedCrewId===scope.crewId)) return true;
   return !!equipo.locationId && (scope.allAuthorizedLocationIds || [scope.crewLocationId]).includes(equipo.locationId);
 }

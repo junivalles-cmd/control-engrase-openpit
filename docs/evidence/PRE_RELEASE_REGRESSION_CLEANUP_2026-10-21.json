@@ -1,0 +1,160 @@
+{
+  "generatedAt": "2026-10-21",
+  "scope": "Cierre de hallazgos posteriores a LUB_NAVIGATION_FINAL_READY; sin auditoria integral final",
+  "verdict": "PRE_RELEASE_REGRESSION_CLEANUP_READY",
+  "e2eFailuresInitial": {
+    "source": "node_modules/.cache/e2e-final-ui.json",
+    "passed": 6215,
+    "failed": 643,
+    "skipped": 16,
+    "flaky": 0
+  },
+  "failureGroups": {
+    "A_old_navigation": 0,
+    "B_labels": 0,
+    "C_obsolete_selectors": 0,
+    "D_obsolete_snapshot_layout": 7,
+    "E_harness": 439,
+    "F_real_regression_or_local_robustness": 162,
+    "G_external_css_or_timeout": 35,
+    "H_other": 0,
+    "detail": [
+      {"count": 161, "category": "F", "cause": "Primer authorization context desreferenciaba previous.supportGrants cuando previous era null y el fixture parcial no incluia identidad/fingerprint"},
+      {"count": 161, "category": "E", "cause": "Fixture grease-form-layout-real sin equipoOccurrenceKey"},
+      {"count": 91, "category": "E", "cause": "Fixtures sin updateTareasMensajesNavBadge"},
+      {"count": 86, "category": "E", "cause": "Fixtures sin Sync"},
+      {"count": 56, "category": "E", "cause": "Fixtures sin operationalDateForShift"},
+      {"count": 35, "category": "E", "cause": "Fixture de evidencia incompleto, sin contexto Auth/DB completo y sin esperar persistencia/ACK"},
+      {"count": 29, "category": "G", "cause": "CSS de fixture dependia de Google Fonts externo"},
+      {"count": 7, "category": "D", "cause": "Comparacion de app completa contra commit historico 301bc41"},
+      {"count": 7, "category": "E", "cause": "Segunda cuadrilla del fixture sin cobertura PRINCIPAL explicita"},
+      {"count": 6, "category": "G", "cause": "Timeout de 30 segundos en corrida larga concurrente"},
+      {"count": 3, "category": "E", "cause": "Handler asincrono de fixture leido antes de completar"},
+      {"count": 1, "category": "F", "cause": "Wrapper de quick-find se encogia a 20.3125px y solapaba el control QR a 360px"}
+    ]
+  },
+  "obsoleteBaselines": {
+    "count": 7,
+    "action": "Se sustituyo la igualdad de app completa historica por el contrato vigente de aislamiento de preferencias de tema",
+    "replacementTitle": "theme preference functions remain isolated from operational persistence",
+    "replacementResult": "7/7 PASS"
+  },
+  "realRegressions": {
+    "initialAuthorizationContextGuard": "FIXED",
+    "topbar360Overlap": "FIXED",
+    "anomaliesAsyncNavigation": "FIXED",
+    "equalKpiRows": "FIXED",
+    "backendOrRlsRegressionFound": false
+  },
+  "flakyOrTimeout": {
+    "originalCategoryG": 35,
+    "externalFontFailuresOriginal": 29,
+    "timeoutsOriginal": 6,
+    "additionalFontIncidentsDuringInterruptedRun": 8,
+    "cssRerun": {"planned": 343, "passed": 343, "failed": 0},
+    "qrLegacyIsolated": {"planned": 6, "passed": 6, "failed": 0},
+    "unresolved": 0,
+    "note": "Los tres timeouts QR de la corrida general ocurrieron en page.goto contra previews efimeros 4175-4177; el archivo aislado completo aprobo en 7.4 segundos. No se modifico el redirect."
+  },
+  "anomaliesRootCause": [
+    "renderAnomalias escribia c.innerHTML despues de await DB.allActive aunque la ruta o cuenta ya hubiera cambiado",
+    "draw esperaba URLs de fotos y luego consultaba un tbody global; un render viejo podia escribir en el DOM de un render nuevo o lanzar por elemento inexistente"
+  ],
+  "anomaliesFix": {
+    "type": "Cancelacion logica con generaciones, igual al patron existente isStaleRun",
+    "guards": ["generation", "route", "actor id", "container connected", "container ownership", "draw generation", "table ownership"],
+    "behavior": "Los errores de cargas obsoletas se descartan; los errores de la vista activa siguen propagandose",
+    "newStore": false,
+    "syncChanged": false
+  },
+  "asyncCancellation": {
+    "spec": "tests/ui/anomalies-async-navigation.spec.js",
+    "testsPerProject": 15,
+    "projects": 7,
+    "total": 105,
+    "result": "PASS"
+  },
+  "fastNavigation": {
+    "destinations": ["Mi Turno", "Tareas", "Historial", "Configuracion"],
+    "phases": ["datos pendientes", "fotos pendientes"],
+    "cases": 56,
+    "result": "PASS"
+  },
+  "networkErrorAfterNavigation": {"cases": 14, "result": "PASS"},
+  "reentry": {"cases": 14, "result": "PASS", "behavior": "La carga anterior no puede sobrescribir el render nuevo"},
+  "productionFixes": [
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/db.js",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css",
+    "CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/sw.js"
+  ],
+  "testsUpdated": [
+    "tests/ui/grease-form-layout-real.spec.js",
+    "tests/ui/cross-location-greasing.spec.js",
+    "tests/ui/qr-grease-register-management.spec.js",
+    "tests/ui/registro-sync-guard.spec.js",
+    "tests/ui/sidebar-real-render.spec.js",
+    "tests/ui/lubricador-alertas-ficha-consistency.spec.js",
+    "tests/ui/lubricador-widget-snapshot.spec.js",
+    "tests/ui/lubricador-shift-workspace.spec.js",
+    "tests/ui/follow-up-visual-consistency.spec.js",
+    "tests/ui/evidence-photo-stamp.spec.js",
+    "tests/ui/execution-gateway.spec.js",
+    "tests/ui/configuration-navigation-real.spec.js",
+    "tests/ui/lubricador-fresh-install-bootstrap.spec.js",
+    "tests/ui/crew-location-coverage.spec.js",
+    "tests/ui/grease-validation.spec.js",
+    "tests/ui/historial-eq-search-flow.spec.js",
+    "tests/ui/lubricador-config.spec.js",
+    "tests/ui/lubricador-dashboard.spec.js",
+    "tests/ui/matrix-occurrence-detail.spec.js",
+    "tests/ui/tareas-mensajes-module.spec.js",
+    "tests/ui/topbar-mobile.spec.js",
+    "tests/ui/topbar-tablet-overlap.spec.js",
+    "tests/ui/weekly-matrix-dual-shift.spec.js",
+    "tests/ui/historial-redesign.spec.js"
+  ],
+  "testsAdded": [
+    "tests/ui/anomalies-async-navigation.spec.js",
+    "tests/ui/authorization-context-initial-write.spec.js"
+  ],
+  "supportingFiles": [
+    "tools/classify-e2e-failures.mjs",
+    "tools/e2e-progress-reporter.mjs",
+    "docs/evidence/E2E_FAILURE_CLASSIFICATION_2026-10-20.json"
+  ],
+  "e2eFinalResult": {
+    "method": "Union por test id del manifiesto general interrumpido y el rerun completo desktop-1920, superpuesta con los reruns dirigidos mas recientes",
+    "plannedUnique": 7042,
+    "coveredUnique": 7042,
+    "passed": 7026,
+    "failed": 0,
+    "skipped": 16,
+    "missing": 0,
+    "initialFailureMapping": {
+      "sameIdentityPassed": 636,
+      "renamedObsoleteBaselineReplacementsPassed": 7,
+      "notPassed": 0
+    },
+    "directedSuite": {"passed": 539, "failed": 0},
+    "desktop1920Rerun": {"planned": 1006, "passedInitially": 999, "skipped": 4, "timeoutsResolvedByIsolatedRerun": 3},
+    "cssCleanRerun": {"planned": 343, "passed": 343, "failed": 0},
+    "expectedSkips": "Cuatro pruebas de teclado movil en cada uno de los cuatro viewports no moviles: 16"
+  },
+  "otherChecks": {
+    "unit": {"files": 121, "passed": 1845, "failed": 0},
+    "typecheck": "PASS",
+    "build": "PASS",
+    "verifyDist": "PASS",
+    "serviceWorkerCache": "v74"
+  },
+  "regressions": [],
+  "remainingIssues": [],
+  "constraints": {
+    "commitCreated": false,
+    "finalIntegralAuditRun": false,
+    "productionBackendChanged": false,
+    "rlsOrSchemaChangedForThisCleanup": false,
+    "androidApkBuiltForThisCleanup": false
+  }
+}

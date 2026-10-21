@@ -1,5 +1,9 @@
--- PREPARED ONLY, manual deployment. Requires 0003 schema/functions and 0009;
--- does NOT require 0008 or 0007. No migration runner is configured in Pages.
+-- PREPARED ONLY, manual deployment. Requires the existing Auth/profile
+-- baseline, the 0009 endpoint, and Storage objects RLS. 0003 only removes
+-- the legacy engrase_sync policy; this migration has no runtime dependency
+-- on 0003. It does not require 0007 or 0008. No migration runner is configured in Pages.
+-- It can be installed before cutover; the legacy policy remains a known
+-- exposure on other stores and evidence reads until the cutover removes it.
 -- Install RPCs before compatible clients. Restrictive policies at the end enforce
 -- RPC-only writes for these two stores; old direct-write clients must be retired.
 begin;

@@ -319,6 +319,43 @@ describe('B) A offline cambia; B cambia y sincroniza primero; A reconecta -> NO 
   });
 });
 
+// Corrección de semántica visual (2026-10-20, "indicador rojo de
+// sincronización en Android") — un conflicto CAS AISLADO (push+pull igual
+// terminan, el resto de filas sigue bien) antes caía en el status 'ok'
+// (verde) de fullSync() porque `conflicts` nunca se miraba al decidir el
+// status global — el usuario nunca se enteraba de que había algo
+// pendiente. Ahora un conflicto aislado reporta 'partial' (ámbar,
+// "SINCRONIZADO CON ADVERTENCIA"), nunca 'ok' (verde, falso) ni
+// 'AUTH_FORBIDDEN'/'error' (rojo, exagerado) — exactamente el mismo
+// escenario real de B), pero ejecutado vía fullSync() para observar el
+// status END-TO-END que de verdad ve el header.
+describe('fullSync() status: un conflicto CAS aislado nunca pinta todo el ciclo en rojo ni lo esconde como verde', () => {
+  it('conflicto CAS aislado (resto del ciclo ok) -> notify status "partial" (ámbar)', async () => {
+    vi.stubGlobal('navigator', { onLine: true }); // fullSync() (a diferencia de pushAll()/pullAll()) sí mira navigator.onLine
+    remote.seed([row('equipment', 'eq1', { code: 'BASE' }, T0)]);
+    await SyncA.fullSync();
+    await SyncB.fullSync();
+
+    const localA = await dbA.get('equipment', 'eq1');
+    localA.code = 'A-CHANGE'; localA.updatedAt = T1;
+    await dbA.put('equipment', localA);
+
+    const localB = await dbB.get('equipment', 'eq1');
+    localB.code = 'B-CHANGE'; localB.updatedAt = T2;
+    await dbB.put('equipment', localB);
+    await SyncB.fullSync();
+
+    let notified = null;
+    SyncA.onChange(s => { notified = s; });
+    const cycle = await SyncA.fullSync();
+
+    expect(notified.status).toBe('partial');
+    expect(notified.conflicts).toBeGreaterThan(0);
+    expect(notified.authErrors || 0).toBe(0);
+    expect(cycle.ok).toBe(false); // un conflicto SÍ sigue contando como "no 100% limpio" (mismo criterio que antes del fix, nunca una regresión del lado del reintento)
+  });
+});
+
 describe('C) A cambia y sincroniza; B solo tenía copia vieja sin cambios; B reconecta -> acepta remoto, 0 push', () => {
   it('B queda igual a A y no sube nada', async () => {
     remote.seed([row('equipment', 'eq1', { code: 'BASE' }, T0)]);

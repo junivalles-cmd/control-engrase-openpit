@@ -15,6 +15,7 @@ const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Managua' }).
 const addDays = (date, days) => { const value = new Date(date + 'T00:00:00Z'); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
 const validReprogramDate = addDays(today, 2);
 const invalidReprogramDate = addDays(today, 8);
+const preCutover = process.argv.includes('--precutover-0013');
 
 await db.exec(`create role anon; create role authenticated; create schema auth; create schema storage;
  create function auth.uid() returns uuid language sql as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
@@ -32,10 +33,28 @@ await db.exec(`create role anon; create role authenticated; create schema auth; 
  grant select,insert,update,delete on storage.objects to anon,authenticated;`);
 await db.exec(await readFile(root + '0009_lubrication_execution_gateway_PREPARED.sql', 'utf8'));
 await db.exec(await readFile(root + '0010_evidence_gateway_PREPARED.sql', 'utf8'));
+if (preCutover) {
+  await db.exec(`create policy "engrase_sync: leer según matriz" on public.engrase_sync for select to authenticated using(exists(
+    select 1 from public.app_profiles a join public.app_store_permissions p on p.role=a.role
+    where a.auth_user_id=auth.uid() and a.active and p.store=engrase_sync.store and p.can_read));
+    insert into public.app_store_permissions values('equipment','LUBRICADOR',false,false,false,false),
+    ('settings','PLANIFICADOR',false,false,false,false),('settings','SUPERVISOR',false,false,false,false),('settings','LUBRICADOR',false,false,false,false);`);
+  await db.exec(await readFile(root + '0012_authorization_scope_bootstrap_PREPARED.sql','utf8'));
+  await db.exec(await readFile(root + '0013_authorization_row_scope_PREPARED.sql','utf8'));
+}
+const before0011 = preCutover ? (await db.query("select policyname,permissive,roles,cmd,qual,with_check from pg_policies where tablename='engrase_sync' order by policyname")).rows : null;
+const matrixBefore0011 = (await db.query('select * from app_store_permissions order by store,role')).rows;
+if (preCutover) await db.exec(await readFile('docs/0011_PRODUCTION_PREFLIGHT_READ_ONLY.sql','utf8'));
 await db.exec(await readFile(root + '0011_operational_catalog_gateway_PREPARED.sql', 'utf8'));
+assert.deepEqual((await db.query('select * from app_store_permissions order by store,role')).rows,matrixBefore0011);
+if (preCutover) {
+  const after = (await db.query("select policyname,permissive,roles,cmd,qual,with_check from pg_policies where tablename='engrase_sync' order by policyname")).rows;
+  assert.deepEqual(after.filter(p=>!p.policyname.startsWith('catalog_')),before0011);
+  assert.equal(after.filter(p=>p.policyname.startsWith('authorization_')).length,8);
+}
 // Model post-0003 authenticated matrix policies; 0011 must not rely on the
 // legacy public ALL/true policy used only to compile the earlier gateways.
-await db.exec(`drop policy legacy_all on public.engrase_sync;
+if (!preCutover) await db.exec(`drop policy legacy_all on public.engrase_sync;
  create policy matrix_read on public.engrase_sync for select to authenticated using(exists(
    select 1 from public.app_profiles a join public.app_store_permissions p on p.role=a.role
    where a.auth_user_id=auth.uid() and a.active and p.store=engrase_sync.store and p.can_read));
@@ -60,7 +79,7 @@ async function reset(role = 'PLANIFICADOR', { active = true, equipmentLocation =
   await db.query('insert into public.app_profiles values($1,$2,$3,$4,$5)', [authId, 'u1', 'Test Operator', role, active]);
   for (const store of ['equipment', 'lubrication_plans', 'lubrication_points', 'settings']) {
     const canWrite = role === 'ADMINISTRADOR' || (role === 'PLANIFICADOR' && ['lubrication_plans','lubrication_points'].includes(store));
-    const canRead = store !== 'settings' || role === 'ADMINISTRADOR';
+    const canRead = preCutover || store !== 'settings' || role === 'ADMINISTRADOR';
     await db.query('insert into public.app_store_permissions values($1,$2,$3,$4,$4,false)', [store, role, canRead, canWrite]);
   }
   await put('locations', 'loc1', { name: 'Volcan' });
@@ -127,6 +146,9 @@ try {
     for (const role of ['SUPERVISOR', 'LUBRICADOR']) {
       await reset(role);
       await deniedUnchanged(() => call('move_equipment_master_location', args({ p_location_id: 'loc2', p_crew_id: 'c1' })), 'ROLE_DENIED');
+      if (role==='LUBRICADOR') for (const name of ['set_equipment_shift','set_equipment_alert_pause','update_equipment_hourmeter','reprogram_lubrication_plan']) {
+        await deniedUnchanged(()=>call(name,args({p_id:name==='reprogram_lubrication_plan'?'p1':'e1',p_crew_id:'c1',p_shift_id:'shift_noche',p_until:validReprogramDate,p_reason:'Test',p_hourmeter:120})),'ROLE_DENIED');
+      }
     }
     const names = (await db.query("select pg_get_function_arguments(p.oid) args from pg_proc p where p.proname='move_equipment_master_location' and p.pronamespace='public'::regnamespace")).rows;
     assert.equal(names.length, 1);
@@ -153,12 +175,67 @@ try {
   await test('Admin and Planner may change shift; hourmeter rejects regression and requires jump confirmation', async () => {
     for (const role of ['ADMINISTRADOR', 'PLANIFICADOR']) {
       await reset(role);
+      assert.equal((await call('update_equipment_hourmeter', args({ p_hourmeter:100 }))).status,'APPLIED');
+      await reset(role);
+      assert.equal((await call('update_equipment_hourmeter', args({ p_hourmeter:600 }))).status,'APPLIED');
+      await reset(role);
       assert.equal((await call('set_equipment_shift', args({ p_shift_id: 'shift_noche' }))).status, 'APPLIED');
       await reset(role);
       await deniedUnchanged(() => call('update_equipment_hourmeter', args({ p_hourmeter: 99 })), 'INVALID_HOURMETER');
+      for (const bad of ['NaN','Infinity','-Infinity',-1,null]) await deniedUnchanged(()=>call('update_equipment_hourmeter',args({p_hourmeter:bad})),'INVALID_HOURMETER');
       await deniedUnchanged(() => call('update_equipment_hourmeter', args({ p_hourmeter: 701 })), 'HOURMETER_CONFIRMATION_REQUIRED');
       assert.equal((await call('update_equipment_hourmeter', args({ p_hourmeter: 701, p_confirm_large_jump: true }))).status, 'APPLIED');
     }
+  });
+  if (preCutover) await test('0013 matrix and scope remain authoritative with legacy and settings permissive policy', async () => {
+    await db.exec("update app_store_permissions set can_read=false where store='settings'; set role authenticated");
+    assert.equal((await db.query("select id from engrase_sync where store='settings'")).rows.length,0);
+    await db.exec("reset role; update app_store_permissions set can_read=false where store='equipment'");
+    await deniedUnchanged(()=>call('set_equipment_shift',args({p_shift_id:'shift_noche'})),'PERMISSION_DENIED');
+    await db.exec('set role authenticated');
+    assert.equal((await db.query("select id from engrase_sync where store='equipment'")).rows.length,0);
+    await db.exec('reset role');
+    await reset('SUPERVISOR');
+    await put('equipment','outside',{locationId:'loc2',hourmeter:10});
+    await db.exec('set role authenticated');
+    assert.deepEqual((await db.query("select id from engrase_sync where store='equipment' order by id")).rows.map(r=>r.id),['e1']);
+    await db.exec('reset role');
+    await put('cuadrillas','c2',{locationId:'loc2',memberUserIds:['u1']});
+    await put('cuadrillas','c3',{locationId:'loc1',memberUserIds:['u1']});
+    await deniedUnchanged(()=>call('set_equipment_alert_pause',args({p_until:validReprogramDate,p_reason:'Taller'})),'CREW_SELECTION_REQUIRED');
+    assert.equal((await call('set_equipment_alert_pause',args({p_crew_id:'c1',p_until:validReprogramDate,p_reason:'Taller'}))).status,'APPLIED');
+  });
+  if (preCutover) await test('ACLs, receipts and safe-stop rollback do not reopen access; anon legacy risk persists',async()=>{
+    const signatures=['move_equipment_master_location(text,text,timestamptz,text)','set_equipment_shift(text,text,timestamptz,text)',
+      'set_equipment_alert_pause(text,text,text,timestamptz,date,text)','update_equipment_hourmeter(text,text,timestamptz,numeric,boolean)',
+      'reprogram_lubrication_plan(text,text,text,timestamptz,date,text)'];
+    for(const signature of signatures) {
+      const r=(await db.query(`select prosecdef,proconfig,pg_get_userbyid(proowner) as owner,
+       has_function_privilege('anon',oid,'execute') as anon,has_function_privilege('authenticated',oid,'execute') as authenticated
+       from pg_proc where oid=to_regprocedure($1)`,['public.'+signature])).rows[0];
+      assert.deepEqual(r,{prosecdef:true,proconfig:['search_path=pg_catalog'],owner:'postgres',anon:false,authenticated:true});
+    }
+    await db.exec('set role anon');
+    assert.equal((await db.query("select id from engrase_sync where store='equipment'")).rows.length,1);
+    await assert.rejects(db.query('select * from operational_catalog_receipts'),/permission denied/);
+    await db.exec('reset role; set role authenticated');
+    await assert.rejects(db.query('select * from operational_catalog_receipts'),/permission denied/);
+    await db.exec('reset role');
+    await call('move_equipment_master_location',args({p_location_id:'loc2'}));
+    const dataBefore=await snapshot();
+    const receipts=(await db.query('select * from operational_catalog_receipts')).rows;
+    const policies=(await db.query("select * from pg_policies where tablename='engrase_sync' order by policyname")).rows;
+    await db.exec(await readFile(root+'0011_operational_catalog_gateway_ROLLBACK.sql','utf8'));
+    assert.deepEqual(await snapshot(),dataBefore);
+    assert.deepEqual((await db.query('select * from operational_catalog_receipts')).rows,receipts);
+    assert.deepEqual((await db.query("select * from pg_policies where tablename='engrase_sync' order by policyname")).rows,policies);
+    for(const signature of signatures) assert.equal((await db.query("select has_function_privilege('authenticated',to_regprocedure($1),'execute') as allowed",['public.'+signature])).rows[0].allowed,false);
+    await assert.rejects(call('move_equipment_master_location',args({p_location_id:'loc1'})),/permission denied/);
+    await db.exec('set role authenticated');
+    assert.equal((await db.query("select public.get_authorization_context() as c")).rows[0].c.context.rowScopeEnforced,true);
+    await db.exec('reset role');
+    // Restore only this disposable fixture for subsequent independent cases.
+    await db.exec('grant execute on function '+signatures.map(s=>'public.'+s).join(',')+' to authenticated');
   });
   await test('Supervisor reprogram is scoped and only changes temporary date/reason', async () => {
     await reset('SUPERVISOR');
@@ -217,5 +294,5 @@ try {
     assert.equal(genericHardDelete.rows.length, 0);
     await db.exec('reset role');
   });
-  console.log(`PASS ${passed} operational catalog gateway SQL checks (PGlite local only)`);
+  console.log(`PASS ${passed} operational catalog gateway SQL checks (${preCutover?'legacy + repaired 0013':'post-cutover matrix'}, PGlite local only)`);
 } finally { await db.close(); }

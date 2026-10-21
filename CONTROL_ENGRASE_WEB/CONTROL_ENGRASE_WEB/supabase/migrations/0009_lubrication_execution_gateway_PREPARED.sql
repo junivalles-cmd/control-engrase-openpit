@@ -67,6 +67,8 @@ declare
   version_at timestamptz;
   day_start numeric := 6;
   night_start numeric := 18;
+  dual_shift_active boolean := false;
+  operational_day date;
 begin
   if auth.uid() is null then return jsonb_build_object('status','DENIED','code','AUTH_REQUIRED'); end if;
   select * into actor from public.app_profiles where auth_user_id = auth.uid() for share;
@@ -241,13 +243,27 @@ begin
   select coalesce((payload->>'shiftDayStart')::numeric,6),coalesce((payload->>'shiftNightStart')::numeric,18)
     into day_start,night_start from public.engrase_sync where store='settings' and id='general' and not deleted;
   day_start := coalesce(day_start,6); night_start := coalesce(night_start,18);
+  operational_day := execution_day;
+  if plan.id is not null and plan.payload->'requiredShifts' @> '["shift_dia","shift_noche"]'::jsonb
+     and nullif(plan.payload->>'effectiveDate','') is not null
+     and p_shift_id='shift_noche'
+     and extract(hour from p_execution_date at time zone 'America/Managua') < day_start
+     and execution_day - 1 >= (plan.payload->>'effectiveDate')::date then
+    operational_day := execution_day - 1;
+  end if;
+  dual_shift_active := plan.id is not null
+    and plan.payload->'requiredShifts' @> '["shift_dia","shift_noche"]'::jsonb
+    and nullif(plan.payload->>'effectiveDate','') is not null
+    and operational_day >= (plan.payload->>'effectiveDate')::date;
+  if dual_shift_active then execution_day := operational_day; end if;
   if p_action='CREATE' and not p_retroactive and p_shift_id <> (case when extract(hour from p_execution_date at time zone 'America/Managua') >= day_start
     and extract(hour from p_execution_date at time zone 'America/Managua') < night_start then 'shift_dia' else 'shift_noche' end) then
     return jsonb_build_object('status','DENIED','code','SHIFT_MISMATCH');
   end if;
   if p_action='CREATE' then
     if plan.id is not null then
-      occurrence := case when plan.payload->>'controlType'='Día y turno de la semana' then plan.id||':'||execution_day::text
+      occurrence := case when dual_shift_active then plan.id||':'||execution_day::text||':'||p_shift_id
+        when plan.payload->>'controlType'='Día y turno de la semana' then plan.id||':'||execution_day::text
         else plan.id||':h:'||(case when jsonb_typeof(plan.payload->'lastGreaseHour')='number'
           then trim_scale((plan.payload->>'lastGreaseHour')::numeric)::text else coalesce(plan.payload->>'lastGreaseHour','0') end) end;
     end if;
@@ -278,7 +294,19 @@ begin
       -- execution flow permits recording before the equipment's scheduled shift.
     end if;
     if complete and plan.id is not null then
-      if plan.payload->>'controlType'='Día y turno de la semana' then
+      if dual_shift_active then
+        for i in 0..1 loop
+          candidate := execution_day+i;
+          if not exists(select 1 from public.engrase_sync where store='lubrication_records' and not deleted
+            and coalesce(payload->>'active','true')='true' and payload->>'equipmentId'=p_equipment_id
+            and payload->>'shiftId'=p_shift_id
+            and (payload->'operationalSnapshot'->>'operationalDate'=candidate::text
+              or ((payload->>'date')::timestamptz at time zone 'America/Managua')::date=candidate)) then
+            candidates := array_append(candidates,candidate);
+          end if;
+        end loop;
+        if cardinality(candidates)=1 then satisfied := plan.id||':'||candidates[1]::text||':'||p_shift_id; end if;
+      elsif plan.payload->>'controlType'='Día y turno de la semana' then
         for i in 0..1 loop
           candidate := execution_day+i;
           if plan.payload->'assignedDays' ? weekdays[extract(dow from candidate)::integer+1]
@@ -291,7 +319,8 @@ begin
     end if;
     snapshot := jsonb_build_object('equipmentLocationIdAtExecution',equipment.payload->>'locationId','executionLocationId',equipment.payload->>'locationId',
       'crewId',crew_id,'crewLocationIdAtExecution',crew.payload->>'locationId','performedByUserId',p_performed_by,
-      'shiftId',p_shift_id,'assignmentId',p_assignment_id,'executionType',p_execution_type,'outOfPlanReason',p_out_of_plan_reason,
+      'shiftId',p_shift_id,'operationalDate',execution_day::text,'occurrenceKey',occurrence,
+      'assignmentId',p_assignment_id,'executionType',p_execution_type,'outOfPlanReason',p_out_of_plan_reason,
       'executionCompleteness',case when complete then 'COMPLETE' else 'PARTIAL' end,'satisfiedOccurrenceKey',satisfied);
     row_payload := jsonb_build_object('id',p_record_id,'equipmentId',p_equipment_id,'planId',p_plan_id,'date',p_execution_date,
       'shiftId',p_shift_id,'userId',p_performed_by,'userName',performer_name,'retroactivo',p_retroactive,
@@ -324,11 +353,11 @@ begin
       update public.engrase_sync set payload=payload||jsonb_build_object('hourmeter',p_hourmeter,'updatedAt',version_at),updated_at=version_at
         where store='equipment' and id=p_equipment_id;
     end if;
-    if plan.id is not null and (plan.payload->>'controlType'<>'Horas de operación' or complete) then
+    if plan.id is not null and not dual_shift_active and (plan.payload->>'controlType'<>'Horas de operación' or complete) then
       update public.engrase_sync set payload=payload||jsonb_build_object('lastGreaseHour',p_hourmeter,'updatedAt',version_at),updated_at=version_at
         where store='lubrication_plans' and id=p_plan_id;
     end if;
-  elsif p_action='CREATE' and p_no_hourmeter and plan.payload->>'controlType'='Horas de operación' then
+  elsif p_action='CREATE' and p_no_hourmeter and not dual_shift_active and plan.payload->>'controlType'='Horas de operación' then
     update public.engrase_sync set payload=payload||jsonb_build_object('lastGreaseDateNoHm',p_execution_date,'updatedAt',version_at),updated_at=version_at
       where store='lubrication_plans' and id=p_plan_id;
   end if;

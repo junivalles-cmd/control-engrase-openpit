@@ -1,0 +1,24 @@
+{
+  "prefix": "TEST0017",
+  "users": [
+    { "id": "TEST0017_ADMIN", "role": "ADMINISTRADOR" },
+    { "id": "TEST0017_PLANNER", "role": "PLANIFICADOR" },
+    { "id": "TEST0017_SUPERVISOR", "role": "SUPERVISOR" },
+    { "id": "TEST0017_LUB_A", "role": "LUBRICADOR" },
+    { "id": "TEST0017_LUB_B", "role": "LUBRICADOR" },
+    { "id": "TEST0017_VIEWER", "role": "VISOR" }
+  ],
+  "rows": [
+    { "store": "locations", "id": "TEST0017_LOC_A", "payload": { "name": "Synthetic A", "active": true } },
+    { "store": "locations", "id": "TEST0017_LOC_B", "payload": { "name": "Synthetic B", "active": true } },
+    { "store": "locations", "id": "TEST0017_LOC_C", "payload": { "name": "Synthetic C", "active": true } },
+    { "store": "cuadrillas", "id": "TEST0017_CREW_A", "payload": { "name": "Synthetic crew A", "active": true, "locationId": "TEST0017_LOC_C", "memberUserIds": ["TEST0017_SUPERVISOR", "TEST0017_LUB_A"] } },
+    { "store": "cuadrillas", "id": "TEST0017_CREW_B", "payload": { "name": "Synthetic crew B", "active": true, "locationId": "TEST0017_LOC_C", "memberUserIds": ["TEST0017_SUPERVISOR", "TEST0017_LUB_B"] } },
+    { "store": "cuadrillas", "id": "TEST0017_CREW_LEGACY", "payload": { "name": "Synthetic legacy crew", "active": true, "locationId": "TEST0017_LOC_B", "memberUserIds": ["TEST0017_LUB_B"] } },
+    { "store": "crew_locations", "id": "TEST0017_COVER_A_A", "payload": { "crew_id": "TEST0017_CREW_A", "location_id": "TEST0017_LOC_A", "role": "PRINCIPAL", "active": true } },
+    { "store": "crew_locations", "id": "TEST0017_COVER_A_B", "payload": { "crew_id": "TEST0017_CREW_A", "location_id": "TEST0017_LOC_B", "role": "APOYO", "active": true } },
+    { "store": "crew_locations", "id": "TEST0017_COVER_B_C", "payload": { "crew_id": "TEST0017_CREW_B", "location_id": "TEST0017_LOC_C", "role": "PRINCIPAL", "active": true } },
+    { "store": "equipment", "id": "TEST0017_EQUIPMENT_X", "payload": { "code": "TEST0017-X", "locationId": "TEST0017_LOC_A", "hourmeter": 100, "active": true } },
+    { "store": "settings", "id": "TEST0017_SETTINGS", "payload": { "shiftDayStart": 6, "shiftNightStart": 18 } }
+  ]
+}

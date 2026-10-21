@@ -1,0 +1,25 @@
+{
+  "comparison": "PRODUCTION_METADATA_VS_OFFLINE_STAGING_DDL_REPLAY",
+  "schemaEquivalent": "PASS_CRITICAL_SCOPE",
+  "counts": {
+    "tables": 10,
+    "functions": 36,
+    "policies": 32,
+    "matrixRows": 90
+  },
+  "differences": [],
+  "expectedIsolationExceptions": [
+    {
+      "object": "public.engrase_sync trigger avisar-push",
+      "action": "OMITTED",
+      "reason": "External production webhook with credential-bearing arguments; never replay to staging"
+    }
+  ],
+  "operationalCounts": {
+    "operations": 0,
+    "profiles": 0,
+    "support_links": 0
+  },
+  "remoteStagingCompared": false,
+  "limitations": "Managed Auth/Storage services are not tested; final catalog comparison must be repeated on remote staging before 0017."
+}

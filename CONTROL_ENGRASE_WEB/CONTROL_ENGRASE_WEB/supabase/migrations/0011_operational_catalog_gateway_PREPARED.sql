@@ -1,10 +1,32 @@
--- PREPARED ONLY; manual deployment after staging/legacy queue review.
--- Install only after the authorized 0003 cutover removes the legacy anon ALL/true
--- policy; this script's restrictive policies target authenticated only.
+-- MANUAL-PRODUCTION-PREPARED: additive PRE-CUTOVER with repaired 0013 PASS.
+-- Apply manually as postgres after preflight / legacy queue review; this
+-- preparation does not authorize execution. Run the COMPLETE transaction.
+-- The old post-0003-only warning is superseded ONLY when all eight repaired
+-- 0013 authenticated restrictive matrix/scope policies are installed intact
+-- and rowScopeEnforced=true. Validate this manually; the DO block below does
+-- not inspect 0013. Without independent matrix gates, legacy ALL/true can
+-- bypass permissive store permissions. Do not remove legacy or anon grants.
 -- Requires app_profiles/app_store_permissions and ownership of engrase_sync.
 -- This SQL does not call 0009/0010, but the compatible client requires both RPCs.
 -- Scope checks use the legacy crew.locationId model: keep 0008 unapplied until
 -- this gateway is revised for crew_locations. No app_store_permissions edits.
+-- Existing profiles/matrix and 0012 helpers must retain postgres ownership
+-- and FORCE RLS=false. authorization_private must remain outside Data API.
+-- Generic authenticated catalog writes require matrix AND row scope AND these
+-- additional role guards. catalog_settings_read is now redundant but cannot
+-- bypass 0013's independent restrictive SELECT matrix or scope policies.
+-- Typed wrappers run as owner and enforce operation roles, destination READ,
+-- Supervisor legacy crew/location scope and CAS themselves. Generic write
+-- bits do not define typed RPC capability (consistent with target 0015).
+-- Supervisor with multiple crews must supply an authorized p_crew_id for
+-- PAUSE/REPROGRAM. Membership arrays/legacy locations must be well formed.
+-- Hourmeter: equality allowed; regression denied; >500 hours needs explicit
+-- true confirmation. No reset/replacement semantics are introduced.
+-- Anon cannot execute new helpers/wrappers or access receipts. Legacy table
+-- exposure remains unchanged, including generic anon reads/writes allowed by
+-- its existing grants. This is not cutover or full client release certification.
+-- See docs/0011_PRODUCTION_PREFLIGHT_READ_ONLY.sql. New receipts/functions
+-- must be absent before installation; CREATE is intentionally not a rerun.
 begin;
 do $$ begin
  if not exists(select 1 from pg_catalog.pg_class where oid='public.engrase_sync'::regclass and relrowsecurity

@@ -55,7 +55,8 @@ const VALIDATION_BADGE = {
 };
 
 // Plazo máximo para validar un engrase: el turno en que se hizo Y como
-// máximo el turno siguiente — nunca queda pendiente indefinidamente. Único
+// máximo el turno siguiente antes de marcarla atrasada. La obligacion de
+// validar conserva el record.id hasta resolverse, incluso fuera de plazo. Único
 // punto central de este número; no repartir "2" por pantallas.
 const MAX_VALIDATION_SHIFTS = 2;
 
@@ -249,21 +250,20 @@ function validationStatusForRecord(record, validations, now, shiftBoundaries) {
   return isValidationExpired(record.date, now, shiftBoundaries) ? VALIDATION_STATUS.VENCIDA : VALIDATION_STATUS.PENDIENTE;
 }
 
-// true solo cuando el record SÍ está sujeto a validación (no es histórico),
-// tiene 0 activas Y todavía está DENTRO del plazo — la definición exacta de
-// "Pendientes de validación" para KPIs/listas (excluye histórico, excluye
-// validado, excluye conflicto Y excluye vencido: ver
-// docs/GREASE_VALIDATION_AUDIT.md §10).
+// Pendiente de resolver: sujeto a validacion y sin firmas activas. El
+// vencimiento sigue disponible como clasificacion de atraso; no oculta
+// registros de dias/turnos anteriores ni permite recrear la ejecucion.
 function isRecordPendingValidation(record, validations, now, shiftBoundaries) {
   if (!isRecordSubjectToValidation(record.date)) return false;
   if (findActiveValidations(record.id, validations).length !== 0) return false;
-  return !isValidationExpired(record.date, now, shiftBoundaries);
+  // El plazo clasifica el atraso, no extingue la obligacion ni su identidad.
+  return true;
 }
 
 // true solo cuando el record SÍ está sujeto a validación, tiene 0 activas Y
 // ya superó el plazo — usar esta función (no isValidationExpired directo)
-// en cualquier UI que tenga el `record` completo, para ocultar el botón
-// "Validar" y mostrar el badge "Validación vencida" en vez de "Pendiente".
+// para señalar el atraso. No debe ocultarse la accion Validar: se firma el
+// mismo registro, conservando su fecha y turno reales de ejecucion.
 // Una vez que existe 1+ firma activa, esto SIEMPRE devuelve false (ver
 // comentario de validationStatusForRecord — nunca se "revierte" a vencida).
 function isRecordValidationExpired(record, validations, now, shiftBoundaries) {

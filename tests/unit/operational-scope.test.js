@@ -13,7 +13,7 @@ const {
   ASSIGNMENT_STATUS,
   canManageAssignments, canMoveEquipment, canMoveCrew, canManageCrewMembership, canRegisterOutOfPlan,
   getAuthorizedCrews,
-  computeOccurrenceKey, resolveDefaultCrewForLocation, resolveOperationalScope,
+  computeOccurrenceKey, parseOccurrenceKeyDate, resolveDefaultCrewForLocation, resolveOperationalScope,
   classifyEquipmentWork, findActivePendingAssignment, createAssignment,
   reassignAssignment, cancelAssignment, completeAssignmentIfPending,
   canLubricadorExecuteEquipment,
@@ -25,6 +25,8 @@ const {
   resolveRecordExecutionType, resolveRecordOutOfPlanReason, resolveRecordCompleteness,
   NO_EXECUTION_REASONS, validateNoExecutionInput, buildNoExecutionRecord, findCarriedOverSkipForToday,
   GREASE_MATCH_STATUS, findMatchingGreaseRecordForOccurrence,
+  REQUIRED_SHIFT_IDS, isExcavatorEquipment, requiredShiftsForPlan, requiredShiftsForEquipmentPlan,
+  operationalDateForShift, generateOccurrences, resolveOccurrenceState, previousShiftOccurrence,
 } = loadOperationalScopeLogic();
 
 let uidSeq = 0;
@@ -77,6 +79,137 @@ describe('computeOccurrenceKey() — identidad de ocurrencia (§O)', () => {
   it('sin plan o sin id -> lanza (nunca genera una clave ambigua)', () => {
     expect(() => computeOccurrenceKey(null)).toThrow();
     expect(() => computeOccurrenceKey({ controlType: 'Horas de operación' })).toThrow();
+  });
+  it('las ocurrencias de doble turno tienen identidad independiente por fecha y turno, con semántica histórica previa a effectiveDate', () => {
+    const plan = { id: 'exc1', controlType: 'Día y turno de la semana', requiredShifts: REQUIRED_SHIFT_IDS, effectiveDate: '2026-10-15' };
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-10-14', shiftId: 'shift_dia' })).toBe('exc1:2026-10-14');
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-10-15', shiftId: 'shift_dia' })).toBe('exc1:2026-10-15:shift_dia');
+    expect(computeOccurrenceKey(plan, { dateISO: '2026-10-15', shiftId: 'shift_noche' })).toBe('exc1:2026-10-15:shift_noche');
+  });
+});
+
+// Fix 2026-10-17 ("FECHA VISUAL DE ASIGNACIÓN ATRASADA"): parseOccurrenceKeyDate()
+// es el ÚNICO lugar que lee fecha/turno de un occurrenceKey ya existente —
+// nunca recalcula "la ocurrencia vigente hoy" (eso sigue siendo
+// mostRecentAssignedDate()/weekdayStatusFor()). Cubre exactamente los 2
+// formatos con fecha discreta que computeOccurrenceKey() genera, más el
+// caso sin fecha (plan por horas).
+describe('parseOccurrenceKeyDate() — fecha/turno de una ocurrencia YA IDENTIFICADA (fix "FECHA VISUAL DE ASIGNACIÓN ATRASADA")', () => {
+  it('clave legacy/"Día y turno de la semana" sin turno dual (planId:YYYY-MM-DD): devuelve esa fecha exacta, sin turno', () => {
+    const r = parseOccurrenceKeyDate('plan_mskx6bbstrbbsz:2026-09-30');
+    expect(r).not.toBeNull();
+    expect(r.dateISO).toBe('2026-09-30');
+    expect(r.shiftId).toBeNull();
+    expect(r.date.getFullYear()).toBe(2026);
+    expect(r.date.getMonth()).toBe(8); // Septiembre (0-indexado)
+    expect(r.date.getDate()).toBe(30);
+  });
+  it('clave dual DÍA (planId:YYYY-MM-DD:shift_dia): devuelve fecha + turno Día', () => {
+    const r = parseOccurrenceKeyDate('plan_x:2026-10-17:shift_dia');
+    expect(r).toEqual(expect.objectContaining({ dateISO: '2026-10-17', shiftId: 'shift_dia' }));
+  });
+  it('clave dual NOCHE (planId:YYYY-MM-DD:shift_noche): devuelve fecha + turno Noche', () => {
+    const r = parseOccurrenceKeyDate('plan_x:2026-10-17:shift_noche');
+    expect(r).toEqual(expect.objectContaining({ dateISO: '2026-10-17', shiftId: 'shift_noche' }));
+  });
+  it('clave por horas (planId:h:lastGreaseHour, sin fecha discreta): null — nunca inventa una fecha', () => {
+    expect(parseOccurrenceKeyDate('plan2:h:5000')).toBeNull();
+    expect(parseOccurrenceKeyDate('plan2:h:0')).toBeNull();
+  });
+  it('sin clave / clave vacía: null, nunca lanza', () => {
+    expect(parseOccurrenceKeyDate(null)).toBeNull();
+    expect(parseOccurrenceKeyDate(undefined)).toBeNull();
+    expect(parseOccurrenceKeyDate('')).toBeNull();
+  });
+  it('estabilidad frente al paso del tiempo: la MISMA clave devuelve SIEMPRE la MISMA fecha, sin importar "hoy" — a diferencia de mostRecentAssignedDate()/weekdayStatusFor(), que recalculan contra la fecha real', () => {
+    const key = 'plan_mskx6bbstrbbsz:2026-09-30';
+    expect(parseOccurrenceKeyDate(key).dateISO).toBe(parseOccurrenceKeyDate(key).dateISO);
+    expect(parseOccurrenceKeyDate(key).dateISO).toBe('2026-09-30'); // aunque "hoy" sea 2026-10-17 o más adelante
+  });
+});
+
+describe('política central DAY/NIGHT segun plan explicito, para cualquier equipo', () => {
+  const types = [{ id: 'type_exc', name: 'Excavadora' }, { id: 'type_truck', name: 'Volquete' }];
+  const excavator = { id: 'e1', typeId: 'type_exc' };
+  const dailyPlan = { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana', assignedDays: ['Martes'], effectiveDate: '2026-10-13' };
+
+  it('identifica excavadora por la relación real typeId -> equipment_types, sin códigos de equipo', () => {
+    expect(isExcavatorEquipment(excavator, types)).toBe(true);
+    expect(isExcavatorEquipment({ id: 'e2', code: '20-85', typeId: 'type_truck' }, types)).toBe(false);
+  });
+  it('el matching por occurrenceKey exige el turno exacto aunque la fecha y el equipo coincidan', () => {
+    const occurrenceDate = new Date(2026, 9, 13, 12);
+    const plan = { id: 'p1', equipmentId: 'e1', controlType: 'Día y turno de la semana' };
+    const nightRecord = { id: 'rn', equipmentId: 'e1', date: '2026-10-13T20:00:00', shiftId: 'shift_noche', details: [] };
+    const dayRecord = { id: 'rd', equipmentId: 'e1', date: '2026-10-13T08:00:00', shiftId: 'shift_dia', details: [] };
+    const result = findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey: 'p1:2026-10-13:shift_dia', occurrenceDate,
+      records: [nightRecord], assignments: [], skips: [] });
+    expect(result.status).toBe(GREASE_MATCH_STATUS.NONE);
+    const exact = findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey: 'p1:2026-10-13:shift_dia', occurrenceDate,
+      records: [nightRecord, dayRecord], assignments: [], skips: [] });
+    expect(exact.status).toBe(GREASE_MATCH_STATUS.MATCH);
+    expect(exact.records.map(r => r.id)).toEqual(['rd']);
+  });
+  it('conserva el histórico y aplica los dos turnos desde la fecha efectiva', () => {
+    expect(requiredShiftsForEquipmentPlan({ equipment: excavator, equipmentTypes: types, plan: dailyPlan, operationalDateISO: '2026-10-12' })).toEqual([null]);
+    expect(requiredShiftsForEquipmentPlan({ equipment: excavator, equipmentTypes: types, plan: { ...dailyPlan, requiredShifts: REQUIRED_SHIFT_IDS }, operationalDateISO: '2026-10-13' })).toEqual(REQUIRED_SHIFT_IDS);
+  });
+  it('genera dos occurrence keys el día programado y catorce en siete días consecutivos programados', () => {
+    const plan = { ...dailyPlan, assignedDays: ['Martes','Miércoles','Jueves','Viernes','Sábado','Domingo','Lunes'], requiredShifts: REQUIRED_SHIFT_IDS };
+    expect(generateOccurrences({ plan: { ...plan, assignedDays: ['Martes'] }, startDateISO: '2026-10-13', endDateISO: '2026-10-13' })).toHaveLength(2);
+    expect(generateOccurrences({ plan, startDateISO: '2026-10-13', endDateISO: '2026-10-19' })).toHaveLength(14);
+    expect(generateOccurrences({ plan: { ...plan, assignedDays: ['Martes'] }, startDateISO: '2026-10-13', endDateISO: '2026-10-19' })).toHaveLength(2);
+  });
+  it('no duplica ni cambia turnos de equipos no excavadora sin configuración explícita', () => {
+    const truckPlan = { ...dailyPlan, equipmentId: 'e2' };
+    expect(requiredShiftsForEquipmentPlan({ equipment: { id: 'e2', typeId: 'type_truck' }, equipmentTypes: types, plan: truckPlan, operationalDateISO: '2026-10-13' })).toEqual([null]);
+    expect(generateOccurrences({ plan: { ...truckPlan, assignedDays: ['Martes'] }, startDateISO: '2026-10-13', endDateISO: '2026-10-13' })).toHaveLength(1);
+  });
+  it('asigna el tramo nocturno después de medianoche al día operacional en que inició el turno', () => {
+    expect(operationalDateForShift(new Date(2026, 9, 14, 2, 15), 'shift_noche', { shiftDayStart: 6, shiftNightStart: 18 })).toBe('2026-10-13');
+    expect(operationalDateForShift(new Date(2026, 9, 14, 8, 0), 'shift_dia', { shiftDayStart: 6, shiftNightStart: 18 })).toBe('2026-10-14');
+  });
+  it('el resolver central mantiene estados DAY/NIGHT independientes para registro, partial, skip, missed y assignment', () => {
+    const dualPlan = { id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', requiredShifts: REQUIRED_SHIFT_IDS, effectiveDate: '2026-10-13' };
+    const day = { id: 'rd', equipmentId: 'e1', date: '2026-10-13T08:00:00', shiftId: 'shift_dia', qty: 2, details: [],
+      operationalSnapshot: { operationalDate: '2026-10-13', occurrenceKey: 'p1:2026-10-13:shift_dia' } };
+    const stateDay = resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_dia', records: [day] });
+    const stateNight = resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', records: [day] });
+    expect(stateDay.state).toBe('COMPLETE');
+    expect(stateNight.state).toBe('PENDING');
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-14', shiftId: 'shift_dia', records: [day], asOfDateISO: '2026-10-15' }).state).toBe('MISSED');
+    const partial = { ...day, id: 'rp', shiftId: 'shift_noche', details: [{ done: false }],
+      operationalSnapshot: { operationalDate: '2026-10-13', occurrenceKey: 'p1:2026-10-13:shift_noche' } };
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', records: [partial] }).state).toBe('PARTIAL');
+    const nightKey = computeOccurrenceKey(dualPlan, { dateISO: '2026-10-13', shiftId: 'shift_noche' });
+    const skipped = { id: 's1', equipmentId: 'e1', occurrenceKey: nightKey };
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', skips: [skipped] }).state).toBe('SKIPPED');
+    const assignment = { id: 'a1', occurrenceKey: nightKey, status: 'PENDING', active: true };
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', assignments: [assignment] }).state).toBe('ASSIGNED');
+  });
+  it('un assignment o skip de DAY nunca satisface ni oculta la ocurrencia NIGHT', () => {
+    const dualPlan = { id: 'p1', equipmentId: 'e1', controlType: 'Horas de operación', requiredShifts: REQUIRED_SHIFT_IDS, effectiveDate: '2026-10-13' };
+    const dayKey = computeOccurrenceKey(dualPlan, { dateISO: '2026-10-13', shiftId: 'shift_dia' });
+    const assignment = { id: 'a-day', occurrenceKey: dayKey, status: ASSIGNMENT_STATUS.PENDING, active: true };
+    const skip = { id: 's-day', equipmentId: 'e1', occurrenceKey: dayKey };
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_dia', assignments: [assignment] }).state).toBe('ASSIGNED');
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', assignments: [assignment] }).state).toBe('PENDING');
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_dia', skips: [skip] }).state).toBe('SKIPPED');
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', skips: [skip] }).state).toBe('PENDING');
+  });
+  it('resuelve la ocurrencia del turno anterior, incluso cuando NIGHT precede al día calendario siguiente', () => {
+    expect(previousShiftOccurrence({ operationalDate: '2026-10-13', shiftId: 'shift_noche' })).toEqual({ operationalDate: '2026-10-13', shiftId: 'shift_dia' });
+    expect(previousShiftOccurrence({ operationalDate: '2026-10-14', shiftId: 'shift_dia' })).toEqual({ operationalDate: '2026-10-13', shiftId: 'shift_noche' });
+  });
+  it('un registro NOCHE después de medianoche solo satisface su fecha operacional explícita', () => {
+    const dualPlan = { id: 'p-cross', equipmentId: 'e-cross', controlType: 'Horas de operación',
+      requiredShifts: REQUIRED_SHIFT_IDS, effectiveDate: '2026-10-13' };
+    const nightAfterMidnight = { id: 'r-night', equipmentId: 'e-cross', shiftId: 'shift_noche',
+      date: '2026-10-14T02:15:00', qty: 2, details: [], operationalSnapshot: {
+        operationalDate: '2026-10-13', occurrenceKey: 'p-cross:2026-10-13:shift_noche',
+      } };
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-13', shiftId: 'shift_noche', records: [nightAfterMidnight] }).state).toBe('COMPLETE');
+    expect(resolveOccurrenceState({ plan: dualPlan, operationalDate: '2026-10-14', shiftId: 'shift_noche', records: [nightAfterMidnight] }).state).toBe('PENDING');
   });
 });
 
@@ -387,7 +520,7 @@ describe('Snapshot histórico (§1 del cierre de lote) — CASO A/B/C del pedido
     const snap = buildExecutionSnapshot({});
     expect(snap).toEqual({
       equipmentLocationIdAtExecution: null, executionLocationId: null, crewId: null, crewLocationIdAtExecution: null,
-      performedByUserId: null, shiftId: null, assignmentId: null, executionType: 'PLANNED',
+      performedByUserId: null, shiftId: null, occurrenceKey: null, operationalDate: null, assignmentId: null, executionType: 'PLANNED',
       outOfPlanReason: null, executionCompleteness: null, satisfiedOccurrenceKey: null
     });
   });

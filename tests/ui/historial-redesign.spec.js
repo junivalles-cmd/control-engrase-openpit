@@ -104,7 +104,8 @@ for (const width of WIDTHS) {
   test(`Historial (sin equipo) @ ${width}px — orden, sin botón Buscar, filtros sin Familia`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.setContent(pageFixture(false));
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
@@ -145,7 +146,8 @@ for (const width of WIDTHS) {
   test(`Historial (equipo seleccionado) @ ${width}px — encabezado compacto, 4 KPI, tabla`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(pageFixture(true));
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
@@ -179,6 +181,7 @@ for (const width of WIDTHS) {
 test('Historial global @ 1366px — filtros + contador/CSV en la misma fila 2', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 1000 });
   await page.setContent(pageFixture(false));
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
   const turnoY = await page.locator('#gh-turno').boundingBox().then(b => b.y);
@@ -194,7 +197,8 @@ for (const width of [412, 1366]) {
   test(`Historial — pulido visual @ ${width}px: padding, alturas ~44px, botón CSV, contador`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.setContent(pageFixture(false));
-    await page.addStyleTag({ path: STYLES_PATH });
+    await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
+  await page.addStyleTag({ path: STYLES_PATH });
 
     // Padding lateral real (antes 0 — el buscador tocaba el borde del panel).
     const panelBox = await page.locator('#hist-eq-panel').boundingBox();

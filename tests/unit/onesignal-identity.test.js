@@ -155,14 +155,17 @@ describe('disablePushForCurrentUser() — §14, bug real de llave rota (corregid
 });
 
 describe('cancelAllLocalNotifications() — §15', () => {
-  it('cancela los 11 IDs fijos conocidos, sin exigir App.currentUser', async () => {
+  it('cancela IDs fijos y ventana dual DAY/NIGHT, sin exigir App.currentUser', async () => {
     const cancel = vi.fn(async () => {});
     const window_ = { Capacitor: { Plugins: { LocalNotifications: { cancel } } } };
     const { cancelAllLocalNotifications } = loadNotificationIdentityLogic()('', window_, {}, makeFakeDB(), stamp);
 
     await cancelAllLocalNotifications();
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(cancel.mock.calls[0][0].notifications.length).toBe(11);
+    // 11 IDs fijos (incluye NOTIF_ID_VALIDATION/_REC — panel de tareas:
+    // "validación pendiente" ahora también se recuerda localmente, mismo
+    // patrón que NOTIF_ID_ASSIGNED/_REC) + 14 de la ventana dual DAY/NIGHT.
+    expect(cancel.mock.calls[0][0].notifications.length).toBe(27);
   });
 
   it('sin el plugin LocalNotifications disponible: no lanza', async () => {
