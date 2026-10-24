@@ -1,7 +1,8 @@
-const CACHE = 'engrase-openpit-v74'; // v74: descarte de renders antiguos de Anomalías y guardas locales.
+const CACHE = 'engrase-openpit-v75'; // v75: TECH-05 (auditoría 2026-10-24) — widget-snapshot.js faltaba en el precache.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
+  './src/core/widget-snapshot.js',
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline

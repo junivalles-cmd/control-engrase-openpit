@@ -8,8 +8,10 @@
 // relleno, nunca registros de producción. La lógica ya se prueba contra la
 // función REAL en tests/unit/reportes-rediseno.test.js y
 // tests/unit/reportes-programado-realizado.test.js — aquí solo se valida
-// composición/responsive (mismo criterio que reportes-charts-grid.spec.js,
-// que sigue cubriendo .charts-grid/.chart-box en general sin tocarlo).
+// composición/responsive. (tests/ui/reportes-charts-grid.spec.js se retiró
+// en TECH-10/TECH-11, auditoría 2026-10-24: probaba `.charts-grid`, una
+// clase ya confirmada sin uso real — renderReportes() usa hoy
+// `.rep-tendencia-turno-grid`/`.chart-box`, cubierto en este archivo.)
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';

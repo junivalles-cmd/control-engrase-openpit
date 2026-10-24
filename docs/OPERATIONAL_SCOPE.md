@@ -434,3 +434,25 @@ Planificador cree una assignment artificial primero).
   sin usuarios reales, sin deploy. `supabase/migrations/0005_*` solo
   preparada.
   fuera del alcance pedido, señalado aquí para una sesión futura.
+
+## ⚠ REGLA PARA LA CARGA DE DATOS MAESTROS (auditoría técnica integral V2, 2026-10-24)
+
+El backend remoto no tiene esquema relacional por entidad: todo vive en una
+sola tabla EAV `engrase_sync(store, id, payload jsonb, ...)` (ver
+`schema.sql`). No hay `NOT NULL`/FK/tipos de columna a nivel Postgres sobre
+`equipment`, `lubrication_points`, `lubrication_plans`, `grease_records`,
+`manual_tasks`, `broadcast_messages`, etc. — **toda validación de forma e
+integridad vive en el código cliente (`app.js`/`src/core/*.js`) o en los
+gateways RPC (0009-0011/0014)**, nunca en el esquema remoto.
+
+**Regla obligatoria para cualquier carga futura de datos maestros**
+(equipment, lubrication_points, lubrication_plans u otro store de negocio):
+debe pasar por las mismas funciones/validadores que usa la UI (o por los
+gateways RPC equivalentes) — **nunca un INSERT/upsert directo a
+`engrase_sync` con JSONB armado a mano**, sin invariantes de
+ubicación/cuadrilla/turno (ver jerarquía `USUARIO→ROL→CUADRILLA(S)→
+UBICACIÓN→TURNO` arriba en este documento) ni de IDs (`uid()`, nunca el
+código visible del equipo). Un importador que se salte esta regla no
+tendría ningún otro lugar en el sistema que detecte datos mal formados.
+No se creó todavía ningún importador — esto queda documentado como
+precondición antes de construir uno.

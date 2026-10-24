@@ -20,6 +20,19 @@ como problema (desperdicio de espacio / layout de móvil en desktop).
 > `6f9e59c` — pendiente una repetición de las capturas si se necesita
 > confirmar el % de utilización actual.
 
+> **ACTUALIZACIÓN (2026-10-24, TECH-11 de la auditoría técnica integral V2):**
+> la "Causa raíz #4" (§ más abajo) y toda fila que cite `.charts-grid`
+> (UI-VIS-204 sección de grid, "Pantallas con grid mejorable") quedaron
+> **OBSOLETAS, no implementadas** — `renderReportes()` fue rediseñado
+> después de esta auditoría y ya no emite `.charts-grid`: el grid real de
+> gráficas de Reportes hoy es `.rep-tendencia-turno-grid` +
+> `.chart-box.rep-chart-tendencia-box`/`.rep-chart-consumo-box`
+> (`app.js:11970-11997` aprox.). La clase `.charts-grid` en sí se confirmó
+> sin ningún uso en `app.js`/`src/` y se eliminó de `styles.css` (código
+> muerto, TECH-10). Si se quiere auditar el grid de columnas de Reportes,
+> hay que auditar las clases reales (`.rep-tendencia-turno-grid`), no esta
+> recomendación.
+
 Método: fragmentos estáticos con la estructura/clases REALES de las funciones
 `render*()` de `app.js` (nunca la app real, nunca red/Supabase — ver
 `docs/AUTOMATED_TESTS.md`), renderizados con `page.setContent()` +

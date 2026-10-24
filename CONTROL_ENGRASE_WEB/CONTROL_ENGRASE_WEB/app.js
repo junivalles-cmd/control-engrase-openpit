@@ -2281,10 +2281,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   Sync.startAuto(App.generalSettings.syncIntervalSeconds);
   updateConnBadge();
 
-  // AUTH_MODE='supabase': flujo de login/PIN completamente separado (ver
-  // renderAuthGateSupabase() más abajo) — nunca toca sessionStorage
-  // 'engrase_user' (eso es exclusivamente del login PIN legacy). Con
-  // AUTH_MODE='legacy' (default) este branch nunca se toma.
+  // AUTH_MODE='supabase' (default real, ver src/core/auth.js) toma SIEMPRE
+  // este branch: flujo de login/PIN separado (renderAuthGateSupabase() más
+  // abajo) — nunca toca sessionStorage 'engrase_user'. Ese es del login PIN
+  // legacy, en el `else` de abajo: NUNCA se toma hoy, queda como rollback.
   if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
     renderAuthGateSupabase();
   } else {
@@ -14971,6 +14971,17 @@ async function updateTareasMensajesNavBadge() {
 async function renderTareasYMensajes(options = {}) {
   const c = $('#app-content');
   if (!c) return;
+  // TECH-04 (auditoría 2026-10-24): mismo patrón de generación/ruta/usuario
+  // ya probado en renderAnomalias()/renderLubricadorHome() — una navegación
+  // fuera de "Tareas y Mensajes" (o un cambio de usuario) mientras esta
+  // función todavía está resolviendo awaits no debe terminar escribiendo
+  // sobre el DOM de la pantalla nueva. Cada invocación (incluidas las
+  // re-renderizaciones "silent" tras una acción) suma una generación nueva,
+  // así que "la segunda carga gana" automáticamente sin lógica extra.
+  const run = (App._tymRenderGen = (App._tymRenderGen || 0) + 1);
+  const route = App.route, actorId = App.currentUser.id;
+  const isStaleRun = () => App._tymRenderGen !== run || App.route !== route
+    || App.currentUser?.id !== actorId || !c.isConnected || $('#app-content') !== c;
   if (!options.silent) c.innerHTML = '<div class="loading">Cargando tareas y mensajes…</div>';
 
   const actor = App.currentUser;
@@ -15010,12 +15021,14 @@ async function renderTareasYMensajes(options = {}) {
   // detalle necesita "Solicitado por"/"Completar tarea" igual que el
   // modal ya existente (openManualTaskDetailModal) — MISMA fuente, nunca
   // un nombre inventado ni un alcance nuevo.
+  try {
   const [manualTasksRaw, broadcastsRaw, reads, equipos, cuadrillas, locations, users] = await Promise.all([
     DB.all('manual_tasks'), DB.all('broadcast_messages'), DB.allActive('broadcast_message_reads'),
     DB.allActive('equipment'), DB.allActive('cuadrillas'), DB.allActive('locations'), DB.allActive('users'),
   ]);
+  if (isStaleRun()) return;
   const scope = actor.role === 'LUBRICADOR' ? await getCurrentOperationalScope() : null;
-  if (!$('#app-content')) return; // la pantalla cambió mientras cargaba
+  if (isStaleRun()) return; // la pantalla cambió (ruta/usuario/generación) mientras cargaba
   const manualTasks = manualTasksRaw.filter(t => t.active !== false);
   const broadcasts = broadcastsRaw.filter(m => m.active !== false);
   const myReadIds = new Set(reads.filter(r => r.userId === actor.id).map(r => r.messageId));
@@ -15202,7 +15215,7 @@ async function renderTareasYMensajes(options = {}) {
     for (const it of historialItems) {
       if (it.kind === 'TAREA' && photosOf(it.data).length) photoSrcsById[it.data.id] = await resolvePhotoThumbSrcs(it.data);
     }
-    if (!$('#app-content')) return;
+    if (isStaleRun()) return;
 
     const lubTaskCardHTML = (t) => {
       const equipo = eq(t.equipmentId);
@@ -15310,7 +15323,7 @@ async function renderTareasYMensajes(options = {}) {
     const msg = broadcastsRaw.find(m => m.id === selectedId);
     if (msg) detailHTML = buildMsgDetailPaneHTML(msg);
   }
-  if (!$('#app-content')) return; // pudo cambiar de pantalla mientras resolvía fotos
+  if (isStaleRun()) return; // pudo cambiar de pantalla mientras resolvía fotos
 
   // --- helpers de detalle (definidos acá: cierran sobre actor/eq/crew/etc.) ---
   async function buildTaskDetailPaneHTML(task) {
@@ -15495,6 +15508,10 @@ async function renderTareasYMensajes(options = {}) {
     }
   }));
   applyTymFocus();
+  } catch (error) {
+    if (isStaleRun()) return; // ejecución obsoleta — error descartado en silencio
+    throw error; // ejecución vigente — el error real sigue visible
+  }
 }
 
 /* ---------- Respaldo completo: exportar / restaurar todos los datos ---------- */

@@ -10,6 +10,15 @@ Auditoría **estática de código**, no interactiva: lectura de cada función `r
 
 Registrar Engrase (`renderRegistrar`/`startGreaseFlow`) y Mi Turno (`renderLubricadorHome`) **no están en esta auditoría** — ya se rediseñaron y corrigieron en las fases anteriores de esta misma sesión (cards responsive, `.grease-flow-panel`, contenedor 720px@768/960px@1024+), y quedan como referencia de PASS.
 
+> **ACTUALIZACIÓN (2026-10-24, TECH-11 de la auditoría técnica integral V2):**
+> toda fila/recomendación de este documento que cite `.charts-grid`
+> (UI-FULL-206, LOTE 4) quedó **OBSOLETA, no implementada** —
+> `renderReportes()` fue rediseñado después de esta auditoría y ya no
+> emite `.charts-grid` (clase confirmada sin uso real y eliminada de
+> `styles.css`, TECH-10). El grid de gráficas real de Reportes hoy usa
+> `.rep-tendencia-turno-grid`/`.chart-box.rep-chart-tendencia-box` — una
+> futura auditoría de ese grid debe partir de esas clases, no de esta fila.
+
 ## LOTE P1 — cerrado (2026-09-24)
 
 Antes de corregir, se estudió `navigate()` (app.js:1789-1809): esa función ya aplica `makeTablesResponsive($('#app-content'))` automáticamente después de renderizar CUALQUIER ruta del menú admin — el bug real en los 3 casos confirmados es que esas pantallas se **re-renderizan a sí mismas** (guardar, importar, cualquier acción de Configuración) llamando su propia función directamente, sin volver a pasar por `navigate()`, así que ese gancho nunca vuelve a aplicarse ahí.
