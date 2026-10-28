@@ -2970,10 +2970,24 @@ function replayPendingDeeplink() {
 async function enterAppAsProfile(profile) {
   App.currentUser = currentUserFromAuthProfile(profile);
   bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
-  const accountSync = await Sync.getAccountSyncState();
-  if (!accountSync.bootstrapComplete && navigator.onLine && Auth.isAuthenticated()) {
+  // BUG-AUTH-001 (bootstrap vs. ciclo periódico en vuelo): Sync.startAuto()
+  // arranca su timer en el boot de la página y NUNCA se detiene al cerrar
+  // sesión (no existe stopAuto()) — sigue disparando fullSync() cada
+  // syncIntervalSeconds pase lo que pase. Si uno de esos ciclos (típico:
+  // uno que arrancó mientras la pantalla de login estaba visible, sin
+  // sesión, y reportó 'AUTH_REQUIRED' legítimamente) sigue en vuelo justo
+  // cuando una cuenta NUEVA (bootstrapComplete=false, la única que llega
+  // hasta aquí) termina de loguearse, el guard de single-flight de
+  // Sync.fullSync() (`this.syncing`) devuelve sin hacer NADA — el banner
+  // "SESIÓN REQUERIDA" de ese ciclo anterior queda pegado aunque
+  // Auth.isAuthenticated() ya sea true. Reintenta hasta 2 veces en total,
+  // una vez que el ciclo ajeno ya terminó y el epoch es el de esta sesión,
+  // antes de entrar con un estado híbrido (reconocido pero "sin sesión").
+  let accountSync = await Sync.getAccountSyncState();
+  for (let attempt = 0; attempt < 2 && !accountSync.bootstrapComplete && navigator.onLine && Auth.isAuthenticated(); attempt++) {
     await Sync.fullSync();
     if (App.currentUser?.id !== profile.appUserId || !Auth.isAuthenticated()) return;
+    accountSync = await Sync.getAccountSyncState();
   }
   boot();
   replayPendingDeeplink();

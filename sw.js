@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v80'; // v80: BUG-AUTH-001 — fix real: Auth.signIn() single-flight + guard de doble-submit en el login (session-epoch race que producía AUTH_REQUIRED espurio justo tras iniciar sesión).
+const CACHE = 'engrase-openpit-v81'; // v81: BUG-AUTH-001 — enterAppAsProfile() reintenta el fullSync() de bootstrap si un ciclo periódico ajeno (nunca detenido en logout) se lo traga en silencio; evita el banner "SESIÓN REQUERIDA" pegado tras loguear una cuenta nueva.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
