@@ -285,10 +285,38 @@ const Auth = {
     });
     // A valid token and a separately persisted snapshot must belong to the
     // same Auth identity. A crash or account switch may never pair them.
+    // BUG-AUTH-001: con _fetchProfile() ya corregido (filtra por
+    // auth_user_id de la sesión) esto ya no debería ocurrir tras un login
+    // normal — pero un snapshot realmente viejo de OTRA cuenta en este
+    // dispositivo (o uno persistido antes de este fix) sigue siendo
+    // posible. En vez de cerrar sesión de inmediato, intenta reconciliar:
+    // si hay red, pide al servidor el perfil REAL de la identidad que
+    // ACABA de autenticarse (nunca confía en el snapshot viejo) — solo
+    // cierra sesión si el servidor confirma que no hay nada válido para
+    // esa cuenta. Offline no cambia: sin forma de confirmar nada contra el
+    // servidor, sigue siendo conservador (cierra sesión), nunca atribuye
+    // el perfil de otra cuenta a esta sesión.
     if (snapshot && snapshot.authUserId !== this._session.authUserId) {
-      await this.signOut();
-      _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
-      return null;
+      if (!navigator.onLine) {
+        await this.signOut();
+        _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_offline_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
+        return null;
+      }
+      let freshProfile = null;
+      try {
+        freshProfile = await this._fetchProfile(await DB.getConfig());
+      } catch (e) {
+        freshProfile = null; // backend inalcanzable -> no se puede confirmar nada, mismo criterio que offline
+      }
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_mismatch_recovery' }); return null; }
+      if (!isValidProfile(freshProfile) || freshProfile.authUserId !== this._session.authUserId) {
+        await this.signOut();
+        _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_no_valid_profile_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
+        return null;
+      }
+      this._profile = freshProfile;
+      await this._persistState();
+      _authDebug('restoreSession:recovered_mismatch', { PROFILE_ROLE: freshProfile.role });
     }
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
@@ -643,10 +671,23 @@ const Auth = {
   },
 
   async _fetchProfile(cfg) {
-    if (!this._session || !this._session.accessToken) return null;
+    if (!this._session || !this._session.accessToken || !this._session.authUserId) return null;
     try {
+      // BUG-AUTH-001 (causa raíz real): esta consulta NO filtraba por
+      // auth_user_id — para un ADMINISTRADOR (que por RLS puede leer TODAS
+      // las filas de app_profiles, no solo la propia), PostgREST podía
+      // devolver varias filas, y rows[0] (sin ORDER BY) no era
+      // necesariamente la de quien acaba de loguearse. Con 1 sola cuenta
+      // real en el sistema esto nunca se notó — al crear la segunda cuenta
+      // ADMINISTRADOR, signIn() podía persistir el perfil de OTRA cuenta
+      // junto a la sesión correcta, y restoreSession() lo detectaba
+      // (auth_user_id de la sesión ≠ del perfil) y cerraba sesión —
+      // "SESIÓN REQUERIDA" inmediatamente después de un login válido.
+      // Filtrar explícitamente por la identidad de ESTA sesión (mismo
+      // criterio que ya usa manage-users/index.ts del lado servidor) hace
+      // que esto sea estructuralmente imposible, nunca solo "menos probable".
       const resp = await fetchWithTimeout(
-        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active`,
+        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active&auth_user_id=eq.${this._session.authUserId}`,
         { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${this._session.accessToken}` } }
       );
       if (classifyAuthStatus(resp.status) || !resp.ok) return null;

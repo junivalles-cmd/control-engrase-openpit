@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v83'; // v83: BUG-AUTH-001 — instrumentación TEMPORAL afinada: EPOCH_BEFORE/EPOCH_AFTER/CALLER_STACK en los 2 únicos sitios reales que mutan _sessionEpoch (signIn/signOut, confirmado por grep exhaustivo de los 3 archivos), SYNC_ID/REASON/CYCLE_EPOCH_CAPTURED/CURRENT_EPOCH_AT_EACH_ASSERT en fullSync().
+const CACHE = 'engrase-openpit-v84'; // v84: BUG-AUTH-001 — FIX REAL: Auth._fetchProfile() ahora filtra por auth_user_id=eq.<sesión actual> (antes traía rows[0] sin filtrar — con 2+ ADMINISTRADOR en el sistema podía adoptar el perfil de OTRA cuenta tras un login válido). restoreSession() además reconcilia un snapshot cacheado stale contra el servidor antes de cerrar sesión, en vez de cerrar de inmediato.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
