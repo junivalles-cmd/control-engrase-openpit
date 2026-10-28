@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v79'; // v79: BUG-AUTH-001 — instrumentación TEMPORAL de diagnóstico (console.debug, sin tokens/secrets) en restoreSession()/ensureFreshSession()/manageUsers(); quitar cuando se confirme la causa real.
+const CACHE = 'engrase-openpit-v80'; // v80: BUG-AUTH-001 — fix real: Auth.signIn() single-flight + guard de doble-submit en el login (session-epoch race que producía AUTH_REQUIRED espurio justo tras iniciar sesión).
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',

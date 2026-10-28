@@ -111,6 +111,7 @@ const Auth = {
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
   _sessionEpoch: 0,
   _signingOut: false,
+  _signingIn: false, // BUG-AUTH-001 (session-epoch race): un segundo signIn() concurrente (doble clic/Enter+clic en el login) nunca debe correr en paralelo — incrementaría _sessionEpoch dos veces y el fullSync() que acababa de arrancar detectaría su propio epoch como "obsoleto" y lanzaría AUTH_REQUIRED, aunque el login haya sido legítimo. El guard de la UI (renderSupabaseLoginForm) ya debería evitar un segundo submit, pero este lock vive en Auth mismo — la única fuente real de autoridad sobre _sessionEpoch — para que valga sin importar desde dónde se llame signIn().
   getSessionEpoch() { return this._sessionEpoch; },
   listeners: [],
 
@@ -147,41 +148,50 @@ const Auth = {
   // ya configurada (igual que el resto de la app) — nunca service_role.
   async signIn(username, password) {
     if (this._signingOut) throw new Error('AUTH_REQUIRED');
-    const epoch = ++this._sessionEpoch;
-    const identifier = usernameToAuthIdentifier(username);
-    const cfg = await DB.getConfig();
-    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
+    // BUG-AUTH-001: single-flight — un segundo signIn() mientras el primero
+    // sigue en vuelo (doble clic, Enter+clic) se rechaza de inmediato, ANTES
+    // de tocar _sessionEpoch, en vez de correr en paralelo y pisarlo.
+    if (this._signingIn) throw new Error('SIGN_IN_IN_PROGRESS');
+    this._signingIn = true;
+    try {
+      const epoch = ++this._sessionEpoch;
+      const identifier = usernameToAuthIdentifier(username);
+      const cfg = await DB.getConfig();
+      if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
 
-    const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
-      body: JSON.stringify({ email: identifier, password })
-    });
-    if (classifyAuthStatus(resp.status) || !resp.ok) {
-      throw new Error('Usuario o contraseña incorrectos.');
-    }
-    const data = await resp.json();
-    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
-    this._session = {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresAt: Date.now() + (data.expires_in || 0) * 1000,
-      authUserId: data.user && data.user.id
-    };
+      const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
+        body: JSON.stringify({ email: identifier, password })
+      });
+      if (classifyAuthStatus(resp.status) || !resp.ok) {
+        throw new Error('Usuario o contraseña incorrectos.');
+      }
+      const data = await resp.json();
+      if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
+      this._session = {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: Date.now() + (data.expires_in || 0) * 1000,
+        authUserId: data.user && data.user.id
+      };
 
-    const profile = await this._fetchProfile(cfg);
-    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
-    if (!isValidProfile(profile)) {
-      // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
-      // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
-      // nunca se deja una sesión Auth "a medias" sin perfil que la respalde.
-      await this.signOut();
-      throw new Error('Esta cuenta no tiene un perfil activo en la aplicación.');
+      const profile = await this._fetchProfile(cfg);
+      if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
+      if (!isValidProfile(profile)) {
+        // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
+        // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
+        // nunca se deja una sesión Auth "a medias" sin perfil que la respalde.
+        await this.signOut();
+        throw new Error('Esta cuenta no tiene un perfil activo en la aplicación.');
+      }
+      this._profile = profile;
+      await this._persistState();
+      this._notify({ status: 'signed_in', profile: this._profile });
+      return { user: this._profile, session: this._session };
+    } finally {
+      this._signingIn = false;
     }
-    this._profile = profile;
-    await this._persistState();
-    this._notify({ status: 'signed_in', profile: this._profile });
-    return { user: this._profile, session: this._session };
   },
 
   async signOut() {

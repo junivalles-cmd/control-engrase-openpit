@@ -3020,15 +3020,35 @@ function renderSupabaseLoginForm() {
       </div>
     </div>`;
   $('#btn-theme').addEventListener('click', openThemePicker);
+  // BUG-AUTH-001 (session-epoch race): este formulario era el único del
+  // módulo Supabase sin guard contra doble-submit (el resto ya usa
+  // withSubmitGuard()). Un doble clic o Enter+clic disparaba dos
+  // Auth.signIn() concurrentes, cada uno incrementando _sessionEpoch — el
+  // fullSync() inicial que el primer login dispara (enterAppAsProfile())
+  // detectaba su propio epoch como obsoleto y lanzaba AUTH_REQUIRED, pese a
+  // que el login había sido legítimo. `loginInFlight` bloquea un segundo
+  // submit ANTES de llamar a Auth.signIn() (el `if (this._signingIn)` de
+  // auth.js es la segunda capa, por si algo más además de este formulario
+  // llegara a invocarlo en paralelo).
+  let loginInFlight = false;
   $('#supabase-login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    if (loginInFlight) return;
+    loginInFlight = true;
+    const btn = ev.target.querySelector('button[type="submit"]');
+    const originalLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Iniciando sesión…';
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     $('#supabase-login-error').textContent = '';
     try {
       const { user: profile } = await Auth.signIn(fd.username, fd.password);
-      enterAppAsProfile(profile);
+      enterAppAsProfile(profile); // éxito: reemplaza la pantalla entera, no hace falta restaurar el botón
     } catch (e) {
-      $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+      if (e.message !== 'SIGN_IN_IN_PROGRESS') {
+        $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+      }
+      loginInFlight = false;
+      btn.disabled = false; btn.textContent = originalLabel;
     }
   });
 }
