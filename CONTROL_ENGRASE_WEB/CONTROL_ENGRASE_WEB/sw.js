@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v77'; // v77: LOTE A2 — master-data-import-gate.js agregado al precache.
+const CACHE = 'engrase-openpit-v84'; // v84: BUG-AUTH-001 — FIX REAL: Auth._fetchProfile() ahora filtra por auth_user_id=eq.<sesión actual> (antes traía rows[0] sin filtrar — con 2+ ADMINISTRADOR en el sistema podía adoptar el perfil de OTRA cuenta tras un login válido). restoreSession() además reconcilia un snapshot cacheado stale contra el servidor antes de cerrar sesión, en vez de cerrar de inmediato.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',

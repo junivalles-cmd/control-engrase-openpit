@@ -383,6 +383,284 @@ describe('O) Auth.manageUsers() — offline/sin sesión bloquea la administraci�
   });
 });
 
+describe('BUG-AUTH-001 (causa raíz real) — _fetchProfile() debe traer SIEMPRE el propio perfil, nunca "la primera fila visible por RLS"', () => {
+  // Fila en forma "servidor" (snake_case, igual que PostgREST) — un
+  // ADMINISTRADOR puede leer, por RLS, CUALQUIERA de estas filas, no solo
+  // la propia. El mock honra el filtro auth_user_id=eq.<uid> cuando está
+  // presente en la URL; SIN ese filtro devuelve TODAS las filas (así se
+  // reproduce exactamente el bug viejo si algo regresa a omitir el filtro).
+  const ROW_A = { auth_user_id: 'uid-A', app_user_id: 'u_adminA', display_name: 'Admin A', role: 'ADMINISTRADOR', active: true };
+  const ROW_B = { auth_user_id: 'uid-B', app_user_id: 'u_adminB', display_name: 'Admin B', role: 'ADMINISTRADOR', active: true };
+  function makeFetch(rows, { signInUid } = {}) {
+    return vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('/auth/v1/token')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'AT-' + signInUid, refresh_token: 'RT-' + signInUid, expires_in: 3600, user: { id: signInUid } }) };
+      }
+      if (u.includes('/rest/v1/app_profiles')) {
+        const m = u.match(/auth_user_id=eq\.([^&]+)/);
+        const visible = m ? rows.filter(r => r.auth_user_id === decodeURIComponent(m[1])) : rows;
+        return { ok: true, status: 200, json: async () => visible };
+      }
+      throw new Error('unexpected fetch ' + url);
+    });
+  }
+
+  it('A) Admin A inicia sesión (único en el sistema) -> perfil A, PROFILE_AUTH_USER_ID_MATCH=true', async () => {
+    vi.stubGlobal('fetch', makeFetch([ROW_A], { signInUid: 'uid-A' }));
+    const res = await Auth.signIn('admina', 'x');
+    expect(res.user.displayName).toBe('Admin A');
+    expect(res.user.authUserId).toBe('uid-A');
+    expect(Auth.getSession().authUserId).toBe('uid-A');
+    expect(Auth.isAuthenticated()).toBe(true);
+  });
+
+  it('B) con AMBOS admins ya en el sistema, B inicia sesión -> trae el perfil de B, NUNCA el de A por ser rows[0] (reproduce y cierra BUG-AUTH-001)', async () => {
+    // ROW_A primero en el arreglo a propósito: el bug viejo tomaba
+    // rows[0] de una respuesta SIN filtrar -> habría devuelto A.
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B], { signInUid: 'uid-B' }));
+    const res = await Auth.signIn('adminb', 'x');
+    expect(res.user.displayName).toBe('Admin B'); // NUNCA 'Admin A'
+    expect(res.user.authUserId).toBe('uid-B');
+    expect(Auth.getProfile().authUserId).toBe(Auth.getSession().authUserId); // match real
+  });
+
+  it('C) A -> logout -> B -> "reload" (instancia nueva de Auth, mismo db) -> sigue siendo B, sin red', async () => {
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B], { signInUid: 'uid-A' }));
+    await Auth.signIn('admina', 'x');
+    await Auth.signOut();
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B], { signInUid: 'uid-B' }));
+    await Auth.signIn('adminb', 'x');
+
+    const fresh = loadAuthLogic(db).Auth; // simula reabrir la app
+    vi.stubGlobal('navigator', { onLine: false });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no debería llamar a fetch'); }));
+    const result = await fresh.restoreSession();
+    expect(result.user.displayName).toBe('Admin B');
+    expect(fresh.isAuthenticated()).toBe(true);
+  });
+
+  it('D) B -> logout -> A -> perfil A correcto (no quedó contaminado por el login anterior de B)', async () => {
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B], { signInUid: 'uid-B' }));
+    await Auth.signIn('adminb', 'x');
+    await Auth.signOut();
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B], { signInUid: 'uid-A' }));
+    const res = await Auth.signIn('admina', 'x');
+    expect(res.user.displayName).toBe('Admin A');
+    expect(Auth.getProfile().authUserId).toBe('uid-A');
+  });
+
+  it('E) sesión válida de B + snapshot cacheado stale de A, online -> restoreSession() recupera el perfil REAL de B desde el servidor, NUNCA cierra sesión', async () => {
+    await db.setAuthTokens({ accessToken: 'AT-B', refreshToken: 'RT-B', expiresAt: Date.now() + 3600000, authUserId: 'uid-B' });
+    await db.setAuthProfileSnapshot({ authUserId: 'uid-A', appUserId: 'u_adminA', displayName: 'Admin A', role: 'ADMINISTRADOR', active: true }); // snapshot VIEJO, de otra cuenta
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', makeFetch([ROW_A, ROW_B]));
+
+    const result = await Auth.restoreSession();
+    expect(result.user.displayName).toBe('Admin B'); // reconciliado con el servidor, nunca con el snapshot viejo
+    expect(Auth.isAuthenticated()).toBe(true); // NUNCA cerró sesión — pudo confirmar contra el backend
+    const persisted = await db.getAuthProfileSnapshot();
+    expect(persisted.authUserId).toBe('uid-B'); // el snapshot stale queda corregido, no solo ignorado en memoria
+  });
+
+  it('F) sesión válida pero el auth.uid no tiene ninguna fila en app_profiles -> rechazo controlado (signOut), nunca un acceso a medias', async () => {
+    await db.setAuthTokens({ accessToken: 'AT-X', refreshToken: 'RT-X', expiresAt: Date.now() + 3600000, authUserId: 'uid-X' });
+    await db.setAuthProfileSnapshot({ authUserId: 'uid-A', appUserId: 'u_adminA', displayName: 'Admin A', role: 'ADMINISTRADOR', active: true });
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', makeFetch([ROW_A])); // uid-X no tiene fila
+
+    const result = await Auth.restoreSession();
+    expect(result).toBeNull();
+    expect(Auth.isAuthenticated()).toBe(false);
+    expect(await db.getAuthTokens()).toBeNull(); // signOut() real, limpia todo
+  });
+
+  it('G) el auth.uid SÍ tiene fila pero está inactive -> rechazo controlado (signOut), nunca se adopta un perfil inactivo', async () => {
+    await db.setAuthTokens({ accessToken: 'AT-B', refreshToken: 'RT-B', expiresAt: Date.now() + 3600000, authUserId: 'uid-B' });
+    await db.setAuthProfileSnapshot({ authUserId: 'uid-A', appUserId: 'u_adminA', displayName: 'Admin A', role: 'ADMINISTRADOR', active: true });
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', makeFetch([ROW_A, { ...ROW_B, active: false }]));
+
+    const result = await Auth.restoreSession();
+    expect(result).toBeNull();
+    expect(Auth.isAuthenticated()).toBe(false);
+  });
+
+  it('mismatch offline (sin red para reconciliar) -> sigue siendo conservador: cierra sesión, nunca atribuye el perfil de A a la sesión de B', async () => {
+    await db.setAuthTokens({ accessToken: 'AT-B', refreshToken: 'RT-B', expiresAt: Date.now() + 3600000, authUserId: 'uid-B' });
+    await db.setAuthProfileSnapshot({ authUserId: 'uid-A', appUserId: 'u_adminA', displayName: 'Admin A', role: 'ADMINISTRADOR', active: true });
+    vi.stubGlobal('navigator', { onLine: false });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no debería llamar a fetch offline'); }));
+
+    const result = await Auth.restoreSession();
+    expect(result).toBeNull();
+    expect(Auth.isAuthenticated()).toBe(false);
+  });
+});
+
+describe('BUG-AUTH-001 (session-epoch race) — Auth.signIn() single-flight: un doble submit del login nunca debe pisar _sessionEpoch', () => {
+  const fetchOkFor = (username, authUid) => vi.fn(async (url) => {
+    if (String(url).includes('/auth/v1/token')) return { ok: true, status: 200, json: async () => ({ access_token: 'AT-' + username, refresh_token: 'RT-' + username, expires_in: 3600, user: { id: authUid } }) };
+    if (String(url).includes('/rest/v1/app_profiles')) return { ok: true, status: 200, json: async () => ([{ auth_user_id: authUid, app_user_id: 'u_' + username, display_name: username, role: 'ADMINISTRADOR', active: true }]) };
+    throw new Error('unexpected fetch ' + url);
+  });
+
+  it('A) login normal: signIn=1 exitoso, epoch avanza exactamente una vez', async () => {
+    vi.stubGlobal('fetch', fetchOkFor('jvalles', 'u1'));
+    const epochBefore = Auth.getSessionEpoch();
+    const res = await Auth.signIn('jvalles', 'x');
+    expect(res.user.role).toBe('ADMINISTRADOR');
+    expect(Auth.getSessionEpoch()).toBe(epochBefore + 1);
+    expect(Auth.isAuthenticated()).toBe(true);
+  });
+
+  it('B/C) doble clic o Enter+clic (dos Auth.signIn() disparados casi a la vez) -> solo UNO corre de verdad; el otro se rechaza ANTES de tocar la red ni el epoch', async () => {
+    const fetchMock = fetchOkFor('jvalles', 'u1');
+    vi.stubGlobal('fetch', fetchMock);
+    const epochBefore = Auth.getSessionEpoch();
+
+    const [a, b] = await Promise.allSettled([
+      Auth.signIn('jvalles', 'x'),
+      Auth.signIn('jvalles', 'x'),
+    ]);
+    const fulfilled = [a, b].filter(r => r.status === 'fulfilled');
+    const rejected = [a, b].filter(r => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason.message).toBe('SIGN_IN_IN_PROGRESS');
+    expect(Auth.getSessionEpoch()).toBe(epochBefore + 1); // UNA sola vez, no dos
+    expect(fetchMock).toHaveBeenCalledTimes(2); // token+profile del único signIn que corrió — el segundo nunca llegó a la red
+    expect(Auth.isAuthenticated()).toBe(true);
+  });
+
+  it('tras el primero resolver, un signIn() posterior (ya no concurrente) vuelve a funcionar con normalidad', async () => {
+    vi.stubGlobal('fetch', fetchOkFor('jvalles', 'u1'));
+    await Auth.signIn('jvalles', 'x');
+    await Auth.signOut();
+    vi.stubGlobal('fetch', fetchOkFor('jvalles', 'u1'));
+    const epochBefore = Auth.getSessionEpoch();
+    await Auth.signIn('jvalles', 'x');
+    expect(Auth.getSessionEpoch()).toBe(epochBefore + 1);
+    expect(Auth.isAuthenticated()).toBe(true);
+  });
+});
+
+describe('BUG-AUTH-001 — ensureFreshSession(): un token expirado a mitad de una acción privilegiada no debe fingirse "sin permiso"', () => {
+  it('sesión con token vigente -> manageUsers llega directo a la red, sin ningún intento de refresh', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => ({ ok: true }) }; }));
+    const res = await Auth.manageUsers('CREATE_USER', { display_name: 'X', username: 'x', role: 'ADMINISTRADOR', temp_password: 'abcd1234' });
+    expect(res).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('/functions/v1/manage-users');
+  });
+
+  it('token ya expirado a mitad del formulario (refresh token todavía vigente, online) -> refresca sesión+perfil y LUEGO llega a manage-users, en ese orden', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(true);
+    // Simula el paso del tiempo mientras la persona llena "Nuevo usuario"
+    // (BUG-AUTH-001 real): el access token expira, el refresh token sigue
+    // vigente — exactamente el estado que antes producía AUTH_REQUIRED
+    // sin tocar la red.
+    Auth._session = { ...Auth._session, expiresAt: Date.now() - 1000 };
+    expect(Auth.isAuthenticated()).toBe(false);
+
+    const order = [];
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('grant_type=refresh_token')) {
+        order.push('refresh');
+        return { ok: true, status: 200, json: async () => ({ access_token: 'NEW-AT', refresh_token: 'NEW-RT', expires_in: 3600, user: { id: 'u1' } }) };
+      }
+      if (String(url).includes('/rest/v1/app_profiles')) {
+        order.push('profile');
+        return { ok: true, status: 200, json: async () => ([{ auth_user_id: 'u1', app_user_id: 'u_jvalles', display_name: 'Junior Valles', role: 'ADMINISTRADOR', active: true }]) };
+      }
+      if (String(url).includes('/functions/v1/manage-users')) {
+        order.push('manage-users');
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      throw new Error('unexpected fetch ' + url);
+    }));
+
+    const res = await Auth.manageUsers('CREATE_USER', { display_name: 'X', username: 'x', role: 'ADMINISTRADOR', temp_password: 'abcd1234' });
+    expect(order).toEqual(['refresh', 'profile', 'manage-users']);
+    expect(res).toEqual({ ok: true });
+    expect(Auth.isAuthenticated()).toBe(true); // sesión queda realmente renovada, no solo "esta llamada coló"
+  });
+
+  it('token expirado + SIN refresh token (o ya revocado por el servidor) -> nunca llega a manage-users, AUTH_REQUIRED, "sesión expirada" nunca se confunde con falta de rol', async () => {
+    await db.setAuthTokens({ ...SESSION_EXPIRADA, refreshToken: 'RT-REVOCADO' });
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    // Restaura offline primero (sin red real) para dejar en memoria la
+    // sesión expirada + el perfil cacheado tal cual, igual que el resto
+    // del archivo (ver "E) access token expirado + offline") — luego
+    // vuelve a estar online para intentar la acción privilegiada.
+    vi.stubGlobal('navigator', { onLine: false });
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(false);
+
+    vi.stubGlobal('navigator', { onLine: true });
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('grant_type=refresh_token')) return { ok: false, status: 401, json: async () => ({}) };
+      throw new Error('no debería llegar a manage-users: ' + url);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(Auth.manageUsers('CREATE_USER', { display_name: 'X', username: 'x', role: 'ADMINISTRADOR', temp_password: 'abcd1234' }))
+      .rejects.toThrow('AUTH_REQUIRED');
+    expect(fetchMock.mock.calls.some(c => String(c[0]).includes('manage-users'))).toBe(false);
+    expect(Auth.isAuthenticated()).toBe(false);
+  });
+
+  it('token expirado + offline -> AUTH_REQUIRED sin red, sesión/perfil cacheados NUNCA se borran (nada de signOut por timeout/fallo de red — no debe romper trabajo offline)', async () => {
+    await db.setAuthTokens(SESSION_EXPIRADA);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    vi.stubGlobal('navigator', { onLine: false });
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(false);
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.manageUsers('CREATE_USER', {})).rejects.toThrow('AUTH_REQUIRED');
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Nunca se cerró sesión: el snapshot sigue intacto para seguir
+    // mostrando identidad/trabajo local (mismo criterio que restoreSession()).
+    expect(await db.getAuthTokens()).not.toBeNull();
+    expect(await db.getAuthProfileSnapshot()).not.toBeNull();
+    expect(Auth.getProfile().displayName).toBe('Junior Valles');
+  });
+
+  it('sesión ADMIN válida -> el servidor decide 200 (ADMIN_VALID), nunca una validación de rol duplicada en el cliente', async () => {
+    await db.setAuthTokens(SESSION_VIGENTE);
+    await db.setAuthProfileSnapshot(PERFIL_ADMIN);
+    await Auth.restoreSession();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, app_user_id: 'u_nuevo', auth_user_id: 'auth-nuevo' }) })));
+    const res = await Auth.manageUsers('CREATE_USER', { display_name: 'Nuevo Admin', username: 'nuevoadmin', role: 'ADMINISTRADOR', temp_password: 'abcd1234' });
+    expect(res.ok).toBe(true);
+  });
+
+  it('sesión válida pero el servidor rechaza por rol (no-admin real) -> la llamada SÍ llega a la red y el 403/AUTH_FORBIDDEN se propaga tal cual, nunca se reinterpreta como AUTH_REQUIRED', async () => {
+    const PERFIL_SUPERVISOR = { authUserId: 'u2', appUserId: 'u_sup', displayName: 'Supervisor X', role: 'SUPERVISOR', active: true };
+    await db.setAuthTokens({ ...SESSION_VIGENTE, authUserId: 'u2' });
+    await db.setAuthProfileSnapshot(PERFIL_SUPERVISOR);
+    await Auth.restoreSession();
+    expect(Auth.isAuthenticated()).toBe(true); // sesión real y válida — solo el ROL no alcanza, decide el servidor
+
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: 'AUTH_FORBIDDEN' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(Auth.manageUsers('CREATE_USER', { display_name: 'X', username: 'x', role: 'LUBRICADOR', temp_password: 'abcd1234' }))
+      .rejects.toThrow('AUTH_FORBIDDEN');
+    expect(fetchMock).toHaveBeenCalledTimes(1); // SÍ llegó a la red — nunca un gate de rol local
+  });
+});
+
 describe('P) Auth.changeOwnPassword() — lote "Mi Perfil"', () => {
   it('sin sesión autenticada, rechaza antes de llamar a fetch', async () => {
     const fetchMock = vi.fn();

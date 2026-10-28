@@ -99,11 +99,37 @@ function isValidProfile(profile) {
   return !!profile && profile.active === true && AUTH_VALID_ROLES.includes(profile.role);
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 — QUITAR una vez confirmada la causa real
+// (ver restoreSession()/ensureFreshSession()/manageUsers() más abajo).
+// NUNCA imprime tokens/JWT/passwords/keys — solo booleanos/estados cortos.
+function _authDebug(tag, fields) {
+  try { console.debug('[BUG-AUTH-001]', tag, fields); } catch (e) {}
+}
+
+// TEMP DIAGNÓSTICO BUG-AUTH-001 — línea de tiempo de _sessionEpoch entre
+// auth.js/sync.js/app.js (duplicada ahí, mismo criterio que
+// usernameToAuthIdentifier()/svHeaders() entre este archivo y la Edge
+// Function: cada archivo corre en su propio contexto). window.__bugAuth001T0
+// es compartido (primer valor leído entre los 3 archivos gana) para poder
+// ordenar los eventos en una sola línea de tiempo real.
+function _epochDebug(event, sessionEpoch, authUidPresent, extra) {
+  try {
+    if (typeof window === 'undefined') return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    window.__bugAuth001T0 = window.__bugAuth001T0 == null ? now : window.__bugAuth001T0;
+    console.debug('[BUG-AUTH-001][EPOCH]', {
+      EVENT: event, SESSION_EPOCH: sessionEpoch, AUTH_UID_PRESENT: !!authUidPresent,
+      TIMESTAMP_RELATIVE: Math.round(now - window.__bugAuth001T0), ...(extra || {}),
+    });
+  } catch (e) {}
+}
+
 const Auth = {
   _session: null, // { accessToken, refreshToken, expiresAt, authUserId } en memoria
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
   _sessionEpoch: 0,
   _signingOut: false,
+  _signingIn: false, // BUG-AUTH-001 (session-epoch race): un segundo signIn() concurrente (doble clic/Enter+clic en el login) nunca debe correr en paralelo — incrementaría _sessionEpoch dos veces y el fullSync() que acababa de arrancar detectaría su propio epoch como "obsoleto" y lanzaría AUTH_REQUIRED, aunque el login haya sido legítimo. El guard de la UI (renderSupabaseLoginForm) ya debería evitar un segundo submit, pero este lock vive en Auth mismo — la única fuente real de autoridad sobre _sessionEpoch — para que valga sin importar desde dónde se llame signIn().
   getSessionEpoch() { return this._sessionEpoch; },
   listeners: [],
 
@@ -139,47 +165,69 @@ const Auth = {
   // AUTH_MODE='supabase' (la UI legacy nunca la invoca). Usa la ANON key
   // ya configurada (igual que el resto de la app) — nunca service_role.
   async signIn(username, password) {
+    _epochDebug('SIGNIN_START', this._sessionEpoch, !!(this._session && this._session.authUserId));
     if (this._signingOut) throw new Error('AUTH_REQUIRED');
-    const epoch = ++this._sessionEpoch;
-    const identifier = usernameToAuthIdentifier(username);
-    const cfg = await DB.getConfig();
-    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
+    // BUG-AUTH-001: single-flight — un segundo signIn() mientras el primero
+    // sigue en vuelo (doble clic, Enter+clic) se rechaza de inmediato, ANTES
+    // de tocar _sessionEpoch, en vez de correr en paralelo y pisarlo.
+    if (this._signingIn) throw new Error('SIGN_IN_IN_PROGRESS');
+    this._signingIn = true;
+    try {
+      const epochBefore = this._sessionEpoch;
+      const epoch = ++this._sessionEpoch;
+      _epochDebug('SIGNIN_EPOCH_CHANGE', this._sessionEpoch, !!(this._session && this._session.authUserId), {
+        EPOCH_BEFORE: epochBefore, EPOCH_AFTER: this._sessionEpoch,
+        CALLER_STACK: (new Error().stack || '').split('\n').slice(2, 5).map(s => s.trim()).join(' | '),
+      });
+      const identifier = usernameToAuthIdentifier(username);
+      const cfg = await DB.getConfig();
+      if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
 
-    const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
-      body: JSON.stringify({ email: identifier, password })
-    });
-    if (classifyAuthStatus(resp.status) || !resp.ok) {
-      throw new Error('Usuario o contraseña incorrectos.');
-    }
-    const data = await resp.json();
-    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
-    this._session = {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresAt: Date.now() + (data.expires_in || 0) * 1000,
-      authUserId: data.user && data.user.id
-    };
+      const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
+        body: JSON.stringify({ email: identifier, password })
+      });
+      if (classifyAuthStatus(resp.status) || !resp.ok) {
+        throw new Error('Usuario o contraseña incorrectos.');
+      }
+      const data = await resp.json();
+      if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
+      this._session = {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: Date.now() + (data.expires_in || 0) * 1000,
+        authUserId: data.user && data.user.id
+      };
 
-    const profile = await this._fetchProfile(cfg);
-    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
-    if (!isValidProfile(profile)) {
-      // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
-      // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
-      // nunca se deja una sesión Auth "a medias" sin perfil que la respalde.
-      await this.signOut();
-      throw new Error('Esta cuenta no tiene un perfil activo en la aplicación.');
+      const profile = await this._fetchProfile(cfg);
+      if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
+      if (!isValidProfile(profile)) {
+        // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
+        // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
+        // nunca se deja una sesión Auth "a medias" sin perfil que la respalde.
+        await this.signOut();
+        throw new Error('Esta cuenta no tiene un perfil activo en la aplicación.');
+      }
+      this._profile = profile;
+      await this._persistState();
+      this._notify({ status: 'signed_in', profile: this._profile });
+      _epochDebug('SIGNIN_END', this._sessionEpoch, !!(this._session && this._session.authUserId));
+      return { user: this._profile, session: this._session };
+    } finally {
+      this._signingIn = false;
     }
-    this._profile = profile;
-    await this._persistState();
-    this._notify({ status: 'signed_in', profile: this._profile });
-    return { user: this._profile, session: this._session };
   },
 
   async signOut() {
+    const epochBefore = this._sessionEpoch;
+    _epochDebug('SIGNOUT_CALLED', this._sessionEpoch, !!(this._session && this._session.authUserId), {
+      EPOCH_BEFORE: epochBefore,
+      CALLER_STACK: (new Error().stack || '').split('\n').slice(2, 5).map(s => s.trim()).join(' | '),
+    });
     this._signingOut = true;
     ++this._sessionEpoch;
+    _epochDebug('SIGNOUT_EPOCH_CHANGE', this._sessionEpoch, false, { EPOCH_BEFORE: epochBefore, EPOCH_AFTER: this._sessionEpoch });
     this._session = null;
     this._profile = null;
     // Borra los DOS namespaces — nunca alcanza con limpiar uno solo:
@@ -202,25 +250,79 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
-    if (this._signingOut) return null;
+    _epochDebug('RESTORE_START', this._sessionEpoch, !!(this._session && this._session.authUserId));
+    const result = await this._restoreSessionImpl();
+    _epochDebug('RESTORE_END', this._sessionEpoch, !!(this._session && this._session.authUserId));
+    return result;
+  },
+
+  async _restoreSessionImpl() {
+    if (this._signingOut) { _authDebug('restoreSession:exit', { branch: 'signingOut' }); return null; }
     const epoch = this._sessionEpoch;
     const session = await DB.getAuthTokens();
-    if (epoch !== this._sessionEpoch) return null;
-    if (!session) return null;
+    if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_1' }); return null; }
+    if (!session) {
+      _authDebug('restoreSession:exit', { branch: 'no_session_in_db', GET_SESSION_HAS_SESSION: false });
+      return null;
+    }
     this._session = session;
     const snapshot = await DB.getAuthProfileSnapshot();
-    if (epoch !== this._sessionEpoch) return null;
+    if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_2' }); return null; }
     this._profile = snapshot;
+    _authDebug('restoreSession:loaded', {
+      AUTH_CLIENT_READY: true,
+      GET_SESSION_HAS_SESSION: true,
+      HAS_ACCESS_TOKEN: !!this._session.accessToken,
+      HAS_REFRESH_TOKEN: !!this._session.refreshToken,
+      SESSION_EXPIRES_AT_PRESENT: !!this._session.expiresAt,
+      SESSION_EXPIRED: !!this._session.expiresAt && Date.now() >= this._session.expiresAt,
+      NETWORK_ONLINE: navigator.onLine,
+      PROFILE_FOUND: !!snapshot,
+      PROFILE_ACTIVE: snapshot ? snapshot.active : null,
+      PROFILE_ROLE: snapshot ? snapshot.role : null,
+      AUTH_USER_ID_PRESENT: !!this._session.authUserId,
+      PROFILE_AUTH_USER_ID_MATCH: !!(snapshot && snapshot.authUserId === this._session.authUserId),
+    });
     // A valid token and a separately persisted snapshot must belong to the
     // same Auth identity. A crash or account switch may never pair them.
+    // BUG-AUTH-001: con _fetchProfile() ya corregido (filtra por
+    // auth_user_id de la sesión) esto ya no debería ocurrir tras un login
+    // normal — pero un snapshot realmente viejo de OTRA cuenta en este
+    // dispositivo (o uno persistido antes de este fix) sigue siendo
+    // posible. En vez de cerrar sesión de inmediato, intenta reconciliar:
+    // si hay red, pide al servidor el perfil REAL de la identidad que
+    // ACABA de autenticarse (nunca confía en el snapshot viejo) — solo
+    // cierra sesión si el servidor confirma que no hay nada válido para
+    // esa cuenta. Offline no cambia: sin forma de confirmar nada contra el
+    // servidor, sigue siendo conservador (cierra sesión), nunca atribuye
+    // el perfil de otra cuenta a esta sesión.
     if (snapshot && snapshot.authUserId !== this._session.authUserId) {
-      await this.signOut();
-      return null;
+      if (!navigator.onLine) {
+        await this.signOut();
+        _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_offline_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
+        return null;
+      }
+      let freshProfile = null;
+      try {
+        freshProfile = await this._fetchProfile(await DB.getConfig());
+      } catch (e) {
+        freshProfile = null; // backend inalcanzable -> no se puede confirmar nada, mismo criterio que offline
+      }
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_mismatch_recovery' }); return null; }
+      if (!isValidProfile(freshProfile) || freshProfile.authUserId !== this._session.authUserId) {
+        await this.signOut();
+        _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_no_valid_profile_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
+        return null;
+      }
+      this._profile = freshProfile;
+      await this._persistState();
+      _authDebug('restoreSession:recovered_mismatch', { PROFILE_ROLE: freshProfile.role });
     }
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
       this._notify({ status: 'restored', profile: this._profile });
+      _authDebug('restoreSession:exit', { branch: 'stillValid_noRefreshNeeded', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
       return { user: this._profile, session: this._session };
     }
 
@@ -232,18 +334,25 @@ const Auth = {
       // es"), solo bloquea que sync.js intente escribir con un token que
       // el servidor va a rechazar.
       this._notify({ status: 'pending_validation', profile: this._profile });
+      _authDebug('restoreSession:exit', { branch: 'expired_offline_noRefreshAttempted', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
       return { user: this._profile, session: this._session };
     }
 
+    _authDebug('restoreSession:refresh_attempt', { REFRESH_ATTEMPTED: true });
     try {
       await this._refreshSession();
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_after_refresh' }); return null; }
       await this.refreshProfile();
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_after_refreshProfile' }); return null; }
       this._notify({ status: 'restored', profile: this._profile });
+      _authDebug('restoreSession:exit', {
+        branch: 'refresh_success', REFRESH_SUCCESS: true,
+        PROFILE_FOUND: !!this._profile, PROFILE_ACTIVE: this._profile ? this._profile.active : null, PROFILE_ROLE: this._profile ? this._profile.role : null,
+        IS_AUTHENTICATED_AFTER: this.isAuthenticated(),
+      });
       return { user: this._profile, session: this._session };
     } catch (e) {
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_in_catch' }); return null; }
       if (!e.authRejected && isNetworkFailure(e)) {
         // Backend no disponible ahora mismo (navigator.onLine=true no lo
         // garantiza — ver Bloque B, hallazgo real del piloto Android).
@@ -254,11 +363,13 @@ const Auth = {
         // sigue dando false con el token sin refrescar) si eso alcanza
         // para sincronizar — nunca sincroniza "a medias".
         this._notify({ status: 'pending_validation', profile: this._profile });
+        _authDebug('restoreSession:exit', { branch: 'refresh_network_failure', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
         return { user: this._profile, session: this._session };
       }
       // Rechazo REAL del servidor (refresh token inválido/revocado) -> ya
       // no hay sesión confiable; se limpia y se exige login real de nuevo
       // (nunca fallback a anon).
+      _authDebug('restoreSession:exit', { branch: 'refresh_rejected_signOut', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, authRejected: !!(e && e.authRejected) });
       await this.signOut();
       return null;
     }
@@ -335,6 +446,66 @@ const Auth = {
     return { ok: true, context, changed, firstSnapshot: !previous };
   },
 
+  // BUG-AUTH-001: renderAuthGateSupabase()/enterAppAsProfile() (app.js)
+  // construyen App.currentUser desde el snapshot cacheado en IndexedDB
+  // SIN verificar isAuthenticated() — así que la UI puede mostrarse
+  // completamente funcional (incl. el botón "Nuevo usuario") mientras el
+  // access token ya expiró de verdad (típicamente: la persona tardó en
+  // llenar el formulario). Antes de eso, manageUsers() solo miraba
+  // isAuthenticated() crudo y lanzaba AUTH_REQUIRED sin intentar nada —
+  // perdía una sesión perfectamente recuperable con su refresh token
+  // todavía vigente. Esta función intenta ESE refresh, una sola vez,
+  // antes de rendirse — nunca reemplaza la autorización real de rol
+  // (ADMINISTRADOR activo), que sigue siendo exclusiva del servidor
+  // (decideCallerAuthorization() en manage-users/index.ts): si el refresh
+  // funciona, la llamada sigue su curso normal y el servidor decide
+  // 200/403 igual que siempre.
+  // Nunca cierra sesión por un fallo de RED durante el intento (mismo
+  // criterio que restoreSession(): un backend inalcanzable no es lo mismo
+  // que una sesión inválida, y cerrar sesión por eso rompería trabajo
+  // offline en otras pantallas) — solo signOut() si el servidor rechaza
+  // EXPLÍCITAMENTE el refresh token (revocado/expirado de verdad).
+  async ensureFreshSession() {
+    const before = this.isAuthenticated();
+    _authDebug('ensureFreshSession:entry', {
+      IS_AUTHENTICATED_BEFORE: before,
+      GET_SESSION_HAS_SESSION: !!this._session,
+      HAS_ACCESS_TOKEN: !!(this._session && this._session.accessToken),
+      HAS_REFRESH_TOKEN: !!(this._session && this._session.refreshToken),
+      SESSION_EXPIRES_AT_PRESENT: !!(this._session && this._session.expiresAt),
+      SESSION_EXPIRED: !!(this._session && this._session.expiresAt && Date.now() >= this._session.expiresAt),
+      NETWORK_ONLINE: navigator.onLine,
+      PROFILE_FOUND: !!this._profile,
+      PROFILE_ACTIVE: this._profile ? this._profile.active : null,
+      PROFILE_ROLE: this._profile ? this._profile.role : null,
+    });
+    if (before) { _authDebug('ensureFreshSession:exit', { branch: 'already_authenticated', IS_AUTHENTICATED_AFTER: true }); return true; }
+    if (this._signingOut || !this._session || !this._session.refreshToken) {
+      _authDebug('ensureFreshSession:exit', { branch: 'no_refresh_token_or_signingOut', REFRESH_ATTEMPTED: false, IS_AUTHENTICATED_AFTER: false });
+      return false;
+    }
+    if (!navigator.onLine) {
+      _authDebug('ensureFreshSession:exit', { branch: 'offline', REFRESH_ATTEMPTED: false, IS_AUTHENTICATED_AFTER: false });
+      return false;
+    }
+    _authDebug('ensureFreshSession:refresh_attempt', { REFRESH_ATTEMPTED: true });
+    try {
+      await this._refreshSession();
+      await this.refreshProfile();
+      const after = this.isAuthenticated();
+      _authDebug('ensureFreshSession:exit', {
+        branch: 'refresh_completed', REFRESH_SUCCESS: true,
+        PROFILE_FOUND: !!this._profile, PROFILE_ACTIVE: this._profile ? this._profile.active : null, PROFILE_ROLE: this._profile ? this._profile.role : null,
+        IS_AUTHENTICATED_AFTER: after,
+      });
+      return after;
+    } catch (e) {
+      if (e && e.authRejected) await this.signOut();
+      _authDebug('ensureFreshSession:exit', { branch: 'refresh_failed', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, authRejected: !!(e && e.authRejected), IS_AUTHENTICATED_AFTER: false });
+      return false;
+    }
+  },
+
   // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge
   // Function server-side (supabase/functions/manage-users), nunca habla
   // directo con auth.admin.* ni con service_role desde el cliente (esa
@@ -342,7 +513,8 @@ const Auth = {
   // propio de la sesión ya autenticada — la Edge Function es quien vuelve
   // a validar server-side que quien llama es ADMINISTRADOR activo, nunca
   // se confía en el rol local. Requiere red: sin sesión autenticada
-  // (offline o sesión no vigente) lanza sin intentar la llamada.
+  // (offline o sesión no vigente, ni siquiera tras intentar refrescarla
+  // vía ensureFreshSession()) lanza sin intentar la llamada.
   // FIX formulario "Agregar usuario". Auditoría: el wiring con la Edge
   // Function ya era correcto — el problema real era que esta función
   // lanzaba mensajes ya redactados a medias, mezclados con códigos crudos
@@ -353,11 +525,16 @@ const Auth = {
   // (app.js, función manageUsersErrorMessage), una sola vez, para las 4
   // pantallas que llaman esto en vez de repetir el mapeo en cada una.
   async manageUsers(action, payload = {}) {
-    if (!this.isAuthenticated()) {
+    if (!(await this.ensureFreshSession())) {
+      _authDebug('manageUsers:blocked', { action, MANAGE_USERS_FETCH_REACHED: false, FAIL_POINT: 'ensureFreshSession_false' });
       throw new Error('AUTH_REQUIRED');
     }
     const cfg = await DB.getConfig();
-    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+    if (!cfg || !cfg.url || !cfg.anonKey) {
+      _authDebug('manageUsers:blocked', { action, MANAGE_USERS_FETCH_REACHED: false, FAIL_POINT: 'SYNC_NOT_CONFIGURED' });
+      throw new Error('SYNC_NOT_CONFIGURED');
+    }
+    _authDebug('manageUsers:fetch', { action, MANAGE_USERS_FETCH_REACHED: true });
     let resp;
     try {
       resp = await fetchWithTimeout(`${cfg.url}/functions/v1/manage-users`, {
@@ -494,10 +671,23 @@ const Auth = {
   },
 
   async _fetchProfile(cfg) {
-    if (!this._session || !this._session.accessToken) return null;
+    if (!this._session || !this._session.accessToken || !this._session.authUserId) return null;
     try {
+      // BUG-AUTH-001 (causa raíz real): esta consulta NO filtraba por
+      // auth_user_id — para un ADMINISTRADOR (que por RLS puede leer TODAS
+      // las filas de app_profiles, no solo la propia), PostgREST podía
+      // devolver varias filas, y rows[0] (sin ORDER BY) no era
+      // necesariamente la de quien acaba de loguearse. Con 1 sola cuenta
+      // real en el sistema esto nunca se notó — al crear la segunda cuenta
+      // ADMINISTRADOR, signIn() podía persistir el perfil de OTRA cuenta
+      // junto a la sesión correcta, y restoreSession() lo detectaba
+      // (auth_user_id de la sesión ≠ del perfil) y cerraba sesión —
+      // "SESIÓN REQUERIDA" inmediatamente después de un login válido.
+      // Filtrar explícitamente por la identidad de ESTA sesión (mismo
+      // criterio que ya usa manage-users/index.ts del lado servidor) hace
+      // que esto sea estructuralmente imposible, nunca solo "menos probable".
       const resp = await fetchWithTimeout(
-        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active`,
+        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active&auth_user_id=eq.${this._session.authUserId}`,
         { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${this._session.accessToken}` } }
       );
       if (classifyAuthStatus(resp.status) || !resp.ok) return null;

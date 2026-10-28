@@ -446,6 +446,88 @@ describe('N) P0-2 cierre — gate completo de fullSync() en AUTH_MODE="supabase"
   });
 });
 
+describe('BUG-AUTH-001 (session-epoch race) — fullSync() ante restoreSession() concurrente: el guard de epoch se mantiene intacto', () => {
+  it('D) restoreSession() durante fullSync() con la MISMA sesión (token vigente, sin refresh) no cambia _sessionEpoch -> sync normal', async () => {
+    await db.setAuthTokens({ accessToken: 'OK', refreshToken: 'RT', expiresAt: Date.now() + 3600000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    await db.setAuthorizationContext('u_jvalles', { authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true, scopeType: 'GLOBAL', authorizedCrewIds: [], authorizedLocationIds: [], authorizationFingerprint: 'fp1', rowScopeEnforced: true });
+    await db.setConfig({ url: 'https://fake.test', anonKey: 'anon-test', lastPull: T0, activeAccountSyncKey: 'u1:fp1', accountSyncStates: { 'u1:fp1': { bootstrapComplete: true, lastPull: T0 } } });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('/rpc/get_authorization_context')) return { ok: true, status: 200, json: async () => ({ status: 'AUTHORIZED', context: { authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true, scopeType: 'GLOBAL', authorizedCrewIds: [], authorizedLocationIds: [], authorizationFingerprint: 'fp1', rowScopeEnforced: true } }) };
+      return { ok: true, status: 200, json: async () => [] }; // GET pull: sin novedades
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const epochBefore = Auth.getSessionEpoch();
+    let notified = null;
+    Sync.onChange(s => { notified = s; });
+    await Sync.fullSync();
+    expect(Auth.getSessionEpoch()).toBe(epochBefore); // restoreSession() de una sesión vigente NUNCA toca el epoch
+    expect(notified.status).toBe('ok');
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('grant_type=refresh_token'))).toBe(false); // ni intentó refrescar
+  });
+
+  it('E) signOut() REAL disparado mientras fullSync() está esperando el refresh de restoreSession() -> epoch SÍ cambia, AUTH_REQUIRED (nunca completa con la sesión vieja)', async () => {
+    await db.setAuthTokens({ accessToken: 'OLD', refreshToken: 'RT', expiresAt: Date.now() - 1000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_jvalles', displayName: 'Junior Valles', role: 'ADMINISTRADOR', active: true });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    const epochBefore = Auth.getSessionEpoch();
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('grant_type=refresh_token')) {
+        // signOut() REAL y completo, en medio del refresh de otro ciclo —
+        // nunca simulado: mismo método que usa el logout real del usuario.
+        await Auth.signOut();
+        return { ok: true, status: 200, json: async () => ({ access_token: 'NEW', refresh_token: 'NEW-RT', expires_in: 3600, user: { id: 'u1' } }) };
+      }
+      throw new Error('no debería llegar a sincronizar con la sesión vieja: ' + url);
+    }));
+    let notified = null;
+    Sync.onChange(s => { notified = s; });
+    await Sync.fullSync();
+    expect(Auth.getSessionEpoch()).not.toBe(epochBefore); // signOut() avanzó el epoch de verdad
+    expect(notified.status).toBe('AUTH_REQUIRED');
+    expect(Auth.isAuthenticated()).toBe(false);
+  });
+
+  it('F) signIn() REAL de OTRO usuario mientras el fullSync() del primero sigue en vuelo -> AUTH_REQUIRED, la sesión nunca queda mezclada', async () => {
+    await db.setAuthTokens({ accessToken: 'OLD-USER1', refreshToken: 'RT1', expiresAt: Date.now() - 1000, authUserId: 'u1' });
+    await db.setAuthProfileSnapshot({ authUserId: 'u1', appUserId: 'u_user1', displayName: 'Usuario Uno', role: 'ADMINISTRADOR', active: true });
+    const { Auth } = loadAuthLogic(db);
+    Auth.isSupabaseMode = () => true;
+    const { Sync } = loadSyncLogic(db, STORES_TEST, Auth);
+    vi.stubGlobal('navigator', { onLine: true });
+    const epochBefore = Auth.getSessionEpoch();
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('grant_type=refresh_token')) {
+        // Otra persona inicia sesión de verdad en el mismo dispositivo
+        // mientras el ciclo del primer usuario sigue esperando su refresh.
+        await Auth.signIn('user2', 'lo-que-sea');
+        return { ok: true, status: 200, json: async () => ({ access_token: 'NEW-USER1', refresh_token: 'NEW-RT1', expires_in: 3600, user: { id: 'u1' } }) };
+      }
+      if (u.includes('/auth/v1/token')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'AT-USER2', refresh_token: 'RT-USER2', expires_in: 3600, user: { id: 'u2' } }) };
+      }
+      if (u.includes('/rest/v1/app_profiles')) {
+        return { ok: true, status: 200, json: async () => ([{ auth_user_id: 'u2', app_user_id: 'u_user2', display_name: 'Usuario Dos', role: 'ADMINISTRADOR', active: true }]) };
+      }
+      throw new Error('no debería llegar a sincronizar con la sesión del primer usuario: ' + url);
+    }));
+    let notified = null;
+    Sync.onChange(s => { notified = s; });
+    await Sync.fullSync();
+    expect(notified.status).toBe('AUTH_REQUIRED'); // el ciclo del primer usuario se aborta, nunca "termina" con datos mezclados
+    expect(Auth.getSessionEpoch()).not.toBe(epochBefore);
+    expect(Auth.getProfile().displayName).toBe('Usuario Dos'); // la sesión activa queda siendo la real del segundo login
+  });
+});
+
 describe('P) Headers de Authorization en engrase_sync — JWT real del usuario, NUNCA el anon key (fix P0-2)', () => {
   it('A) legacy mode: no despacha Authorization con anon key', async () => {
     await db.put('equipment', { id: 'eq1', code: 'BASE', active: true, updatedAt: T0 });

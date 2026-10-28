@@ -213,7 +213,7 @@ export const AUTH_JS_PATH = path.join(SRC_ROOT, 'src/core/auth.js');
 const SYNC_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, ['classifyAuthStatus']],
-  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'perfNow', 'logSyncPerf', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'syncSessionEpoch', 'syncConfig', 'authenticatedSyncFetch', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
+  [SYNC_JS_PATH, ['PHOTO_BUCKET', 'perfNow', 'logSyncPerf', 'FULL_REFRESH_WINDOWS', 'localDateISO', 'dueFullRefreshWindows', 'resolvePhotoStoragePath', 'dataURLtoBlob', 'isRowDirty', 'decidePullAction', 'syncAuthHeaders', 'syncSessionEpoch', '_epochDebug', 'syncConfig', 'authenticatedSyncFetch', 'readAuthErrorMessage', 'buildAuthErrorDetail', 'Sync']],
 ];
 
 /**
@@ -247,7 +247,7 @@ const AUTH_SOURCES = [
   [DB_JS_PATH, ['nowISO', 'NETWORK_TIMEOUT_MS', 'fetchWithTimeout', 'isNetworkFailure']],
   [AUTH_JS_PATH, [
     'AUTH_MODE', 'AUTH_VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
-    'usernameToAuthIdentifier', 'classifyAuthStatus', 'isValidProfile', 'Auth',
+    'usernameToAuthIdentifier', 'classifyAuthStatus', 'isValidProfile', '_authDebug', '_epochDebug', 'Auth',
   ]],
 ];
 

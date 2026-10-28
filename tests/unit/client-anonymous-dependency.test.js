@@ -41,11 +41,18 @@ describe('Client pre-cutover boundary',()=>{
     const pending=new Promise(resolve=>{release=resolve;});
     const source=readFileSync(APP_JS_PATH,'utf8');
     const body=extractDeclaration(source,'currentUserFromAuthProfile')+'\n'+extractDeclaration(source,'replayPendingDeeplink')+'\n'+extractDeclaration(source,'enterAppAsProfile');
+    // BUG-AUTH-001 (bootstrap vs. ciclo periódico en vuelo): enterAppAsProfile()
+    // reintenta hasta 2 veces si Sync.getAccountSyncState() sigue reportando
+    // bootstrapComplete=false después de un fullSync() real — este mock
+    // confirma el bootstrap tras ESE primer pull real (como en producción,
+    // donde el propio fullSync() exitoso lo completa), para seguir probando
+    // exactamente el camino de "un solo pull real, sin colisión".
+    let bootstrapComplete=false;
     const enter=new Function('App','DB','Sync','Auth','navigator','bindOneSignalIdentity','boot','abrirDesdeNotificacion',body+';return enterAppAsProfile;')(
       app,{getConfig:async()=>({})},
       // El bootstrap pendiente es por cuenta/fingerprint (Sync.getAccountSyncState()),
       // ya no el cursor legacy del dispositivo.
-      {getAccountSyncState:async()=>({bootstrapComplete:false,key:'auth-u1:fp1'}),fullSync:async()=>{order.push('pull');await pending;}},
+      {getAccountSyncState:async()=>({bootstrapComplete,key:'auth-u1:fp1'}),fullSync:async()=>{order.push('pull');await pending;bootstrapComplete=true;}},
       activeAuth,{onLine:online},()=>{},()=>order.push('boot'),()=>{});
     const entering=enter({appUserId:'u',displayName:'Fixture',role:'LUBRICADOR'});
     if(online){await vi.waitFor(()=>expect(order).toEqual(['pull']));release();}

@@ -2967,13 +2967,42 @@ function replayPendingDeeplink() {
   abrirDesdeNotificacion(datos);
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 (quitar una vez confirmada la causa real) —
+// duplicada de auth.js/sync.js (cada archivo corre su propio script
+// clásico) — comparten window.__bugAuth001T0 para una sola línea de tiempo.
+function _epochDebug(event, sessionEpoch, authUidPresent, extra) {
+  try {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    window.__bugAuth001T0 = window.__bugAuth001T0 == null ? now : window.__bugAuth001T0;
+    console.debug('[BUG-AUTH-001][EPOCH]', {
+      EVENT: event, SESSION_EPOCH: sessionEpoch, AUTH_UID_PRESENT: !!authUidPresent,
+      TIMESTAMP_RELATIVE: Math.round(now - window.__bugAuth001T0), ...(extra || {}),
+    });
+  } catch (e) {}
+}
+
 async function enterAppAsProfile(profile) {
+  if (typeof _epochDebug === 'function') _epochDebug('ENTER_APP', typeof Auth !== 'undefined' ? Auth.getSessionEpoch() : null, typeof Auth !== 'undefined' && !!Auth.getSession()?.authUserId);
   App.currentUser = currentUserFromAuthProfile(profile);
   bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
-  const accountSync = await Sync.getAccountSyncState();
-  if (!accountSync.bootstrapComplete && navigator.onLine && Auth.isAuthenticated()) {
+  // BUG-AUTH-001 (bootstrap vs. ciclo periódico en vuelo): Sync.startAuto()
+  // arranca su timer en el boot de la página y NUNCA se detiene al cerrar
+  // sesión (no existe stopAuto()) — sigue disparando fullSync() cada
+  // syncIntervalSeconds pase lo que pase. Si uno de esos ciclos (típico:
+  // uno que arrancó mientras la pantalla de login estaba visible, sin
+  // sesión, y reportó 'AUTH_REQUIRED' legítimamente) sigue en vuelo justo
+  // cuando una cuenta NUEVA (bootstrapComplete=false, la única que llega
+  // hasta aquí) termina de loguearse, el guard de single-flight de
+  // Sync.fullSync() (`this.syncing`) devuelve sin hacer NADA — el banner
+  // "SESIÓN REQUERIDA" de ese ciclo anterior queda pegado aunque
+  // Auth.isAuthenticated() ya sea true. Reintenta hasta 2 veces en total,
+  // una vez que el ciclo ajeno ya terminó y el epoch es el de esta sesión,
+  // antes de entrar con un estado híbrido (reconocido pero "sin sesión").
+  let accountSync = await Sync.getAccountSyncState();
+  for (let attempt = 0; attempt < 2 && !accountSync.bootstrapComplete && navigator.onLine && Auth.isAuthenticated(); attempt++) {
     await Sync.fullSync();
     if (App.currentUser?.id !== profile.appUserId || !Auth.isAuthenticated()) return;
+    accountSync = await Sync.getAccountSyncState();
   }
   boot();
   replayPendingDeeplink();
@@ -3020,15 +3049,35 @@ function renderSupabaseLoginForm() {
       </div>
     </div>`;
   $('#btn-theme').addEventListener('click', openThemePicker);
+  // BUG-AUTH-001 (session-epoch race): este formulario era el único del
+  // módulo Supabase sin guard contra doble-submit (el resto ya usa
+  // withSubmitGuard()). Un doble clic o Enter+clic disparaba dos
+  // Auth.signIn() concurrentes, cada uno incrementando _sessionEpoch — el
+  // fullSync() inicial que el primer login dispara (enterAppAsProfile())
+  // detectaba su propio epoch como obsoleto y lanzaba AUTH_REQUIRED, pese a
+  // que el login había sido legítimo. `loginInFlight` bloquea un segundo
+  // submit ANTES de llamar a Auth.signIn() (el `if (this._signingIn)` de
+  // auth.js es la segunda capa, por si algo más además de este formulario
+  // llegara a invocarlo en paralelo).
+  let loginInFlight = false;
   $('#supabase-login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    if (loginInFlight) return;
+    loginInFlight = true;
+    const btn = ev.target.querySelector('button[type="submit"]');
+    const originalLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Iniciando sesión…';
     const fd = Object.fromEntries(new FormData(ev.target).entries());
     $('#supabase-login-error').textContent = '';
     try {
       const { user: profile } = await Auth.signIn(fd.username, fd.password);
-      enterAppAsProfile(profile);
+      enterAppAsProfile(profile); // éxito: reemplaza la pantalla entera, no hace falta restaurar el botón
     } catch (e) {
-      $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+      if (e.message !== 'SIGN_IN_IN_PROGRESS') {
+        $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
+      }
+      loginInFlight = false;
+      btn.disabled = false; btn.textContent = originalLabel;
     }
   });
 }
@@ -3390,6 +3439,7 @@ const MENU = [
 ];
 
 function boot() {
+  if (typeof _epochDebug === 'function') _epochDebug('BOOT_START', typeof Auth !== 'undefined' ? Auth.getSessionEpoch() : null, typeof Auth !== 'undefined' && !!Auth.getSession()?.authUserId);
   wireEvidenceImgFallbackOnce();
   // runAutoCycle() (no fullSync() directo): además del sync incremental de
   // siempre, revisa si hay una ventana de full refresh 07:00/19:00
@@ -13638,6 +13688,14 @@ async function renderUsuariosSupabase(c) {
   } catch (e) {
     const tbody = $('#usuarios-sb-tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
+    // BUG-AUTH-001: sin sesión válida (ni siquiera tras el intento de
+    // refresh dentro de Auth.manageUsers()), el botón queda deshabilitado
+    // en vez de clickeable-pero-sin-efecto — mismo criterio visual que el
+    // bloque offline de arriba, nunca un cierre de sesión automático.
+    if (e && e.message === 'AUTH_REQUIRED') {
+      const btn = $('#btn-new-user-sb');
+      if (btn) { btn.disabled = true; btn.title = 'Tu sesión expiró — vuelve a iniciar sesión.'; }
+    }
     return;
   }
 
