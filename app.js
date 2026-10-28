@@ -2967,7 +2967,22 @@ function replayPendingDeeplink() {
   abrirDesdeNotificacion(datos);
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 (quitar una vez confirmada la causa real) —
+// duplicada de auth.js/sync.js (cada archivo corre su propio script
+// clásico) — comparten window.__bugAuth001T0 para una sola línea de tiempo.
+function _epochDebug(event, sessionEpoch, authUidPresent, extra) {
+  try {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    window.__bugAuth001T0 = window.__bugAuth001T0 == null ? now : window.__bugAuth001T0;
+    console.debug('[BUG-AUTH-001][EPOCH]', {
+      EVENT: event, SESSION_EPOCH: sessionEpoch, AUTH_UID_PRESENT: !!authUidPresent,
+      TIMESTAMP_RELATIVE: Math.round(now - window.__bugAuth001T0), ...(extra || {}),
+    });
+  } catch (e) {}
+}
+
 async function enterAppAsProfile(profile) {
+  if (typeof _epochDebug === 'function') _epochDebug('ENTER_APP', typeof Auth !== 'undefined' ? Auth.getSessionEpoch() : null, typeof Auth !== 'undefined' && !!Auth.getSession()?.authUserId);
   App.currentUser = currentUserFromAuthProfile(profile);
   bindOneSignalIdentity(profile.appUserId); // no await: nunca bloquea boot()
   // BUG-AUTH-001 (bootstrap vs. ciclo periódico en vuelo): Sync.startAuto()
@@ -3424,6 +3439,7 @@ const MENU = [
 ];
 
 function boot() {
+  if (typeof _epochDebug === 'function') _epochDebug('BOOT_START', typeof Auth !== 'undefined' ? Auth.getSessionEpoch() : null, typeof Auth !== 'undefined' && !!Auth.getSession()?.authUserId);
   wireEvidenceImgFallbackOnce();
   // runAutoCycle() (no fullSync() directo): además del sync incremental de
   // siempre, revisa si hay una ventana de full refresh 07:00/19:00

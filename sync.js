@@ -163,6 +163,24 @@ function syncSessionEpoch() {
   return typeof Auth !== 'undefined' ? (Auth.getSessionEpoch?.() || 0) : null;
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 (quitar una vez confirmada la causa real) —
+// línea de tiempo de _sessionEpoch entre auth.js/sync.js/app.js. NUNCA
+// imprime tokens/JWT — solo el número de epoch, si hay authUserId, y un
+// timestamp relativo compartido (window.__bugAuth001T0, primer valor leído
+// gana) para poder ordenar los eventos de los 3 archivos en una sola línea
+// de tiempo real.
+function _epochDebug(event, sessionEpoch, authUidPresent, extra) {
+  try {
+    if (typeof window === 'undefined') return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    window.__bugAuth001T0 = window.__bugAuth001T0 == null ? now : window.__bugAuth001T0;
+    console.debug('[BUG-AUTH-001][EPOCH]', {
+      EVENT: event, SESSION_EPOCH: sessionEpoch, AUTH_UID_PRESENT: !!authUidPresent,
+      TIMESTAMP_RELATIVE: Math.round(now - window.__bugAuth001T0), ...(extra || {}),
+    });
+  } catch (e) {}
+}
+
 async function syncConfig() {
   const epoch = syncSessionEpoch();
   const cfg = { ...(await DB.getConfig()) };
@@ -1266,10 +1284,20 @@ const Sync = {
       // §12 y Auth.restoreSession()). Inerte mientras AUTH_MODE sea
       // 'legacy' o Auth no esté cargado — no cambia nada del flujo actual.
       const cycleEpoch = syncSessionEpoch();
+      // TEMP DIAGNÓSTICO BUG-AUTH-001 — el guard real (NUNCA quitado, NUNCA
+      // convertido en warning) ahora pasa por esta única función en vez de
+      // repetirse 6 veces, así queda loggeado en cada checkpoint sin
+      // duplicar la condición ni cambiar su comportamiento.
+      const assertEpochFresh = (checkpoint) => {
+        const current = syncSessionEpoch();
+        _epochDebug('FULLSYNC_COMPARE_EPOCH', current, !!(Auth?.getSession?.()?.authUserId), { cycleEpoch, checkpoint, cycleId, reason });
+        if (cycleEpoch !== current) throw new Error('AUTH_REQUIRED');
+      };
+      _epochDebug('FULLSYNC_CAPTURE_EPOCH', cycleEpoch, !!(Auth?.getSession?.()?.authUserId), { cycleId, reason });
       if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) throw new Error('AUTH_REQUIRED');
       if (Auth.isSupabaseMode()) {
         await Auth.restoreSession();
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('after_restoreSession');
         if (!Auth.isAuthenticated()) {
           this.notify({ status: 'AUTH_REQUIRED', at: nowISO() });
           return;
@@ -1278,7 +1306,7 @@ const Sync = {
         // snapshot resolves a separate bootstrap namespace. Rehydrate before
         // upload when the identity/fingerprint no longer matches the cache.
         const authorization = await Auth.refreshAuthorizationContext();
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('after_refreshAuthorizationContext');
         if (!authorization.ok) {
           this.notify({ status: authorization.reason || 'AUTHORIZATION_UNAVAILABLE', at: nowISO() });
           return;
@@ -1297,7 +1325,7 @@ const Sync = {
       const esPrimeraVez = !account.bootstrapComplete;
       let pushRes, pullRes;
       if (esPrimeraVez) {
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('before_pullAll_bootstrap');
         pullRes = await this.pullAll();
         // P0-2 Etapa B1: si el pull inicial ya no tiene sesión válida
         // (solo posible con AUTH_MODE='supabase'), no tiene sentido
@@ -1306,12 +1334,12 @@ const Sync = {
           this.notify({ status: pullRes.reason, at: nowISO(), authErrorDetails: pullRes.authErrorDetails || [] });
           return;
         }
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('before_pushAll_bootstrap');
         pushRes = await this.pushAll();
       } else {
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('before_pushAll_incremental');
         pushRes = await this.pushAll();
-        if (cycleEpoch !== syncSessionEpoch()) throw new Error('AUTH_REQUIRED');
+        assertEpochFresh('after_pushAll_incremental');
         if (pushRes.reason === 'AUTH_REQUIRED') {
           this.notify({ status:'AUTH_REQUIRED', at:nowISO() });
           return;
@@ -1397,6 +1425,7 @@ const Sync = {
   // bootstrap de cuenta completo ni sin sesión
   // válida en modo supabase (mismo gate que pushAll/pullAll).
   async runAutoCycle(reason = 'auto') {
+    _epochDebug('AUTO_SYNC_START', syncSessionEpoch(), !!(typeof Auth !== 'undefined' && Auth.getSession?.()?.authUserId), { reason, syncing: this.syncing });
     // Mirar la identidad/cache de cuenta ANTES del ciclo, para no duplicar
     // un pull completo si el propio ciclo hizo bootstrap o cambió fingerprint.
     const before = await this.getAccountSyncState();

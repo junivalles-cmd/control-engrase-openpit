@@ -106,6 +106,24 @@ function _authDebug(tag, fields) {
   try { console.debug('[BUG-AUTH-001]', tag, fields); } catch (e) {}
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 — línea de tiempo de _sessionEpoch entre
+// auth.js/sync.js/app.js (duplicada ahí, mismo criterio que
+// usernameToAuthIdentifier()/svHeaders() entre este archivo y la Edge
+// Function: cada archivo corre en su propio contexto). window.__bugAuth001T0
+// es compartido (primer valor leído entre los 3 archivos gana) para poder
+// ordenar los eventos en una sola línea de tiempo real.
+function _epochDebug(event, sessionEpoch, authUidPresent, extra) {
+  try {
+    if (typeof window === 'undefined') return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    window.__bugAuth001T0 = window.__bugAuth001T0 == null ? now : window.__bugAuth001T0;
+    console.debug('[BUG-AUTH-001][EPOCH]', {
+      EVENT: event, SESSION_EPOCH: sessionEpoch, AUTH_UID_PRESENT: !!authUidPresent,
+      TIMESTAMP_RELATIVE: Math.round(now - window.__bugAuth001T0), ...(extra || {}),
+    });
+  } catch (e) {}
+}
+
 const Auth = {
   _session: null, // { accessToken, refreshToken, expiresAt, authUserId } en memoria
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
@@ -147,6 +165,7 @@ const Auth = {
   // AUTH_MODE='supabase' (la UI legacy nunca la invoca). Usa la ANON key
   // ya configurada (igual que el resto de la app) — nunca service_role.
   async signIn(username, password) {
+    _epochDebug('SIGNIN_START', this._sessionEpoch, !!(this._session && this._session.authUserId));
     if (this._signingOut) throw new Error('AUTH_REQUIRED');
     // BUG-AUTH-001: single-flight — un segundo signIn() mientras el primero
     // sigue en vuelo (doble clic, Enter+clic) se rechaza de inmediato, ANTES
@@ -155,6 +174,7 @@ const Auth = {
     this._signingIn = true;
     try {
       const epoch = ++this._sessionEpoch;
+      _epochDebug('SIGNIN_EPOCH_CHANGE', this._sessionEpoch, !!(this._session && this._session.authUserId));
       const identifier = usernameToAuthIdentifier(username);
       const cfg = await DB.getConfig();
       if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
@@ -188,6 +208,7 @@ const Auth = {
       this._profile = profile;
       await this._persistState();
       this._notify({ status: 'signed_in', profile: this._profile });
+      _epochDebug('SIGNIN_END', this._sessionEpoch, !!(this._session && this._session.authUserId));
       return { user: this._profile, session: this._session };
     } finally {
       this._signingIn = false;
@@ -195,6 +216,7 @@ const Auth = {
   },
 
   async signOut() {
+    _epochDebug('SIGNOUT_CALLED', this._sessionEpoch, !!(this._session && this._session.authUserId));
     this._signingOut = true;
     ++this._sessionEpoch;
     this._session = null;
@@ -219,6 +241,13 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
+    _epochDebug('RESTORE_START', this._sessionEpoch, !!(this._session && this._session.authUserId));
+    const result = await this._restoreSessionImpl();
+    _epochDebug('RESTORE_END', this._sessionEpoch, !!(this._session && this._session.authUserId));
+    return result;
+  },
+
+  async _restoreSessionImpl() {
     if (this._signingOut) { _authDebug('restoreSession:exit', { branch: 'signingOut' }); return null; }
     const epoch = this._sessionEpoch;
     const session = await DB.getAuthTokens();

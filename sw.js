@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v81'; // v81: BUG-AUTH-001 — enterAppAsProfile() reintenta el fullSync() de bootstrap si un ciclo periódico ajeno (nunca detenido en logout) se lo traga en silencio; evita el banner "SESIÓN REQUERIDA" pegado tras loguear una cuenta nueva.
+const CACHE = 'engrase-openpit-v82'; // v82: BUG-AUTH-001 — instrumentación TEMPORAL de línea de tiempo de _sessionEpoch (SIGNIN_*/ENTER_APP/BOOT_START/AUTO_SYNC_START/FULLSYNC_CAPTURE_EPOCH/FULLSYNC_COMPARE_EPOCH/RESTORE_*/SIGNOUT_CALLED) para aislar quién muta el epoch durante boot() -> runAutoCycle('auto').
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
