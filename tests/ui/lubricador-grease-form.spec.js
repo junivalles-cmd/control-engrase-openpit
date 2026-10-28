@@ -352,3 +352,47 @@ test('Registrar engrase (móvil) — saltar de un campo a otro NO cierra/reabre 
   await page.waitForTimeout(250);
   expect((await kbState(page)).open, 'al blur final (sin otro foco), sí se cierra').toBe(false);
 });
+
+test('Campo: controles críticos y modal de Lubricador conservan 48px efectivos en todos los anchos operativos', async ({ page }) => {
+  for (const width of [360, 390, 412, 600, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(`${FIXTURE}
+      <div id="modal-overlay" class="modal-overlay open">
+        <div class="modal"><div class="modal-head"><h3>Reportar anomalía</h3><button class="icon-btn" aria-label="Cerrar">✕</button></div>
+          <div class="modal-body"><form id="anom-form" class="form-grid"><input value="Equipo"/><select><option>Normal</option></select><textarea>Detalle</textarea><div class="modal-actions"><button class="btn">Cancelar</button><button class="btn btn-accent">Guardar</button></div></form></div>
+        </div>
+      </div>`);
+    await page.addStyleTag({ path: STYLES_PATH });
+
+    const controls = page.locator([
+      '.grease-flow-toggle-row', '.retro-toggle', '.check-row', '.grease-flow-panel .btn',
+      '.lub-nav-item', '#modal-overlay .btn', '#modal-overlay .icon-btn',
+      '#modal-overlay input', '#modal-overlay select', '#modal-overlay textarea',
+    ].join(','));
+    const count = await controls.count();
+    for (let index = 0; index < count; index++) {
+      const box = await controls.nth(index).boundingBox();
+      expect(box?.height, `control ${index} a ${width}px`).toBeGreaterThanOrEqual(48);
+    }
+
+    // La X de una evidencia no crece visualmente: su área real de hit-test se
+    // expande mediante ::before hasta 48px.
+    await page.locator('.grease-flow-card-evidencia .form-grid').evaluate(el => {
+      el.insertAdjacentHTML('beforeend', '<span class="photo-slot"><img alt="foto"/><button class="photo-slot-remove">✕</button></span>');
+    });
+    const photoHitArea = await page.locator('.photo-slot-remove').evaluate(el => {
+      const before = getComputedStyle(el, '::before');
+      const box = el.getBoundingClientRect();
+      return box.height - Number.parseFloat(before.top) - Number.parseFloat(before.bottom);
+    });
+    expect(photoHitArea, `quitar evidencia a ${width}px`).toBeGreaterThanOrEqual(48);
+
+    const metrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      navHeight: document.querySelector('.lub-bottom-nav').getBoundingClientRect().height,
+    }));
+    expect(metrics.scrollWidth, `sin overflow a ${width}px`).toBeLessThanOrEqual(metrics.clientWidth);
+    expect(metrics.navHeight, `bottom nav intacta a ${width}px`).toBeGreaterThanOrEqual(48);
+  }
+});

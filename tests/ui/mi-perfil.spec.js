@@ -1,16 +1,16 @@
 // tests/ui/mi-perfil.spec.js
 //
 // Lote "Mi Perfil" — autoservicio de perfil para cualquier usuario
-// autenticado (nombre visible, contraseña, PIN local), reutilizando
-// Auth/app_profiles/QuickUnlock ya existentes, SIN ampliar permisos.
-// Extrae y ejecuta las funciones REALES de app.js (renderMiPerfil(),
-// miPerfilRoleCrewSummaryHTML(), miPerfilErrorMessage(), withSubmitGuard())
-// contra una página real de Playwright — nunca una reimplementación.
-// DB/Auth/QuickUnlock/App/getCurrentOperationalScope/logAudit/
-// quickUnlockConfigureModal se reemplazan por espías/fakes (su
+// autenticado (nombre visible, contraseña), reutilizando Auth/app_profiles
+// ya existentes, SIN ampliar permisos. Extrae y ejecuta las funciones
+// REALES de app.js (renderMiPerfil(), miPerfilRoleCrewSummaryHTML(),
+// miPerfilErrorMessage(), withSubmitGuard()) contra una página real de
+// Playwright — nunca una reimplementación. DB/Auth/App/
+// getCurrentOperationalScope/logAudit se reemplazan por espías/fakes (su
 // comportamiento real ya se prueba aparte: Auth en tests/unit/auth.test.js,
-// QuickUnlock en tests/unit/quick-unlock.test.js, operational-scope en
-// tests/unit/device-assignment-isolation.test.js).
+// operational-scope en tests/unit/device-assignment-isolation.test.js).
+// (El panel "PIN rápido" (QuickUnlock) que este archivo probaba se retiró
+// por completo en UX CAMPO V2, 2026-10-24.)
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -21,7 +21,6 @@ const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles
 const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'withSubmitGuard',
-  'quickUnlockConfigureModal', // se re-asigna a un espía DESPUÉS de extraerla (abajo) — se extrae solo para que no truene como ReferenceError si algo más la referencia indirectamente
   'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderMiPerfil', 'miPerfilErrorMessage',
 ];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
@@ -34,7 +33,7 @@ const SCOPE_CREW = {
 
 async function bootMiPerfil(page, {
   displayName = 'Junior Valles', appUserId = 'u_jvalles', role = 'ADMINISTRADOR',
-  quickUnlockConfigured = false, offline = false, scope = SCOPE_GLOBAL,
+  offline = false, scope = SCOPE_GLOBAL,
   cuadrillas = [], locations = [],
 } = {}) {
   await page.setContent('<div class="app-shell"><main id="app-content" class="app-content"></main></div>');
@@ -46,7 +45,6 @@ async function bootMiPerfil(page, {
       window.__updateOwnDisplayNameCalls = [];
       window.__changeOwnPasswordCalls = [];
       window.__logAuditCalls = [];
-      window.__quickUnlockConfigureModalCalls = [];
       window.Auth = {
         isSupabaseMode: () => true,
         isAuthenticated: () => true,
@@ -62,15 +60,11 @@ async function bootMiPerfil(page, {
         },
       };
       window.DB = { allActive: async (store) => (store === 'cuadrillas' ? ${JSON.stringify(cuadrillas)} : store === 'locations' ? ${JSON.stringify(locations)} : []) };
-      window.QuickUnlock = { isConfigured: async () => ${quickUnlockConfigured}, disable: async () => {} };
       window.getCurrentOperationalScope = async () => (${JSON.stringify(scope)});
       window.logAudit = async (...args) => { window.__logAuditCalls.push(args); };
       window.showInAppToast = () => {};
       Object.defineProperty(window.navigator, 'onLine', { value: ${!offline}, configurable: true });
       ${appRealSrc}
-      // Espía: confirma CON QUÉ se llama, sin ejecutar su cuerpo real (abre
-      // un modal — su comportamiento real ya se prueba por separado).
-      quickUnlockConfigureModal = (mode, onDone) => { window.__quickUnlockConfigureModalCalls.push(mode); };
       window.renderMiPerfil = renderMiPerfil;
     `,
   });
@@ -157,37 +151,10 @@ test.describe('E) cambiar contraseña — llama a Auth.changeOwnPassword(), nunc
   });
 });
 
-test.describe('F) PIN rápido — sigue siendo 100% local (QuickUnlock), nunca se sincroniza, nunca da autorización', () => {
-  test('sin PIN configurado: muestra "Configurar PIN rápido", llama a quickUnlockConfigureModal("configure", ...)', async ({ page }) => {
-    await bootMiPerfil(page, { quickUnlockConfigured: false });
-    await expect(page.locator('#mi-perfil-pin-configure')).toBeVisible();
-    await expect(page.locator('#mi-perfil-pin-change')).toHaveCount(0);
-    await page.locator('#mi-perfil-pin-configure').click();
-    expect(await page.evaluate(() => window.__quickUnlockConfigureModalCalls)).toEqual(['configure']);
-  });
-
-  test('con PIN ya configurado: muestra "Cambiar PIN" y "Desactivar PIN rápido", nunca el botón de configurar inicial', async ({ page }) => {
-    await bootMiPerfil(page, { quickUnlockConfigured: true });
-    await expect(page.locator('#mi-perfil-pin-change')).toBeVisible();
-    await expect(page.locator('#mi-perfil-pin-disable')).toBeVisible();
-    await expect(page.locator('#mi-perfil-pin-configure')).toHaveCount(0);
-    await page.locator('#mi-perfil-pin-change').click();
-    expect(await page.evaluate(() => window.__quickUnlockConfigureModalCalls)).toEqual(['change']);
-  });
-
-  test('"Desactivar PIN rápido" llama a QuickUnlock.disable() y a logAudit(), nunca a Auth (el PIN nunca es autorización de servidor)', async ({ page }) => {
-    await bootMiPerfil(page, { quickUnlockConfigured: true });
-    await page.locator('#mi-perfil-pin-disable').click();
-    await expect.poll(() => page.evaluate(() => window.__logAuditCalls.length)).toBe(1);
-    const auditCall = await page.evaluate(() => window.__logAuditCalls[0][0]);
-    expect(auditCall).toBe('QUICK_UNLOCK_DESACTIVADO');
-  });
-});
-
 for (const width of [390, 412]) {
   test(`G) Mi Perfil @ ${width}px — sin scroll horizontal, formulario compacto (sin cards gigantes)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1400 });
-    await bootMiPerfil(page, { quickUnlockConfigured: false });
+    await bootMiPerfil(page);
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
   });

@@ -2,7 +2,17 @@
 -- CONTROL DE ENGRASE - OPEN PIT
 -- Script de creación de la base de datos remota (Supabase)
 --
--- CÓMO USARLO:
+-- DEPRECATED / HISTORICAL — NO USAR EN PRODUCCIÓN.
+-- Este archivo conserva el baseline inicial para referencia y pruebas
+-- históricas. Contiene una policy abierta (USING(true)/WITH CHECK(true)) y
+-- crea `engrase-photos` como bucket público. No representa el estado seguro
+-- actual ni debe ejecutarse para instalar una instancia nueva.
+--
+-- FUENTE CURRENT: aplicar únicamente las migraciones versionadas de
+-- `supabase/migrations/` en el orden documentado en `docs/MIGRATION_STATUS.md`
+-- y validar con los preflights de solo lectura correspondientes.
+--
+-- CÓMO SE USABA HISTÓRICAMENTE (NO EJECUTAR):
 -- 1. Crea una cuenta gratis en https://supabase.com y un nuevo proyecto.
 -- 2. Ve a "SQL Editor" en el panel izquierdo, pega este script completo
 --    y presiona "Run".

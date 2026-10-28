@@ -106,6 +106,20 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       ${validationSrc}
       ${appSrc}
       window.currentShiftId = currentShiftId;
+      // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+      // colapsados — se expanden automáticamente tras cada render
+      // (idempotente) para no romper la cobertura de consistencia
+      // Alertas/Ficha de este archivo, ajena a la interacción propia del
+      // acordeón.
+      renderLubricadorHome = (() => {
+        const real = renderLubricadorHome;
+        return async (...args) => {
+          const result = await real(...args);
+          document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+          document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+          return result;
+        };
+      })();
       window.renderLubricadorHome = renderLubricadorHome;
       window.statusFor = statusFor;
       window.lastSyncState = lastSyncState;

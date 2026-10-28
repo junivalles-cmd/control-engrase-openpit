@@ -1,3 +1,6 @@
+# HISTORICAL / DEPRECATED — diseño de una fase anterior de sync/Auth.
+# Las menciones a PIN o login legacy no describen el flujo actual.
+
 # Sync en segundo plano con la app terminada — por qué NO se implementó
 
 Ver también `docs/STORAGE_PRIVACY_DESIGN.md` y `docs/SESSION_HANDOFF.md` (lote
@@ -91,3 +94,6 @@ dispara un re-pull completo automáticamente, sin bloquear el login/PIN
 esperado por la UI). Ver `tests/unit/full-refresh-windows.test.js` para la
 cobertura completa (ventanas pendientes/cumplidas/catch-up entre días,
 integración con `fullSync()`, no-duplicación).
+# HISTORICAL / DEPRECATED — diseño de una fase anterior de sync/Auth.
+# Las menciones a PIN o login legacy no describen el flujo actual.
+

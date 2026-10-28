@@ -419,7 +419,6 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* §0.1: "entre último campo y botón principal: 18-20px" — 15px del gap
    general + 5px extra en el propio botón, nunca un contenedor nuevo. */
 .login-card .form-grid button[type="submit"],
-#quick-unlock-area .btn { margin-top: 5px; }
 /* §0.4: "Entrar con otra cuenta" deja de ser texto subrayado (.link-btn) y
    pasa a un botón secundario REAL — mismo .btn de siempre (ya es el look
    "secundario" de la app, btn-accent es el único primario), solo ancho
@@ -1642,7 +1641,12 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ============================================================
    INTERFAZ SIMPLIFICADA — LUBRICADOR (móvil, un toque, campo)
    ============================================================ */
-.lub-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.lub-shell {
+  /* Operación de campo: controles con guantes deben tener 48px efectivos.
+     El token se redefine solo aquí, sin afectar el escritorio administrativo. */
+  --tap: 48px;
+  min-height: 100vh; display: flex; flex-direction: column; background: var(--bg);
+}
 /* UI/Responsive Fase 4 (docs/UI_RESPONSIVE.md): topbar, user-strip y lub-content
    comparten el mismo margen lateral (--sp-3, 12px) para que el borde izquierdo
    de marca / usuario / tarjetas quede alineado en vez de saltar entre 16px y
@@ -1731,16 +1735,25 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    márgenes verticales reducidos (12/10px → 10/8px, margin-bottom 12px →
    10px, separación nombre→rol→chips 10px → 6px) — NINGÚN font-size cambia
    aquí (19px/10.5px/11.5px intactos, ver abajo). */
-.lub-welcome-card {
+/* UX CAMPO V2 (2026-10-24): header compacto de Mi Turno — reemplaza
+   .lub-welcome-card/.lub-context-row/.lub-kpi-row (retirados, sin tarjetas
+   KPI grandes a propósito). Cuadrilla/ubicación/turno en una fila
+   compacta + "Cambiar cuadrilla" (min-width:0 en el texto, shrink-0 en el
+   botón, soporta nombres largos sin truncar) + resumen de 3 números. */
+.lub-turno-header {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 10px var(--sp-3) 8px; margin-bottom: 10px;
-  border-top: 3px solid var(--accent);
+  padding: 10px var(--sp-3) 8px; margin-bottom: 10px; border-top: 3px solid var(--accent);
 }
-.lub-welcome-name { font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: 0.01em; }
-.lub-welcome-role {
-  display: inline-block; margin: 2px 0 6px; font-size: 10.5px; font-weight: 700;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-ink);
-}
+.lub-turno-header-top { display: flex; align-items: flex-start; gap: 8px; }
+.lub-turno-header-identity { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.lub-turno-header-crew { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: 0.01em; overflow-wrap: anywhere; }
+.lub-turno-header-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
+.lub-turno-header .lub-change-crew { flex-shrink: 0; }
+.lub-turno-header-summary { margin-top: 6px; font-size: 11.5px; color: var(--text-dim); font-weight: 600; }
+/* Parte S del pedido: offline nunca es un error en Mi Turno — tono neutro
+   (--text-dim), nunca --red. */
+.lub-turno-header-offline { margin-top: 4px; font-size: 11px; color: var(--text-dim); }
+
 .lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 0; }
 .lub-context-chip {
   display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2);
@@ -1753,23 +1766,48 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .lub-context-chip.tone-amber .dot { background: var(--amber); }
 .lub-context-chip.tone-red .dot { background: var(--red); }
 
-.lub-kpi-row { display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; gap: 8px; margin-bottom: 10px; }
-@media (min-width: 480px) { .lub-kpi-row { grid-template-columns: repeat(4, 1fr); } }
-/* Fix 2026-10-09 (§9 del pedido, "legibilidad sin gráficos"): flex-column +
-   justify-content:center para que las 4 tarjetas queden con la MISMA altura
-   real (grid ya las igualaba, esto solo centra el contenido dentro de esa
-   altura — menos espacio vacío visual) y el número gana peso (22px/700 →
-   24px/800) sin agregar ningún elemento nuevo. */
-.lub-kpi-card {
-  background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--border);
-  border-radius: 12px; padding: 10px 12px; min-height: 56px;
-  display: flex; flex-direction: column; justify-content: center;
+/* UX CAMPO V2 (2026-10-24): acordeones de Mi Turno (Pendientes
+   anteriores/Atención prioritaria/Engrases de mi turno) — <button> real +
+   aria-expanded/aria-controls, SIEMPRE presentes (incluso en 0, con su
+   propio estado vacío), todos colapsados al entrar a una navegación real. */
+.lub-accordions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.lub-accordion { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.lub-accordion-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--tap);
+  padding: 10px 12px; background: transparent; border: none; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
 }
-.lub-kpi-card.tone-red { border-top-color: var(--red); }
-.lub-kpi-card.tone-amber { border-top-color: var(--amber); }
-.lub-kpi-card.tone-green { border-top-color: var(--green); }
-.lub-kpi-value { font-family: var(--font-mono); font-size: 24px; font-weight: 800; line-height: 1.15; }
-.lub-kpi-label { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.02em; margin-top: 2px; font-weight: 600; }
+.lub-accordion-head:hover { background: var(--surface-2); }
+.lub-accordion-head:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.lub-accordion-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.lub-accordion-title { font-weight: 700; font-size: 13.5px; }
+.lub-accordion-subtitle { font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
+.lub-accordion-count {
+  flex: none; font-family: var(--font-mono); font-weight: 800; font-size: 14px;
+  min-width: 26px; text-align: center; padding: 2px 6px; border-radius: 20px;
+  background: var(--surface-2); color: var(--text-dim);
+}
+.lub-accordion-count[data-tone="active"] { background: color-mix(in srgb, var(--amber) 16%, var(--surface-2)); color: color-mix(in srgb, var(--amber) 70%, var(--text)); }
+.lub-accordion-chevron { flex: none; font-size: 14px; color: var(--text-dim); transition: transform 0.15s ease; }
+.lub-accordion-head[aria-expanded="true"] .lub-accordion-chevron { transform: rotate(180deg); }
+.lub-accordion-panel { padding: 0 12px 12px; }
+.lub-accordion-empty { margin: 0; color: var(--text-dim); }
+
+/* Pull-to-sync (UX CAMPO V2, Parts O-R) — SOLO Mi Turno. Altura 0 en
+   reposo (ver wirePullToSync(), nunca reserva espacio permanente);
+   durante el gesto, JS fija su altura real (hasta 72px) vía style.height.
+   Vive FUERA de #app-content (topbar/.lub-shell), por eso no usa las
+   clases .lub-* scopeadas a #app-content. */
+.lub-pull-indicator {
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; height: 0; font-size: 12px; font-weight: 600;
+  color: var(--text-dim); background: var(--surface-2);
+  transition: height 0.1s ease-out;
+}
+.lub-pull-indicator[data-state="ready"] { color: var(--accent-ink); }
+.lub-pull-indicator[data-state="syncing"] { color: var(--accent-ink); }
+.lub-pull-indicator[data-state="done"] { color: var(--green); }
+.lub-pull-indicator[data-state="offline"] { color: var(--amber); }
 
 .lub-arrastrado-card {
   background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--amber);
@@ -3267,8 +3305,17 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .tym-filter-chip {
   background: none; border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
   padding: 5px 12px; font-size: 12px; color: var(--text-dim); min-height: 30px;
+  position: relative;
 }
 .tym-filter-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* El chip mide ~30px de alto (medido real) — bajo los 48px táctiles exigidos.
+   Se agranda SOLO el área de toque (pseudo-elemento invisible, sin afectar
+   el pill visual ni el layout): el click dentro de esta zona sigue
+   resolviendo al botón real, nunca un hitbox/componente nuevo. Ancho ya
+   supera 48px en los 3 chips, por eso solo se extiende arriba/abajo. */
+.tym-filter-chip::after {
+  content: ''; position: absolute; left: 0; right: 0; top: -9px; bottom: -9px;
+}
 
 /* Panel/pantalla de detalle (§4/§5 del pedido): header compacto con
    estado a la derecha, cuerpo con grid denso, footer de acciones directas
@@ -3458,6 +3505,36 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .hist-del-btn { color: var(--text-dim); border-radius: 8px; }
 .hist-del-btn:hover, .hist-del-btn:focus-visible { color: var(--red); background: rgba(229,72,77,0.12); }
 #hist-area .photo-thumb { width: 52px; height: 52px; }
+
+/* Campo: los controles de estas rutas tenían alturas fijas de 44px o una
+   fila demasiado compacta. El token de .lub-shell ya lleva botones, nav,
+   iconos, tabs y acciones de sincronización a 48px; estas reglas cubren las
+   excepciones hard-coded de Registrar, Historial y sus modales. */
+.lub-shell .grease-flow-toggle-row,
+.lub-shell .retro-toggle,
+.lub-shell .check-row { min-height: var(--tap); box-sizing: border-box; }
+.lub-shell .hist-eq-search,
+.lub-shell .hist-eq-period-filter .input,
+.lub-shell .hist-global-search,
+.lub-shell .hist-global-filter .input,
+.lub-shell :where(#anom-form, #grease-form, #val-reason-wrap, #val-other-wrap) :is(input:not([type="checkbox"], [type="file"], [type="hidden"]), select, textarea),
+.lub-shell #oop-reason-select,
+.lub-shell #btn-check-all,
+.lub-shell :where(#val-name, #val-role) { min-height: var(--tap); }
+.lub-shell .hist-eq-clear-dates,
+.lub-shell .hist-cond-link { min-height: var(--tap); display: inline-flex; align-items: center; }
+
+/* La X de evidencia conserva su apariencia de 20px, pero su pseudo-elemento
+   amplía la zona que recibe el toque a 48px sin agrandar la miniatura. */
+.lub-shell .photo-slot { overflow: visible; }
+.lub-shell .photo-slot img { border-radius: inherit; }
+.lub-shell .photo-slot-remove::before { content: ''; position: absolute; inset: -14px; }
+
+/* openModal() monta el diálogo al final de body. Mientras la ruta de campo
+   está activa, su overlay hereda el mismo objetivo de 48px sin cambiar los
+   modales de administración. */
+body:has(.lub-shell) #modal-overlay { --tap: 48px; }
+body:has(.lub-shell) #modal-overlay :is(input:not([type="checkbox"], [type="file"], [type="hidden"]), select, textarea) { min-height: var(--tap); }
 
 /* ---------------- Historial: buscador + filtros GLOBALES ----------------
    Contenedor único con el padding (16px lateral, 16px abajo, 0 arriba —
@@ -3722,8 +3799,6 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content #lub-follow-up .lub-follow-up-more { grid-column: 1 / -1; }
 #app-content #lub-follow-up summary { display: flex; align-items: center; cursor: pointer; font-weight: 600; padding: 0 10px; }
 #app-content #lub-follow-up .lub-arrastrado-actions .btn:focus-visible, #app-content #lub-follow-up summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-#app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px; }
-#app-content #lub-pending-follow-up .lub-pending-context { font-size: 12px; line-height: 1.4; margin-top: 4px; }
 #app-content .lub-global-register { --oop-tone: #1F4E79; --oop-ink: color-mix(in srgb, var(--oop-tone) 55%, var(--text)); display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 440px; min-height: 56px; gap: 12px; margin-top: 10px; padding: 8px 12px; background: color-mix(in srgb, var(--oop-tone) 5%, var(--surface)); color: var(--oop-ink); border: 1px solid color-mix(in srgb, var(--oop-ink) 65%, var(--border)); border-radius: var(--radius-sm); box-shadow: none; cursor: pointer; }
 #app-content .lub-global-register .lub-hero-action-text { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 10px; row-gap: 3px; min-width: 0; text-align: left; }
 #app-content .lub-global-register .lub-hero-action-text::before { content: ""; grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 32px; height: 32px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--oop-tone) 10%, var(--surface)); }
@@ -3756,41 +3831,39 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 #app-content .lub-quick-actions .lub-quick-action:disabled, #app-content .lub-global-register:disabled { opacity: 1; cursor: not-allowed; color: var(--text-dim); background: var(--surface-2); border-color: var(--border); box-shadow: none; }
 #app-content .lub-quick-actions .lub-quick-action:disabled .btn-icon { color: var(--text-dim); background: currentColor; }
 
-/* Final shift workspace polish: presentation only, scoped to Mi Turno. */
-#app-content.lub-content:has(#lub-pending-follow-up) { margin-inline: auto; width: 100%; }
-/* Gap entre tarjetas de "Pendientes y seguimiento" igual de compacto en
+/* Final shift workspace polish: presentation only, scoped to Mi Turno.
+   UX CAMPO V2 (2026-10-24): #lub-pending-follow-up ya NO está siempre
+   presente (solo cuando hay "Requieren seguimiento") y "Pendientes
+   anteriores" vive ahora en su propio acordeón — el ancla de pantalla
+   completa pasa a .lub-turno-header (SIEMPRE presente en Mi Turno), y la
+   densidad de .lub-pending-card pasa a su acordeón real. */
+#app-content.lub-content:has(.lub-turno-header) { margin-inline: auto; width: 100%; }
+/* Gap entre tarjetas de "Requieren seguimiento" igual de compacto en
    TODOS los anchos (antes solo <=600px bajaba a 8px; 768+ seguía en los
    12px genéricos de .lub-eq-list). */
 #app-content #lub-pending-follow-up > .lub-eq-list { gap: 8px; }
-#app-content:has(#lub-pending-follow-up) .lub-welcome-card { padding: 8px 12px 6px; margin-bottom: 8px; }
-#app-content:has(#lub-pending-follow-up) .lub-section-head { margin-top: 10px; margin-bottom: 6px; }
-/* Pulido densidad (2026-10-20, "último pulido visual"): -19% de alto en
-   las 4 tarjetas KPI (84px -> 68px) y -14% de padding — el número sigue
-   siendo protagonista (24px/800, sin tocar), solo se reduce el aire
-   sobrante alrededor. min-height en .lub-kpi-label es un PISO, no un
-   techo: una etiqueta de 2 líneas ("Pendientes del turno anterior")
-   sigue creciendo lo que necesite, nunca se corta. */
-#app-content:has(#lub-pending-follow-up) .lub-kpi-row { margin-bottom: 8px; }
-#app-content:has(#lub-pending-follow-up) .lub-kpi-card { min-height: 68px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: center; }
-#app-content:has(#lub-pending-follow-up) .lub-kpi-label { min-height: 22px; line-height: 13px; }
-#app-content #lub-pending-follow-up > .lub-eq-list .lub-pending-card { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
-#app-content #lub-pending-follow-up .lub-pending-card.tone-red { background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
-#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-origen { font-size: 12px; line-height: 18px; margin-bottom: 6px; color: color-mix(in srgb, var(--amber) 65%, var(--text)); }
-#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-origen.tone-red { color: color-mix(in srgb, var(--red) 65%, var(--text)); }
-#app-content #lub-pending-follow-up .lub-pending-card .lub-eq-code { font-size: 17px; }
-#app-content #lub-pending-follow-up .lub-pending-card .lub-arrastrado-actions { margin-top: auto; padding-top: 6px; flex-wrap: nowrap; justify-content: space-between; }
-#app-content #lub-pending-follow-up > .lub-eq-list .lub-pending-card .btn { flex: none; min-height: 44px; padding: 6px 10px; font-size: 12px; }
-#app-content #lub-pending-follow-up .lub-arr-ver { order: -1; background: transparent; border-color: var(--border); color: var(--text); }
-#app-content #lub-pending-follow-up .lub-arr-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-#app-content:has(#lub-pending-follow-up) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; box-shadow: none; }
-#app-content:has(#lub-pending-follow-up) button:focus:not(:focus-visible) { outline: none; }
-:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-pending-follow-up .lub-pending-card { border-left-width: 4px !important; }
+#app-content:has(.lub-turno-header) .lub-turno-header { padding: 8px 12px 6px; margin-bottom: 8px; }
+#app-content:has(.lub-turno-header) .lub-section-head { margin-top: 10px; margin-bottom: 6px; }
+#app-content #lub-acc-pendientes-anteriores-panel > .lub-eq-list .lub-pending-card { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card.tone-red { background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-origen { font-size: 12px; line-height: 18px; margin-bottom: 6px; color: color-mix(in srgb, var(--amber) 65%, var(--text)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-origen.tone-red { color: color-mix(in srgb, var(--red) 65%, var(--text)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-eq-code { font-size: 17px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-actions { margin-top: auto; padding-top: 6px; flex-wrap: nowrap; justify-content: space-between; }
+#app-content #lub-acc-pendientes-anteriores-panel > .lub-eq-list .lub-pending-card .btn { flex: none; min-height: 44px; padding: 6px 10px; font-size: 12px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-arr-ver { order: -1; background: transparent; border-color: var(--border); color: var(--text); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-arr-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#app-content:has(.lub-turno-header) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; box-shadow: none; }
+#app-content:has(.lub-turno-header) button:focus:not(:focus-visible) { outline: none; }
+:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card { border-left-width: 4px !important; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card { border-left-width: 4px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-context { font-size: 12px; line-height: 1.4; margin-top: 4px; }
 @media (min-width: 768px) {
-  #app-content.lub-content:has(#lub-pending-follow-up) { max-width: none; }
+  #app-content.lub-content:has(.lub-turno-header) { max-width: none; }
   #app-content #lub-pending-follow-up > .lub-eq-list { align-items: stretch; }
 }
 @media (min-width: 1200px) {
-  #app-content.lub-content:has(#lub-pending-follow-up) { max-width: 1220px; }
+  #app-content.lub-content:has(.lub-turno-header) { max-width: 1220px; }
   #app-content #lub-follow-up .lub-eq-list:has(> .lub-follow-up-row:nth-child(3)),
   #app-content #lub-follow-up .lub-follow-up-expanded:has(> .lub-follow-up-row:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

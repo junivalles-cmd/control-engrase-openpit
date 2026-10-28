@@ -45,7 +45,22 @@ export async function bootLubricadorFollowUp(page, { source = appSource, equipos
     window.refreshPushTokenCrewScope = async () => {}; window.updateLubricadorWidgetSnapshot = snapshot => window.__widget = snapshot;
     window.openValidationDetailModal = () => {};
     ${db}\n${core}\n${app}
-    window.DB = DB; window.renderLubricadorHome = renderLubricadorHome;
+    window.DB = DB;
+    // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+    // colapsados — este fixture los expande automáticamente después de
+    // CADA render (idempotente, nunca cierra lo ya abierto) para no
+    // romper la cobertura de clasificación/negocio YA existente de este
+    // archivo, que no es sobre la interacción propia del acordeón.
+    renderLubricadorHome = (() => {
+      const real = renderLubricadorHome;
+      return async (...args) => {
+        const result = await real(...args);
+        document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+        document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+        return result;
+      };
+    })();
+    window.renderLubricadorHome = renderLubricadorHome;
     window.__offline = () => { lastSyncState.status = 'offline'; };
   ` });
   await page.evaluate(async ({ crew, locations, coverage, equipos, records, plans, assignments, skips, validations }) => {

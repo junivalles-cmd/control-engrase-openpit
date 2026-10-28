@@ -7,8 +7,8 @@
 // (renderLubricadorConfig(), miPerfilRoleCrewSummaryHTML(),
 // openThemePicker(), getTheme()/applyTheme()/saveTheme(), THEMES/MODES)
 // contra una página real de Playwright — mismo mecanismo que
-// tests/ui/mi-perfil.spec.js. Auth/QuickUnlock/DB/getCurrentOperationalScope
-// se reemplazan por fakes (su comportamiento real ya se prueba aparte);
+// tests/ui/mi-perfil.spec.js. Auth/DB/getCurrentOperationalScope se
+// reemplazan por fakes (su comportamiento real ya se prueba aparte);
 // confirmChangeUser() se extrae REAL (es simple: abre un modal de
 // confirmación) para probar la integración real del botón "Entrar con otra
 // cuenta", con `logout` como espía — su propia garantía de "nunca toca
@@ -25,7 +25,6 @@ const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles
 const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
-  'quickUnlockConfigureModal', // se re-asigna a un espía después de extraerla
   'confirmChangeUser', // real: solo abre un modal de confirmación
   'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
   ...THEME_PREFERENCE_DECLARATIONS, 'openThemePicker',
@@ -34,7 +33,7 @@ const APP_NAMES = [
   // reimplementación. renderLubricadorHome() en sí NO se extrae (es la
   // pantalla "Mi Turno" completa, ya probada aparte en
   // tests/ui/lubricador-mi-turno-real-execution.spec.js) — se reemplaza
-  // por un espía después de la extracción, igual que quickUnlockConfigureModal.
+  // por un espía después de la extracción.
   'setSelectedCrewId', 'goToLubricadorTurno',
 ];
 const appRealSrc = APP_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n\n');
@@ -46,7 +45,7 @@ const SCOPE_CREW = {
 
 async function bootConfig(page, {
   displayName = 'Ana Lubricadora', appUserId = 'u_ana', role = 'LUBRICADOR',
-  quickUnlockConfigured = false, scope = SCOPE_CREW,
+  scope = SCOPE_CREW,
   cuadrillas = [{ id: 'cq1', name: 'Cuadrilla 76-08' }], locations = [{ id: 'loc1', name: 'Volcán' }],
   shiftDia = true,
 } = {}) {
@@ -84,27 +83,22 @@ async function bootConfig(page, {
         delete: async (...a) => { window.__dbWriteCalls.push(['delete', ...a]); },
         clear: async (...a) => { window.__dbWriteCalls.push(['clear', ...a]); },
       };
-      window.QuickUnlock = {
-        isConfigured: async () => ${quickUnlockConfigured},
-        disable: async () => { window.__dbWriteCalls.push('QuickUnlock.disable'); },
-      };
       window.getCurrentOperationalScope = async () => (${JSON.stringify(scope)});
       window.currentShiftId = () => ${shiftDia ? "'shift_dia'" : "'shift_noche'"};
       window.navigate = (route) => { window.__navigateCalls.push(route); };
       // logout() real es enorme (OneSignal/Sync/notificaciones) y no cambia
       // en este lote — se reemplaza por un espía que SÍ pasa por
-      // Auth.signOut()/QuickUnlock.disable() (igual que el real), para que
-      // "IndexedDB preservado" se pueda comprobar de verdad: si el flujo
-      // real de logout() tocara IndexedDB, window.DB.put/delete/clear lo
+      // Auth.signOut() (igual que el real), para que "IndexedDB
+      // preservado" se pueda comprobar de verdad: si el flujo real de
+      // logout() tocara IndexedDB, window.DB.put/delete/clear lo
       // registrarían igual aquí.
-      window.logout = async () => { await window.Auth.signOut(); await window.QuickUnlock.disable(); };
+      window.logout = async () => { await window.Auth.signOut(); };
       // Espía — renderLubricadorHome() es la pantalla "Mi Turno" completa,
       // ya probada aparte (tests/ui/lubricador-mi-turno-real-execution.spec.js);
       // acá solo importa confirmar que goToLubricadorTurno() la invoca de
       // verdad después de limpiar la cuadrilla de sesión.
       window.renderLubricadorHome = () => { window.__renderLubricadorHomeCalls = (window.__renderLubricadorHomeCalls || 0) + 1; };
       ${appRealSrc}
-      quickUnlockConfigureModal = (mode) => { window.__quickUnlockConfigureModalCalls = mode; };
       applyTheme(getTheme());
       window.renderLubricadorConfig = renderLubricadorConfig;
       window.goToLubricadorTurno = goToLubricadorTurno;
@@ -227,21 +221,9 @@ test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmedi
   });
 });
 
+// D) Seguridad — "Configurar/Cambiar PIN rápido" se retiró con Quick
+// Unlock (UX CAMPO V2, 2026-10-24); solo queda "Cambiar contraseña".
 test.describe('D) Seguridad', () => {
-  test('"Configurar PIN rápido" llama a quickUnlockConfigureModal("configure", ...) cuando no hay PIN', async ({ page }) => {
-    await bootConfig(page, { quickUnlockConfigured: false });
-    await expect(page.locator('#lub-config-pin')).toContainText('Configurar PIN rápido');
-    await page.locator('#lub-config-pin').click();
-    expect(await page.evaluate(() => window.__quickUnlockConfigureModalCalls)).toBe('configure');
-  });
-
-  test('"Cambiar PIN rápido" llama a quickUnlockConfigureModal("change", ...) cuando ya hay PIN', async ({ page }) => {
-    await bootConfig(page, { quickUnlockConfigured: true });
-    await expect(page.locator('#lub-config-pin')).toContainText('Cambiar PIN rápido');
-    await page.locator('#lub-config-pin').click();
-    expect(await page.evaluate(() => window.__quickUnlockConfigureModalCalls)).toBe('change');
-  });
-
   test('"Cambiar contraseña" reusa Mi Perfil (navigate("miperfil")) — nunca un formulario duplicado', async ({ page }) => {
     await bootConfig(page);
     await page.locator('#lub-config-password').click();

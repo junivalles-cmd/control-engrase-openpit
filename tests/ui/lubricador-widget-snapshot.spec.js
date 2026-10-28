@@ -104,17 +104,15 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
           },
         },
       };
-      // disablePushForCurrentUser()/clearOneSignalIdentity()/cancelAllLocalNotifications()/
-      // stopInactivityTimer() son dependencias de logout() ajenas a este
-      // lote (OneSignal/notificaciones/inactividad) — espías para poder
-      // ejecutar el logout() REAL sin esas piezas.
+      // disablePushForCurrentUser()/clearOneSignalIdentity()/cancelAllLocalNotifications()
+      // son dependencias de logout() ajenas a este lote (OneSignal/
+      // notificaciones) — espías para poder ejecutar el logout() REAL sin
+      // esas piezas.
       window.clearAppBadge = () => {};
       window.disablePushForCurrentUser = () => {};
       window.clearOneSignalIdentity = () => {};
       window.cancelAllLocalNotifications = () => {};
-      window.stopInactivityTimer = () => {};
       window.Auth = { isSupabaseMode: () => true, signOut: async () => {} };
-      window.QuickUnlock = { disable: async () => {} };
       window.renderAuthGateSupabase = () => {};
       ${shiftsSrc}
       ${statusSrc}
@@ -123,6 +121,20 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       ${widgetSnapshotSrc}
       ${appSrc}
       window.currentShiftId = currentShiftId;
+      // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+      // colapsados — se expanden automáticamente tras cada render
+      // (idempotente) para no romper la cobertura del widget de pantalla
+      // de inicio de este archivo, ajena a la interacción propia del
+      // acordeón.
+      renderLubricadorHome = (() => {
+        const real = renderLubricadorHome;
+        return async (...args) => {
+          const result = await real(...args);
+          document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+          document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+          return result;
+        };
+      })();
       window.renderLubricadorHome = renderLubricadorHome;
       window.logout = logout;
       window.lastSyncState = lastSyncState;

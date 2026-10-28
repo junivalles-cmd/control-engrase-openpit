@@ -83,10 +83,13 @@ describe('E) Cuadrillas/Ubicaciones/Categorías — siguen usando las funciones 
   });
 });
 
-describe('Categorías — set completo y omisión correcta de "Seguridad" sin Quick Unlock', () => {
-  it('CONFIG_CATEGORIES declara las 8 categorías pedidas, en orden', () => {
+// "Seguridad"/PIN rápido (Quick Unlock) se retiró por completo de
+// CONFIG_CATEGORIES en UX CAMPO V2 (2026-10-24) — ya no es una categoría
+// condicional, simplemente no existe.
+describe('Categorías — set completo (7 categorías, sin "Seguridad")', () => {
+  it('CONFIG_CATEGORIES declara las 7 categorías pedidas, en orden', () => {
     expect(renderConfigSrc).toContain("{ key: 'general', label: 'General' }");
-    expect(renderConfigSrc).toContain("{ key: 'seguridad', label: 'Seguridad', omit: !quickUnlockAvailable }");
+    expect(renderConfigSrc).not.toContain("key: 'seguridad'");
     expect(renderConfigSrc).toContain("{ key: 'operacion', label: 'Operación' }");
     expect(renderConfigSrc).toContain("{ key: 'organizacion', label: 'Organización' }");
     expect(renderConfigSrc).toContain("{ key: 'usuarios', label: 'Usuarios y accesos' }");
@@ -95,9 +98,9 @@ describe('Categorías — set completo y omisión correcta de "Seguridad" sin Qu
     expect(renderConfigSrc).toContain("{ key: 'administracion', label: 'Administración' }");
   });
 
-  it('el bloque "Seguridad"/PIN rápido completo sigue condicionado a quickUnlockAvailable, igual que antes del lote', () => {
-    expect(renderConfigSrc).toContain('${quickUnlockAvailable ? `');
-    expect(renderConfigSrc).toContain('config-cat-seguridad');
+  it('no queda ningún bloque "Seguridad"/PIN rápido (retirado con Quick Unlock)', () => {
+    expect(renderConfigSrc).not.toContain('quickUnlockAvailable');
+    expect(renderConfigSrc).not.toContain('config-cat-seguridad');
   });
 });
 

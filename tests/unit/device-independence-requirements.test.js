@@ -6,8 +6,14 @@
 // (A-H) a aserciones concretas contra el código REAL (src/core/
 // operational-scope.js + app.js), para que quede trazable cuál test prueba
 // cuál punto — la cobertura de fondo ya vive en operational-scope.test.js/
-// device-assignment-isolation.test.js/quick-unlock.test.js; este archivo
-// es el índice verificable, no una reimplementación paralela.
+// device-assignment-isolation.test.js; este archivo es el índice
+// verificable, no una reimplementación paralela.
+//
+// Punto G original (Quick Unlock es LOCAL y nunca determina permisos) se
+// retiró en UX CAMPO V2 (2026-10-24): Quick Unlock se eliminó por completo
+// del runtime (src/core/quick-unlock.js ya no existe), así que la
+// propiedad que probaba ya no aplica — no hay módulo que confundir con el
+// scope real.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loadOperationalScopeLogic, loadDeviceIdentityLogic } from '../helpers/loadLubricationLogic.js';
@@ -83,30 +89,6 @@ describe('F — Cambiar de dispositivo conserva los mismos permisos remotos', ()
     const dispositivoNuevo = resolveOperationalScope({ currentUser: { id: 'u_lub1', role: 'LUBRICADOR' }, cuadrillas, selectedCrewId: '', shiftId: 'shift_dia' });
     expect(dispositivoNuevo).toEqual(dispositivoViejo);
   });
-});
-
-describe('G — Quick Unlock es LOCAL y nunca determina permisos/cuadrilla/ubicación', () => {
-  it('attemptUnlock() exitoso no devuelve ni toca ningún campo de cuadrilla/ubicación — solo confirma identidad local, el scope real se resuelve aparte', async () => {
-    // Mismo patrón de prueba que tests/unit/quick-unlock.test.js (sección N,
-    // "el PIN nunca cambia ni eleva el rol") — aquí se confirma lo mismo
-    // para cuadrilla/ubicación, el campo que este lote agrega.
-    const { loadQuickUnlockLogic } = await import('../helpers/loadLubricationLogic.js');
-    const { QuickUnlock } = loadQuickUnlockLogic(makeFakeDbForPin());
-    await QuickUnlock.configure('u_lub1', '739184');
-    const result = await QuickUnlock.attemptUnlock('u_lub1', '739184');
-    expect(result.ok).toBe(true);
-    expect(result).not.toHaveProperty('crewId');
-    expect(result).not.toHaveProperty('cuadrillaId');
-    expect(result).not.toHaveProperty('locationId');
-  });
-
-  function makeFakeDbForPin() {
-    let quickUnlock = null;
-    return {
-      async getQuickUnlock() { return quickUnlock; },
-      async setQuickUnlock(v) { quickUnlock = v; return v; },
-    };
-  }
 });
 
 describe('H — Offline sigue funcionando después de sincronización inicial (sin cambios por este lote — confirmado que sigue intacto)', () => {

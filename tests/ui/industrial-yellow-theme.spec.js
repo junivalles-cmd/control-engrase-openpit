@@ -18,7 +18,7 @@ async function palette(page, mode) {
       <div style="padding:12px"><button class="btn btn-accent">Registrar</button>
       <span class="status-chip" style="--c:var(--amber)">PENDIENTE HOY</span>
       <span class="status-chip" style="--c:var(--green)">REALIZADO</span></div></div>
-    <div class="lub-welcome-card"><div class="lub-welcome-name">Lubricador de prueba</div><div class="lub-welcome-role">LUBRICADOR</div></div>
+    <div class="lub-turno-header"><div class="lub-turno-header-top"><div class="lub-turno-header-identity"><span class="lub-turno-header-crew">Cuadrilla de prueba</span></div></div></div>
     <div class="crew-location-filters"><button class="btn" aria-pressed="true">Todas (3)</button><button class="btn">Zona A (2)</button></div>
   </main>`);
   await page.addStyleTag({ path: path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css') });
@@ -48,7 +48,7 @@ for (const mode of ['light', 'dark', 'sun']) {
     });
     expect(tokens.accent).toBe('#A4373A'); expect(tokens['accent-dark']).toBe('#742629'); expect(tokens['on-accent']).toBe('#FFFFFF');
     const button = page.locator('.btn-accent');
-    for (const selector of ['.btn-accent', '.menu-item.active', '.crew-location-filters [aria-pressed=true]', '.lub-welcome-role', '.status-chip:first-of-type']) {
+    for (const selector of ['.btn-accent', '.menu-item.active', '.crew-location-filters [aria-pressed=true]', '.lub-turno-header-crew', '.status-chip:first-of-type']) {
       const c = await colors(page, selector); expect(ratio(c.fg, c.bg), selector).toBeGreaterThanOrEqual(4.5);
     }
     await button.hover();
@@ -57,7 +57,7 @@ for (const mode of ['light', 'dark', 'sun']) {
     await page.mouse.move(0, 0); await button.focus();
     const focus = await colors(page, '.btn-accent'); expect(focus.outline).not.toBe('none');
     expect(ratio(focus.outlineColor, (await colors(page, 'main')).bg)).toBeGreaterThanOrEqual(3);
-    const border = await page.locator('.lub-welcome-card').evaluate(el => getComputedStyle(el).borderTopColor);
+    const border = await page.locator('.lub-turno-header').evaluate(el => getComputedStyle(el).borderTopColor);
     expect(border).toBe('rgb(164, 55, 58)');
     const stripes = await page.locator('.panel-head').evaluate(el => getComputedStyle(el).borderImageSource);
     expect(stripes).toContain('164, 55, 58');

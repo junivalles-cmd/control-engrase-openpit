@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-24",
+  "scope": "Snapshot de conteos (sin payload) de TODOS los stores de engrase_sync en producción (proyecto cont_engrase, ref havrirlapjyqrffgalqx) inmediatamente antes del reset operativo total. active_n = filas donde payload->>'active' es distinto de 'false' (misma regla que usa la app: r.active !== false).",
+  "stores": {
+    "anomalies": { "total": 10, "active": 4, "deleted": 6 },
+    "audit_log": { "total": 837, "active": 837, "deleted": 0, "note": "fuera de alcance del reset, es bitácora histórica" },
+    "broadcast_message_reads": { "total": 1, "active": 1, "deleted": 0 },
+    "broadcast_messages": { "total": 6, "active": 0, "deleted": 6 },
+    "crew_locations": { "total": 2, "active": 1, "deleted": 1 },
+    "cuadrillas": { "total": 4, "active": 3, "deleted": 1, "note": "STRUCTURAL — se conserva, decisión en este reset" },
+    "equipment": { "total": 11, "active": 7, "deleted": 4 },
+    "equipment_types": { "total": 11, "active": 7, "deleted": 4, "note": "fuera de alcance explícito del pedido — NO tocado" },
+    "grease_validations": { "total": 38, "active": 38, "deleted": 0 },
+    "locations": { "total": 8, "active": 4, "deleted": 4, "note": "fuera de alcance explícito del pedido — NO tocado" },
+    "lubricants": { "total": 4, "active": 2, "deleted": 2, "note": "fuera de alcance explícito del pedido — NO tocado" },
+    "lubrication_assignments": { "total": 8, "active": 8, "deleted": 0 },
+    "lubrication_plans": { "total": 7, "active": 7, "deleted": 0 },
+    "lubrication_points": { "total": 1050, "active": 1028, "deleted": 22 },
+    "lubrication_records": { "total": 109, "active": 105, "deleted": 4 },
+    "manual_tasks": { "total": 6, "active": 1, "deleted": 4 },
+    "notification_dispatch_log": { "total": 4, "active": 4, "deleted": 0, "note": "fuera de alcance — bitácora técnica" },
+    "push_tokens": { "total": 2, "active": 2, "deleted": 0, "note": "fuera de alcance — parámetro técnico" },
+    "settings": { "total": 3, "active": 3, "deleted": 0, "note": "fuera de alcance — configuración" },
+    "shifts": { "total": 2, "active": 2, "deleted": 0, "note": "fuera de alcance — configuración (Día/Noche), no es estado operativo por-cuadrilla" },
+    "users": { "total": 7, "active": 4, "deleted": 3, "note": "CONSERVAR — fuera de alcance de este reset" },
+    "lubrication_skips": { "total": 0, "active": 0, "deleted": 0 },
+    "app_config_evidence_execution": { "note": "app_config es LOCAL_STORES en db.js, nunca sincroniza — no existe en el servidor. Nada que limpiar aquí del lado de Supabase." }
+  },
+  "storage_before": {
+    "bucket": "engrase-photos",
+    "total_objects": 82,
+    "total_bytes": 4965000
+  },
+  "scope_decisions": {
+    "reset_these_stores": ["equipment", "lubrication_points", "lubrication_plans", "lubrication_records", "grease_validations", "lubrication_skips", "manual_tasks", "broadcast_messages", "broadcast_message_reads", "anomalies", "lubrication_assignments", "crew_locations"],
+    "keep_untouched": ["users", "cuadrillas (definición estructural)", "shifts", "settings", "push_tokens", "locations", "equipment_types", "lubricants", "audit_log", "notification_dispatch_log", "RLS/migraciones/funciones/Edge Functions/app_store_permissions"],
+    "rationale_cuadrillas": "memberUserIds referencia usuarios reales (u_ediaz, u_jguerra) que se conservan — borrar/vaciar cuadrillas rompería su contexto de acceso aunque el usuario en sí no se toque. Se interpreta 'limpiar relaciones operativas' como el reset de crew_locations (la capa de cobertura operativa), no como vaciar cuadrillas.",
+    "rationale_locations_equipment_types_lubricants": "no estaban en la lista explícita del pedido; se tratan como catálogo/config estructural igual que cuadrillas. Marcado para tu confirmación si también los quieres vaciar."
+  }
+}

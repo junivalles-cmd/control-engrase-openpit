@@ -21,16 +21,14 @@ for (const width of [390, 412, 600, 768, 1024, 1366]) {
       window.renderAnomalias = () => { document.querySelector('#app-content').innerHTML = '<h2>Anomalías</h2>'; };
       window.Auth.isAuthenticated = () => true;
       window.Auth.getProfile = () => ({appUserId:'lub',displayName:'Lubricador',role:'LUBRICADOR'});
-      window.QuickUnlock = {isConfigured: async () => true};
       window.getHelpContent = async () => ({families:[],faq:[{question:'Consulta de ayuda',answer:'Contenido existente'}]});
       window.wirePhotoThumbs = () => {};
       window.openThemePicker = () => {};
-      window.quickUnlockConfigureModal = () => {};
       window._activeConfigCategory = '';
       ${navigation}
     ` });
     await page.evaluate(() => bootLubricador());
-    await expect(page.locator('.lub-welcome-card')).toBeVisible();
+    await expect(page.locator('.lub-turno-header')).toBeVisible();
     const nav = page.locator('.lub-bottom-nav');
     await expect(nav.locator('button > span:last-child')).toHaveText(['Mi Turno', 'Tareas', 'Anomalías', 'Historial']);
     await expect(nav.getByRole('button', { name: 'Ayuda', exact: true })).toHaveCount(0);
@@ -56,7 +54,7 @@ for (const width of [390, 412, 600, 768, 1024, 1366]) {
     await page.locator('#lub-help-back-config').click();
     await expect(page.locator('#lub-config-help')).toBeVisible();
     await nav.locator('[data-route="turno"]').click();
-    await expect(page.locator('.lub-welcome-card')).toBeVisible();
+    await expect(page.locator('.lub-turno-header')).toBeVisible();
     await expect(nav.locator('[aria-current="page"]')).toHaveAttribute('data-route', 'turno');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);

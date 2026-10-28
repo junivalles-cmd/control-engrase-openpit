@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — handoff acumulativo, no runbook vigente.
+# Conserva decisiones y hallazgos de sesiones anteriores; para instalación,
+# Auth, Storage y despliegue consulte docs/DOCUMENTATION_STATUS.md.
+
 # Session Handoff — Control de Engrase (migration-typescript)
 
 Última actualización: 2026-10-02 (parte 20) — CORRECCIÓN ARQUITECTÓNICA: eliminada toda dependencia de dispositivo físico del scope operativo (commit `f467782`) — la cuadrilla ahora autoriza USUARIOS (`cuadrillas[].memberUserIds`), nunca un teléfono. "Próximos" (mañana) + domingo en plan imprimible ya commiteados (`908e0e2`). Skill **UI UX Pro Max** instalada localmente + `CLAUDE.md` con reglas permanentes del proyecto (commit `82f3b1b`). HEAD de cierre de sesión: `82f3b1b`. Sin push en ningún momento. `stash@{0}` ya no existe (confirmado obsoleto, dropeado).
@@ -770,3 +774,7 @@ Nada tocó producción/Supabase: sin SQL ejecutado, sin bucket modificado, sin u
 - NO `git push` sin autorización explícita y específica de ese momento.
 - NO desplegar Edge Functions ni ejecutar SQL contra producción sin autorización explícita y específica de ese momento.
 - `docs/SESSION_HANDOFF.md` se mantiene siempre **sin trackear** (fuera de `git add`/commits).
+# HISTORICAL / DEPRECATED — handoff acumulativo, no runbook vigente.
+# Conserva decisiones y hallazgos de sesiones anteriores; para instalación,
+# Auth, Storage y despliegue consulte docs/DOCUMENTATION_STATUS.md.
+

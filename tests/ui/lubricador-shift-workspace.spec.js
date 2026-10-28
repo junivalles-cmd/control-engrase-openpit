@@ -14,7 +14,10 @@ for (const count of [0, 1, 2, 3, 8]) test(`workspace ${count} recommendations: r
       const main = document.getElementById('app-content'), rect = main.getBoundingClientRect();
       return { overflow: document.documentElement.scrollWidth > innerWidth, width: rect.width, centered: Math.abs(rect.left - (innerWidth - rect.width) / 2) < 1,
         columns: document.querySelector('#lub-follow-up .lub-eq-list') ? getComputedStyle(document.querySelector('#lub-follow-up .lub-eq-list')).gridTemplateColumns.split(' ').length : 0,
-        kpis: [...document.querySelectorAll('.lub-kpi-card')].map(el => el.getBoundingClientRect().height),
+        // UX CAMPO V2 (2026-10-24): la fila de 4 .lub-kpi-card se retiró —
+        // el acordeón real equivalente es .lub-accordion-head (3, SIEMPRE
+        // presentes, misma consistencia visual de altura que antes).
+        kpis: [...document.querySelectorAll('.lub-accordion-head')].map(el => el.getBoundingClientRect().height),
         quickColumns: getComputedStyle(document.querySelector('.lub-quick-actions')).gridTemplateColumns.split(' ').length,
         small: [...main.querySelectorAll('button')].some(el => { const r = el.getBoundingClientRect(); return r.width < 44 || r.height < 44; }),
       };

@@ -171,6 +171,23 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
       ${validationSrc}
       ${appSrc}
       window.currentShiftId = currentShiftId;
+      // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+      // colapsados — este archivo (clasificación de trabajo, no la
+      // interacción del propio acordeón) los expande automáticamente
+      // tras CADA render (idempotente: nunca cierra lo ya abierto, cubre
+      // los muchos rerenders repetidos de este archivo) para no romper
+      // su cobertura existente. La interacción real del acordeón
+      // (colapsado inicial, expandir/contraer, aria-expanded) se prueba
+      // aparte en tests/ui/lubricador-mi-turno-accordions.spec.js.
+      renderLubricadorHome = (() => {
+        const real = renderLubricadorHome;
+        return async (...args) => {
+          const result = await real(...args);
+          document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+          document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+          return result;
+        };
+      })();
       window.renderLubricadorHome = renderLubricadorHome;
       // Expuesto para los tests del INVARIANTE "local-first" (625355f):
       // permite simular, desde fuera, que la sincronización remota falla
@@ -182,19 +199,49 @@ async function bootPage(page, { equipos = [], plans = [], records = [], skips = 
   });
 }
 
-// Localiza la lista (.lub-eq-list) de una sección por el texto de su
-// encabezado — null si la sección está oculta (sin trabajo que mostrar),
-// igual que hace la pantalla real.
+// Localiza la lista (.lub-eq-list) de una sección — UX CAMPO V2
+// (2026-10-24): "ATRASADOS"/"MI TURNO" ya no son .lub-section-head con un
+// .lub-eq-list hermano, viven DENTRO del panel de su acordeón
+// (#lub-acc-<key>-panel .lub-eq-list, siempre presente en el DOM, aunque
+// el acordeón esté colapsado — este archivo prueba clasificación, no la
+// interacción del acordeón en sí, y el fixture ya los expande
+// automáticamente tras cada render, ver bootPage() arriba). El resto de
+// secciones (Realizados/Requieren seguimiento) no son acordeones y no
+// cambiaron.
 function seccion(page, textoEncabezado) {
   if (textoEncabezado === 'REQUIEREN SEGUIMIENTO') return page.locator('#lub-follow-up > .lub-eq-list');
-  if (textoEncabezado === 'ATRASADOS') return page.locator('.lub-section-head:has-text("ATRASADOS") + .lub-eq-list, .lub-section-head:has-text("PENDIENTES DEL TURNO ANTERIOR") + .lub-eq-list');
+  if (textoEncabezado === 'ATRASADOS' || textoEncabezado === 'PENDIENTES DEL TURNO ANTERIOR') return page.locator('#lub-acc-pendientes-anteriores-panel > .lub-eq-list');
+  if (textoEncabezado === 'MI TURNO') return page.locator('#lub-acc-mi-turno-panel > .lub-eq-list');
   return page.locator(`.lub-section-head:has-text("${textoEncabezado}") + .lub-eq-list`);
 }
 
-// Lee el número de UN KPI por su etiqueta (los 4 .lub-kpi-card no tienen id
-// propio) — mismo método "ubicar por texto" que seccion() arriba.
+// Lee el número de UN KPI por su etiqueta — UX CAMPO V2 (2026-10-24): la
+// fila de 4 .lub-kpi-card se retiró; "Vencidos por horas"/"Pendientes
+// hoy"/"Pendientes del turno anterior" ahora son el contador propio
+// (.lub-accordion-count) de su acordeón; "Realizados hoy" sigue siendo el
+// único contador fuera de los 3 acordeones (span dedicado dentro del
+// status-chip "REALIZADOS (N)", agregado solo para esto, mismo texto
+// visible de siempre).
+// "Realizados hoy" ya no tiene un KPI siempre visible (como los 3
+// acordeones) — su sección (no un acordeón) se sigue ocultando por
+// completo en 0 (sin cambios, ver §7 de lubricador-dashboard.test.js), así
+// que el contador (.lub-realizados-count) literalmente no existe en el DOM
+// cuando es 0. Esta función cubre ambos casos con la MISMA aserción que
+// antes (kpiValue(page,'Realizados hoy')).
+async function expectRealizadosHoy(page, n) {
+  if (n === 0) return expect(page.locator('.lub-realizados-count')).toHaveCount(0);
+  return expect(page.locator('.lub-realizados-count')).toHaveText(String(n));
+}
+
 function kpiValue(page, label) {
-  return page.locator('.lub-kpi-card', { hasText: label }).locator('.lub-kpi-value');
+  const ACCORDION_BTN_BY_LABEL = {
+    'Vencidos por horas': '#lub-acc-atencion-prioritaria-btn',
+    'Pendientes hoy': '#lub-acc-mi-turno-btn',
+    'Pendientes del turno anterior': '#lub-acc-pendientes-anteriores-btn',
+  };
+  if (ACCORDION_BTN_BY_LABEL[label]) return page.locator(`${ACCORDION_BTN_BY_LABEL[label]} .lub-accordion-count`);
+  if (label === 'Realizados hoy') return page.locator('.lub-realizados-count');
+  throw new Error(`kpiValue(): etiqueta desconocida "${label}"`);
 }
 
 // Dedup real (punto E del pedido): un código solo puede estar en UNA de
@@ -702,7 +749,7 @@ test('A/F — 2 equipos ASIGNADOS "PROGRAMADO HOY" en Mi Turno: el KPI "Pendient
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(page.locator('.lub-section-head:has-text("MI TURNO")')).toContainText('(2)');
+  await expect(page.locator('#lub-acc-mi-turno-btn .lub-accordion-count')).toHaveText('2');
   await expect(seccion(page, 'MI TURNO')).toContainText('45-77');
   await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
   // El bug real: esto marcaba "0" antes del fix.
@@ -730,7 +777,7 @@ test('B — una de las 2 asignaciones pasa a COMPLETE: sale de Mi Turno (Pendien
   await bootPage(page, { crewLocations: ASSIGNMENT_COVERAGE, equipos, plans, assignments });
   await page.evaluate(() => window.renderLubricadorHome());
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('2');
-  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
+  await expectRealizadosHoy(page, 0);
 
   await page.evaluate(() => {
     window.__mockData.lubrication_records.push({
@@ -742,7 +789,7 @@ test('B — una de las 2 asignaciones pasa a COMPLETE: sale de Mi Turno (Pendien
 
   expect(errors).toEqual([]);
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
-  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('1');
+  await expectRealizadosHoy(page, 1);
   expect(await enCuantasSeccionesDeTrabajo(page, '45-77')).toBe(1); // solo Realizados
   await expect(seccion(page, 'MI TURNO')).toContainText('A-02');
 });
@@ -768,7 +815,7 @@ test('C — un equipo ASIGNADO con un PARTIAL de hoy sigue PENDIENTE (nunca desa
   await expect(seccion(page, 'MI TURNO')).toContainText('PROGRAMADO HOY');
   expect(await enCuantasSeccionesDeTrabajo(page, 'T-60')).toBe(1); // solo Mi Turno, nunca Realizados
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
-  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0');
+  await expectRealizadosHoy(page, 0);
 });
 
 test('A/C — un equipo NORMAL vencido por HORÓMETRO cuenta en "Vencidos por horas" (+1), nunca infla "Pendientes hoy" ni aparece en Mi Turno', async ({ page }) => {
@@ -819,10 +866,18 @@ test('B — un equipo ASIGNADO (no normal) vencido por HORÓMETRO también cuent
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1');
-  // §4 del pedido: aceptable que además aparezca en Atrasados (overlap a
-  // propósito — estado técnico vs. bandeja de trabajo, significados
-  // distintos) — el merge de asignados ya mete cualquier ROJO asignado ahí.
+  // §4 del pedido original: el estado ROJO por horómetro SIEMPRE se evalúa
+  // (nunca lo decide el origen normal/asignado) — este equipo asignado
+  // vencido por horas cumple vencidosHorometro por construcción. Pero
+  // también es ROJO asignado, así que el merge de asignados lo mete en
+  // Atrasados (arrastradosTotal) — y el pedido de acordeones de Mi Turno
+  // (UX CAMPO V2, 2026-10-24) exige que cada obligación viva en
+  // EXACTAMENTE una sección, con la precedencia que el propio pedido fija
+  // (1. Pendientes anteriores, 2. Atención prioritaria): por eso NO cuenta
+  // también en "Atención prioritaria" — antes (KPI "Vencidos por horas",
+  // sin bandeja propia) el solape era aceptado a propósito porque un KPI
+  // es solo un número, nunca una bandeja de tarjetas real.
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('0');
   await expect(seccion(page, 'ATRASADOS')).toContainText('T-66');
 });
 
@@ -843,7 +898,12 @@ test('D — un equipo que clasifica como asignado a SU PROPIA cuadrilla (redunda
   await page.evaluate(() => window.renderLubricadorHome());
 
   expect(errors).toEqual([]);
-  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('1'); // nunca "2"
+  // UX CAMPO V2 (2026-10-24): este equipo (ROJO asignado) también lo
+  // deduplica "Atención prioritaria" contra "Pendientes anteriores" (ver
+  // test B arriba) — queda en 0 en el acordeón de atención prioritaria y
+  // UNA sola vez en Atrasados, nunca 2 veces en ninguna combinación.
+  await expect(kpiValue(page, 'Vencidos por horas')).toHaveText('0');
+  await expect(seccion(page, 'ATRASADOS').locator('.lub-eq-code', { hasText: 'T-67' })).toHaveCount(1);
 });
 
 test('E — tras registrar el engrase (lastGreaseHour avanza, status deja de ser ROJO), el equipo deja de contar en "Vencidos por horas" en el siguiente render', async ({ page }) => {
@@ -896,7 +956,7 @@ test('E — sin duplicados: cada equipo cuenta en el KPI de UNA sola categoría 
   expect(errors).toEqual([]);
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('1');
   await expect(kpiValue(page, 'Pendientes del turno anterior')).toHaveText('1');
-  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('1');
+  await expectRealizadosHoy(page, 1);
   for (const code of ['T-62', 'T-63', 'T-64']) {
     expect(await enCuantasSeccionesDeTrabajo(page, code)).toBe(1);
   }
@@ -948,12 +1008,15 @@ test('O-A — plan programado HOY + COMPLETE fuera de plan AYER que satisfizo es
   await expect(seccion(page, 'REALIZADOS ADELANTADOS')).toContainText('Cuadrilla A');
 
   // H/I/J/K del pedido: nunca pendiente/atrasado/realizado-hoy a la vez.
+  // UX CAMPO V2 (2026-10-24): "Mi turno"/"Pendientes anteriores" son
+  // acordeones SIEMPRE presentes (incluso en 0, con su propio estado
+  // vacío) — nunca desaparecen como antes hacía .lub-section-head;
+  // "Realizados hoy" (no es un acordeón) sigue ocultándose por completo.
   await expect(kpiValue(page, 'Pendientes hoy')).toHaveText('0');
   await expect(kpiValue(page, 'Pendientes del turno anterior')).toHaveText('0');
-  await expect(kpiValue(page, 'Realizados hoy')).toHaveText('0'); // la ejecución real fue AYER, no hoy
-  expect(await page.locator('.lub-section-head:has-text("MI TURNO")').count()).toBe(0);
-  expect(await page.locator('.lub-section-head:has-text("ATRASADOS")').count()).toBe(0);
-  expect(await page.locator('.lub-section-head:has-text("REALIZADOS (")').count()).toBe(0); // "Realizados hoy" (no adelantados) oculta, nunca una tarjeta en 0
+  await expectRealizadosHoy(page, 0); // la ejecución real fue AYER, no hoy
+  await expect(page.locator('#lub-acc-mi-turno-panel')).toContainText('No hay engrases programados para este turno.');
+  await expect(page.locator('#lub-acc-pendientes-anteriores-panel')).toContainText('No hay pendientes de turnos anteriores.');
   // Q del pedido: sin duplicados — '20-5530' aparece UNA sola vez en toda
   // las secciones formales. El seguimiento informativo PUEDE coexistir —
   // regla E de doble turno (grease-validation.js): el registro de AYER ya
@@ -1389,11 +1452,11 @@ test('FIX "ELIMINAR PARPADEO EN SYNC INCREMENTAL": un repintado silent SIN cambi
   // Marca el DOM actual a mano: si renderLubricadorHome({silent:true}) de
   // verdad reemplaza #app-content, este marcador desaparece (el template
   // real nunca lo escribe).
-  await page.evaluate(() => document.querySelector('.lub-welcome-card').setAttribute('data-marker', 'untouched'));
+  await page.evaluate(() => document.querySelector('.lub-turno-header').setAttribute('data-marker', 'untouched'));
   await page.evaluate(() => window.renderLubricadorHome({ silent: true }));
 
   await expect(page.locator('#app-content')).not.toContainText('Cargando tu turno…');
-  expect(await page.locator('.lub-welcome-card').getAttribute('data-marker')).toBe('untouched'); // el DOM NO se tocó
+  expect(await page.locator('.lub-turno-header').getAttribute('data-marker')).toBe('untouched'); // el DOM NO se tocó
   await expect(seccion(page, 'MI TURNO')).toContainText('T-60');
   expect(errors).toEqual([]);
 });
@@ -1409,7 +1472,7 @@ test('FIX "ELIMINAR PARPADEO EN SYNC INCREMENTAL": un repintado silent CON un ca
   expect(errors).toEqual([]);
   await expect(seccion(page, 'MI TURNO')).toContainText('T-61');
 
-  await page.evaluate(() => document.querySelector('.lub-welcome-card').setAttribute('data-marker', 'untouched'));
+  await page.evaluate(() => document.querySelector('.lub-turno-header').setAttribute('data-marker', 'untouched'));
   await page.evaluate(() => {
     // Mismo patrón que los tests "local-first" de arriba: simula el
     // DB.put() real de un engrase COMPLETE guardado localmente, y un sync
@@ -1425,6 +1488,6 @@ test('FIX "ELIMINAR PARPADEO EN SYNC INCREMENTAL": un repintado silent CON un ca
   await expect(seccion(page, 'REALIZADOS')).toContainText('T-61'); // el cambio real SÍ se refleja
   expect(await enCuantasSeccionesDeTrabajo(page, 'T-61')).toBe(1);
   // Hubo algo real que actualizar -> el DOM SÍ se reemplazó (el marcador manual no sobrevive).
-  expect(await page.locator('.lub-welcome-card').getAttribute('data-marker')).toBeNull();
+  expect(await page.locator('.lub-turno-header').getAttribute('data-marker')).toBeNull();
   expect(errors).toEqual([]);
 });

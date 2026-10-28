@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — diseño de transición; no es guía de instalación.
+# Para el estado vigente consulte docs/DOCUMENTATION_STATUS.md,
+# docs/MIGRATION_STATUS.md y las migraciones versionadas.
+
 # P0-2 — Auditoría y diseño: Autenticación real + Roles + RLS
 
 Fecha: 2026-09-26. Solo auditoría y diseño — **ningún código, SQL ni dato
@@ -438,3 +442,4 @@ mockeado según corresponda:
 ## 15. Respuesta final (resumen — ver arriba el detalle completo)
 
 Ver mensaje de cierre en el chat.
+

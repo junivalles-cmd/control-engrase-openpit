@@ -18,7 +18,7 @@ async function bootShell(page) {
     window.renderTareasYMensajes = () => { document.querySelector('#app-content').innerHTML = '<div id="marker-tareas">TAREAS</div>'; };
     bootLubricador();
   });
-  await expect(page.locator('.lub-welcome-card')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   return {errors, consoleErrors};
 }
 
@@ -31,7 +31,7 @@ test('LUBRICADOR: bootLubricador() renderiza el shell completo y Mi Turno, sin p
   await expect(page.locator('.lub-bottom-nav')).toBeVisible();
   const html = await page.locator('#app-content').innerHTML();
   expect(html.length, 'el contenido central NUNCA debe quedar vacío').toBeGreaterThan(0);
-  await expect(page.locator('.lub-welcome-card')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
 });
 
 test('LUBRICADOR: los 4 botones de navegación inferior SÍ responden (wiring real, no solo presencia en el DOM)', async ({ page }) => {
@@ -47,7 +47,7 @@ test('LUBRICADOR: los 4 botones de navegación inferior SÍ responden (wiring re
   await expect(page.locator('.lub-nav-item[data-route="ayuda"]')).toHaveCount(0);
 
   await page.locator('.lub-nav-item[data-route="turno"]').click();
-  await expect(page.locator('.lub-welcome-card')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
 });
 
 test('LUBRICADOR: "Mi cuenta" (gear) SÍ responde y abre el modal real', async ({ page }) => {

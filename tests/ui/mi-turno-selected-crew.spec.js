@@ -76,6 +76,20 @@ async function runtime(page, ready = true) {
     window.openAnomalyForm = () => {}; window.openQrScanner = () => {};
     ${source}
     window.DB = DB;
+    // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+    // colapsados — se expanden automáticamente tras cada render
+    // (idempotente; no-op en las pantallas de selección de cuadrilla,
+    // que no tienen acordeones) para no romper la cobertura de este
+    // archivo, ajena a la interacción propia del acordeón.
+    renderLubricadorHome = (() => {
+      const real = renderLubricadorHome;
+      return async (...args) => {
+        const result = await real(...args);
+        document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+        document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+        return result;
+      };
+    })();
     window.renderLubricadorHome = renderLubricadorHome;
     window.getCurrentOperationalScope = getCurrentOperationalScope;
     window.setSelectedCrewId = setSelectedCrewId;
@@ -154,7 +168,9 @@ test('selected crew with no active assignments still sees its own normal work, n
   // vuelven a ser trabajo NORMAL de su cuadrilla default (cuad_a) — nunca
   // el de otra cuadrilla real (MOJ-02/ACR-03 siguen fuera).
   await expect(cards(page)).toHaveText(['VOL-OTRA-CUADRILLA', 'VOL-SIN-ASIGNAR', 'VOL-01']);
-  await expect(page.locator('.lub-kpi-value').first()).toHaveText('0'); // "Vencidos por horas"
+  // UX CAMPO V2 (2026-10-24): "Vencidos por horas" ahora es el contador
+  // propio del acordeón "Atención prioritaria", no una .lub-kpi-card.
+  await expect(page.locator('#lub-acc-atencion-prioritaria-btn .lub-accordion-count')).toHaveText('0');
 });
 
 // Con 1 sola cuadrilla autorizada (cuad_a), resolveOperationalScope() ni

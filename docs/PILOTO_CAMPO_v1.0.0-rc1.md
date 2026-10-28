@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — plan de piloto de `v1.0.0-rc1`.
+# No usar como checklist actual de campo; la navegación y autenticación de
+# esa versión ya cambiaron.
+
 # Plan de Piloto de Campo — v1.0.0-rc1
 
 **Objetivo:** validar `v1.0.0-rc1` en condiciones reales de campo, con
@@ -71,3 +75,7 @@ backlog.
   `docs/PILOT_ISSUES_TEMPLATE.md`.
 
 Detalle completo del release en `docs/RELEASE_v1.0.0-rc1.md`.
+# HISTORICAL / DEPRECATED — plan de piloto de `v1.0.0-rc1`.
+# No usar como checklist actual de campo; la navegación y autenticación de
+# esa versión ya cambiaron.
+

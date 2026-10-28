@@ -2,12 +2,15 @@
 //
 // Pedido "CONFIGURACIÓN FINAL + SESIÓN OFFLINE..." (2026-10-09), Parte B/C.
 // Carga y EJECUTA de verdad openLubAccountMenu()/confirmLubricadorLogout()/
-// lockApp()/confirmChangeUser() (mismo patrón real-execution que el resto
-// de este proyecto) — logout() en sí se reemplaza por un espía que SÍ pasa
-// por Auth.signOut()/QuickUnlock.disable() (igual que el real), mismo
-// método ya usado en tests/ui/lubricador-config.spec.js, para poder
-// comprobar "nunca toca IndexedDB" sin extraer la función real completa
-// (enorme: OneSignal/notificaciones/widget, sin cambios en este lote).
+// confirmChangeUser() (mismo patrón real-execution que el resto de este
+// proyecto) — logout() en sí se reemplaza por un espía que SÍ pasa por
+// Auth.signOut() (igual que el real), mismo método ya usado en
+// tests/ui/lubricador-config.spec.js, para poder comprobar "nunca toca
+// IndexedDB" sin extraer la función real completa (enorme: OneSignal/
+// notificaciones/widget, sin cambios en este lote).
+// (UX CAMPO V2, 2026-10-24: "Bloquear"/lockApp()/Quick Unlock se
+// retiraron por completo — "Cerrar sesión" y "Entrar con otra cuenta"
+// quedan como únicas acciones de sesión en este menú.)
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
@@ -18,7 +21,7 @@ const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles
 const appSource = readSource(APP_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
-  'confirmChangeUser', 'crewCoveragePresentation', 'openLubAccountMenu', 'confirmLubricadorLogout', 'lockApp',
+  'confirmChangeUser', 'crewCoveragePresentation', 'openLubAccountMenu', 'confirmLubricadorLogout',
 ];
 const appRealSrc = APP_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n\n');
 
@@ -46,9 +49,6 @@ async function bootMenu(page, { online = true, pendingCount = 0 } = {}) {
         isAuthenticated: () => true,
         signOut: async () => { window.__dbWriteCalls.push('Auth.signOut'); return true; },
       };
-      window.QuickUnlock = {
-        disable: async () => { window.__dbWriteCalls.push('QuickUnlock.disable'); },
-      };
       window.DB = {
         allActive: async () => [],
         put: async (...a) => { window.__dbWriteCalls.push(['put', ...a]); },
@@ -58,18 +58,15 @@ async function bootMenu(page, { online = true, pendingCount = 0 } = {}) {
       window.Sync = { pendingCount: async () => ${pendingCount} };
       window.getCurrentOperationalScope = async () => ({ kind: 'NO_CREW_ASSIGNED', authorizedCrews: [] });
       window.clearAppBadge = () => {};
-      window.stopInactivityTimer = () => {};
       window.renderAuthGateSupabase = () => { window.__renderAuthGateCalls++; };
       // logout() real es enorme (OneSignal/widget/notificaciones, sin
-      // cambios en este lote) — espía que SÍ pasa por Auth.signOut()/
-      // QuickUnlock.disable() (igual que el real), mismo método que
+      // cambios en este lote) — espía que SÍ pasa por Auth.signOut()
+      // (igual que el real), mismo método que
       // tests/ui/lubricador-config.spec.js.
-      window.logout = async () => { await window.Auth.signOut(); await window.QuickUnlock.disable(); };
-      window.lockApp2x = 0;
+      window.logout = async () => { await window.Auth.signOut(); };
       ${appRealSrc}
       window.openLubAccountMenu = openLubAccountMenu;
       window.confirmLubricadorLogout = confirmLubricadorLogout;
-      window.lockApp = lockApp;
       window.confirmChangeUser = confirmChangeUser;
     `,
   });
@@ -81,38 +78,29 @@ test('C — "Cerrar sesión" está en Mi Cuenta, separado visualmente (divider) 
   const menu = page.locator('.lub-account-menu');
   await expect(menu.locator('#lub-menu-mi-perfil')).toBeVisible();
   await expect(menu.locator('#lub-menu-config')).toBeVisible();
-  await expect(menu.locator('#lub-menu-lock')).toBeVisible();
+  await expect(menu.locator('#lub-menu-lock')).toHaveCount(0); // retirado con Quick Unlock (UX CAMPO V2)
   await expect(menu.locator('#lub-menu-change-user')).toBeVisible();
   await expect(menu.locator('.lub-account-menu-divider')).toHaveCount(1);
   await expect(menu.locator('#lub-menu-logout')).toContainText('Cerrar sesión');
 });
 
-test('E — "Entrar con otra cuenta" (ahora en Mi Cuenta): abre confirmChangeUser() real y, al confirmar, pasa por Auth.signOut()/QuickUnlock.disable() sin ninguna escritura a IndexedDB', async ({ page }) => {
+test('E — "Entrar con otra cuenta" (ahora en Mi Cuenta): abre confirmChangeUser() real y, al confirmar, pasa por Auth.signOut() sin ninguna escritura a IndexedDB', async ({ page }) => {
   await bootMenu(page);
   await page.evaluate(() => window.openLubAccountMenu());
   await page.locator('#lub-menu-change-user').click();
   await expect(page.locator('.modal-body')).toContainText('Vas a salir de la sesión');
   await page.locator('#confirm-change-user-confirm').click();
-  await expect.poll(() => page.evaluate(() => window.__dbWriteCalls)).toEqual(['Auth.signOut', 'QuickUnlock.disable']);
+  await expect.poll(() => page.evaluate(() => window.__dbWriteCalls)).toEqual(['Auth.signOut']);
   const dbCalls = await page.evaluate(() => window.__dbWriteCalls.filter((c) => Array.isArray(c)));
   expect(dbCalls).toEqual([]); // K/L: ninguna escritura a IndexedDB
 });
 
-test('F/G — "Bloquear" (lockApp real) conserva la sesión Auth y permite Quick Unlock — nunca Auth.signOut()/QuickUnlock.disable()', async ({ page }) => {
-  await bootMenu(page);
-  await page.evaluate(() => window.lockApp());
-  const dbCalls = await page.evaluate(() => window.__dbWriteCalls);
-  expect(dbCalls).toEqual([]); // nunca Auth.signOut ni QuickUnlock.disable
-  const gateCalls = await page.evaluate(() => window.__renderAuthGateCalls);
-  expect(gateCalls).toBe(1); // vuelve al MISMO gate que ofrece Quick Unlock al arrancar
-});
-
-test('H — Cerrar sesión OFFLINE (sin pendientes) muestra la advertencia real y ofrece Bloquear primero', async ({ page }) => {
+test('H — Cerrar sesión OFFLINE (sin pendientes) muestra la advertencia real, sin ninguna alternativa de bloqueo (retirada con Quick Unlock)', async ({ page }) => {
   await bootMenu(page, { online: false, pendingCount: 0 });
   await page.evaluate(() => window.confirmLubricadorLogout());
   await expect(page.locator('#modal-title-text')).toContainText('Estás sin conexión');
   await expect(page.locator('.modal-body')).toContainText('podrías necesitar conexión a internet');
-  await expect(page.locator('#lub-logout-lock')).toContainText('Bloquear en su lugar');
+  await expect(page.locator('#lub-logout-lock')).toHaveCount(0);
   await expect(page.locator('#lub-logout-confirm')).toContainText('Cerrar sesión de todos modos');
 });
 
@@ -121,7 +109,7 @@ test('I — OFFLINE + pendientes de sincronizar muestra la advertencia REFORZADA
   await page.evaluate(() => window.confirmLubricadorLogout());
   await expect(page.locator('#modal-title-text')).toContainText('información pendiente de sincronizar');
   await expect(page.locator('.modal-body')).toContainText('3 registro(s)');
-  await expect(page.locator('#lub-logout-lock')).toContainText('Bloquear en su lugar');
+  await expect(page.locator('#lub-logout-lock')).toHaveCount(0);
 });
 
 test('online, sin pendientes: confirmación simple ("Se cerrará la sesión de Jose Guerrero...")', async ({ page }) => {
@@ -141,7 +129,7 @@ test('online CON pendientes: sigue siendo posible cerrar sesión, solo con adver
   await expect(page.locator('#lub-logout-confirm')).toBeVisible();
 });
 
-test('J — Cancelar no cambia la sesión (nunca llama logout() ni lockApp())', async ({ page }) => {
+test('J — Cancelar no cambia la sesión (nunca llama logout())', async ({ page }) => {
   await bootMenu(page, { online: false, pendingCount: 1 });
   await page.evaluate(() => window.confirmLubricadorLogout());
   await page.locator('#lub-logout-cancel').click();
@@ -156,7 +144,7 @@ test('K/L — "Cerrar sesión de todos modos" (offline+pendientes) sigue sin toc
   await bootMenu(page, { online: false, pendingCount: 5 });
   await page.evaluate(() => window.confirmLubricadorLogout());
   await page.locator('#lub-logout-confirm').click();
-  await expect.poll(() => page.evaluate(() => window.__dbWriteCalls)).toEqual(['Auth.signOut', 'QuickUnlock.disable']);
+  await expect.poll(() => page.evaluate(() => window.__dbWriteCalls)).toEqual(['Auth.signOut']);
   const dbCalls = await page.evaluate(() => window.__dbWriteCalls.filter((c) => Array.isArray(c)));
   expect(dbCalls).toEqual([]);
 });

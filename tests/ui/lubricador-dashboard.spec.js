@@ -2,75 +2,99 @@
 //
 // "Mi Turno" del Lubricador (renderLubricadorHome(), ruta 'turno') —
 // fragmento estático con la MISMA estructura/clases REALES que genera la
-// función (lub-context-row/lub-kpi-row/lub-arrastrado-card/lub-eq-btn/
+// función (lub-turno-header/lub-accordion*/lub-arrastrado-card/lub-eq-btn/
 // lub-quick-actions) — sin login/DB real, mismo método que el resto de
 // specs del proyecto.
 //
-// Hardening UI 2026-10-08 ("simplificar Mi Turno"): 4 secciones con
-// contador — ATRASADOS/MI TURNO/REALIZADOS/ALERTAS — "Asignaciones activas"
-// ya NO es una sección aparte (un equipo asignado vive dentro de Atrasados
-// o Mi Turno con badge ASIGNADO). Foco explícito del pedido: mobile first
-// 390/412px, identificar equipos en pocos segundos, ocultar bloques vacíos
-// salvo los 4 KPIs.
+// UX CAMPO V2 (2026-10-24): reemplaza la fila de 4 .lub-kpi-card por 3
+// acordeones reales (Pendientes anteriores/Atención prioritaria/Engrases
+// de mi turno), cada uno SIEMPRE presente (incluso en 0, con su propio
+// estado vacío) — "Realizados" y "Requieren seguimiento" (antes
+// "Alertas") siguen ocultándose por completo cuando están vacíos, sin
+// cambios de esa propiedad.
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 
+function accordion({ key, title, subtitle, count, cardsHTML, emptyText, expanded = true }) {
+  return `
+  <section class="lub-accordion" data-accordion="${key}">
+    <button type="button" class="lub-accordion-head" id="lub-acc-${key}-btn" aria-expanded="${expanded}" aria-controls="lub-acc-${key}-panel" aria-label="${title}, ${count} trabajo${count === 1 ? '' : 's'}">
+      <span class="lub-accordion-titles">
+        <span class="lub-accordion-title">${title}</span>
+        <span class="lub-accordion-subtitle">${subtitle}</span>
+      </span>
+      <span class="lub-accordion-count" data-tone="${count ? 'active' : 'empty'}">${count}</span>
+      <span class="lub-accordion-chevron" aria-hidden="true">⌄</span>
+    </button>
+    <div class="lub-accordion-panel" id="lub-acc-${key}-panel" role="region" ${expanded ? '' : 'hidden'}>
+      ${count ? `<div class="lub-eq-list">${cardsHTML}</div>` : `<p class="field-hint lub-accordion-empty">${emptyText}</p>`}
+    </div>
+  </section>`;
+}
+
 function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = true, withAlertas = true, asignadoEnMiTurno = true } = {}) {
+  const arrastradoCard = `
+    <div class="lub-arrastrado-card lub-pending-card tone-amber">
+      <span class="lub-arrastrado-origen tone-amber">Turno anterior</span>
+      <div class="lub-eq-top"><span class="lub-eq-code">T-06</span></div>
+      <div class="lub-eq-model">Caterpillar D8T</div>
+      <div class="lub-eq-location">📍 Rajo Principal</div>
+      <div class="lub-arrastrado-motivo">Motivo: No hubo tiempo</div>
+      <div class="lub-arrastrado-actions"><button class="btn btn-accent">Registrar engrase</button><button class="btn">Ver ficha</button></div>
+    </div>`;
+  const miTurnoCard = `
+    <div class="lub-eq-btn" data-status="AMARILLO">
+      <div class="lub-eq-top">
+        <span class="lub-eq-code">T-09</span>
+        <span class="status-chip" style="--c:var(--amber)">PRÓXIMO</span>
+        ${asignadoEnMiTurno ? '<span class="status-chip chip-origen" style="--c:var(--amber)">ASIGNADO</span>' : ''}
+      </div>
+      <div class="lub-eq-model">Komatsu WA470</div>
+      <div class="lub-eq-location">📍 Rajo Principal</div>
+      <div class="lub-eq-bottom"><span class="mono">900 h</span></div>
+      <div class="lub-arrastrado-actions"><button class="btn btn-accent">Registrar engrase</button><button class="btn">Ver ficha</button></div>
+    </div>`;
+
   return `
   <div class="lub-shell">
     <main class="lub-content">
-      <div class="lub-welcome-card">
-        <div class="lub-welcome-name">Jose Guerrero</div>
-        <div class="lub-welcome-role">LUBRICADOR</div>
-        <div class="lub-context-row">
-          <span class="lub-context-chip">☀ Turno Día</span>
-          <span class="lub-context-chip">📍 Rajo Principal</span>
-          <span class="lub-context-chip">👥 Cuadrilla A</span>
-          <span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>
-        </div>
-      </div>
-
-      <div class="lub-kpi-row">
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Vencidos por horas</div></div>
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Pendientes hoy</div></div>
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Arrastrados</div></div>
-        <div class="lub-kpi-card tone-green"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Realizados hoy</div></div>
-      </div>
-
-      ${withArrastrados ? `
-      <div class="lub-section-head" id="arrastrados-head"><span class="status-chip" style="--c:var(--red)">ATRASADOS (1)</span></div>
-      <div class="lub-eq-list" id="arrastrados-list">
-        <div class="lub-arrastrado-card tone-amber">
-          <span class="lub-arrastrado-origen tone-amber">Turno anterior</span>
-          <div class="lub-eq-top"><span class="lub-eq-code">T-06</span></div>
-          <div class="lub-eq-model">Caterpillar D8T</div>
-          <div class="lub-eq-location">📍 Rajo Principal</div>
-          <div class="lub-arrastrado-motivo">Motivo: No hubo tiempo</div>
-          <div class="lub-arrastrado-actions"><button class="btn btn-accent">Registrar engrase</button><button class="btn">Ver ficha</button></div>
-        </div>
-      </div>` : ''}
-
-      ${withMiTurno ? `
-      <div class="lub-section-head" id="mi-turno-head"><span class="dim">MI TURNO (1)</span></div>
-      <div class="lub-eq-list" id="mi-turno-list">
-        <div class="lub-eq-btn" data-status="AMARILLO">
-          <div class="lub-eq-top">
-            <span class="lub-eq-code">T-09</span>
-            <span class="status-chip" style="--c:var(--amber)">PRÓXIMO</span>
-            ${asignadoEnMiTurno ? '<span class="status-chip chip-origen" style="--c:var(--amber)">ASIGNADO</span>' : ''}
+      <div class="lub-turno-header">
+        <div class="lub-turno-header-top">
+          <div class="lub-turno-header-identity">
+            <span class="lub-turno-header-crew">👥 Cuadrilla A</span>
+            <span class="lub-turno-header-detail">
+              <span class="lub-context-chip lub-coverage-chip" title="Rajo Principal" aria-label="Cobertura: Rajo Principal">📍 Rajo Principal</span>
+              ☀ Turno Día
+            </span>
           </div>
-          <div class="lub-eq-model">Komatsu WA470</div>
-          <div class="lub-eq-location">📍 Rajo Principal</div>
-          <div class="lub-eq-bottom"><span class="mono">900 h</span></div>
-          <div class="lub-arrastrado-actions"><button class="btn btn-accent">Registrar engrase</button><button class="btn">Ver ficha</button></div>
         </div>
-      </div>` : ''}
+        <div class="lub-turno-header-summary">${withArrastrados ? 1 : 0} pendiente · 0 prioridad · ${withMiTurno ? 1 : 0} turno</div>
+      </div>
+
+      <div class="lub-accordions" id="lub-accordions">
+        ${accordion({ key: 'pendientes-anteriores', title: 'Pendientes anteriores', subtitle: 'Trabajo de turnos anteriores sin completar', count: withArrastrados ? 1 : 0, cardsHTML: arrastradoCard, emptyText: 'No hay pendientes de turnos anteriores.' })}
+        ${accordion({ key: 'atencion-prioritaria', title: 'Atención prioritaria', subtitle: 'Equipos que requieren atención primero', count: 0, cardsHTML: '', emptyText: 'No hay equipos que requieran atención prioritaria.' })}
+        ${accordion({ key: 'mi-turno', title: 'Engrases de mi turno', subtitle: 'Trabajo programado para este turno', count: withMiTurno ? 1 : 0, cardsHTML: miTurnoCard, emptyText: 'No hay engrases programados para este turno.' })}
+      </div>
+
+      ${withAlertas ? `
+      <section id="lub-pending-follow-up" aria-label="Seguimiento sugerido">
+        <section id="lub-follow-up">
+          <h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · 1</h3>
+          <div class="lub-eq-list" id="alertas-list">
+            <div class="lub-arrastrado-card tone-amber">
+              <div class="lub-eq-top"><button type="button" class="lub-eq-code dash-code-link">T-11</button><span class="dim">12 días sin engrasar</span></div>
+              <div class="lub-eq-model">Volvo A40</div>
+            </div>
+          </div>
+        </section>
+      </section>` : `<section id="lub-pending-follow-up"><p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p></section>`}
 
       ${withRealizados ? `
-      <div class="lub-section-head" id="realizados-head"><span class="status-chip" style="--c:var(--green)">REALIZADOS (1)</span></div>
+      <div class="lub-section-head" id="realizados-head"><span class="status-chip" style="--c:var(--green)">REALIZADOS (<span class="lub-realizados-count">1</span>)</span></div>
       <div class="lub-eq-list" id="realizados-list">
         <div class="lub-arrastrado-card tone-green">
           <div class="lub-eq-top"><span class="lub-eq-code">T-02</span><span class="dim">08:15</span></div>
@@ -78,15 +102,6 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
           <div class="lub-record-meta dim"><span>2.5 lb</span><span>Juan Pérez</span></div>
           <div class="lub-record-validacion"><span class="status-chip">Validado</span></div>
           <div class="lub-arrastrado-actions"><button class="btn">Ver ficha</button></div>
-        </div>
-      </div>` : ''}
-
-      ${withAlertas ? `
-      <div class="lub-section-head" id="alertas-head"><span class="status-chip" style="--c:var(--amber)">ALERTAS (1)</span></div>
-      <div class="lub-eq-list" id="alertas-list">
-        <div class="lub-arrastrado-card tone-amber">
-          <div class="lub-eq-top"><button type="button" class="lub-eq-code dash-code-link">T-11</button><span class="dim">12 días sin engrasar</span></div>
-          <div class="lub-eq-model">Volvo A40</div>
         </div>
       </div>` : ''}
 
@@ -109,89 +124,99 @@ function fixture({ withArrastrados = true, withMiTurno = true, withRealizados = 
   </div>`;
 }
 
-// Fix 2026-10-09 (§14 del pedido): 360/384 se suman a los 390/412 que ya
-// cubría esta suite — las 4 anchuras de auditoría obligatorias, con el
-// fixture REAL completo (contexto + 4 KPI + Atrasados/Mi Turno/Realizados/
-// Alertas + acción principal + Accesos rápidos), no solo el topbar vacío
-// (eso ya lo cubre lubricador-mobile-ux.spec.js aparte).
-for (const width of [360, 384, 390, 412]) {
+// Auditoría de campo: cubre las cinco anchuras operativas solicitadas, con el
+// fixture REAL completo (header + 3 acordeones + Realizados/Requieren
+// seguimiento + acción principal + Accesos rápidos), no solo el topbar
+// vacío (eso ya lo cubre lubricador-mobile-ux.spec.js aparte).
+for (const width of [360, 390, 412, 600, 768]) {
   test(`Mi Turno @ ${width}px — sin scroll horizontal`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
     await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
-  await page.addStyleTag({ path: STYLES_PATH });
+    await page.addStyleTag({ path: STYLES_PATH });
 
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
   });
 
-  test(`Mi Turno @ ${width}px — los 4 KPIs están en 2 columnas, visibles sin scroll adicional`, async ({ page }) => {
+  test(`Mi Turno @ ${width}px — los 3 acordeones ocupan el ancho completo, apilados, sin scroll adicional`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
     await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
-  await page.addStyleTag({ path: STYLES_PATH });
+    await page.addStyleTag({ path: STYLES_PATH });
 
-    const cards = page.locator('.lub-kpi-card');
-    await expect(cards).toHaveCount(4);
-    const cols = await page.locator('.lub-kpi-row').evaluate(el => new Set(Array.from(el.children).map(c => Math.round(c.getBoundingClientRect().left))).size);
-    expect(cols).toBe(2);
+    const heads = page.locator('.lub-accordion-head');
+    await expect(heads).toHaveCount(3);
+    const lefts = await heads.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left)));
+    expect(new Set(lefts).size).toBe(1); // misma columna, apilados verticalmente
+    const tops = await heads.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top)));
+    expect(tops[0]).toBeLessThan(tops[1]); expect(tops[1]).toBeLessThan(tops[2]);
   });
 
-  test(`Mi Turno @ ${width}px — acciones rápidas, acciones de Atrasados y de Mi Turno cumplen touch target >=44px`, async ({ page }) => {
+  test(`Mi Turno @ ${width}px — acordeones, acciones rápidas y acciones de tarjetas cumplen touch target >=48px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1200 });
     await page.setContent(fixture());
     await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
-  await page.addStyleTag({ path: STYLES_PATH });
+    await page.addStyleTag({ path: STYLES_PATH });
 
+    const heads = page.locator('.lub-accordion-head');
+    const h = await heads.count();
+    for (let i = 0; i < h; i++) {
+      const box = await heads.nth(i).boundingBox();
+      expect(box.height).toBeGreaterThanOrEqual(48);
+    }
     const quickActions = page.locator('.lub-quick-action');
     const n = await quickActions.count();
     for (let i = 0; i < n; i++) {
       const box = await quickActions.nth(i).boundingBox();
-      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(48);
     }
     const hero = await page.locator('.lub-hero-action').boundingBox();
-    expect(hero.height).toBeGreaterThanOrEqual(44);
-    // .lub-arrastrado-actions se reusa tal cual en Atrasados, Mi Turno y
-    // Realizados (hardening UI 2026-10-08) — este selector ya cubre los 3.
+    expect(hero.height).toBeGreaterThanOrEqual(48);
+    // .lub-arrastrado-actions se reusa tal cual en Pendientes anteriores,
+    // Mi Turno y Realizados (hardening UI 2026-10-08) — este selector ya
+    // cubre los 3.
     const arrBtns = page.locator('.lub-arrastrado-actions .btn');
     const m = await arrBtns.count();
     expect(m).toBeGreaterThan(0);
     for (let i = 0; i < m; i++) {
       const box = await arrBtns.nth(i).boundingBox();
-      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(48);
     }
   });
 }
 
-test('4 KPIs siempre visibles incluso en 0 (nunca se ocultan, a diferencia de Atrasados/Mi Turno/Realizados/Alertas)', async ({ page }) => {
+test('los 3 acordeones siempre muestran su encabezado y contador, incluso en 0 (nunca desaparecen, a diferencia de Realizados/Requieren seguimiento)', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withArrastrados: false, withMiTurno: false, withRealizados: false, withAlertas: false }));
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  await expect(page.locator('.lub-kpi-card')).toHaveCount(4);
-  const values = await page.locator('.lub-kpi-value').allTextContents();
-  expect(values).toEqual(['0', '0', '0', '0']);
+  await expect(page.locator('.lub-accordion-head')).toHaveCount(3);
+  const values = await page.locator('.lub-accordion-count').allTextContents();
+  expect(values).toEqual(['0', '0', '0']);
+  await expect(page.locator('#lub-acc-pendientes-anteriores-panel')).toContainText('No hay pendientes de turnos anteriores.');
+  await expect(page.locator('#lub-acc-mi-turno-panel')).toContainText('No hay engrases programados para este turno.');
 });
 
-test('"Atrasados" se oculta por completo cuando no hay registros (nunca una tarjeta en 0)', async ({ page }) => {
+test('"Pendientes anteriores" muestra su estado vacío (nunca una tarjeta en 0) cuando no hay registros', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withArrastrados: false }));
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  await expect(page.locator('#arrastrados-head')).toHaveCount(0);
-  await expect(page.locator('#arrastrados-list')).toHaveCount(0);
+  await expect(page.locator('#lub-acc-pendientes-anteriores-panel .lub-pending-card')).toHaveCount(0);
+  await expect(page.locator('#lub-acc-pendientes-anteriores-panel')).toContainText('No hay pendientes de turnos anteriores.');
 });
 
-test('"Mi Turno" se oculta por completo cuando no hay trabajo del turno actual', async ({ page }) => {
+test('"Mi Turno" muestra su estado vacío (nunca una tarjeta en 0) cuando no hay trabajo del turno actual', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withMiTurno: false }));
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  await expect(page.locator('#mi-turno-head')).toHaveCount(0);
-  await expect(page.locator('#mi-turno-list')).toHaveCount(0);
+  await expect(page.locator('#lub-acc-mi-turno-panel .lub-eq-btn')).toHaveCount(0);
+  await expect(page.locator('#lub-acc-mi-turno-panel')).toContainText('No hay engrases programados para este turno.');
 });
 
 test('"Realizados" se oculta por completo cuando no hay engrases completados hoy', async ({ page }) => {
@@ -204,38 +229,39 @@ test('"Realizados" se oculta por completo cuando no hay engrases completados hoy
   await expect(page.locator('#realizados-list')).toHaveCount(0);
 });
 
-test('"Alertas" se oculta por completo cuando no hay equipos para mostrar', async ({ page }) => {
+test('"Requieren seguimiento" (antes "Alertas") se oculta por completo cuando no hay equipos para mostrar', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture({ withAlertas: false }));
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  await expect(page.locator('#alertas-head')).toHaveCount(0);
   await expect(page.locator('#alertas-list')).toHaveCount(0);
 });
 
-test('orden de pantalla: Atrasados > Mi Turno > Realizados > Alertas', async ({ page }) => {
+test('orden de pantalla: Pendientes anteriores > Atención prioritaria > Mi Turno > Realizados > Requieren seguimiento', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 1200 });
   await page.setContent(fixture());
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const arrastradosBox = await page.locator('#arrastrados-head').boundingBox();
-  const miTurnoBox = await page.locator('#mi-turno-head').boundingBox();
+  const pendientesBox = await page.locator('#lub-acc-pendientes-anteriores-btn').boundingBox();
+  const atencionBox = await page.locator('#lub-acc-atencion-prioritaria-btn').boundingBox();
+  const miTurnoBox = await page.locator('#lub-acc-mi-turno-btn').boundingBox();
   const realizadosBox = await page.locator('#realizados-head').boundingBox();
-  const alertasBox = await page.locator('#alertas-head').boundingBox();
-  expect(miTurnoBox.y).toBeGreaterThan(arrastradosBox.y);
+  const alertasBox = await page.locator('#lub-pending-follow-up').boundingBox();
+  expect(atencionBox.y).toBeGreaterThan(pendientesBox.y);
+  expect(miTurnoBox.y).toBeGreaterThan(atencionBox.y);
   expect(realizadosBox.y).toBeGreaterThan(miTurnoBox.y);
-  expect(alertasBox.y).toBeGreaterThan(realizadosBox.y);
+  expect(alertasBox.y).toBeGreaterThan(miTurnoBox.y);
 });
 
-test('cada tarjeta de Atrasados muestra código, modelo, ubicación, origen y acciones Registrar/Ver ficha', async ({ page }) => {
+test('cada tarjeta de "Pendientes anteriores" muestra código, modelo, ubicación, origen y acciones Registrar/Ver ficha', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('.lub-arrastrado-card').first();
+  const card = page.locator('#lub-acc-pendientes-anteriores-panel .lub-arrastrado-card').first();
   await expect(card.locator('.lub-arrastrado-origen')).toHaveText('Turno anterior');
   await expect(card.locator('.lub-eq-code')).toHaveText('T-06');
   await expect(card.locator('.lub-eq-model')).toContainText('Caterpillar D8T');
@@ -250,7 +276,7 @@ test('una tarjeta de Mi Turno asignada muestra el badge ASIGNADO junto al estado
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('#mi-turno-list .lub-eq-btn').first();
+  const card = page.locator('#lub-acc-mi-turno-panel .lub-eq-btn').first();
   const chips = await card.locator('.lub-eq-top .status-chip').allTextContents();
   expect(chips).toContain('ASIGNADO');
 });
@@ -261,7 +287,7 @@ test('una tarjeta de Mi Turno sin asignación NO muestra el badge ASIGNADO', asy
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('#mi-turno-list .lub-eq-btn').first();
+  const card = page.locator('#lub-acc-mi-turno-panel .lub-eq-btn').first();
   const chips = await card.locator('.lub-eq-top .status-chip').allTextContents();
   expect(chips).not.toContain('ASIGNADO');
 });
@@ -272,8 +298,8 @@ test('§12: el badge ASIGNADO (origen) se ve visualmente distinto del status-chi
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const estadoChip = page.locator('#mi-turno-list .lub-eq-top .status-chip', { hasText: 'PRÓXIMO' });
-  const asignadoChip = page.locator('#mi-turno-list .lub-eq-top .status-chip', { hasText: 'ASIGNADO' });
+  const estadoChip = page.locator('#lub-acc-mi-turno-panel .lub-eq-top .status-chip', { hasText: 'PRÓXIMO' });
+  const asignadoChip = page.locator('#lub-acc-mi-turno-panel .lub-eq-top .status-chip', { hasText: 'ASIGNADO' });
   const estadoBg = await estadoChip.evaluate(el => getComputedStyle(el).backgroundColor);
   const asignadoBg = await asignadoChip.evaluate(el => getComputedStyle(el).backgroundColor);
   // ESTADO sigue macizo (mismo --c con 18% de opacidad); ASIGNADO pasa a
@@ -298,7 +324,7 @@ test('cada tarjeta de Realizados muestra código, hora, lb, quién lo realizó, 
   await expect(card.locator('button', { hasText: 'Ver ficha' })).toBeVisible();
 });
 
-test('cada tarjeta de Alertas muestra el código de equipo (abre la Ficha) y los días sin engrasar', async ({ page }) => {
+test('cada tarjeta de "Requieren seguimiento" muestra el código de equipo (abre la Ficha) y los días sin engrasar', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
@@ -309,17 +335,18 @@ test('cada tarjeta de Alertas muestra el código de equipo (abre la Ficha) y los
   await expect(card).toContainText('días sin engrasar');
 });
 
-test('contexto compacto muestra turno + ubicación + cuadrilla + sincronización en una sola fila', async ({ page }) => {
+test('header compacto muestra cuadrilla + ubicación (chip con title/aria-label) + turno, y el resumen de 3 números', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const chips = await page.locator('.lub-context-chip').allTextContents();
-  expect(chips.some(t => t.includes('Turno Día'))).toBe(true);
-  expect(chips.some(t => t.includes('Rajo Principal'))).toBe(true);
-  expect(chips.some(t => t.includes('Cuadrilla A'))).toBe(true);
-  expect(chips.some(t => t.includes('Sincronizado'))).toBe(true);
+  await expect(page.locator('.lub-turno-header-crew')).toContainText('Cuadrilla A');
+  await expect(page.locator('.lub-turno-header-detail')).toContainText('Turno Día');
+  await expect(page.locator('.lub-coverage-chip')).toHaveAttribute('title', 'Rajo Principal');
+  await expect(page.locator('.lub-turno-header-summary')).toContainText('1 pendiente');
+  await expect(page.locator('.lub-turno-header-summary')).toContainText('0 prioridad');
+  await expect(page.locator('.lub-turno-header-summary')).toContainText('1 turno');
 });
 
 test('"Registrar fuera de plan" es la acción principal dominante (tarjeta grande separada), y Accesos rápidos tiene exactamente 4 botones: Escanear QR, Buscar equipo, Matriz semanal, Reportar anomalía', async ({ page }) => {
@@ -333,14 +360,14 @@ test('"Registrar fuera de plan" es la acción principal dominante (tarjeta grand
   expect(labels).toEqual(['Escanear QR', 'Buscar equipo', 'Matriz semanal', 'Reportar anomalía']);
 });
 
-test('tarjeta de bienvenida muestra nombre + rol del usuario junto al contexto', async ({ page }) => {
+test('los 3 acordeones tienen accesibilidad real: <button>, aria-expanded, aria-controls y aria-label con el conteo', async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 1200 });
   await page.setContent(fixture());
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({contentType:'text/css',body:''}));
   await page.addStyleTag({ path: STYLES_PATH });
 
-  const card = page.locator('.lub-welcome-card');
-  await expect(card.locator('.lub-welcome-name')).toHaveText('Jose Guerrero');
-  await expect(card.locator('.lub-welcome-role')).toHaveText('LUBRICADOR');
-  await expect(card.locator('.lub-context-row')).toContainText('Turno Día');
+  const btn = page.locator('#lub-acc-pendientes-anteriores-btn');
+  expect(await btn.evaluate(el => el.tagName)).toBe('BUTTON');
+  await expect(btn).toHaveAttribute('aria-controls', 'lub-acc-pendientes-anteriores-panel');
+  await expect(btn).toHaveAttribute('aria-label', /Pendientes anteriores, 1 trabajo/);
 });

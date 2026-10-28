@@ -25,9 +25,9 @@ function buildPageScript({ role, supabaseMode }) {
     window.Sync = { runAutoCycle() {} };
     window.Auth = { isSupabaseMode: () => ${supabaseMode} };
     window.ic = () => '';
-    ${['updateTareasMensajesNavBadge', 'wireEvidenceImgFallbackOnce', 'refreshLocalNotifications', 'refreshAppBadge', 'startInactivityTracking',
-      'programarCierrePorFinDeTurno', 'updateConnBadge', 'wireShiftTimer', 'updateShiftBadge', 'confirmLogout',
-      'lockApp', 'confirmChangeUser', 'wireQuickFind', 'openQrScanner', 'handleQrDeepLink',
+    ${['updateTareasMensajesNavBadge', 'wireEvidenceImgFallbackOnce', 'refreshLocalNotifications', 'refreshAppBadge',
+      'updateConnBadge', 'wireShiftTimer', 'updateShiftBadge', 'confirmLogout',
+      'confirmChangeUser', 'wireQuickFind', 'openQrScanner', 'handleQrDeepLink',
       // Renderers reales de cada pantalla NO se cargan (necesitan DB real) —
       // se stubean para que el render async disparado por navigate() no
       // explote con ReferenceError; las aserciones de este spec nunca

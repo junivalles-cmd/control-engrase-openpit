@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-24",
+  "scope": "Resultado de la limpieza de TEST_CONFIRMED ejecutada contra producción (Supabase, proyecto cont_engrase, ref havrirlapjyqrffgalqx). Mecanismo usado: UPDATE acotado por lista exacta de IDs (nunca masivo/sin filtro), replicando el patrón real de soft-delete de la app (payload.active=false + columna deleted=true, verificado contra equipment ya borrado antes de escribir nada).",
+  "backend_counts_after": {
+    "anomalies": { "total": 10, "deleted_true": 6 },
+    "broadcast_messages": { "total": 6, "deleted_true": 6, "changed": "2 filas: payload.active true->false (bcast_TEST_E2E_PUSH/PUSH2). deleted ya era true en ambas antes de esta sesión (inconsistencia preexistente entre deleted y payload.active, no introducida ahora)." },
+    "crew_locations": { "total": 2, "deleted_true": 1 },
+    "cuadrillas": { "total": 4, "deleted_true": 1 },
+    "equipment": { "total": 11, "deleted_true": 4 },
+    "equipment_types": { "total": 11, "deleted_true": 4 },
+    "grease_validations": { "total": 38, "deleted_true": 0 },
+    "locations": { "total": 8, "deleted_true": 4 },
+    "lubricants": { "total": 4, "deleted_true": 2 },
+    "lubrication_assignments": { "total": 8, "deleted_true": 0 },
+    "lubrication_plans": { "total": 7, "deleted_true": 0 },
+    "lubrication_points": { "total": 1050, "deleted_true": 22, "changed": "22 filas pt_eq_demo_* : active true->false, deleted false->true" },
+    "lubrication_records": { "total": 109, "deleted_true": 4 },
+    "manual_tasks": { "total": 6, "deleted_true": 4, "changed": "4 filas TEST_E2E_PHOTO2/PHOTO/FIX4/FIX3 : active ->false, deleted ->true" },
+    "users": { "total": 7, "deleted_true": 3 }
+  },
+  "deleted": [],
+  "soft_deleted": {
+    "lubrication_points": ["pt_eq_demo_0568_Bisagras","pt_eq_demo_0568_Cilindrosdeinclinación","pt_eq_demo_0568_Pasadoresdebastidor","pt_eq_demo_0568_Pinesdecuchilla","pt_eq_demo_0568_Rodillos","pt_eq_demo_1231_Cardanes","pt_eq_demo_1231_Dirección","pt_eq_demo_1231_Ejes","pt_eq_demo_1231_Pinesdetolva","pt_eq_demo_1231_Suspensión","pt_eq_demo_4569_Articulacióncentral","pt_eq_demo_4569_Cardanes","pt_eq_demo_4569_Crucetas","pt_eq_demo_4569_Dirección","pt_eq_demo_4569_Pinesdetolva","pt_eq_demo_4569_Suspensión","pt_eq_demo_4586_Articulacióncentral","pt_eq_demo_4586_Cardanes","pt_eq_demo_4586_Crucetas","pt_eq_demo_4586_Dirección","pt_eq_demo_4586_Pinesdetolva","pt_eq_demo_4586_Suspensión"],
+    "broadcast_messages": ["bcast_TEST_E2E_PUSH_957f62a14de74372be1d096069cad0ca","bcast_TEST_E2E_PUSH2_0dfe70ee66c648f2983261fe2cfe2629"],
+    "manual_tasks": ["mtask_TEST_E2E_PHOTO2_db770c9b026b477eb9d81f23c4f7e84b","mtask_TEST_E2E_PHOTO_a181cce47d1c4dc5957cb616c638befe","mtask_TEST_E2E_FIX4_8c6aeeb03ee8418b96d954b4076f5355","mtask_TEST_E2E_FIX3_526b7c1e79cf42f7b90d9518d8d2728b"]
+  },
+  "storage_deleted": {
+    "attempted": ["manual_tasks/mtask_TEST_E2E_PHOTO2_db770c9b026b477eb9d81f23c4f7e84b_0.webp","manual_tasks/mtask_TEST_E2E_FIX3_526b7c1e79cf42f7b90d9518d8d2728b_0.webp","manual_tasks/mtask_TEST_E2E_FIX4_8c6aeeb03ee8418b96d954b4076f5355_0.jpg"],
+    "succeeded": [],
+    "status": "NO EJECUTADO — limitación de la herramienta, no de la clasificación",
+    "reason": "`supabase storage rm` (CLI v2.116.0, --linked y --project-ref, ambas sintaxis ss:/// validadas por el propio CLI) devolvió {\"deleted\":[]} sin error en 3 intentos distintos, pese a que `storage ls -r` confirma que los 3 archivos existen. No se intentó extraer la service_role key para forzar el borrado por API directa (bloqueado correctamente por el sandbox como extracción de credenciales; no se buscó una vía alterna). Los 3 objetos (18.9 KB total) quedan pendientes de borrado manual desde el dashboard de Supabase o actualizando el CLI a 2.122.0.",
+    "total_bytes_pending": 19020
+  },
+  "unknown_preserved": [
+    "968 lubrication_points huérfanos (planId inexistente) distintos de los 22 '_demo_' — NO tocados, requiere decisión del usuario",
+    "usuario 'Planificador' (u_mu2w804yo1n94u) activo con nombre genérico — NO tocado",
+    "10 anomalías (incluidas 6 creadas bajo cuentas demo) — NO tocadas, sin marcador de prueba confirmado",
+    "manual_tasks 'mtask_mvffsl88ahm98t' (Drenar aceite hidraulico) — NO tocada",
+    "109 lubrication_records / 38 grease_validations — NO tocados, sin marcador de prueba encontrado"
+  ],
+  "real_preserved": [
+    "7 equipment activos (25-46, A11, A-02, T-06, 20-5530, 05-0870, 45-77)",
+    "7 lubrication_plans (todos referencian equipmentId real)",
+    "60 lubrication_points correctamente ligados a los 7 planes reales",
+    "8 lubrication_assignments, 38 grease_validations, 109 lubrication_records (menos los 4 ya-VERIF-01), 4 usuarios activos reales (incluye admin + 2 lubricadores con username estilo código de equipo)"
+  ],
+  "local_tablet": {
+    "performed": false,
+    "reason": "Ningún dispositivo Android conectado a esta sesión (adb no disponible / sin dispositivos). Secciones 10-12 del pedido (reconciliar tablet, verificación funcional en Mi Turno/Tareas/Anomalías/Historial/Mensajes/Sync, dos ciclos de sync observados) no se ejecutaron. No se simuló ni se inventó un resultado."
+  },
+  "sync_1": "NO_EJECUTADO (sin dispositivo)",
+  "sync_2": "NO_EJECUTADO (sin dispositivo)",
+  "badge": "NO_VERIFICADO (sin dispositivo)",
+  "files_created": [
+    "docs/evidence/PRE_REAL_DATA_CLEANUP_2026-10-24.json",
+    "docs/evidence/POST_REAL_DATA_CLEANUP_2026-10-24.json"
+  ],
+  "data_only_changes": "28 filas en engrase_sync (producción) actualizadas vía UPDATE acotado por ID exacto. Cero cambios de schema/RLS/migraciones/función. Cero TRUNCATE/DELETE/mass UPDATE.",
+  "review_required": [
+    "968 lubrication_points huérfanos: decidir si son catálogo seminal reutilizable para la carga real o basura de desarrollo segura de borrar.",
+    "Usuario 'Planificador' activo: confirmar si está en uso real antes de decidir.",
+    "3 objetos de storage (19 KB) pendientes de borrado manual por falla del CLI.",
+    "Verificación en tablet real (secciones 10-13 del pedido) pendiente — requiere dispositivo conectado en una próxima sesión."
+  ]
+}

@@ -2,7 +2,27 @@ import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { bootLubricadorFollowUp, followUpEquipment as equipos, followUpRecords as records, followUpCoverage as coverage } from '../helpers/lubricadorFollowUpFixture.js';
 const codes = page => page.locator('#lub-follow-up .lub-eq-code');
-const kpis = page => page.locator('.lub-kpi-value').allTextContents();
+// UX CAMPO V2 (2026-10-24): la fila de 4 .lub-kpi-card se retiró —
+// "Vencidos por horas"/"Pendientes hoy"/"Pendientes del turno anterior"
+// ahora son el contador propio (.lub-accordion-count) de su acordeón;
+// "Realizados hoy" sigue siendo el único contador fuera de los 3
+// acordeones (span dedicado dentro del status-chip "REALIZADOS (N)").
+const kpis = page => page.evaluate(() => [
+  document.querySelector('#lub-acc-atencion-prioritaria-btn .lub-accordion-count')?.textContent,
+  document.querySelector('#lub-acc-mi-turno-btn .lub-accordion-count')?.textContent,
+  document.querySelector('#lub-acc-pendientes-anteriores-btn .lub-accordion-count')?.textContent,
+  document.querySelector('.lub-realizados-count')?.textContent ?? '0',
+]);
+function kpiByLabel(page, label) {
+  const map = {
+    'Vencidos por horas': '#lub-acc-atencion-prioritaria-btn .lub-accordion-count',
+    'Pendientes hoy': '#lub-acc-mi-turno-btn .lub-accordion-count',
+    'Pendientes del turno anterior': '#lub-acc-pendientes-anteriores-btn .lub-accordion-count',
+    'Realizados hoy': '.lub-realizados-count',
+  };
+  if (!map[label]) throw new Error(`kpiByLabel(): etiqueta desconocida "${label}"`);
+  return page.locator(map[label]);
+}
 const baseline = execFileSync('git', ['show', 'fbabc2a:CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js'], { encoding: 'utf8' });
 test('A/B principal and legacy show Mojón, reject unauthorized Volcán', async ({ page }) => {
   const errors = await bootLubricadorFollowUp(page, { coverage: [] });
@@ -15,7 +35,7 @@ test('C/G principal + support without assignment, location filter and independen
   await expect(codes(page)).toHaveText(['TEST-M', 'TEST-V']);
   await expect(page.locator('.crew-location-filter')).toHaveCount(3);
   await page.locator('[data-location-id="V"]').click(); await expect(codes(page)).toHaveText(['TEST-V']);
-  await expect(page.locator('.lub-kpi-value')).toHaveText(['0', '0', '0', '0']);
+  await expect.poll(() => kpis(page)).toEqual(['0', '0', '0', '0']);
   await page.locator('[data-location-id="M"]').click(); await expect(codes(page)).toHaveText(['TEST-M']);
   await page.locator('[data-location-id=""]').click(); await expect(codes(page)).toHaveText(['TEST-M', 'TEST-V']);
   expect(errors).toEqual([]);
@@ -27,10 +47,10 @@ test('D strict previous-turn pending takes precedence, never duplicated in follo
     await DB.put('lubrication_skips', { id: 'S2', equipmentId: 'E1', date: '2026-10-09T08:00:00', createdAt: '2026-10-10T13:00:00', shiftId: 'shift_dia', reason: 'SIN_TIEMPO', active: true });
     return renderLubricadorHome();
   });
-  await expect(page.locator('.lub-section-head:has-text("PENDIENTES DEL TURNO ANTERIOR") + .lub-eq-list')).toContainText('TEST-M');
+  await expect(page.locator('#lub-acc-pendientes-anteriores-panel')).toContainText('TEST-M');
   await expect(codes(page)).toHaveText(['TEST-V']);
   await expect(page.locator('.lub-pending-context')).toContainText('Turno Noche');
-  await expect(page.locator('.lub-kpi-card', { hasText: 'Pendientes del turno anterior' }).locator('.lub-kpi-value')).toHaveText('1');
+  await expect(kpiByLabel(page, 'Pendientes del turno anterior')).toHaveText('1');
   expect(errors).toEqual([]);
 });
 test('E Ficha and no occurrence reuse real OUT_OF_PLAN dispatcher without mutations', async ({ page }) => {
@@ -59,7 +79,13 @@ test('F all existing KPIs and widget totals equal initial release for same local
   const plans = [{ id: 'P1', equipmentId: 'E1', controlType: 'Día y turno de la semana', assignedDays: ['Sábado'], active: true }];
   await bootLubricadorFollowUp(old, { source: baseline, plans });
   const errors = await bootLubricadorFollowUp(page, { plans });
-  expect(await kpis(page)).toEqual(await kpis(old));
+  // UX CAMPO V2 (2026-10-24): `old` sigue corriendo el código histórico
+  // (fbabc2a, con la fila de 4 .lub-kpi-card) — `page` corre el código
+  // actual (3 acordeones + Realizados). La invariancia de negocio se
+  // verifica contra los contadores equivalentes de cada lado, nunca
+  // contra markup retirado en el lado nuevo.
+  const oldKpis = await old.locator('.lub-kpi-value').allTextContents();
+  expect(await kpis(page)).toEqual(oldKpis);
   expect(await page.evaluate(() => window.__widget)).toEqual(await old.evaluate(() => window.__widget));
   expect(errors).toEqual([]); await old.close();
 });
@@ -100,8 +126,8 @@ test('A/B historical scheduled pending wins by ID and code; order precedes follo
   await expect(page.locator('.lub-pending-card .lub-eq-code')).toHaveText(['20-5530']);
   await expect(codes(page)).toHaveText(['05-0870']);
   await expect(page.locator('.lub-pending-context')).toContainText('Turno Noche');
-  expect(await page.locator('#lub-pending-follow-up h3.lub-section-head').allTextContents()).toEqual(['PENDIENTES DEL TURNO ANTERIOR (1)', 'REQUIEREN SEGUIMIENTO · 1']);
-  await expect(page.locator('.lub-kpi-value')).toHaveText(['0', '0', '1', '0']);
+  expect(await page.locator('#lub-pending-follow-up h3.lub-section-head').allTextContents()).toEqual(['REQUIEREN SEGUIMIENTO · 1']);
+  await expect.poll(() => kpis(page)).toEqual(['0', '0', '1', '0']);
   expect(errors).toEqual([]);
 });
 

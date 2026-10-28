@@ -48,19 +48,16 @@ const refreshSrc = extractDeclaration(appSource, 'refreshLocalNotifications');
 const notifyAnomSrc = extractDeclaration(appSource, 'notifyNewAnomalies');
 const notifEngraseSrc = extractDeclaration(appSource, 'notificarEngraseRealizado');
 const logoutSrc = extractDeclaration(appSource, 'logout');
-const lockAppSrc = extractDeclaration(appSource, 'lockApp');
 const notifyPushSource = readSource(NOTIFY_PUSH_TS_PATH);
 
-describe('logout()/lockApp() — §9/§11/§12/§13: limpieza de notificaciones personales al cerrar sesión, NUNCA al bloquear', () => {
+// lockApp()/Quick Unlock se retiraron por completo en UX CAMPO V2
+// (2026-10-24) — ya no existe ningún "bloquear sin cerrar sesión" que
+// conserve notificaciones/identidad OneSignal aparte, así que esa
+// distinción se retira junto con la función.
+describe('logout() — §9: limpieza de notificaciones personales al cerrar sesión', () => {
   it('logout() cancela las notificaciones locales Y retira la identidad OneSignal (en modo supabase)', () => {
     expect(logoutSrc).toContain('cancelAllLocalNotifications();');
     expect(logoutSrc).toContain('clearOneSignalIdentity();');
-  });
-
-  it('lockApp() NO toca ninguna de las dos — Bloquear conserva identidad y notificaciones (sigue siendo la misma persona)', () => {
-    expect(lockAppSrc).not.toContain('cancelAllLocalNotifications');
-    expect(lockAppSrc).not.toContain('clearOneSignalIdentity');
-    expect(lockAppSrc).not.toContain('disablePushForCurrentUser');
   });
 
   it('"Cambiar usuario" (confirmChangeUser) delega en logout() para la salida — no duplica la lógica de limpieza', () => {

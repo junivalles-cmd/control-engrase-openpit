@@ -1,14 +1,13 @@
 // tests/ui/logout-change-user-confirm.spec.js
 //
 // Bloque A (pre-cutover, ver docs/SESSION_HANDOFF.md) — dos gaps reales que
-// la auditoría encontró sobre un PIN persistente que YA funcionaba
-// correctamente: "Cerrar sesión" disparaba logout() de inmediato al primer
-// toque (ningún alert()/confirm()/modal), y no existía ninguna acción
-// "Cambiar usuario" separada de Bloquear/Cerrar sesión. Prueba las
-// funciones REALES confirmLogout()/confirmChangeUser() (extraídas de
-// app.js) contra una página real de Playwright — logout() en sí se
-// reemplaza por un espía (su comportamiento real, ya probado, vive en
-// tests/unit/quick-unlock.test.js/auth.test.js).
+// la auditoría encontró: "Cerrar sesión" disparaba logout() de inmediato al
+// primer toque (ningún alert()/confirm()/modal), y no existía ninguna
+// acción "Cambiar usuario" separada de Cerrar sesión. Prueba las funciones
+// REALES confirmLogout()/confirmChangeUser() (extraídas de app.js) contra
+// una página real de Playwright — logout() en sí se reemplaza por un espía
+// (su comportamiento real, ya probado, vive en
+// tests/unit/lubricador-session-safety.test.js/auth.test.js).
 
 import { test, expect } from '@playwright/test';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';

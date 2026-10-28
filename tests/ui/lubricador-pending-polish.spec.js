@@ -8,11 +8,21 @@ test('previous pending: precedence, context, AA, footer and KPI invariance', asy
   const before = await context.newPage(); await bootLubricadorFollowUp(before, { source: baseline, plans });
   const errors = await bootLubricadorFollowUp(page, { plans });
   await page.locator('#app-content').evaluate(el => el.classList.add('lub-content'));
-  expect(await page.locator('.lub-kpi-value').allTextContents()).toEqual(await before.locator('.lub-kpi-value').allTextContents());
+  // UX CAMPO V2 (2026-10-24): la fila de 4 .lub-kpi-card se retiró a
+  // propósito (acordeones propios) — la invariancia de valores de negocio
+  // contra el baseline histórico (f7d0d3a) ahora se verifica contra los
+  // contadores reales equivalentes, nunca contra markup retirado.
+  // Orden histórico: Vencidos por horas/Pendientes hoy/Pendientes del
+  // turno anterior/Realizados hoy = [0, 0, 1, 0] para este fixture.
+  expect(await before.locator('.lub-kpi-value').allTextContents()).toEqual(['0', '0', '1', '0']);
+  await expect(page.locator('#lub-acc-atencion-prioritaria-btn .lub-accordion-count')).toHaveText('0');
+  await expect(page.locator('#lub-acc-mi-turno-btn .lub-accordion-count')).toHaveText('0');
+  await expect(page.locator('#lub-acc-pendientes-anteriores-btn .lub-accordion-count')).toHaveText('1');
+  await expect(page.locator('.lub-realizados-count')).toHaveCount(0); // 0 oculta su sección por completo
   expect(await page.locator('.lub-pending-card').getAttribute('data-equipment-id')).toBe('E1');
   await expect(page.locator('#lub-follow-up [data-equipment-id="E1"]')).toHaveCount(0);
   await expect(page.locator('.lub-pending-context')).toContainText('Turno Noche');
-  expect(await page.locator('#lub-pending-follow-up h3.lub-section-head').allTextContents()).toEqual(['PENDIENTES DEL TURNO ANTERIOR (1)', 'REQUIEREN SEGUIMIENTO · 1']);
+  expect(await page.locator('#lub-pending-follow-up h3.lub-section-head').allTextContents()).toEqual(['REQUIEREN SEGUIMIENTO · 1']);
   for (const mode of ['light', 'dark', 'sun', 'contrast']) {
     await page.evaluate(mode => { document.documentElement.dataset.theme = 'amarillo-cat'; document.documentElement.dataset.mode = mode; }, mode);
     const result = await page.locator('.lub-pending-card').evaluate(card => {

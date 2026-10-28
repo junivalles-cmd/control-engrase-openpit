@@ -1,5 +1,31 @@
 apply plugin: 'com.android.application'
 
+/*
+ * Release signing is deliberately local-only. Supply the four values through
+ * android/keystore.properties (see .example) or RELEASE_* environment
+ * variables. No password, alias or key path belongs in version control.
+ */
+def releaseSigningProperties = new Properties()
+def releaseSigningPropertiesFile = rootProject.file('keystore.properties')
+if (releaseSigningPropertiesFile.exists()) {
+    releaseSigningPropertiesFile.withInputStream { releaseSigningProperties.load(it) }
+}
+def releaseSigningValue = { String propertyName, String environmentName ->
+    System.getenv(environmentName) ?: project.findProperty("release.${propertyName}") ?: releaseSigningProperties.getProperty(propertyName)
+}
+def releaseStoreFilePath = releaseSigningValue('storeFile', 'RELEASE_STORE_FILE')
+def releaseStorePassword = releaseSigningValue('storePassword', 'RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = releaseSigningValue('keyAlias', 'RELEASE_KEY_ALIAS')
+def releaseKeyPassword = releaseSigningValue('keyPassword', 'RELEASE_KEY_PASSWORD')
+def releaseSigningConfigured = [releaseStoreFilePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it?.trim() }
+def releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+    def normalized = taskName.toLowerCase(Locale.ROOT)
+    normalized.contains('release') || normalized == 'assemble' || normalized == 'bundle'
+}
+if (releaseBuildRequested && !releaseSigningConfigured) {
+    throw new GradleException('Release signing is required. Configure android/keystore.properties from keystore.properties.example or set RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD.')
+}
+
 android {
     namespace "com.conequisa.engraseopenpit"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +33,10 @@ android {
         applicationId "com.conequisa.engraseopenpit"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Keep applicationId stable so an APK signed by the same key upgrades
+        // installed field devices in place.
+        versionCode 2
+        versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +44,21 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            release {
+                storeFile rootProject.file(releaseStoreFilePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

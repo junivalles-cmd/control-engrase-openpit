@@ -12,7 +12,7 @@ const source = [
   declarations(APP_JS_PATH, ['$', '$$', 'esc', 'ic', 'todayDateISO', 'STATUS_COLOR', 'GREASE_UNIT', 'NO_EXECUTION_REASON_LABELS',
     'colorLegendHTML', 'validationBadgeHTML', 'computeAllStatuses', 'getSelectedCrewId', 'setSelectedCrewId', 'getCurrentOperationalScope',
     'loadAssignmentContext', 'equipoOccurrenceKey', 'crewCoveragePresentation', ...LUBRICATION_FOLLOW_UP_APP_NAMES, 'renderLubricadorHome', 'openModal', 'closeModal', 'wireMatrixOccurrenceDetails', 'wireMatrizScrollHint', 'armSyncWatchdog',
-    'openLubricadorMatrizModal', 'handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'cuadrillasPanelHTML', 'wireCuadrillasPanel', 'bootLubricador', 'computeTasksMensajesBadgeCount', 'updateTareasMensajesNavBadge', 'markBroadcastAsRead', 'onSyncStateChange']),
+    'openLubricadorMatrizModal', 'handleOutOfPlanEquipoSelected', 'startLubricadorGreaseFlow', 'cuadrillasPanelHTML', 'wireCuadrillasPanel', 'bootLubricador', 'wirePullToSync', 'computeTasksMensajesBadgeCount', 'updateTareasMensajesNavBadge', 'markBroadcastAsRead', 'onSyncStateChange']),
   readSource(path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/lubricador-notifications.js')),
 ].join('\n');
 
@@ -52,7 +52,24 @@ export async function bootBell(page, { equipmentRows, anomalyRows = [], assignme
     window.focusTareasYMensajesItem = async (kind, id) => { window.__focus = { kind, id }; };
     window.navigate = route => { App.route = route; };
     ${source}
-    window.DB = DB; window.renderLubricadorHome = renderLubricadorHome;
+    window.DB = DB;
+    // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+    // colapsados — este fixture los expande automáticamente después de
+    // CADA render (idempotente, nunca cierra lo ya abierto; cubre tanto
+    // bootLubricador() -> navigate('turno') como un re-render manual),
+    // para no romper la cobertura de este archivo (panel de
+    // notificaciones/tareas), que no es sobre la interacción propia del
+    // acordeón.
+    renderLubricadorHome = (() => {
+      const real = renderLubricadorHome;
+      return async (...args) => {
+        const result = await real(...args);
+        document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+        document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+        return result;
+      };
+    })();
+    window.renderLubricadorHome = renderLubricadorHome;
     window.getCurrentOperationalScope = getCurrentOperationalScope;
     window.openDB = openDB; window.updateTareasMensajesNavBadge = updateTareasMensajesNavBadge; window.bootLubricador = bootLubricador;
   ` });

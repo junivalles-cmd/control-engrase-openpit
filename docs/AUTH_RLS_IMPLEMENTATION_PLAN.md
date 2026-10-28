@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — plan de rollout conservado para auditoría.
+# Las menciones a PIN/Quick Unlock, auth legacy y policies abiertas describen
+# fases anteriores; no son instrucciones operativas actuales.
+
 # P0-2 — Plan de implementación: Auth real + app_profiles + RLS
 
 Continúa `docs/AUTH_RLS_MIGRATION_DESIGN.md` (auditoría/diseño, aprobada).

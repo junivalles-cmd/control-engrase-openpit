@@ -53,7 +53,22 @@ async function boot(page, { equipmentRows, anomalyRows = [], assignmentRows = []
     window.logAudit = async () => {}; window.showInAppToast = () => {};
     window.Auth = { manageUsers: async () => ({ users: [] }) };
     ${source}
-    window.DB = DB; window.renderLubricadorHome = renderLubricadorHome;
+    window.DB = DB;
+    // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+    // colapsados — se expanden automáticamente tras cada render
+    // (idempotente) para no romper la cobertura del panel de
+    // tareas/notificaciones de este archivo, ajena a la interacción
+    // propia del acordeón.
+    renderLubricadorHome = (() => {
+      const real = renderLubricadorHome;
+      return async (...args) => {
+        const result = await real(...args);
+        document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+        document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+        return result;
+      };
+    })();
+    window.renderLubricadorHome = renderLubricadorHome;
     window.getCurrentOperationalScope = getCurrentOperationalScope;
     window.openDB = openDB;
   ` });

@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-24",
+  "scope": "Normalización de catálogos estructurales (locations/equipment_types/lubricants) antes de importar equipment/lubrication_points/lubrication_plans reales. Fuente real: C:\\Users\\Planificador\\Documents\\EQUIPOS MINA LL 2026 - copia.xlsx (tabla Tabla1, 107 equipos, columna Descripción).",
+  "bucket_check": {
+    "project": "cont_engrase (havrirlapjyqrffgalqx)",
+    "bucket_exists": false,
+    "note": "Verificado 2 veces en 2 sesiones distintas (SQL directo sobre storage.buckets + API de Storage). El usuario reportó haberlo recreado manualmente; no se encontró evidencia de que exista en este proyecto. No se intentó crearlo (bloqueado por el clasificador de seguridad en la sesión anterior)."
+  },
+  "locations_before": [
+    { "id": "loc_mskx598x2iq3u8", "name": "Volcan", "active": true },
+    { "id": "loc_mskx598yig9b1q", "name": "Mojon", "active": true },
+    { "id": "loc_mskx5990yw1cgc", "name": "Acarreo", "active": true },
+    { "id": "loc_mskx598yqttb3d", "name": "Troja", "active": true },
+    { "id": "loc_mvdx905wpjvkju", "name": "Taller", "active": false },
+    { "id": "loc_taller", "name": "Taller Mecánico", "active": false },
+    { "id": "loc_botadero", "name": "Botadero Norte", "active": false },
+    { "id": "loc_pit1", "name": "Rajo Principal", "active": false }
+  ],
+  "locations_after": [
+    { "id": "loc_mskx598x2iq3u8", "name": "Volcán", "active": true, "change": "rename Volcan->Volcán" },
+    { "id": "loc_mskx598yig9b1q", "name": "Mojón", "active": true, "change": "rename Mojon->Mojón" },
+    { "id": "loc_mskx5990yw1cgc", "name": "Acarreo", "active": true, "change": "sin cambios" },
+    { "id": "loc_mskx598yqttb3d", "name": "Troja", "active": true, "change": "sin cambios" },
+    { "id": "loc_mvdx905wpjvkju", "name": "Taller", "active": true, "change": "activada como canónica" },
+    { "id": "loc_taller", "name": "Taller Mecánico", "active": false, "change": "se mantiene inactiva (duplicado no canónico)" },
+    { "id": "loc_botadero", "name": "Botadero Norte", "active": false, "change": "sin cambios" },
+    { "id": "loc_pit1", "name": "Rajo Principal", "active": false, "change": "sin cambios" }
+  ],
+  "equipment_type_derivation": {
+    "source_rows_total": 107,
+    "raw_descriptions_distinct": [
+      { "raw": "Camión Volquete", "count": 19 },
+      { "raw": "Camión articulado ", "count": 15, "variant_of": "Camión Articulado" },
+      { "raw": "Excavadora de Orugas", "count": 13 },
+      { "raw": "Camión Articulado", "count": 12 },
+      { "raw": "Torre de iluminacion", "count": 11 },
+      { "raw": "Tractor de Orugas", "count": 8 },
+      { "raw": "Camioneta", "count": 7 },
+      { "raw": "Motoniveladora", "count": 3 },
+      { "raw": "Cisterna de Agua", "count": 3 },
+      { "raw": "Cisterna de Combustible", "count": 3 },
+      { "raw": "Vibrocompactadora", "count": 3 },
+      { "raw": "Excavadora de orugas ", "count": 2, "variant_of": "Excavadora de Orugas" },
+      { "raw": "Cargador Frontal", "count": 2 },
+      { "raw": "Camion Lubrico", "count": 2 },
+      { "raw": "Back Hoe", "count": 2 },
+      { "raw": "Motoniveladora ", "count": 1, "variant_of": "Motoniveladora" },
+      { "raw": "Tractor de orugas ", "count": 1, "variant_of": "Tractor de Orugas" }
+    ],
+    "normalized_types": [
+      { "type": "Camión Articulado", "equipment_count": 27 },
+      { "type": "Camión Volquete", "equipment_count": 19 },
+      { "type": "Excavadora de Orugas", "equipment_count": 15 },
+      { "type": "Torre de Iluminación", "equipment_count": 11 },
+      { "type": "Tractor de Orugas", "equipment_count": 9 },
+      { "type": "Camioneta", "equipment_count": 7 },
+      { "type": "Motoniveladora", "equipment_count": 4 },
+      { "type": "Cisterna de Agua", "equipment_count": 3 },
+      { "type": "Cisterna de Combustible", "equipment_count": 3 },
+      { "type": "Vibrocompactadora", "equipment_count": 3 },
+      { "type": "Cargador Frontal", "equipment_count": 2 },
+      { "type": "Camión Lubrico", "equipment_count": 2 },
+      { "type": "Retroexcavadora (Back Hoe)", "equipment_count": 2 }
+    ],
+    "existing_type_match_reused": [
+      { "normalized": "Camión Articulado", "existing_id": "type_articulado" },
+      { "normalized": "Camión Volquete", "existing_id": "type_volquete" },
+      { "normalized": "Excavadora de Orugas", "existing_id": "type_excavadora", "note": "existente se llama 'Excavadora' sin sufijo — mismo concepto, no se renombró" },
+      { "normalized": "Tractor de Orugas", "existing_id": "type_tractor", "note": "existente se llama 'Tractor de Oruga' (singular) — mismo concepto, no se renombró" },
+      { "normalized": "Motoniveladora", "existing_id": "type_motoniveladora" },
+      { "normalized": "Cargador Frontal", "existing_id": "type_cargador" },
+      { "normalized": "Retroexcavadora (Back Hoe)", "existing_id": "type_retro" }
+    ],
+    "new_types_created": [
+      "type_torre_iluminacion", "type_camioneta", "type_cisterna_agua",
+      "type_cisterna_combustible", "type_vibrocompactadora", "type_camion_lubrico"
+    ]
+  },
+  "lubricants_change": {
+    "canonical": { "id": "lub_moly", "name": "Grasa Moly", "active": true },
+    "disabled_duplicate": { "id": "lub_mu2u3ikbb6dvva", "name": "Grasa Moly", "active": false },
+    "unchanged": [
+      { "id": "lub_ep2", "name": "Grasa EP2", "active": false },
+      { "id": "lub_ht", "name": "Grasa Alta Temperatura", "active": false }
+    ]
+  },
+  "duplicate_validation": { "duplicate_active_locations": 0, "duplicate_active_types": 0, "duplicate_active_lubricants": 0 },
+  "cuadrillas_check": {
+    "untouched": true,
+    "locationId_resolution_after_rename": [
+      { "cuadrilla": "cuad_a / 76-08 Camion Lubrico", "locationId": "loc_mskx598x2iq3u8", "resolves_to": "Volcán" },
+      { "cuadrilla": "cuad_b / 76-14 Camion Lubrico", "locationId": "loc_mskx598yig9b1q", "resolves_to": "Mojón" },
+      { "cuadrilla": "cuad_c / 80-177 Camioneta Lubricadora", "locationId": "loc_mskx5990yw1cgc", "resolves_to": "Acarreo" },
+      { "cuadrilla": "cuad_d / Cuadrilla D", "locationId": null, "resolves_to": null }
+    ]
+  },
+  "crew_locations": { "total": 2, "active": 0, "note": "sin tocar, se reconstruirá después de cargar la estructura operativa real, tal como pediste" },
+  "tablet_validation": "PENDING — adb no disponible / sin dispositivo conectado en esta sesión."
+}

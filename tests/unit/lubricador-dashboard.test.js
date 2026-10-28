@@ -110,49 +110,51 @@ describe('§3 — cada tarjeta de Arrastrados trae código/modelo/ubicación/ori
   });
 });
 
-describe('§2 — exactamente 4 KPIs, SIEMPRE visibles (incluso en 0)', () => {
-  it('los 4 kpiTile() son "Vencidos por horas"/Pendientes hoy/Arrastrados/Realizados hoy, sin condicional que los oculte', () => {
-    const iRow = src.indexOf('<div class="lub-kpi-row">');
-    const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
+// UX CAMPO V2 (2026-10-24): la fila de 4 kpiTile() se retiró — Mi Turno ya
+// no muestra "tarjetas KPI" (pedido explícito: "NO KPI cards grandes").
+// "Vencidos por horas"/"Pendientes hoy"/"Pendientes del turno anterior" se
+// reemplazan por los 3 acordeones reales (con sus propias tarjetas, no solo
+// un número) + el resumen compacto del header ("N pendientes · N prioridad
+// · N turno"); "Realizados hoy" sigue como su propia sección, sin cambios.
+describe('§2 — acordeones de Mi Turno (reemplazo de los 4 KPIs), SIEMPRE presentes (incluso en 0, con estado vacío)', () => {
+  it('accordionHTML() construye las 3 bandejas con los MISMOS totales ya fusionados (arrastradosVisibles/atencionPrioritariaVisibles/miTurnoVisible), nunca un cálculo aparte', () => {
+    const iRow = src.indexOf('<div class="lub-accordions" id="lub-accordions">');
+    const iEnd = src.indexOf('</div>', src.lastIndexOf("accordionHTML('mi-turno'", src.indexOf('${followUpVisible.length')));
     const block = src.slice(iRow, iEnd);
-    expect(block).toContain("kpiTile('Vencidos por horas', vencidosHorometroVisibles.length");
-    expect(block).toContain("kpiTile('Pendientes hoy', miTurnoVisible.length");
-    expect(block).toContain("kpiTile('Pendientes del turno anterior', arrastradosVisibles.length");
-    expect(block).toContain("kpiTile('Realizados hoy', realizadosHoyVisibles.length");
+    expect(block).toContain("accordionHTML('pendientes-anteriores', 'Pendientes anteriores', 'Trabajo de turnos anteriores sin completar', arrastradosVisibles.length,");
+    expect(block).toContain("accordionHTML('atencion-prioritaria', 'Atención prioritaria', 'Equipos que requieren atención primero', atencionPrioritariaVisibles.length,");
+    expect(block).toContain("accordionHTML('mi-turno', 'Engrases de mi turno', 'Trabajo programado para este turno', miTurnoVisible.length,");
   });
 
-  // Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
-  // hoy"/"Arrastrados"/"Realizados hoy" deben leer las MISMAS listas
-  // fusionadas (miTurnoTotal/arrastradosTotal/realizadosHoyList) que ya
-  // pinta la pantalla — nunca las listas previas al merge con
-  // statusesAssigned (pendientesHoyList/arrastrados/realizadosHoy), que es
-  // justo la causa raíz del bug real reportado ("MI TURNO (2)" con el KPI
-  // en 0).
-  it('ningún kpiTile() del KPI row vuelve a leer las listas previas al merge con statusesAssigned', () => {
-    const iRow = src.indexOf('<div class="lub-kpi-row">');
-    const iEnd = src.indexOf('</div>', src.indexOf('Realizados hoy', iRow));
-    const block = src.slice(iRow, iEnd);
-    expect(block).not.toContain('pendientesHoyList.length');
-    expect(block).not.toMatch(/kpiTile\('Pendientes del turno anterior', arrastrados\.length/);
-    expect(block).not.toContain("kpiTile('Realizados hoy', realizadosHoy,");
+  it('cada acordeón SIEMPRE se pinta (nunca condicionado a su propio count) — internamente decide tarjetas vs. estado vacío, nunca desaparece', () => {
+    const fn = src.slice(src.indexOf('const accordionHTML = '), src.indexOf('const eqCardHTML ='));
+    expect(fn).toContain('${count ? `<div class="lub-eq-list">${listHTML}</div>` : `<p class="field-hint lub-accordion-empty">${esc(emptyText)}</p>`}');
+  });
+
+  it('el resumen del header usa los mismos 3 totales, nunca pendientesHoyList/arrastrados/realizadosHoy previos al merge con statusesAssigned', () => {
+    expect(src).toContain('${arrastradosVisibles.length} pendiente${arrastradosVisibles.length === 1 ? \'\' : \'s\'} · ${atencionPrioritariaVisibles.length} prioridad · ${miTurnoVisible.length} turno');
   });
 });
 
-describe('§7 — bloques vacíos ocultos (Atrasados/Mi Turno/Realizados/Alertas), nunca una tarjeta en 0 (hardening UI 2026-10-08, "simplificar Mi Turno")', () => {
-  it('"Atrasados" solo se renderiza si hay filas visibles en el filtro', () => {
-    expect(src).toContain('${previousTurnVisible.length ? `');
+describe('§7 — acordeones con estado vacío propio (Pendientes anteriores/Atención prioritaria/Mi turno), nunca una tarjeta en 0 (hardening UI 2026-10-08 + UX CAMPO V2)', () => {
+  it('"Pendientes anteriores" (antes "Atrasados") tiene su propio texto de estado vacío', () => {
+    expect(src).toContain("'No hay pendientes de turnos anteriores.'");
   });
 
-  it('"Mi Turno" solo se renderiza si hay filas visibles en el filtro', () => {
-    expect(src).toContain('${miTurnoVisible.length ? `');
+  it('"Atención prioritaria" (antes solo un KPI, ahora bandeja propia) tiene su propio texto de estado vacío', () => {
+    expect(src).toContain("'No hay equipos que requieran atención prioritaria.'");
   });
 
-  it('"Realizados" solo se renderiza si hay filas visibles en el filtro', () => {
+  it('"Engrases de mi turno" (antes "Mi Turno") tiene su propio texto de estado vacío', () => {
+    expect(src).toContain("'No hay engrases programados para este turno.'");
+  });
+
+  it('"Realizados" solo se renderiza si hay filas visibles en el filtro (sin cambios — no es uno de los 3 acordeones)', () => {
     expect(src).toContain('${realizadosHoyVisibles.length ? `');
   });
 
-  it('"Alertas" (fix 2026-10-09, §7 del pedido) SIEMPRE muestra el encabezado — con lista si hay alertas, o "Sin alertas de engrase" si no hay ninguna (nunca desaparece en silencio, a diferencia de Atrasados/Mi Turno/Realizados)', () => {
-    expect(src).toContain('${followUpVisible.length ? `');
+  it('"Requieren seguimiento" (sugerido, no es una obligación del turno, no es uno de los 3 acordeones) sigue mostrando SIEMPRE su encabezado (fix 2026-10-09, §7 original) — nunca desaparece en silencio', () => {
+    expect(src).toContain('<section id="lub-pending-follow-up" aria-label="Seguimiento sugerido">');
     expect(src).toContain('Sin pendientes ni equipos que requieran seguimiento.');
   });
 });
@@ -238,15 +240,17 @@ describe('§8/§9 — nunca se muestra cumplimiento global, otras ubicaciones, n
   });
 });
 
-describe('§1 — Contexto compacto: turno + ubicación + cuadrilla + sincronización, sin cálculo nuevo', () => {
-  it('el turno reusa currentShiftId() (ya global), la ubicación/cuadrilla salen de scope.crewLocationId/myCrew ya resueltos', () => {
+describe('§1 — Header compacto de Mi Turno: cuadrilla + ubicación + turno, sin cálculo nuevo (UX CAMPO V2: el indicador de sync ya NO se duplica aquí)', () => {
+  it('el turno/ubicación/cuadrilla salen de turnoActual/headerCoverage/myCrew ya resueltos, sin cálculo nuevo', () => {
     expect(src).toContain("turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'");
-    expect(src).toContain('locations.find(l => l.id === scope.crewLocationId)');
-    expect(src).toContain('esc(myCrew.name)');
+    expect(src).toContain('const headerCoverage = crewCoveragePresentation(scope, locations);');
+    expect(src).toContain("esc(myCrew?.name || 'Sin cuadrilla')");
   });
 
-  it('la sincronización lee lastSyncState.status (el mismo estado global que ya mantiene updateConnBadge(), nunca un segundo sistema de sync)', () => {
-    expect(src).toContain('const st = lastSyncState.status;');
+  it('nunca duplica un segundo indicador de sincronización — #conn-badge (topbar persistente de bootLubricador()) ya cubre eso', () => {
+    const header = src.slice(src.indexOf('<div class="lub-turno-header">'), src.indexOf('lub-turno-header-summary'));
+    expect(header).not.toContain('lastSyncState.status');
+    expect(src).toContain('el indicador de sincronización YA vive en #conn-badge');
   });
 });
 

@@ -1,5 +1,12 @@
 # Instalación Android — Control de Engrase
 
+**CURRENT.** Esta guía reemplaza las instrucciones históricas de PIN/Quick
+Unlock. La versión actual usa autenticación vigente y no debe asumirse que
+existe un bloqueo local de 4 horas.
+
+Para un APK/AAB firmado y actualización de campo, seguir además
+`docs/ANDROID_RELEASE.md`.
+
 Guía para generar e instalar el APK desde el código fuente. Un solo
 APK/una sola Web universal — nunca un build distinto por ubicación,
 cuadrilla, turno, usuario o tipo de dispositivo.
@@ -90,7 +97,7 @@ CONTROL_ENGRASE_APP_ANDROID\android\app\build\outputs\apk\debug\app-debug.apk
 - **`-r` siempre** (reinstala conservando datos) para actualizar una
   instalación existente.
 - **NO usar `adb uninstall`** para actualizar normalmente — borra
-  IndexedDB/sesión/PIN local del dispositivo.
+  IndexedDB y datos locales de la aplicación.
 - **NO limpiar datos de la app** (`adb shell pm clear <appId>`, o
   Ajustes → Apps → Control de Engrase → Almacenamiento → Borrar datos)
   salvo que soporte técnico lo autorice explícitamente (ver

@@ -15,7 +15,6 @@ async function boot(page) {
     window.Auth = { isSupabaseMode: () => true };
     window.__calls = [];
     window.navigate = route => __calls.push(route);
-    window.lockApp = () => __calls.push('lock');
     window.confirmChangeUser = () => __calls.push('change-user');
     window.confirmLubricadorLogout = () => __calls.push('logout-confirm');
     ${source}
@@ -29,7 +28,7 @@ test('Mi Cuenta summary uses rendered operational context; logout remains danger
   await expect(page.locator('.lub-account-summary')).toContainText('LUBRICADOR · Cuadrilla ficticia C1');
   await expect(page.locator('.lub-account-summary [title]')).toHaveAttribute('title', 'Zona A + Zona B + Zona C');
   await expect(page.locator('#lub-menu-logout')).toHaveClass(/btn-danger/);
-  await expect(page.locator('#lub-menu-lock')).not.toHaveClass(/btn-danger/);
+  await expect(page.locator('#lub-menu-lock')).toHaveCount(0); // retirado con Quick Unlock (UX CAMPO V2)
   await expect(page.locator('#lub-menu-change-user')).not.toHaveClass(/btn-danger/);
   for (const button of await page.locator('.lub-account-menu button').all()) {
     expect((await button.boundingBox()).height).toBeGreaterThanOrEqual(44);
@@ -38,7 +37,7 @@ test('Mi Cuenta summary uses rendered operational context; logout remains danger
   await page.screenshot({ path: testInfo.outputPath('account-context.png') });
 });
 
-for (const [id, call] of [['mi-perfil', 'miperfil'], ['config', 'lubconfig'], ['lock', 'lock'], ['change-user', 'change-user'], ['logout', 'logout-confirm']]) {
+for (const [id, call] of [['mi-perfil', 'miperfil'], ['config', 'lubconfig'], ['change-user', 'change-user'], ['logout', 'logout-confirm']]) {
   test('Mi Cuenta preserves action ' + id, async ({ page }) => {
     await boot(page);
     await page.locator('#lub-menu-' + id).click();

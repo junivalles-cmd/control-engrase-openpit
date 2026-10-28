@@ -58,9 +58,6 @@
      Auth.isAuthenticated() (P0-2 Etapa B1, inerte mientras AUTH_MODE sea
      'legacy' — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md). -->
 <script src="src/core/auth.js"></script>
-<!-- Quick unlock offline (P0-2) — depende de DB (db.js) y de nowISO(),
-     independiente de sync.js/Auth en sí, ver src/core/quick-unlock.js. -->
-<script src="src/core/quick-unlock.js"></script>
 <script src="sync.js"></script>
 <!-- Núcleo de lógica extraído de app.js (turnos, horómetro, estado de
      engrase, criticidad de anomalías) — ver docs/MODULARIZATION.md.
@@ -93,6 +90,10 @@
      reimplementa. -->
 <script src="src/core/tasks-notifications-panel.js"></script>
 <script src="src/core/lubricador-notifications.js"></script>
+<!-- LOTE A2 "GATE SEGURO DE DATOS MAESTROS" (2026-10-25) — valida cada fila
+     de importación de equipment/lubrication_points/lubrication_plans ANTES
+     de escribir nada; puro, mismo patrón que operational-scope.js. -->
+<script src="src/core/master-data-import-gate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

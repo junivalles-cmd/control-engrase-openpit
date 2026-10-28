@@ -1,13 +1,14 @@
-const CACHE = 'engrase-openpit-v75'; // v75: TECH-05 (auditoría 2026-10-24) — widget-snapshot.js faltaba en el precache.
+const CACHE = 'engrase-openpit-v77'; // v77: LOTE A2 — master-data-import-gate.js agregado al precache.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
   './src/core/widget-snapshot.js',
+  './src/core/master-data-import-gate.js',
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline
   // siga funcionando.
-  './src/core/auth.js', './src/core/quick-unlock.js', './src/core/shifts.js', './src/core/hourmeter.js',
+  './src/core/auth.js', './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',

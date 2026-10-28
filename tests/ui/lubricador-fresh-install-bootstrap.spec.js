@@ -148,6 +148,21 @@ async function bootPage(page, { cuadrillas = [], cfg = null, syncState = { statu
       ${validationSrc}
       ${appSrc}
       window.currentShiftId = currentShiftId;
+      // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+      // colapsados — se expanden automáticamente tras cada render
+      // (idempotente; no-op mientras la pantalla siga en los estados de
+      // bootstrap, que no tienen acordeones) para no romper la
+      // cobertura de este archivo, ajena a la interacción propia del
+      // acordeón.
+      renderLubricadorHome = (() => {
+        const real = renderLubricadorHome;
+        return async (...args) => {
+          const result = await real(...args);
+          document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+          document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+          return result;
+        };
+      })();
       window.renderLubricadorHome = renderLubricadorHome;
       window.onSyncStateChange = onSyncStateChange;
       window.redibujarPantallaActual = redibujarPantallaActual;
@@ -184,7 +199,7 @@ test('B — fresh install, sync exitoso, 1 membership real → Mi Turno con la c
   // Con 1 sola cuadrilla autorizada, Mi Turno se auto-selecciona sin pedir
   // confirmación (ver operational-scope.js) — nunca el selector.
   await expect(page.locator('.crew-select-btn')).toHaveCount(0);
-  await expect(page.locator('.lub-kpi-row')).toBeVisible(); // pantalla real de Mi Turno, no la de bootstrap
+  await expect(page.locator('.lub-turno-header')).toBeVisible(); // pantalla real de Mi Turno, no la de bootstrap
   await expect(page.locator('#app-content')).toContainText('Cuadrilla A');
 });
 
@@ -251,7 +266,7 @@ test('E — Reintentar (mismo Sync.fullSync real) + sync exitoso → desaparece 
   await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
   await expect(page.locator('#app-content')).not.toContainText('Sincronizando datos…');
   // 1 sola cuadrilla autorizada: auto-selecciona, sin selector.
-  await expect(page.locator('.lub-kpi-row')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).toContainText('Cuadrilla A');
   expect(errors).toEqual([]);
 });
@@ -330,7 +345,7 @@ test('F — dispositivo con pull previo exitoso + offline ahora + cache local v�
   await expect(page.locator('#app-content')).not.toContainText('Sincronizando datos…');
   await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
   await expect(page.locator('#app-content')).not.toContainText('Sin cuadrilla autorizada');
-  await expect(page.locator('.lub-kpi-row')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).toContainText('Cuadrilla A');
 });
 
@@ -434,7 +449,7 @@ test('RACE-D — bootstrap completo + 1 cuadrilla → auto-selecciona directo a 
   expect(errors).toEqual([]);
   await expect(page.locator('#app-content')).not.toContainText('Elige tu cuadrilla de trabajo');
   await expect(page.locator('#app-content')).not.toContainText('Sin cuadrilla autorizada');
-  await expect(page.locator('.lub-kpi-row')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).toContainText('Cuadrilla Única');
 });
 
@@ -520,7 +535,7 @@ test('FIX "BOOTSTRAP HANG EN ERROR": una vez bootstrapComplete es true, un error
   const cuadrillas = [{ id: 'crew1', name: 'Cuadrilla A', active: true, locationId: 'l1', isDefault: true, memberUserIds: ['lub1'] }];
   await bootPage(page, { shell: true, cuadrillas, selectedCrewId: 'crew1', cfg: { url: 'x', anonKey: 'k', lastPull: '2026-10-17T00:00:00.000Z' }, syncState: { status: 'ok', pulled: 1 } });
   await page.evaluate(() => window.renderLubricadorHome());
-  await expect(page.locator('.lub-kpi-row')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).toContainText('Cuadrilla A');
 
   // Un error de sync DESPUÉS de que el bootstrap ya terminó (p. ej. un
@@ -529,7 +544,7 @@ test('FIX "BOOTSTRAP HANG EN ERROR": una vez bootstrapComplete es true, un error
   // del fix anterior "ELIMINAR PARPADEO EN SYNC INCREMENTAL", sin cambios).
   await page.evaluate(() => window.onSyncStateChange({ status: 'error', message: 'Error al descargar cambios: 500' }));
 
-  await expect(page.locator('.lub-kpi-row')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).not.toContainText('Sincronizando datos…');
   await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
   expect(errors).toEqual([]);

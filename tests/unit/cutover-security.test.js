@@ -10,7 +10,8 @@
 //   D, F   -> tests/unit/auth.test.js, manage-users-logic.test.js
 //   H      -> tests/unit/sync-multidevice.test.js, sync-auth-gate.test.js (L)
 //   I      -> tests/unit/sync-auth-gate.test.js (N.B), backend-connectivity.test.js
-//   J      -> tests/unit/quick-unlock.test.js (G), backend-connectivity.test.js
+//   J      -> backend-connectivity.test.js (el PIN local/Quick Unlock que
+//             también cubría esta letra se retiró en UX CAMPO V2, 2026-10-24)
 //   K      -> tests/ui/registro-sync-guard.spec.js (Playwright, sin cambios)
 //   C      -> requiere el cutover SQL real ejecutado contra producción para
 //             observarse directamente (DENIED de verdad); no puede probarse

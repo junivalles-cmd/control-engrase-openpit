@@ -24,16 +24,20 @@ begin
         array[]::text[]),
       ('push_tokens_insert_owner_only','INSERT',
         array[]::text[],
-        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
       ('push_tokens_update_owner_only','UPDATE',
         array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[],
-        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'id'=id$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
+        array[$q$store<>'push_tokens'$q$,$q$current_app_active()$q$,$q$notdeleted$q$,$q$payload->>'userid'$q$,$q$app_profiles$q$,$q$auth.uid()$q$,$q$active=true$q$]::text[]),
       ('push_tokens_no_hard_delete','DELETE',
         array[$q$store<>'push_tokens'$q$]::text[],array[]::text[])
     ), actual as (
       select e.*,p.permissive,p.roles,p.cmd as actual_cmd,
         lower(regexp_replace(coalesce(p.qual,''),'[[:space:]]','','g')) as using_sql,
-        lower(regexp_replace(coalesce(p.with_check,''),'[[:space:]]','','g')) as check_sql
+        lower(regexp_replace(coalesce(p.with_check,''),'[[:space:]]','','g')) as check_sql,
+        regexp_replace(
+          regexp_replace(lower(coalesce(p.with_check,'')),'::text','','g'),
+          '[[:space:]()]','','g'
+        ) as check_semantic_sql
       from expected e left join pg_catalog.pg_policies p
         on p.schemaname='public' and p.tablename='engrase_sync' and p.policyname=e.policyname
     )
@@ -44,6 +48,11 @@ begin
        or not ('authenticated'=any(coalesce(a.roles,array[]::name[])))
        or exists(select 1 from unnest(a.using_parts) as req(fragment) where position(req.fragment in a.using_sql)=0)
        or exists(select 1 from unnest(a.check_parts) as req(fragment) where position(req.fragment in a.check_sql)=0)
+       -- PostgreSQL deparses this invariant with parentheses/casts (and may
+       -- qualify id). Normalize only those formatting artifacts, then still
+       -- require payload.id to equal the row id for INSERT and UPDATE.
+       or (a.policyname in ('push_tokens_insert_owner_only','push_tokens_update_owner_only')
+           and a.check_semantic_sql !~ $rx$payload->>'id'=(engrase_sync\.)?id$rx$)
   ) then
     raise exception '0015 requires all four exact-scope 0007 restrictive owner guards on public.engrase_sync for authenticated';
   end if;

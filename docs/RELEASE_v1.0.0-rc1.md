@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — release candidate y piloto anteriores.
+# Quick Unlock/PIN, rutas y menús descritos aquí pertenecen a esa versión;
+# consulte la documentación CURRENT antes de instalar o desplegar.
+
 # Release v1.0.0-rc1 — Control de Engrase (Open Pit)
 
 **Fecha:** 2026-10-21
@@ -116,3 +120,7 @@ Este release no aplicó ninguna migración de base de datos (todas las
    sin coordinarlo.
 3. **Web (si aplica):** redesplegar el `dist/` generado desde el commit
    anterior.
+# HISTORICAL / DEPRECATED — release candidate y piloto anteriores.
+# Quick Unlock/PIN, rutas y menús descritos aquí pertenecen a esa versión;
+# consulte la documentación CURRENT antes de instalar o desplegar.
+

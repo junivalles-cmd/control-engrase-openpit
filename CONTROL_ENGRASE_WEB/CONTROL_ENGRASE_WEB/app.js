@@ -1272,8 +1272,7 @@ async function bindOneSignalIdentity(userId) {
 }
 
 // Se llama SOLO en Cerrar sesión real (logout(), AUTH_MODE='supabase') —
-// NUNCA en Bloquear (lockApp() no la toca, la persona sigue siendo la
-// misma, §12) ni en Cambiar usuario de forma directa (confirmChangeUser()
+// nunca en Cambiar usuario de forma directa (confirmChangeUser()
 // ya delega en logout() para la salida; el login siguiente vuelve a
 // asociar con bindOneSignalIdentity(), ver §11).
 async function clearOneSignalIdentity() {
@@ -1360,13 +1359,13 @@ async function focusTareasYMensajesItem(kind, id) {
 async function abrirDesdeNotificacion(datos) {
   if (!datos) return;
   // Hallazgo real (E2E push/deeplink, 2026-10-20): wirePushListeners() se
-  // engancha ANTES del gate de Quick Unlock (ver boot inicial), así que un
-  // tap en la notificación mientras la pantalla de PIN sigue mostrándose
-  // llega acá con App.currentUser todavía null — antes el `return`
-  // temprano perdía el deep-link en silencio, sin ningún reintento después
-  // de desbloquear. Ahora se guarda UNA sola vez (la última pedida, nunca
-  // una cola) y enterAppAsProfile()/el restore de sesión legacy la
-  // reproduce con este mismo código, ya con el usuario cargado.
+  // engancha ANTES de que termine de restaurarse la sesión (ver boot
+  // inicial), así que un tap en la notificación mientras todavía se
+  // restaura Auth llega acá con App.currentUser todavía null — antes el
+  // `return` temprano perdía el deep-link en silencio, sin ningún reintento
+  // después. Ahora se guarda UNA sola vez (la última pedida, nunca una
+  // cola) y enterAppAsProfile() la reproduce con este mismo código, ya con
+  // el usuario cargado.
   if (!App.currentUser) { App._pendingDeeplink = datos; return; }
   try {
     if (datos.equipoId) {
@@ -2242,25 +2241,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   window.addEventListener('online', updateConnBadge);
   window.addEventListener('offline', updateConnBadge);
+  // BUG-001: mismo patrón, actualización inmediata y barata — ver
+  // updateLubricadorConnectivitySummary() arriba.
+  window.addEventListener('online', updateLubricadorConnectivitySummary);
+  window.addEventListener('offline', updateLubricadorConnectivitySummary);
   Sync.onChange(onSyncStateChange);
-
-  // Atrás de Android en Quick Unlock (§5 del pedido "LOGIN / QUICK UNLOCK /
-  // CAMBIO DE USUARIO") — SIN el plugin @capacitor/app (no instalado, ver
-  // comentario de renderQuickUnlockScreen()): Capacitor, por defecto, deja
-  // que el WebView maneje Atrás con su propio canGoBack()/goBack() cuando
-  // no hay un listener nativo de 'backButton' registrado — y goBack()
-  // SIEMPRE dispara 'popstate' en la página, con o sin ese plugin. Se
-  // registra UNA sola vez para toda la sesión de la pestaña/app (nunca se
-  // reconecta por pantalla, igual criterio que el listener de clic de
-  // #conn-badge de abajo). Solo actúa si la pantalla de Quick Unlock está
-  // de verdad visible en este momento (#quick-unlock-area) — en cualquier
-  // otro caso (login normal, dentro de la app ya autenticada) no hace
-  // nada, dejando el comportamiento existente intacto (§5: "dentro de la
-  // app autenticada, NO modificar navegación existente salvo necesidad
-  // real").
-  window.addEventListener('popstate', () => {
-    if ($('#quick-unlock-area')) renderSupabaseLoginForm();
-  });
 
   // Delegado en document (no en el botón directamente) porque el topbar se
   // vuelve a dibujar entero cada vez que cambia de pantalla — así funciona
@@ -2576,6 +2561,33 @@ function showInAppToast(text) {
   setTimeout(() => toast.remove(), 6000);
 }
 
+// BUG-001 (2026-10-25, hallazgo real en Android — validación de campo):
+// #conn-badge SIEMPRE reaccionaba de inmediato a online/offline
+// (updateConnBadge(), abajo), pero el texto offline propio del header
+// compacto de Mi Turno ("Sin conexión · puedes continuar trabajando") solo
+// se calculaba DENTRO de renderLubricadorHome() — sin un render completo
+// de por medio, quedaba desactualizado hasta el próximo. Esta función
+// actualiza SOLO ese nodo (#lub-turno-header-offline, ver header de
+// renderLubricadorHome()) con un textContent/hidden barato: nunca toca
+// acordeones, nunca sus contadores ni su estado abierto/cerrado, nunca
+// dispara sync ni lee/escribe DB. Si el nodo no existe (no estamos en Mi
+// Turno, o Mi Turno todavía no terminó su primer render) no hace nada.
+// "online" NUNCA se pinta como "Sincronizado" aquí — eso lo decide
+// #conn-badge/lastSyncState real, nunca una suposición de este helper.
+async function updateLubricadorConnectivitySummary() {
+  if (App.route !== 'turno') return;
+  const el = $('#lub-turno-header-offline');
+  if (!el) return;
+  if (navigator.onLine) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  const pendientesSync = (typeof Sync !== 'undefined' && Sync.pendingCount) ? await Sync.pendingCount() : 0;
+  el.hidden = false;
+  el.textContent = `Sin conexión · puedes continuar trabajando${pendientesSync > 0 ? ` · ${pendientesSync} cambio${pendientesSync === 1 ? '' : 's'} pendiente${pendientesSync === 1 ? '' : 's'} de sincronizar` : ''}`;
+}
+
 function updateConnBadge() {
   const b = $('#conn-badge');
   if (!b) return;
@@ -2812,7 +2824,6 @@ async function renderLogin() {
 function confirmLogout() {
   openModal('¿Cerrar sesión en este dispositivo?', `
     <p>Después tendrás que ingresar nuevamente tu usuario y contraseña.</p>
-    <p class="dim">El acceso rápido mediante PIN de esta sesión se eliminará.</p>
     <div class="modal-actions">
       <button type="button" class="btn" id="confirm-logout-cancel">Cancelar</button>
       <button type="button" class="btn btn-danger" id="confirm-logout-confirm">Cerrar sesión</button>
@@ -2831,10 +2842,10 @@ function confirmLogout() {
 // DESPUÉS: Auth.signIn() para volver a entrar SÍ necesita red. Por eso el
 // aviso offline es sobre "después", no sobre que logout() vaya a fallar
 // ahora. Reusa Sync.pendingCount() (YA existente, nunca un contador nuevo)
-// y lockApp() (YA existente, nunca un bloqueo nuevo) — este modal solo
-// decide qué texto/botones mostrar según conexión/pendientes; nunca cambia
-// qué hace logout() en sí (sigue sin tocar IndexedDB/fotos/cola de sync,
-// confirmado).
+// — este modal solo decide qué texto mostrar según conexión/pendientes;
+// nunca cambia qué hace logout() en sí (sigue sin tocar IndexedDB/fotos/
+// cola de sync, confirmado). UX CAMPO V2: ya no ofrece "Bloquear en su
+// lugar" (Quick Unlock/bloqueo manual se eliminó del flujo operativo).
 async function confirmLubricadorLogout() {
   const nombre = App.currentUser ? App.currentUser.name : '';
   const offline = !navigator.onLine;
@@ -2847,7 +2858,6 @@ async function confirmLubricadorLogout() {
       <p class="dim">${pendientes} registro(s) todavía sin sincronizar, y actualmente no hay conexión.</p>
       <div class="modal-actions">
         <button type="button" class="btn" id="lub-logout-cancel">Cancelar</button>
-        <button type="button" class="btn btn-accent" id="lub-logout-lock">Bloquear en su lugar</button>
         <button type="button" class="btn btn-danger" id="lub-logout-confirm">Cerrar sesión de todos modos</button>
       </div>
     `);
@@ -2855,10 +2865,8 @@ async function confirmLubricadorLogout() {
     // §12 del pedido.
     openModal('Estás sin conexión', `
       <p>Si cierras sesión ahora, podrías necesitar conexión a internet para volver a iniciar sesión.</p>
-      <p class="dim">Si solo deseas dejar de usar temporalmente el dispositivo, usa Bloquear.</p>
       <div class="modal-actions">
         <button type="button" class="btn" id="lub-logout-cancel">Cancelar</button>
-        <button type="button" class="btn btn-accent" id="lub-logout-lock">Bloquear en su lugar</button>
         <button type="button" class="btn btn-danger" id="lub-logout-confirm">Cerrar sesión de todos modos</button>
       </div>
     `);
@@ -2875,28 +2883,20 @@ async function confirmLubricadorLogout() {
     `);
   }
   $('#lub-logout-cancel').addEventListener('click', closeModal);
-  $('#lub-logout-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
   $('#lub-logout-confirm').addEventListener('click', () => { closeModal(); logout(); });
 }
 
-// "Cambiar usuario" — distinto de Bloquear (mantiene todo intacto) y de
-// Cerrar sesión (mismo texto que esa acción para quien lo lee, pero pensado
-// para el flujo "otra persona va a usar este teléfono ahora", no para dejar
-// de trabajar). Arquitectura de una sola sesión Auth activa por dispositivo
-// (ver docs/SESSION_HANDOFF.md, "auditar arquitectura antes de PIN
-// multiusuario" — NO se implementó un almacén de varios refresh_tokens en
-// este lote): en la práctica es la MISMA operación de fondo que Cerrar
-// sesión (Auth.signOut() + borrar el PIN de este dispositivo), la próxima
-// persona entra con SU usuario/contraseña y configura SU propio PIN — nunca
-// pisa el PIN de la persona anterior hasta que de verdad haga login.
-// `App.currentUser` puede venir null (se llama también desde el propio
-// gate/login, no solo desde dentro de la app).
+// "Cambiar usuario" — pensado para el flujo "otra persona va a usar este
+// teléfono ahora", no para dejar de trabajar. Arquitectura de una sola
+// sesión Auth activa por dispositivo: en la práctica es la MISMA operación
+// de fondo que Cerrar sesión (Auth.signOut()), la próxima persona entra con
+// SU usuario/contraseña. `App.currentUser` puede venir null (se llama
+// también desde el propio gate/login, no solo desde dentro de la app).
 function confirmChangeUser() {
   if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
   const nombreActual = App.currentUser ? esc(App.currentUser.name) : 'este usuario';
   openModal('Cambiar de usuario', `
     <p>Vas a salir de la sesión de <b>${nombreActual}</b> en este dispositivo para que otra persona entre con su propio usuario y contraseña.</p>
-    <p class="dim">El PIN configurado aquí se reemplaza por el de la persona nueva cuando lo configure — la cuadrilla/ubicación de este dispositivo NO cambia.</p>
     <div class="modal-actions">
       <button type="button" class="btn" id="confirm-change-user-cancel">Cancelar</button>
       <button type="button" class="btn btn-accent" id="confirm-change-user-confirm">Cambiar usuario</button>
@@ -2918,53 +2918,28 @@ function logout() {
   clearLubricadorWidgetSnapshot();
   // Retira la identidad de OneSignal de ESTA persona (lote arquitectura de
   // notificaciones, §13) — solo tiene sentido en modo supabase (identidad
-  // Auth real); el login PIN legacy nunca asoció una. NUNCA se llama desde
-  // lockApp() (§12: bloquear conserva la identidad, sigue siendo la misma
-  // persona) ni cambia nada del deviceId/cuadrillaId del dispositivo.
+  // Auth real); el login PIN legacy nunca asoció una.
   if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) clearOneSignalIdentity();
   // Cancela de inmediato las notificaciones locales de la persona que se
   // va (§15) — sin esto, quedarían programadas hasta que alguien más
   // inicie sesión y refreshLocalNotifications() las recalcule.
   cancelAllLocalNotifications();
-  stopInactivityTimer();
   App.currentUser = null;
   App.lubricadorGreaseFlowActive = false; // salida explícita — no debe sobrevivir a la sesión siguiente
-  // AUTH_MODE='supabase': CERRAR SESIÓN real — distinto de "Bloquear"
-  // (lockApp() más abajo). Borra auth_tokens + profile snapshot + PIN
-  // rápido configurado (P0-2): la próxima vez exige Usuario + Contraseña
-  // de nuevo, nunca queda un PIN "huérfano" de una sesión ya cerrada.
-  // NUNCA toca IndexedDB operativo (engrases pendientes, anomalías,
-  // catálogos siguen intactos — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §25).
+  // AUTH_MODE='supabase': CERRAR SESIÓN real. Borra auth_tokens + profile
+  // snapshot: la próxima vez exige Usuario + Contraseña de nuevo. NUNCA
+  // toca IndexedDB operativo (engrases pendientes, anomalías, catálogos
+  // siguen intactos — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §25).
   if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
-    Auth.signOut().then(() => QuickUnlock.disable()).then(() => renderAuthGateSupabase());
+    Auth.signOut().then(() => renderAuthGateSupabase());
     return;
   }
   sessionStorage.removeItem('engrase_user');
   renderLogin();
 }
 
-// "Bloquear" — a propósito NUNCA llama a Auth.signOut() ni
-// QuickUnlock.disable(): la sesión Auth y el PIN configurado siguen
-// intactos, listos para desbloquear de nuevo (ver renderAuthGateSupabase(),
-// que se llama exactamente igual al arrancar la app y al bloquear — nunca
-// reingresa en silencio). Solo existe en AUTH_MODE='supabase' — el login
-// PIN legacy no distingue "bloquear" de "cerrar sesión".
-function lockApp() {
-  if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) return;
-  clearAppBadge();
-  stopInactivityTimer();
-  App.currentUser = null;
-  App.lubricadorGreaseFlowActive = false;
-  // forcePin:true — "Bloquear" (manual, fin de turno, o las 4h de
-  // inactividad real) SIEMPRE debe mostrar Quick Unlock de inmediato,
-  // nunca la ventana de gracia que sí aplica al reabrir/recargar la app
-  // (ver renderAuthGateSupabase()) — bloquear ES, por definición, la
-  // acción que exige volver a verificar identidad ahora mismo.
-  renderAuthGateSupabase({ forcePin: true });
-}
-
 /* ============================================================
-   LOGIN / DESBLOQUEO — AUTH_MODE='supabase' (P0-2). Módulo de pantallas
+   LOGIN — AUTH_MODE='supabase' (P0-2). Módulo de pantallas
    separado del login PIN legacy de arriba — mientras AUTH_MODE sea
    'legacy' (default), nada de esto se ejecuta (ver el branch del listener
    de DOMContentLoaded). La identidad real SIEMPRE viene de Auth (Supabase
@@ -2982,7 +2957,7 @@ function currentUserFromAuthProfile(profile) {
 }
 
 // Reproduce el deep-link que abrirDesdeNotificacion() dejó en espera por
-// no tener todavía App.currentUser (pantalla de Quick Unlock/login de por
+// no tener todavía App.currentUser (restauración de sesión/login de por
 // medio) — único lugar que lo limpia y lo dispara, para no reproducirlo
 // dos veces si boot() se llama más de una vez en la misma entrada.
 function replayPendingDeeplink() {
@@ -3004,32 +2979,20 @@ async function enterAppAsProfile(profile) {
   replayPendingDeeplink();
 }
 
-// Punto de entrada único para AUTH_MODE='supabase': se llama al arrancar Y
-// cada vez que se bloquea (lockApp()) — SIEMPRE vuelve a pedir PIN o
-// contraseña, nunca reingresa en silencio (ese es el punto del "quick
-// unlock": nunca queda una sesión abierta indefinidamente en pantalla,
-// aunque el token siga vigente). Auth.restoreSession() ya refresca/valida
-// la sesión real en segundo plano; sync.js decide aparte, con su propio
-// gate (sin cambios de esta tarea), si eso alcanza para sincronizar — esta
-// pantalla NUNCA decide sync, solo qué pantalla mostrar.
-async function renderAuthGateSupabase({ forcePin = false } = {}) {
+// Punto de entrada único para AUTH_MODE='supabase': se llama al arrancar.
+// UX CAMPO V2 — Quick Unlock/PIN eliminado del flujo operativo (decisión de
+// producto: agregaba fricción en campo sin suficiente beneficio): con una
+// sesión Auth válida en caché (snapshot local), entra directo, en línea o
+// sin conexión — nunca pide credenciales de nuevo mientras esa sesión siga
+// siendo válida. Sin sesión real, muestra el login normal.
+// Auth.restoreSession() ya refresca/valida la sesión real en segundo plano;
+// sync.js decide aparte, con su propio gate, si eso alcanza para
+// sincronizar — esta pantalla NUNCA decide sync, solo qué pantalla mostrar.
+async function renderAuthGateSupabase() {
   await Auth.restoreSession();
   const snapshot = await DB.getAuthProfileSnapshot();
   if (snapshot && isValidProfile(snapshot)) {
-    const configured = await QuickUnlock.isConfigured(snapshot.appUserId);
-    if (configured) {
-      // Simplificación para campo (2026-10-20) — reabrir/recargar con
-      // actividad real hace MENOS de 4h entra directo, sin PIN (mismo
-      // camino que un desbloqueo exitoso: enterAppAsProfile(), que ya
-      // reproduce el deep-link pendiente si lo hay — ver
-      // replayPendingDeeplink()). `forcePin` (bloqueo manual/por
-      // inactividad/fin de turno, ver lockApp()) nunca usa esta ventana —
-      // siempre exige el PIN de inmediato.
-      if (!forcePin && await QuickUnlock.isWithinInactivityGrace(snapshot.appUserId)) {
-        return enterAppAsProfile(snapshot);
-      }
-      return renderQuickUnlockScreen(snapshot);
-    }
+    return enterAppAsProfile(snapshot);
   }
   return renderSupabaseLoginForm();
 }
@@ -3047,7 +3010,7 @@ function renderSupabaseLoginForm() {
             <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
           </div>
         </div>
-        ${!online ? '<p class="login-hint">Sin conexión — se necesita Internet para iniciar sesión la primera vez. Si ya configuraste un PIN rápido antes, vuelve a intentarlo con señal.</p>' : ''}
+        ${!online ? '<p class="login-hint">Sin conexión — se necesita Internet para iniciar sesión la primera vez. Si ya iniciaste sesión antes en este dispositivo, vuelve a abrir la app cuando tengas señal.</p>' : ''}
         <form id="supabase-login-form" class="form-grid">
           <label>Usuario<input required name="username" autocomplete="username" ${online ? '' : 'disabled'}/></label>
           <label>Contraseña<input required type="password" name="password" autocomplete="current-password" ${online ? '' : 'disabled'}/></label>
@@ -3063,8 +3026,6 @@ function renderSupabaseLoginForm() {
     $('#supabase-login-error').textContent = '';
     try {
       const { user: profile } = await Auth.signIn(fd.username, fd.password);
-      const configured = await QuickUnlock.isConfigured(profile.appUserId);
-      if (!configured) return offerQuickUnlockSetup(profile);
       enterAppAsProfile(profile);
     } catch (e) {
       $('#supabase-login-error').textContent = e.message || 'No se pudo iniciar sesión.';
@@ -3072,199 +3033,13 @@ function renderSupabaseLoginForm() {
   });
 }
 
-// Quick Unlock — botón "←" (vuelve al login normal, sin cerrar sesión ni
-// borrar nada) + "Entrar con otra cuenta" (acción explícita de cambio de
-// cuenta, reusa confirmChangeUser()/logout() — §8 del pedido "LOGIN / QUICK
-// UNLOCK / CAMBIO DE USUARIO": una sola ruta/helper para cambiar cuenta,
-// cero sistema de autenticación nuevo).
-//
-// Atrás Android (§5 del pedido): se empuja UNA entrada de historial propia
-// (`history.pushState`) SOLO mientras esta pantalla está visible — el gesto/
-// botón Atrás nativo de Android ya mueve el WebView con
-// canGoBack()/goBack() sobre ese mismo historial (sin necesitar el plugin
-// @capacitor/app, que NO está instalado — agregarlo sería una dependencia
-// nueva que requiere confirmación explícita + recompilar/sincronizar el
-// APK, fuera de alcance de este lote). goBack() dispara 'popstate' (wireado
-// una sola vez al arrancar, ver DOMContentLoaded), que es la MISMA función
-// que usa el botón "←" — un solo código, dos formas de dispararlo, nunca
-// dos implementaciones. Al salir por "Entrar con otra cuenta" se usa
-// replaceState() (nunca pushState/back) para no dejar la entrada marcada
-// "quickunlock" viva — así un Atrás posterior en el login normal no vuelve
-// a esta pantalla (nunca el loop Quick Unlock → Login → Atrás → Quick
-// Unlock... que pide evitar el pedido).
-function renderQuickUnlockScreen(snapshot) {
-  try { history.pushState({ screen: 'quickunlock' }, '', ''); } catch (e) {}
-  document.body.innerHTML = `
-    <div class="login-screen">
-      <div class="login-card">
-        <button type="button" class="icon-btn login-back-btn" id="quick-unlock-back" aria-label="Atrás" title="Atrás">←</button>
-        ${themeButtonHTML('login-theme-btn')}
-        <div class="brand brand-login">
-          <div class="brand-mark"></div>
-          <div>
-            <div class="brand-title">CONTROL DE ENGRASE</div>
-            <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
-          </div>
-        </div>
-        <p class="login-hint">${esc(snapshot.displayName)}<br><span class="dim">${esc(snapshot.role || '')}</span></p>
-        <div id="quick-unlock-area" class="form-grid">
-          <input id="quick-unlock-pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="PIN" maxlength="6"/>
-          <button type="button" id="quick-unlock-submit" class="btn btn-accent">Desbloquear</button>
-        </div>
-        <div id="quick-unlock-error" class="login-error"></div>
-        <!-- Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.4 del pedido):
-             botón secundario REAL (ya era un <button>, solo cambia el look
-             de link subrayado a .btn con ancho completo) — mismo handler,
-             nunca una reimplementación. -->
-        <button type="button" id="quick-unlock-change-user" class="btn login-btn-secondary">${ic('repeat')}Entrar con otra cuenta</button>
-        <div class="login-footer">Funciona sin conexión · desbloqueo local de este dispositivo</div>
-      </div>
-    </div>`;
-
-  // Desactiva la entrada de historial "quickunlock" SIN navegar (nunca
-  // dispara 'popstate') — se usa cuando esta pantalla se abandona por
-  // cualquier camino que NO sea el botón "←"/Atrás de Android, para que
-  // un Atrás posterior (ya en el login normal o dentro de la app) no la
-  // vuelva a encontrar y reabra Quick Unlock por error (el loop que pide
-  // evitar el pedido).
-  const clearQuickUnlockHistoryMarker = () => {
-    if (history.state && history.state.screen === 'quickunlock') history.replaceState(null, '', '');
-  };
-
-  $('#btn-theme').addEventListener('click', openThemePicker);
-  // "←": si la entrada de historial de esta pantalla sigue viva, back() la
-  // consume y el handler global de 'popstate' pinta el login — si por lo
-  // que sea pushState falló arriba (try/catch), cae directo al login
-  // normal, el botón nunca queda muerto.
-  $('#quick-unlock-back').addEventListener('click', () => {
-    if (history.state && history.state.screen === 'quickunlock') history.back();
-    else renderSupabaseLoginForm();
-  });
-  $('#quick-unlock-change-user').addEventListener('click', () => {
-    clearQuickUnlockHistoryMarker();
-    confirmChangeUser();
-  });
-
-  const doUnlock = async () => {
-    const pin = $('#quick-unlock-pin').value.trim();
-    const res = await QuickUnlock.attemptUnlock(snapshot.appUserId, pin);
-    if (res.ok) { clearQuickUnlockHistoryMarker(); enterAppAsProfile(snapshot); return; }
-    if (res.reason === 'LOCKED') {
-      const mins = Math.ceil(res.remainingMs / 60000);
-      $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
-    } else {
-      $('#quick-unlock-error').textContent = res.attemptsLeft != null
-        ? `PIN incorrecto. Te quedan ${res.attemptsLeft} intento(s).`
-        : 'PIN incorrecto.';
-    }
-    $('#quick-unlock-pin').value = '';
-    $('#quick-unlock-pin').focus();
-  };
-  $('#quick-unlock-submit').addEventListener('click', doUnlock);
-  $('#quick-unlock-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doUnlock(); });
-
-  // Si ya estaba bloqueado desde antes (recarga de página durante el
-  // bloqueo), avisar de una vez en vez de esperar el primer intento.
-  QuickUnlock.isLockedOut(snapshot.appUserId).then(async (locked) => {
-    if (!locked) return;
-    const remainingMs = await QuickUnlock.getLockRemainingMs(snapshot.appUserId);
-    const mins = Math.ceil(remainingMs / 60000);
-    $('#quick-unlock-error').textContent = `Demasiados intentos fallidos. Intenta de nuevo en ${mins} minuto(s).`;
-  });
-}
-
-// Se ofrece UNA vez, justo después de un login real exitoso (online,
-// perfil activo) — nunca antes (ver principio de seguridad en
-// src/core/quick-unlock.js). "Ahora no" entra normalmente sin configurar
-// nada; puede configurarse/cambiarse/desactivarse después desde
-// Configuración (ver renderConfig()).
-function offerQuickUnlockSetup(profile) {
-  document.body.innerHTML = `
-    <div class="login-screen">
-      <div class="login-card">
-        <div class="brand brand-login">
-          <div class="brand-mark"></div>
-          <div>
-            <div class="brand-title">CONTROL DE ENGRASE</div>
-            <div class="brand-sub">OPEN PIT · GESTIÓN DE LUBRICACIÓN</div>
-          </div>
-        </div>
-        <p class="login-hint">¿Configurar un PIN rápido (4 o 6 dígitos) para entrar sin escribir tu contraseña cada vez, incluso sin Internet?</p>
-        <form id="quick-unlock-setup-form" class="form-grid">
-          <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-          <label>Confirmar PIN<input required name="pinConfirm" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-          <div id="quick-unlock-setup-error" class="login-error span-2"></div>
-          <button type="submit" class="btn btn-accent span-2">Configurar PIN</button>
-        </form>
-        <button type="button" id="quick-unlock-setup-skip" class="btn login-btn-secondary">Ahora no</button>
-      </div>
-    </div>`;
-  $('#quick-unlock-setup-skip').addEventListener('click', () => enterAppAsProfile(profile));
-  $('#quick-unlock-setup-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    if (fd.pin !== fd.pinConfirm) {
-      $('#quick-unlock-setup-error').textContent = 'Los PIN no coinciden. Vuelve a escribirlos.';
-      return;
-    }
-    try {
-      await QuickUnlock.configure(profile.appUserId, fd.pin);
-      enterAppAsProfile(profile);
-    } catch (e) {
-      $('#quick-unlock-setup-error').textContent = e.message;
-    }
-  });
-}
-
-// Configurar/Cambiar — se llama desde Configuración (ver renderConfig())
-// Y desde Mi Perfil (ver renderMiPerfil()), ya dentro de la app, con
-// sesión activa confirmada por Auth.isAuthenticated() (nunca se ofrece
-// esto sin eso, ver quickUnlockAvailable). changePin() reutiliza
-// exactamente las mismas reglas de configure() (formato, PIN trivial) —
-// nunca duplica esa validación. `onDone` (por defecto renderConfig, para
-// no romper los call sites existentes) refresca la pantalla que abrió
-// este modal una vez guardado — nunca asume que siempre es Configuración.
-function quickUnlockConfigureModal(mode, onDone = renderConfig) {
-  openModal(mode === 'change' ? 'Cambiar PIN rápido' : 'Configurar PIN rápido', `
-    <p class="dim" style="margin-top:-4px">PIN de 4 o 6 dígitos para desbloquear este dispositivo sin escribir tu contraseña. Nunca reemplaza tu rol ni tus permisos.</p>
-    <form id="quick-unlock-modal-form" class="form-grid">
-      <label>PIN<input required name="pin" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-      <label>Confirmar PIN<input required name="pinConfirm" inputmode="numeric" pattern="\\d{4}|\\d{6}" autocomplete="off" maxlength="6"/></label>
-      <div id="quick-unlock-modal-error" class="login-error span-2"></div>
-      <div class="modal-actions span-2">
-        <button type="button" class="btn" id="quick-unlock-modal-cancel">Cancelar</button>
-        <button type="submit" class="btn btn-accent">Guardar</button>
-      </div>
-    </form>`);
-  $('#quick-unlock-modal-cancel').addEventListener('click', () => closeModal());
-  $('#quick-unlock-modal-form').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    if (fd.pin !== fd.pinConfirm) {
-      $('#quick-unlock-modal-error').textContent = 'Los PIN no coinciden. Vuelve a escribirlos.';
-      return;
-    }
-    try {
-      const appUserId = Auth.getProfile().appUserId;
-      await QuickUnlock.changePin(appUserId, fd.pin);
-      await logAudit(mode === 'change' ? 'QUICK_UNLOCK_CAMBIADO' : 'QUICK_UNLOCK_CONFIGURADO', App.currentUser.name, App.currentUser.name);
-      showInAppToast('✓ PIN rápido guardado');
-      closeModal();
-      onDone();
-    } catch (e) {
-      $('#quick-unlock-modal-error').textContent = e.message;
-    }
-  });
-}
-
 /* ============================================================
    MI PERFIL (lote "Mi Perfil") — autoservicio para CUALQUIER usuario
-   autenticado, reutilizando Auth/app_profiles/QuickUnlock ya existentes,
-   SIN ampliar permisos de nadie. Solo existe en AUTH_MODE='supabase' (el
-   login PIN legacy no tiene Auth real detrás que autoeditar) — se accede
-   desde el mismo clúster de acciones de cuenta que ya tienen ambos shells
-   (Bloquear/Cambiar usuario/Cerrar sesión), NUNCA desde una sección
-   administrativa nueva (§6 del pedido).
+   autenticado, reutilizando Auth/app_profiles ya existentes, SIN ampliar
+   permisos de nadie. Solo existe en AUTH_MODE='supabase' (el login PIN
+   legacy no tiene Auth real detrás que autoeditar) — se accede desde el
+   mismo clúster de acciones de cuenta que ya tienen ambos shells (Cambiar
+   usuario/Cerrar sesión), NUNCA desde una sección administrativa nueva.
 
    Username: SOLO LECTURA a propósito (auditoría previa, ver respuesta
    final del lote) — app_profiles bloquea por RLS cualquier auto-UPDATE
@@ -3328,7 +3103,6 @@ async function renderMiPerfil() {
   const [cuadrillas, locations, scope] = await Promise.all([
     DB.allActive('cuadrillas'), DB.allActive('locations'), getCurrentOperationalScope(),
   ]);
-  const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
   const offline = !navigator.onLine;
 
   c.innerHTML = `<div class="lub-profile-layout">
@@ -3381,24 +3155,7 @@ async function renderMiPerfil() {
       </div>
     </div>
 
-    <div class="panel config-narrow">
-      <div class="panel-head"><h3>PIN rápido (solo este dispositivo)</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Permite volver a entrar en este dispositivo sin escribir tu contraseña, incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol, y nunca se sincroniza a otros dispositivos.</p>
-        ${quickUnlockConfigured
-          ? `<button type="button" class="btn" id="mi-perfil-pin-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="mi-perfil-pin-disable">Desactivar PIN rápido</button>`
-          : `<button type="button" class="btn btn-accent" id="mi-perfil-pin-configure">Configurar PIN rápido</button>`}
-      </div>
-    </div></div>`;
-
-  $('#mi-perfil-pin-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure', renderMiPerfil));
-  $('#mi-perfil-pin-change')?.addEventListener('click', () => quickUnlockConfigureModal('change', renderMiPerfil));
-  $('#mi-perfil-pin-disable')?.addEventListener('click', async () => {
-    await QuickUnlock.disable();
-    await logAudit('QUICK_UNLOCK_DESACTIVADO', App.currentUser.name, App.currentUser.name);
-    showInAppToast('✓ PIN rápido desactivado');
-    renderMiPerfil();
-  });
+    </div>`;
 
   $('#mi-perfil-nombre-form')?.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -3520,7 +3277,6 @@ async function renderLubricadorConfig() {
   const [cuadrillas, locations, scope] = await Promise.all([
     DB.allActive('cuadrillas'), DB.allActive('locations'), getCurrentOperationalScope(),
   ]);
-  const quickUnlockConfigured = await QuickUnlock.isConfigured(profile.appUserId);
   const turnoLabel = currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
   // §4 del pedido ("Apariencia" compacta: tema/modo actuales + preview) —
   // getTheme()/THEMES/MODES YA existentes, nunca una biblioteca nueva.
@@ -3570,7 +3326,6 @@ async function renderLubricadorConfig() {
       <div class="panel-head"><h3>Seguridad</h3></div>
       <div style="padding:14px" class="lub-config-actions">
         <button type="button" class="btn" id="lub-config-password">${ic('lock')}Cambiar contraseña</button>
-        <button type="button" class="btn" id="lub-config-pin">${ic('lock')}${quickUnlockConfigured ? 'Cambiar PIN rápido' : 'Configurar PIN rápido'}</button>
       </div>
     </div>
 
@@ -3592,7 +3347,6 @@ async function renderLubricadorConfig() {
     </div></div>`;
 
   $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
-  $('#lub-config-pin').addEventListener('click', () => quickUnlockConfigureModal(quickUnlockConfigured ? 'change' : 'configure', renderLubricadorConfig));
   $('#lub-config-theme').addEventListener('click', () => openThemePicker());
   $('#lub-config-help').addEventListener('click', () => navigate('ayuda'));
   // §3 del pedido: solo limpia la selección de SESIÓN (localStorage) para
@@ -3604,122 +3358,6 @@ async function renderLubricadorConfig() {
     setSelectedCrewId(App.currentUser.id, '');
     goToLubricadorTurno();
   });
-}
-
-/* ---------- Bloqueo local por inactividad ----------
-   Fix 2026-10-09 ("SESIÓN OFFLINE", Parte C/§4/§7 del pedido, OBLIGATORIO):
-   ANTES cerraba sesión de verdad (logout(), Auth.signOut()) — en campo/mina
-   sin conexión, eso dejaba al Lubricador fuera de la app sin poder volver a
-   entrar (Auth.signIn() necesita red; solo Quick Unlock funciona offline).
-   Ahora usa lockApp() (YA existente, conserva sesión Auth + IndexedDB +
-   cola de sync + fotos + PIN configurado) — nunca un bloqueo nuevo, nunca
-   logout automático por tiempo. Si alguien deja el dispositivo
-   desbloqueado, se bloquea solo tras un rato sin uso; se reanuda con el
-   mismo PIN, nunca con usuario/contraseña de nuevo.
-
-   Simplificación para campo (2026-10-20, "Quick Unlock para uso en
-   campo") — el umbral pasó de 30 minutos a
-   QUICK_UNLOCK_INACTIVITY_MS (4 horas, constante única en quick-
-   unlock.js — nunca duplicada aquí) y ahora PERSISTE `lastActivityAt`
-   (ver QuickUnlock.recordActivity(), con throttle abajo) para que
-   renderAuthGateSupabase() pueda saltar el PIN al reabrir/recargar si la
-   última actividad real fue hace menos de 4h — antes esta pantalla
-   aparecía en CUALQUIER reapertura fría, sin mirar cuán reciente fue el
-   último uso. */
-let inactivityTimer = null;
-let finTurnoTimer = null;
-// Throttle de la escritura a IndexedDB (nunca en cada tap/tecla/scroll —
-// innecesario contra una ventana de 4 HORAS, y cada DB.setQuickUnlock() es
-// una transacción real). Una escritura cada 60s de uso activo sigue siendo
-// más que suficiente precisión para esa ventana.
-const ACTIVITY_PERSIST_THROTTLE_MS = 60 * 1000;
-let lastActivityPersistAt = 0;
-// Reintento corto (nunca otra ventana de 4h) mientras hay un
-// formulario/flujo abierto en el momento exacto en que se cumplieron las
-// 4h — §3 del pedido: "no interrumpir trabajo activo". Si la persona
-// sigue interactuando, resetInactivityTimer() ya cancela este reintento
-// (actividad real = nunca se cumplieron las 4h en primer lugar); esto
-// solo cubre el caso borde de alguien que se alejó a mitad de un
-// formulario exactamente en el límite.
-const AUTO_LOCK_SAFE_RETRY_MS = 30 * 1000;
-
-// Mismo criterio que el gate de re-render de sync (ver onSyncStateChange(),
-// auditoría de sincronización 2026-10-20) — nunca una 2da implementación
-// de "hay un formulario/flujo en curso que no se debe interrumpir".
-function isSafeToAutoLock() {
-  return !App.lubricadorGreaseFlowActive &&
-    !document.querySelector('#modal-overlay.open') &&
-    !document.querySelector('#grease-form') &&
-    !document.querySelector('.grease-validate-choice');
-}
-
-function fireInactivityLock() {
-  if (!App.currentUser) return;
-  if (!isSafeToAutoLock()) {
-    // Nunca pierde el trabajo en curso — reintenta pronto, sin abrir una
-    // ventana nueva de 4h (si la persona sigue tecleando/tocando, el
-    // próximo evento real ya cancela este timer vía resetInactivityTimer()).
-    inactivityTimer = setTimeout(fireInactivityLock, AUTO_LOCK_SAFE_RETRY_MS);
-    return;
-  }
-  alert('Dispositivo bloqueado por inactividad. Ingresa tu PIN para continuar.');
-  lockApp();
-}
-
-/* ---------- Bloqueo local al terminar el turno ----------
-   Fix 2026-10-09 (mismo motivo de arriba — era logout(), ahora lockApp()):
-   pensado para los teléfonos COMPARTIDOS entre cuadrillas: si la cuadrilla
-   saliente deja la sesión desbloqueada, la entrante podría registrar
-   engrases con el nombre equivocado. Al terminar el turno el dispositivo se
-   BLOQUEA solo (nunca cierra sesión), obligando a que cada quien desbloquee
-   con su propio PIN — así el historial sigue diciendo quién hizo qué, sin
-   arriesgar que alguien quede fuera de la app por falta de conexión. */
-function programarCierrePorFinDeTurno() {
-  clearTimeout(finTurnoTimer);
-  if (!App.currentUser || App.currentUser.role !== 'LUBRICADOR') return;
-
-  const { shiftDayStart, shiftNightStart } = App.generalSettings;
-  const turno = App.currentUser.shiftId || currentShiftId();
-  const horaFin = turno === 'shift_dia' ? shiftNightStart : shiftDayStart;
-
-  const fin = new Date();
-  fin.setHours(horaFin, 30, 0, 0); // media hora de margen para cerrar pendientes
-  if (fin.getTime() <= Date.now()) fin.setDate(fin.getDate() + 1);
-
-  const faltan = fin.getTime() - Date.now();
-  if (faltan > 0 && faltan < 24 * 3600 * 1000) {
-    finTurnoTimer = setTimeout(() => {
-      if (!App.currentUser) return;
-      alert('Terminó tu turno. El dispositivo se bloquea para que la siguiente cuadrilla entre con su propio PIN.');
-      lockApp();
-    }, faltan);
-  }
-}
-
-function resetInactivityTimer() {
-  if (!App.currentUser) return;
-  clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(fireInactivityLock, QUICK_UNLOCK_INACTIVITY_MS);
-  // Persiste `lastActivityAt` (con throttle) — SOLO en AUTH_MODE='supabase'
-  // (Quick Unlock no existe en 'legacy'; DB.getQuickUnlock() ahí nunca
-  // matchea este usuario, así que sería un no-op, pero el guard explícito
-  // documenta la intención y evita una escritura inerte en cada tap).
-  if (typeof Auth !== 'undefined' && Auth.isSupabaseMode()) {
-    const now = Date.now();
-    if (now - lastActivityPersistAt >= ACTIVITY_PERSIST_THROTTLE_MS) {
-      lastActivityPersistAt = now;
-      QuickUnlock.recordActivity(App.currentUser.id).catch(() => {});
-    }
-  }
-}
-
-function stopInactivityTimer() { clearTimeout(inactivityTimer); inactivityTimer = null; clearTimeout(finTurnoTimer); finTurnoTimer = null; }
-
-function startInactivityTracking() {
-  ['click', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
-    document.addEventListener(evt, resetInactivityTimer, { passive: true });
-  });
-  resetInactivityTimer();
 }
 
 /* ---------- shell principal ---------- */
@@ -3760,8 +3398,6 @@ function boot() {
   Sync.runAutoCycle();
   refreshLocalNotifications();
   refreshAppBadge();
-  startInactivityTracking();
-  programarCierrePorFinDeTurno();
   // Nota: las notificaciones push (initPushNotifications) YA NO se activan solas aquí.
   // Necesitan un proyecto de Firebase configurado (google-services.json en el proyecto
   // Android) — si se llaman sin eso, la app se cierra de golpe. Ahora solo se activan
@@ -3805,7 +3441,6 @@ function boot() {
           })()}
         </nav>
         ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-mi-perfil"><span class="menu-icon icon-users"></span><span>Mi Perfil</span></button>` : ''}
-        ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-lock-app"><span class="menu-icon icon-lock"></span><span>Bloquear</span></button>` : ''}
         ${(typeof Auth !== 'undefined' && Auth.isSupabaseMode()) ? `<button class="menu-item" id="btn-change-user"><span class="menu-icon icon-repeat"></span><span>Cambiar usuario</span></button>` : ''}
         <button class="menu-item logout" id="btn-logout">
           <span class="menu-icon icon-logout"></span><span>Cerrar sesión</span>
@@ -3851,7 +3486,6 @@ function boot() {
   });
   $('#btn-logout').addEventListener('click', confirmLogout);
   $('#btn-mi-perfil')?.addEventListener('click', () => navigate('miperfil'));
-  $('#btn-lock-app')?.addEventListener('click', lockApp);
   $('#btn-change-user')?.addEventListener('click', confirmChangeUser);
   const toggle = $('#btn-menu-toggle');
   if (toggle) toggle.addEventListener('click', () => {
@@ -3958,14 +3592,12 @@ function makeTablesResponsive(container) {
 /* ============================================================
    INTERFAZ SIMPLIFICADA PARA LUBRICADOR (móvil, un toque)
    ============================================================ */
-// Lote "mobile UX real Android" — Mi Perfil/Bloquear/Cambiar usuario
-// colapsan en UN solo botón de topbar (antes 3 botones de 44px cada uno,
-// la causa real del overflow horizontal medido en 360-412px junto con QR/
-// conexión/Cerrar sesión). Ninguna función se pierde: las 3 siguen siendo
-// exactamente las mismas (navigate('miperfil')/lockApp()/
-// confirmChangeUser()), solo detrás de un único punto de entrada — mismo
-// patrón que ya usa el resto de la app (openModal() real, nunca un menú
-// nuevo reimplementado).
+// Lote "mobile UX real Android" — Mi Perfil/Cambiar usuario colapsan en UN
+// solo botón de topbar (antes varios botones de 44px cada uno, la causa
+// real del overflow horizontal medido en 360-412px junto con QR/conexión/
+// Cerrar sesión). Mismo patrón que ya usa el resto de la app (openModal()
+// real, nunca un menú nuevo reimplementado). UX CAMPO V2: "Bloquear" se
+// retiró de este menú (Quick Unlock eliminado del flujo operativo).
 // Fix 2026-10-09 ("CONFIGURACIÓN FINAL + SESIÓN OFFLINE", Parte B/§5 del
 // pedido): "Cerrar sesión" se muda aquí (fuera del header/topbar, ver
 // bootLubricador() — ya no hay #btn-logout ahí) y queda separado
@@ -3994,14 +3626,12 @@ async function openLubAccountMenu() {
       <div class="lub-account-summary"><strong>${esc(App.currentUser.name)}</strong><span>${esc(App.currentUser.role)}${context?.crewName ? ' · ' + esc(context.crewName) : ''}</span>${context?.coverageLabel ? `<span title="${esc(context.coverageTitle)}">${esc(context.coverageLabel)}</span>` : ''}</div>
       <button type="button" class="btn" id="lub-menu-mi-perfil">${ic('users')}Mi Perfil</button>
       ${supa ? `<button type="button" class="btn" id="lub-menu-config">${ic('gear')}Configuración</button>` : ''}
-      ${supa ? `<button type="button" class="btn" id="lub-menu-lock">${ic('lock')}Bloquear</button>` : ''}
       ${supa ? `<button type="button" class="btn" id="lub-menu-change-user">${ic('repeat')}Cambiar usuario</button>` : ''}
       <hr class="lub-account-menu-divider"/>
       <button type="button" class="btn btn-danger" id="lub-menu-logout">${ic('logout')}Cerrar sesión</button>
     </div>`);
   $('#lub-menu-mi-perfil').addEventListener('click', () => { closeModal(); navigate('miperfil'); });
   $('#lub-menu-config')?.addEventListener('click', () => { closeModal(); navigate('lubconfig'); });
-  $('#lub-menu-lock')?.addEventListener('click', () => { closeModal(); lockApp(); });
   $('#lub-menu-change-user')?.addEventListener('click', () => { closeModal(); confirmChangeUser(); });
   $('#lub-menu-logout').addEventListener('click', () => { closeModal(); confirmLubricadorLogout(); });
 }
@@ -4045,6 +3675,11 @@ function bootLubricador() {
            usuario/turno visible, así que no se quita del DOM — ver toggle en
            el handler de .lub-nav-item y en el boot inicial, abajo. -->
       <div class="lub-user-strip hidden">👤 ${esc(App.currentUser.name)} · <span id="lub-shift"></span></div>
+      <!-- Pull-to-sync (UX CAMPO V2, Parts O-R) — SOLO Mi Turno, ver
+           wirePullToSync(). Vive FUERA de #app-content a propósito: nunca
+           se borra al repintar Mi Turno, nunca reserva espacio permanente
+           (altura 0 en reposo, position:fixed durante el gesto). -->
+      <div class="lub-pull-indicator" id="lub-pull-indicator" aria-live="polite" hidden></div>
       <main id="app-content" class="lub-content"></main>
       <nav class="lub-bottom-nav">
         <button class="lub-nav-item active" data-route="turno" aria-current="page"><span class="menu-icon icon-clock"></span><span>Mi Turno</span></button>
@@ -4097,6 +3732,90 @@ function bootLubricador() {
   renderLubricadorHome();
   handleQrDeepLink();
   wireKeyboardOpenWatcher();
+  // Pull-to-sync (UX CAMPO V2) — wireado UNA sola vez por boot (el gesto
+  // vive en document/window, nunca dentro de #app-content, así que no hay
+  // que re-wirearlo en cada renderLubricadorHome()).
+  wirePullToSync();
+}
+
+// Pull-to-sync — SOLO en Mi Turno (App.route==='turno'), con scrollTop<=0,
+// sin modal abierto, sin formulario activo y sin un sync ya en curso.
+// Llama Sync.fullSync() TAL CUAL (el mismo mecanismo real de "Tocar para
+// sincronizar ahora" de #conn-badge, ver boot()) — nunca un sync
+// alternativo, nunca dos ciclos a la vez (single-flight real: ya lo
+// garantiza Sync.fullSync() por dentro, acá además se evita ni arrancar el
+// gesto visual si Sync.syncing ya es true). El indicador es temporal
+// (~48-56px durante el gesto) — nunca un espacio permanente; #conn-badge
+// sigue siendo la alternativa accesible de siempre (pull-to-sync no es la
+// única forma de sincronizar).
+function wirePullToSync() {
+  const THRESHOLD = 56;
+  const MAX_PULL = 72;
+  let tracking = false, armed = false, startY = 0, lastDelta = 0;
+
+  const indicator = () => document.getElementById('lub-pull-indicator');
+
+  function canStartPull() {
+    return App.route === 'turno'
+      && window.scrollY <= 0
+      && !document.querySelector('#modal-overlay.open')
+      && !document.querySelector('#grease-form')
+      && !App.lubricadorGreaseFlowActive
+      && (typeof Sync === 'undefined' || !Sync.syncing);
+  }
+
+  function setText(state, text) {
+    const el = indicator();
+    if (!el) return;
+    el.dataset.state = state;
+    el.textContent = text;
+  }
+
+  function reset() {
+    const el = indicator();
+    if (el) { el.style.height = '0px'; el.hidden = true; el.removeAttribute('data-state'); el.textContent = ''; }
+    tracking = false; armed = false; lastDelta = 0;
+  }
+
+  document.addEventListener('touchstart', (e) => {
+    if (!canStartPull()) { tracking = false; return; }
+    tracking = true;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const delta = e.touches[0].clientY - startY;
+    if (delta <= 0 || window.scrollY > 0) { reset(); return; }
+    lastDelta = Math.min(delta, MAX_PULL);
+    const el = indicator();
+    if (el) { el.hidden = false; el.style.height = lastDelta + 'px'; }
+    armed = lastDelta >= THRESHOLD;
+    setText(armed ? 'ready' : 'pulling', armed ? 'Suelta para sincronizar' : 'Desliza para sincronizar');
+  }, { passive: true });
+
+  document.addEventListener('touchend', async () => {
+    if (!tracking) return;
+    const shouldSync = armed;
+    tracking = false; armed = false;
+    if (!shouldSync) { reset(); return; }
+    if (typeof Sync === 'undefined' || Sync.syncing) { reset(); return; }
+    if (!navigator.onLine) {
+      setText('offline', 'Sin conexión · los cambios se enviarán al recuperar internet');
+      setTimeout(reset, 1800);
+      return;
+    }
+    setText('syncing', 'Sincronizando…');
+    await Sync.fullSync('manual');
+    const status = lastSyncState.status;
+    if (status === 'ok') setText('done', 'Sincronizado');
+    else if (status === 'partial') setText('done', 'Sincronizado con advertencia');
+    else if (status === 'offline' || status === 'backend_unreachable') setText('offline', 'Sin conexión · los cambios se enviarán al recuperar internet');
+    else setText('done', 'Sincronizado con advertencia');
+    setTimeout(reset, 1400);
+  }, { passive: true });
+
+  document.addEventListener('touchcancel', reset, { passive: true });
 }
 
 // Detecta el teclado virtual abierto en Registrar Engrase (fix real Android
@@ -4603,6 +4322,22 @@ async function renderLubricadorHome(options = {}) {
     return `<span class="status-chip chip-origen" style="--c:var(--gray-status)">APOYO · ${esc(nombre)}</span>`;
   };
 
+  // Parte V del pedido (UX CAMPO V2): indicador compacto de anomalía
+  // abierta en la tarjeta — NUNCA el detalle completo inline (eso sigue
+  // viviendo solo en la Ficha/el panel de tareas) y NUNCA mezclado con el
+  // status-chip de pendiente-de-engrase (línea propia, separada). Cuenta
+  // sobre panelAnomalyTasks (openAnomaliesCountByEquipoId, calculado más
+  // abajo junto al resto del panel) — mismo alcance/criterio "abierta" que
+  // ya decide esa sección, ningún cálculo nuevo.
+  const anomalyIndicatorHTML = (equipmentId) => {
+    const entry = openAnomaliesCountByEquipoId.get(equipmentId);
+    if (!entry || !entry.count) return '';
+    const { count, critica } = entry;
+    // Mismo componente/texto que equipmentCard() (.eq-anomaly-badge,
+    // src más arriba en este archivo) — nunca una paleta/clase nueva.
+    return `<div class="eq-anomaly-badge ${critica ? 'critical' : ''}">⚠ ${count} anomalía${count === 1 ? '' : 's'} abierta${count === 1 ? '' : 's'}${critica ? ' · crítica' : ''}</div>`;
+  };
+
   const arrastradoRowHTML = ({ e, origen, tone, asignado, assignmentId, occurrenceKey, shiftId: rowShiftId, occurrenceDate: rowDate, skip: rowSkip, label: rowLabel }) => {
     const skip = rowSkip || lastSkipByEquipoId[e.id];
     const scheduled = statusesNormalYAsignados.find(row => row.e.id === e.id)?.s.scheduleDate;
@@ -4621,6 +4356,7 @@ async function renderLubricadorHome(options = {}) {
         ${masterLocationHTML(e)}
         <div class="lub-pending-context dim">${esc(pendingContext)}</div>
         ${skip ? `<div class="lub-arrastrado-motivo">Motivo: ${esc(NO_EXECUTION_REASON_LABELS[skip.reason] || skip.reason)}</div>` : ''}
+        ${anomalyIndicatorHTML(e.id)}
         <div class="lub-arrastrado-actions">
           <button type="button" class="btn btn-accent lub-arr-reg" data-id="${e.id}" data-assignment-id="${esc(assignmentId || '')}">${ic("check")}Registrar engrase</button>
           <button type="button" class="btn lub-arr-ver" data-id="${e.id}">Ver ficha</button>
@@ -4648,37 +4384,24 @@ async function renderLubricadorHome(options = {}) {
         <span class="mono">${fmt(e.hourmeter)} h</span>
         ${s.remaining !== undefined && s.remaining !== null ? `<span class="mono" style="color:${STATUS_COLOR[s.code]}">${s.remaining < 0 ? fmt(Math.abs(s.remaining)) + ' h atraso' : fmt(s.remaining) + ' h restante'}</span>` : ''}
       </div>
+      ${anomalyIndicatorHTML(e.id)}
       <div class="lub-arrastrado-actions">
         <button type="button" class="btn btn-accent lub-mt-reg" data-id="${e.id}" data-assignment-id="${esc(assignmentId || '')}">${ic("check")}Registrar engrase</button>
         <button type="button" class="btn lub-mt-ver" data-id="${e.id}">Ver ficha</button>
       </div>
     </div>`;
 
-  const kpiTile = (label, value, tone) => `
-    <div class="lub-kpi-card tone-${tone}">
-      <div class="lub-kpi-value">${value}</div>
-      <div class="lub-kpi-label">${label}</div>
-    </div>`;
-
-  // "1. CONTEXTO COMPACTO": turno + ubicación + cuadrilla + sincronización,
-  // en una sola fila — nunca un cálculo nuevo, solo lectura de lo que ya
-  // existe (scope/myCrew/lastSyncState, este último global y ya mantenido
-  // por updateConnBadge()).
-  const syncChip = (() => {
-    if ($('#conn-badge')) return ''; // The global topbar uses the same lastSyncState.
-    const st = lastSyncState.status;
-    if (st === 'ok') return `<span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>`;
-    if (st === 'syncing') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Sincronizando…</span>`;
-    if (st === 'unconfigured' || st === 'idle') return `<span class="lub-context-chip tone-amber"><span class="dot"></span>Solo local</span>`;
-    return `<span class="lub-context-chip tone-red"><span class="dot"></span>Sin conexión</span>`;
-  })();
+  // Header compacto de Mi Turno (UX CAMPO V2): cuadrilla/ubicación/turno —
+  // el indicador de sincronización YA vive en #conn-badge (topbar
+  // persistente de bootLubricador(), siempre montado), así que esta
+  // pantalla nunca duplica un segundo indicador propio.
   const headerCoverage = crewCoveragePresentation(scope, locations);
-  const contextChips = [
-    `<span class="lub-context-chip">${turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'}</span>`,
-    myCrew ? `<span class="lub-context-chip lub-coverage-chip" title="${esc(headerCoverage.title)}" aria-label="Cobertura: ${esc(headerCoverage.title)}">📍 ${esc(headerCoverage.label)}</span>` : '',
-    myCrew ? `<span class="lub-context-chip">👥 ${esc(myCrew.name)}</span>` : '',
-    syncChip,
-  ].join('');
+  // Parte S del pedido ("Offline"): sin conexión nunca se trata como un
+  // error en Mi Turno — reusa navigator.onLine/Sync.pendingCount() (YA
+  // existentes, mismo criterio que confirmLubricadorLogout()), nunca un
+  // contador nuevo.
+  const sinConexion = !navigator.onLine;
+  const pendientesSync = sinConexion && typeof Sync !== 'undefined' && Sync.pendingCount ? await Sync.pendingCount() : 0;
 
   // "3. REALIZADOS": engrases COMPLETE (nunca PARTIAL, ver
   // resolveRecordCompleteness()/EXECUTION_COMPLETENESS — mismo criterio que
@@ -4739,6 +4462,14 @@ async function renderLubricadorHome(options = {}) {
   }) : { tasks: [], notifications: [], manualTasks: [] };
   const panelAnomalyTasks = notifTasksPanel.tasks.filter(t => t.type === 'ANOMALIA');
   const panelManualTasks = notifTasksPanel.manualTasks || [];
+  // anomalyIndicatorHTML() (arriba) cuenta sobre este mapa — mismas
+  // anomalías/mismo alcance que ya decidió panelAnomalyTasks, nunca un
+  // segundo filtro "abierta" paralelo.
+  const openAnomaliesCountByEquipoId = new Map();
+  for (const t of panelAnomalyTasks) {
+    const prev = openAnomaliesCountByEquipoId.get(t.equipmentId) || { count: 0, critica: false };
+    openAnomaliesCountByEquipoId.set(t.equipmentId, { count: prev.count + 1, critica: prev.critica || t.criticidad === 'Crítica' });
+  }
   const PANEL_PRIORITY_COLOR = { CRITICA: '#C00000', PENDIENTE: '#F4B183', INFORMATIVA: '#8893A6' };
   // Tarjeta de tarea operativa (más campos que panelItemRowHTML genérica:
   // cuadrilla/creador/tipo/vence — §4 del pedido). Reusa los MISMOS tokens
@@ -5009,6 +4740,27 @@ async function renderLubricadorHome(options = {}) {
   const realizadosAdelantadosVisibles = filterLocationRows(realizadosAdelantadosList);
   const followUpVisible = filterLocationRows(followUpRows);
   const previousTurnVisible = arrastradosVisibles;
+  // UX CAMPO V2 ("Atención prioritaria", acordeón 2 de Mi Turno) — reusa
+  // vencidosHorometroVisibles TAL CUAL (ningún cálculo nuevo), pero antes
+  // SOLO alimentaba el KPI "Vencidos por horas" (nunca tuvo bandeja propia
+  // de tarjetas) y por diseño puede solapar con Atrasados (ver comentario
+  // real en la construcción de `vencidosHorometro`, §4: "es aceptable que
+  // el mismo equipo también aparezca en Atrasados"). El pedido de los 3
+  // acordeones exige que cada equipo aparezca en EXACTAMENTE una sección;
+  // la precedencia que el propio pedido define (1. Pendientes anteriores,
+  // 2. Atención prioritaria, 3. Mi turno) ya resuelve ese solape: un equipo
+  // que ya está en Pendientes anteriores se excluye aquí. miTurnoVisible NO
+  // necesita este mismo filtro — `statusesNormalRestantes` (arriba) ya
+  // excluye arrastradosIds/vencidosHorometroIds por construcción, así que
+  // Mi turno ya es disjunto de las otras 2 secciones.
+  const previousTurnVisibleIds = new Set(previousTurnVisible.map(row => row.e.id));
+  const atencionPrioritariaVisibles = vencidosHorometroVisibles
+    .filter(({ e }) => !previousTurnVisibleIds.has(e.id))
+    .map(({ e, s }) => ({
+      e, s, asignado: asignadosPorId.has(e.id),
+      assignmentId: assignmentByEquipoId.get(e.id)?.id,
+      occurrenceKey: assignmentByEquipoId.get(e.id)?.occurrenceKey,
+    }));
 
   // Widget de pantalla de inicio (lote "WIDGET ANDROID") — nunca bloquea
   // el render (no-op fuera de Android, ver isNative() en
@@ -5040,11 +4792,13 @@ async function renderLubricadorHome(options = {}) {
     const master = masterLocationFor(row.e);
     return [row.e?.id || null, row.s?.code || null, row.origen || null, row.days ?? null, row.severity?.key || null,
       asg?.id || null, asg?.occurrenceKey || null, asg?._supportOperational === true,
-      master.locationId, master.state, master.label, row.occurrenceKey || null, row.shiftId || null];
+      master.locationId, master.state, master.label, row.occurrenceKey || null, row.shiftId || null,
+      openAnomaliesCountByEquipoId.get(row.e?.id)?.count || 0];
   };
   const turnoSignature = JSON.stringify({
     crewId: scope.crewId || null, locationFilter, filterLocations,
     turno: turnoActual, syncStatus: lastSyncState.status, coverage: headerCoverage.label,
+    sinConexion, pendientesSync,
     rows: [...arrastradosVisibles, ...miTurnoVisible, ...vencidosHorometroVisibles, ...realizadosAdelantadosVisibles, ...followUpVisible].map(rowSig),
     realizados: realizadosHoyVisibles.map(r => r.id),
     validacionesPendientes: pendingValidationFollowUp.map(r => [r.id, validationStatusForRecord(r, validationsHoy, ahoraValidacion, App.generalSettings)]),
@@ -5056,55 +4810,91 @@ async function renderLubricadorHome(options = {}) {
   // datos más frescos), esta vieja nunca debe pisarla con el resultado que
   // calculó.
   if (isStaleRun()) return;
-  const yaRenderizado = !!c.querySelector('.lub-welcome-card');
+  const yaRenderizado = !!c.querySelector('.lub-turno-header');
   if (options.silent && yaRenderizado && turnoSignature === App._lubTurnoSignature) {
     return; // nada visualmente relevante cambió — conserva DOM/scroll/interacción tal cual
   }
   App._lubTurnoSignature = turnoSignature;
   const prevScrollY = options.silent && yaRenderizado ? window.scrollY : null;
+  // Conserva qué acordeones estaban abiertos entre repintados "silent"
+  // (sync incremental) — una navegación real (sin options.silent) siempre
+  // vuelve a empezar con los 3 colapsados, por diseño (§ "todos
+  // inicialmente colapsados").
+  const openAccordionsBefore = new Set($$('.lub-accordion-panel:not([hidden])', c).map(p => p.id));
+
+  // UX CAMPO V2 (acordeones de Mi Turno) — cada bandeja de trabajo real
+  // (arrastradosVisibles/atencionPrioritariaVisibles/miTurnoVisible, YA
+  // calculadas arriba, ningún dato nuevo) pasa a un <section> con un
+  // <button> real (nunca <div onclick>) + aria-expanded/aria-controls,
+  // como pide la auditoría de accesibilidad (§X). Reusa exactamente los
+  // mismos renderers de tarjeta que ya existían (arrastradoRowHTML para
+  // Pendientes anteriores; eqButtonHTML, el MISMO de "Mi turno", para
+  // Atención prioritaria — misma forma de dato {e,s,asignado,assignmentId,
+  // occurrenceKey}), así que los listeners .lub-arr-reg/.lub-mt-reg/etc. ya
+  // wireados más abajo cubren las tarjetas nuevas sin cambios.
+  const accordionHTML = (key, title, subtitle, count, listHTML, emptyText) => `
+    <section class="lub-accordion" data-accordion="${key}">
+      <button type="button" class="lub-accordion-head" id="lub-acc-${key}-btn" aria-expanded="false" aria-controls="lub-acc-${key}-panel" aria-label="${esc(title)}, ${count} trabajo${count === 1 ? '' : 's'}">
+        <span class="lub-accordion-titles">
+          <span class="lub-accordion-title">${esc(title)}</span>
+          <span class="lub-accordion-subtitle">${esc(subtitle)}</span>
+        </span>
+        <span class="lub-accordion-count" data-tone="${count ? 'active' : 'empty'}">${count}</span>
+        <span class="lub-accordion-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div class="lub-accordion-panel" id="lub-acc-${key}-panel" role="region" hidden>
+        ${count ? `<div class="lub-eq-list">${listHTML}</div>` : `<p class="field-hint lub-accordion-empty">${esc(emptyText)}</p>`}
+      </div>
+    </section>`;
+  const eqCardHTML = ({ e, s, asignado, assignmentId, occurrenceKey }) => eqButtonHTML(e, s, asignado, assignmentId, occurrenceKey);
+  // "Atención prioritaria" reusa eqButtonHTML tal cual (misma tarjeta real
+  // de "Mi turno", mismo criterio de estado) — pero sus botones de acción
+  // necesitan una clase propia (.lub-ap-reg/.lub-ap-ver) para que
+  // .lub-mt-reg/.lub-mt-ver sigan contando EXCLUSIVAMENTE las tarjetas de
+  // "Mi turno" (dos secciones/acordeones distintos, nunca la misma
+  // bandeja). Wireado aparte más abajo con el MISMO handler real.
+  const eqCardHTMLPriority = (row) => eqCardHTML(row).replace(/lub-mt-reg/g, 'lub-ap-reg').replace(/lub-mt-ver/g, 'lub-ap-ver');
 
   c.innerHTML = `
-    <div class="lub-welcome-card">
-      <div class="lub-welcome-name">${esc(App.currentUser.name)}</div>
-      <div class="lub-welcome-role">${esc(App.currentUser.role)}</div>
-      <div class="lub-context-row lub-operational-context" data-crew-name="${esc(myCrew?.name || '')}" data-coverage-label="${esc(headerCoverage.label)}" data-coverage-title="${esc(headerCoverage.title)}">${contextChips}
+    <div class="lub-turno-header">
+      <div class="lub-turno-header-top">
+        <div class="lub-turno-header-identity lub-operational-context" data-crew-name="${esc(myCrew?.name || '')}" data-coverage-label="${esc(headerCoverage.label)}" data-coverage-title="${esc(headerCoverage.title)}">
+          <span class="lub-turno-header-crew">👥 ${esc(myCrew?.name || 'Sin cuadrilla')}</span>
+          <span class="lub-turno-header-detail">
+            ${myCrew ? `<span class="lub-context-chip lub-coverage-chip" title="${esc(headerCoverage.title)}" aria-label="Cobertura: ${esc(headerCoverage.title)}">📍 ${esc(headerCoverage.label)}</span>` : ''}
+            ${turnoActual === 'shift_dia' ? '☀ Turno Día' : '☾ Turno Noche'}
+          </span>
+        </div>
         ${scope.kind === 'CREW_SCOPED' && scope.authorizedCrews.length > 1 ? `<button type="button" class="btn lub-change-crew" id="lub-change-crew">⇄ Cambiar cuadrilla</button>` : ''}
       </div>
-    </div>
-
-    <!-- Fix 2026-10-09 ("PULIDA FINAL MI TURNO + AUDITORÍA KPI"): "Pendientes
-         hoy"/"Arrastrados"/"Realizados hoy" usan los MISMOS totales ya
-         fusionados (miTurnoTotal/arrastradosTotal/realizadosHoyList) que ya
-         pinta esta pantalla y que ya usa updateLubricadorWidgetSnapshot()
-         arriba — nunca un cálculo aparte. Antes el KPI leía las listas
-         previas al merge con statusesAssigned (pendientesHoyList/arrastrados/
-         realizadosHoy), así que un equipo ASIGNADO con ocurrencia real del
-         turno (ej. "PROGRAMADO HOY") aparecía en "MI TURNO (N)" pero el KPI
-         seguía en 0 — ASIGNADO es origen/prioridad, no estado de ejecución,
-         y debe contar igual que el trabajo normal.
-         Fix 2026-10-09 ("CERRAR KPI VENCIDOS"): "Vencidos" → "Vencidos por
-         horas" — mismo criterio, ahora también sobre normal+asignado
-         (statusesNormalYAsignados, ver arriba), nunca solo normal. Sigue
-         siendo el único KPI sin bandeja propia; un equipo asignado vencido
-         por horas puede aparecer A LA VEZ en Atrasados (estado técnico vs.
-         bandeja de trabajo — significados distintos, overlap aceptado a
-         propósito, ver §4 del pedido). -->
-    <div class="lub-kpi-row">
-      ${kpiTile('Vencidos por horas', vencidosHorometroVisibles.length, vencidosHorometroVisibles.length ? 'red' : 'neutral')}
-      ${kpiTile('Pendientes hoy', miTurnoVisible.length, miTurnoVisible.length ? 'amber' : 'neutral')}
-      ${kpiTile('Pendientes del turno anterior', arrastradosVisibles.length, arrastradosVisibles.length ? 'amber' : 'neutral')}
-      ${kpiTile('Realizados hoy', realizadosHoyVisibles.length, 'green')}
+      <div class="lub-turno-header-summary">${arrastradosVisibles.length} pendiente${arrastradosVisibles.length === 1 ? '' : 's'} · ${atencionPrioritariaVisibles.length} prioridad · ${miTurnoVisible.length} turno</div>
+      <!-- BUG-001 (2026-10-25): SIEMPRE se renderiza este nodo (antes solo
+           existía cuando sinConexion era true) para que
+           updateLubricadorConnectivitySummary() (ver boot()) pueda
+           actualizarlo con un simple textContent/hidden al recibir
+           online/offline, sin esperar al próximo render completo de Mi
+           Turno — nunca toca acordeones/contadores/datos. -->
+      <div class="lub-turno-header-offline" id="lub-turno-header-offline" ${sinConexion ? '' : 'hidden'}>${sinConexion ? `Sin conexión · puedes continuar trabajando${pendientesSync > 0 ? ` · ${pendientesSync} cambio${pendientesSync === 1 ? '' : 's'} pendiente${pendientesSync === 1 ? '' : 's'} de sincronizar` : ''}` : ''}</div>
     </div>
 
     ${filterLocations.length > 1 ? `<div class="crew-location-filter-label">FILTRAR UBICACIÓN</div><div class="crew-location-filters" role="group" aria-label="Filtrar trabajo por ubicación">
       ${['', ...filterLocations].map(id => `<button type="button" class="btn crew-location-filter" data-location-id="${esc(id)}" aria-pressed="${locationFilter === id}">${id ? esc((locations.find(l => l.id === id) || {}).name || 'Sin ubicación') : 'Todas'} (${filterLocationRows([...arrastradosTotal, ...miTurnoTotal], undefined, id).length})</button>`).join('')}
-    </div><p class="field-hint crew-location-filter-hint">Los KPI corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
+    </div><p class="field-hint crew-location-filter-hint">El resumen y los acordeones corresponden a la ubicación seleccionada; Todas muestra el consolidado.</p>` : ''}
 
-    <section id="lub-pending-follow-up" aria-label="Pendientes y seguimiento">
-      <h2 class="lub-section-head">PENDIENTES Y SEGUIMIENTO</h2>
-      ${previousTurnVisible.length ? `<h3 class="lub-section-head">PENDIENTES DEL TURNO ANTERIOR (${previousTurnVisible.length})</h3><div class="lub-eq-list">${locationRowsHTML(previousTurnVisible, arrastradoRowHTML)}</div>` : ''}
-      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · ${followUpVisible.length}</h3><p class="field-hint">Sugeridos por tiempo desde el último engrase. No forman parte de la programación del turno.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary><div class="lub-follow-up-expanded">${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}</div></details>` : ''}</div></section>` : ''}
-      ${!previousTurnVisible.length && !followUpVisible.length ? '<p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p>' : ''}
+    <div class="lub-accordions" id="lub-accordions">
+      ${accordionHTML('pendientes-anteriores', 'Pendientes anteriores', 'Trabajo de turnos anteriores sin completar', arrastradosVisibles.length, locationRowsHTML(arrastradosVisibles, arrastradoRowHTML), 'No hay pendientes de turnos anteriores.')}
+      ${accordionHTML('atencion-prioritaria', 'Atención prioritaria', 'Equipos que requieren atención primero', atencionPrioritariaVisibles.length, locationRowsHTML(atencionPrioritariaVisibles, eqCardHTMLPriority), 'No hay equipos que requieran atención prioritaria.')}
+      ${accordionHTML('mi-turno', 'Engrases de mi turno', 'Trabajo programado para este turno', miTurnoVisible.length, locationRowsHTML(miTurnoVisible, eqCardHTML), 'No hay engrases programados para este turno.')}
+    </div>
+
+    <!-- "REQUIEREN SEGUIMIENTO" (sugerido, nunca una obligación del turno,
+         por eso no es uno de los 3 acordeones) — fix 2026-10-09 (§7 del
+         pedido original): el encabezado SIEMPRE se muestra, nunca
+         desaparece en silencio; UX CAMPO V2 (2026-10-24) no cambia esta
+         propiedad, solo le quitó "PENDIENTES DEL TURNO ANTERIOR" (ahora
+         el acordeón "Pendientes anteriores" arriba). -->
+    <section id="lub-pending-follow-up" aria-label="Seguimiento sugerido">
+      ${followUpVisible.length ? `<section id="lub-follow-up"><h3 class="lub-section-head">REQUIEREN SEGUIMIENTO · ${followUpVisible.length}</h3><p class="field-hint">Sugeridos por tiempo desde el último engrase. No forman parte de la programación del turno.</p><div class="lub-eq-list">${followUpVisible.slice(0, 5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}${followUpVisible.length > 5 ? `<details class="lub-follow-up-more"><summary>Ver todos (${followUpVisible.length})</summary><div class="lub-follow-up-expanded">${followUpVisible.slice(5).map(row => lubricationFollowUpRowHTML(row, locations, masterLocationFor(row.e))).join('')}</div></details>` : ''}</div></section>` : '<p class="field-hint">✓ Sin pendientes ni equipos que requieran seguimiento.</p>'}
     </section>
 
     <!-- Solo tareas; los mensajes operativos viven en la campana. -->
@@ -5118,13 +4908,8 @@ async function renderLubricadorHome(options = {}) {
       ${panelAnomalyTasks.length ? `<h3 class="lub-section-head">ANOMALÍAS ABIERTAS (${panelAnomalyTasks.length})</h3><div class="lub-eq-list">${panelAnomalyTasks.map(panelItemRowHTML).join('')}</div>` : ''}
     </section>` : ''}
 
-    ${miTurnoVisible.length ? `
-    <div class="lub-section-head"><span class="dim">MI TURNO (${miTurnoVisible.length})</span></div>
-    <div class="lub-eq-list">${locationRowsHTML(miTurnoVisible, ({ e, s, asignado, assignmentId, occurrenceKey }) => eqButtonHTML(e, s, asignado, assignmentId, occurrenceKey))}</div>
-    ` : ''}
-
     ${realizadosHoyVisibles.length ? `
-    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (${realizadosHoyVisibles.length})</span></div>
+    <div class="lub-section-head"><span class="status-chip" style="--c:${STATUS_COLOR.VERDE}">REALIZADOS (<span class="lub-realizados-count">${realizadosHoyVisibles.length}</span>)</span></div>
     <div class="lub-eq-list">${locationRowsHTML(realizadosHoyVisibles, realizadoRowHTML, recordEquipment)}</div>
     ` : ''}
 
@@ -5164,6 +4949,23 @@ async function renderLubricadorHome(options = {}) {
   // Fix 2026-10-17: solo repintado "silent" (sync incremental) restaura el
   // scroll — una navegación real empieza arriba, como siempre.
   if (prevScrollY !== null) window.scrollTo(0, prevScrollY);
+  // Acordeones de Mi Turno — SIEMPRE colapsados en una navegación real
+  // (§ "todos inicialmente colapsados"); un repintado "silent" (sync
+  // incremental) restaura cuáles estaban abiertos, para no cerrarle a
+  // mitad de turno un acordeón que el Lubricador ya abrió.
+  $$('.lub-accordion-head', c).forEach(btn => {
+    const panel = document.getElementById(btn.getAttribute('aria-controls'));
+    if (!panel) return;
+    if (prevScrollY !== null && openAccordionsBefore.has(panel.id)) {
+      btn.setAttribute('aria-expanded', 'true');
+      panel.hidden = false;
+    }
+    btn.addEventListener('click', () => {
+      const expanded = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!expanded));
+      panel.hidden = expanded;
+    });
+  });
   $$('.crew-location-filter', c).forEach(b => b.addEventListener('click', () => {
     try { localStorage.setItem(filterKey, b.dataset.locationId); } catch (e) { /* optional preference */ }
     renderLubricadorHome();
@@ -5172,6 +4974,11 @@ async function renderLubricadorHome(options = {}) {
   $$('.lub-arr-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-mt-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));
   $$('.lub-mt-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+  // "Atención prioritaria" — mismas 2 acciones reales, mismo handler que
+  // "Mi turno" (.lub-mt-reg/.lub-mt-ver), solo con su propia clase para
+  // que ambos acordeones se puedan contar/seleccionar por separado.
+  $$('.lub-ap-reg', c).forEach(b => b.addEventListener('click', () => startLubricadorGreaseFlow(b.dataset.id, b.dataset.assignmentId ? { assignmentId: b.dataset.assignmentId } : undefined)));
+  $$('.lub-ap-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-real-ver', c).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
   $$('.lub-real-val', c).forEach(b => b.addEventListener('click', async () => {
     const validation = findActiveValidation(b.dataset.rec, validationsHoy);
@@ -7010,75 +6817,93 @@ async function readWorkbookRows(file) {
   return XLSX.utils.sheet_to_json(sheet, { defval: '' });
 }
 
+// LOTE A2 "GATE SEGURO DE DATOS MAESTROS" (2026-10-25, código temporal
+// 2026-10-26): cada fila pasa por validateEquipmentImportRow()
+// (src/core/master-data-import-gate.js) ANTES de escribir nada — no crea
+// tipos/ubicaciones automáticamente, turno solo acepta Día/Noche. El
+// Ahorrativo ya NO es obligatorio: si falta (o viene corrupto), se usa el
+// "Código" interno como código operativo TEMPORAL (warning, no bloqueante),
+// y shortCode queda null como marca de "Ahorrativo pendiente" — nunca se
+// inventa un código. Si el archivo tiene AL MENOS un error bloqueante, NO se
+// escribe absolutamente nada (gate atómico a nivel de archivo, no por fila)
+// — ver importHasBlockingErrors().
 async function handleEquipmentExcelImport(file, types, locations) {
   let rows;
   try { rows = await readWorkbookRows(file); } catch (err) { alert('No se pudo leer el archivo: ' + err.message); return; }
   if (!rows.length) { alert('El archivo no tiene filas de datos.'); return; }
 
   const equipos = await DB.allActive('equipment');
-  const preview = [];
-  for (const row of rows) {
-    const code = String(pickField(row, 'codigo', 'código', 'code')).trim();
-    const shortCode = String(pickField(row, 'ahorrativo', 'codigo ahorrativo', 'código ahorrativo', 'shortcode')).trim();
-    if (!code && !shortCode) continue;
-    const hmRaw = pickField(row, 'horometro', 'horómetro', 'hourmeter');
-    const existing = equipos.find(e =>
-      (code && e.code.toLowerCase() === code.toLowerCase()) ||
-      (shortCode && (e.shortCode || '').toLowerCase() === shortCode.toLowerCase()));
-    preview.push({
-      code: code || null, shortCode: shortCode || null,
-      description: pickField(row, 'descripcion', 'descripción', 'description') || 'Equipo',
+  const existingByCode = new Map(equipos.map(e => [e.code.toLowerCase(), e]));
+  const typesByName = new Map(types.map(t => [t.name.toLowerCase(), t]));
+  const locationsByName = new Map(locations.map(l => [l.name.toLowerCase(), l]));
+  const seenCodes = new Set();
+
+  const dataRows = rows.filter(row => Object.values(row).some(v => String(v ?? '').trim()));
+  if (!dataRows.length) { alert('El archivo no tiene filas de datos.'); return; }
+
+  const results = dataRows.map(row => {
+    const rawRow = {
+      ahorrativo: pickField(row, 'ahorrativo', 'codigo ahorrativo', 'código ahorrativo', 'shortcode'),
+      internalCode: pickField(row, 'codigo', 'código', 'code'),
+      description: pickField(row, 'descripcion', 'descripción', 'description'),
       brand: pickField(row, 'marca', 'brand'),
       model: pickField(row, 'modelo', 'model'),
       serial: pickField(row, 'serie', 'numero de serie', 'nº de serie', 'serial'),
       typeName: pickField(row, 'categoria', 'categoría', 'tipo', 'type'),
       locationName: pickField(row, 'ubicacion', 'ubicación', 'location'),
-      status: pickField(row, 'estado', 'status') || 'Operativo',
-      hourmeterRaw: hmRaw,
+      status: pickField(row, 'estado', 'status'),
+      hourmeterRaw: pickField(row, 'horometro', 'horómetro', 'hourmeter'),
       shift: pickField(row, 'turno', 'shift'),
-      existing
-    });
-  }
-  if (!preview.length) { alert('No se encontraron filas con "Código" o "Ahorrativo" válidos.'); return; }
+    };
+    return { rawRow, ...validateEquipmentImportRow(rawRow, { existingByCode, typesByName, locationsByName, seenCodes }) };
+  });
 
-  openModal(`Importar equipos (${preview.length} filas)`, `
-    <p class="dim">Se hará coincidir por <b>Código</b> o por <b>Ahorrativo</b> si el código no está. Los que coincidan se actualizan; el resto se crea con código automático si no traen uno. Categorías o ubicaciones que no existan se crean automáticamente.</p>
+  const summary = buildImportSummary(results);
+  const blocked = importHasBlockingErrors(results);
+
+  openModal(`Importar equipos (${summary.total} filas)`, `
+    <div class="detail-grid" style="margin-bottom:10px">
+      <div><b>Filas totales</b><div>${summary.total}</div></div>
+      <div><b>Válidas</b><div>${summary.valid}</div></div>
+      <div><b>Warnings</b><div style="color:var(--amber)">${summary.warnings}</div></div>
+      <div><b>Errores</b><div style="color:var(--red)">${summary.errors}</div></div>
+      <div><b>Crear</b><div>${summary.toCreate}</div></div>
+      <div><b>Actualizar</b><div>${summary.toUpdate}</div></div>
+      <div><b>Ignorar</b><div>${summary.toIgnore}</div></div>
+    </div>
+    ${blocked ? `<p style="color:var(--red); font-weight:600">${summary.errors} fila(s) con errores bloqueantes — corrige el archivo y vuelve a subirlo. No se importará nada mientras existan errores.</p>` : ''}
     <div style="max-height:40vh; overflow:auto; border:1px solid var(--border); border-radius:8px">
       <table class="data-table">
-        <thead><tr><th>Código</th><th>Ahorrativo</th><th>Acción</th><th>Marca/Modelo</th></tr></thead>
-        <tbody>${preview.map(p => `<tr><td class="mono">${p.code || '—'}</td><td class="mono">${p.shortCode || '—'}</td><td>${p.existing ? 'Actualizar' : 'Crear'}</td><td>${esc(p.brand)} ${esc(p.model)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Código</th><th>Acción</th><th>Marca/Modelo</th><th>Observaciones</th></tr></thead>
+        <tbody>${results.map(r => `<tr>
+          <td class="mono">${esc(r.resolved?.code || r.rawRow.ahorrativo || r.rawRow.internalCode) || '—'}</td>
+          <td>${r.action}</td>
+          <td>${esc(r.rawRow.brand)} ${esc(r.rawRow.model)}</td>
+          <td style="font-size:12px">${r.issues.map(i => `<div style="color:${i.severity === 'error' ? 'var(--red)' : 'var(--amber)'}">${esc(i.message)}</div>`).join('')}</td>
+        </tr>`).join('')}</tbody>
       </table>
     </div>
-    <div class="modal-actions"><button class="btn btn-accent" id="btn-confirm-import">Confirmar importación</button></div>
+    <div class="modal-actions">${blocked ? '' : `<button class="btn btn-accent" id="btn-confirm-import">Confirmar importación${summary.warnings ? ` (con ${summary.warnings} warning(s))` : ''}</button>`}</div>
   `);
+
+  if (blocked) return;
 
   $('#btn-confirm-import').addEventListener('click', async () => {
     let created = 0, updated = 0;
-    for (const p of preview) {
-      let typeId = types.find(t => t.name.toLowerCase() === p.typeName.toLowerCase())?.id;
-      if (!typeId && p.typeName) {
-        const t = stamp({ id: uid('type'), name: p.typeName, active: true }, App.currentUser.name);
-        await DB.put('equipment_types', t); types.push(t); typeId = t.id;
-      }
-      let locationId = locations.find(l => l.name.toLowerCase() === p.locationName.toLowerCase())?.id;
-      if (!locationId && p.locationName) {
-        const l = stamp({ id: uid('loc'), name: p.locationName, active: true }, App.currentUser.name);
-        await DB.put('locations', l); locations.push(l); locationId = l.id;
-      }
-      const shiftId = /noche/i.test(p.shift) ? 'shift_noche' : 'shift_dia';
-      const parsedHm = parseFloat(p.hourmeterRaw);
-      const obj = p.existing || { id: uid('eq'), code: p.code || await generateNextEquipmentCode() };
-      if (!obj.code) obj.code = p.code || await generateNextEquipmentCode();
-      const hourmeter = !isNaN(parsedHm) && parsedHm > 0 ? parsedHm : (p.existing ? p.existing.hourmeter : 0);
+    for (const r of results) {
+      const d = r.resolved;
+      if (!d) continue;
+      const obj = d.existingId ? await DB.get('equipment', d.existingId) : { id: uid('eq'), code: d.code };
       Object.assign(obj, {
-        shortCode: p.shortCode || obj.shortCode || '',
-        description: p.description, brand: p.brand, model: p.model, serial: p.serial,
-        typeId: typeId || obj.typeId || (types[0] && types[0].id),
-        locationId: locationId || obj.locationId || (locations[0] && locations[0].id),
-        status: p.status, hourmeter, shiftId
+        code: d.code,
+        shortCode: d.shortCode || obj.shortCode || '',
+        description: d.description, brand: d.brand, model: d.model, serial: d.serial,
+        typeId: d.typeId, locationId: d.locationId,
+        status: d.status, shiftId: d.shiftId,
+        hourmeter: d.hourmeter !== null ? d.hourmeter : (d.existingId ? obj.hourmeter : 0),
       });
       await DB.put('equipment', stamp(obj, App.currentUser.name));
-      p.existing ? updated++ : created++;
+      d.existingId ? updated++ : created++;
     }
     await logAudit('EQUIPOS_IMPORTADOS', `${created} creados, ${updated} actualizados`, App.currentUser.name);
     showInAppToast(`✓ Equipos importados: ${created} creados, ${updated} actualizados`);
@@ -8091,8 +7916,10 @@ async function renderPlan() {
       <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
       <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
       ${canEdit ? `<button class="btn" id="pts-import">${ic("upload")}Importar puntos de engrase desde Excel</button>` : ''}
+       ${canEdit ? `<button class="btn" id="plans-import">${ic("upload")}Importar planes desde Excel</button>` : ''}
       ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
       <input type="file" id="pts-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
+       <input type="file" id="plans-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div id="plan-bulk-bar" class="bulk-bar hidden">
       <span id="plan-bulk-count">0 seleccionados</span>
@@ -8138,6 +7965,13 @@ async function renderPlan() {
       const file = ev.target.files[0];
       if (!file) return;
       await handlePointsExcelImport(file, equipos, types, lubricants);
+      ev.target.value = '';
+    });
+    $('#plans-import').addEventListener('click', () => $('#plans-import-file').click());
+    $('#plans-import-file').addEventListener('change', async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      await handlePlansExcelImport(file, equipos, plans);
       ev.target.value = '';
     });
   }
@@ -8537,81 +8371,169 @@ async function openBulkPlanForm(equipmentIds) {
 }
 
 /* ---------- Importación masiva de puntos de engrase desde Excel ---------- */
+// LOTE A2 "GATE SEGURO DE DATOS MAESTROS" (2026-10-25): cada fila pasa por
+// validatePointsImportRow() (src/core/master-data-import-gate.js) ANTES de
+// escribir nada. Cambios de comportamiento respecto a la versión anterior:
+// - Ya NO crea planes automáticamente — un equipo sin plan es un error
+//   bloqueante (POINT_EQUIPMENT_WITHOUT_PLAN), nunca un plan "de cortesía".
+// - Ya NO asume el primer lubricante de la lista ni una cantidad fija de
+//   0.5 lb — el archivo debe traer "Lubricante" y "Cantidad recomendada",
+//   y ambos deben existir/ser válidos.
+// - Una categoría que no coincide con ningún tipo YA NO aplica el punto a
+//   TODOS los equipos (bug real encontrado en la auditoría: `!type` hacía
+//   el filtro verdadero para cualquier equipo) — ahora es un error.
+// Gate atómico a nivel de archivo: si existe al menos un error bloqueante,
+// no se escribe nada (ver importHasBlockingErrors()).
 async function handlePointsExcelImport(file, equipos, types, lubricants) {
   let rows;
   try { rows = await readWorkbookRows(file); } catch (err) { alert('No se pudo leer el archivo: ' + err.message); return; }
   if (!rows.length) { alert('El archivo no tiene filas de datos.'); return; }
 
-  const defaultLub = lubricants[0]?.id;
-  const parsed = [];
-  for (const row of rows) {
-    const category = String(pickField(row, 'categoria', 'categoría', 'tipo de equipo', 'tipo')).trim();
-    const brand = String(pickField(row, 'marca', 'brand')).trim();
-    const code = String(pickField(row, 'codigo', 'código', 'code')).trim();
-    const point = String(pickField(row, 'punto de engrase', 'punto', 'point')).trim();
-    const freq = parseFloat(pickField(row, 'frecuencia (horas)', 'frecuencia', 'frequency'));
-    const system = String(pickField(row, 'sistema', 'system')) || 'General';
-    const component = String(pickField(row, 'componente', 'component')) || point;
-    if (!point || isNaN(freq)) continue;
+  const dataRows = rows.filter(row => Object.values(row).some(v => String(v ?? '').trim()));
+  if (!dataRows.length) { alert('El archivo no tiene filas de datos.'); return; }
 
-    // Aplica a un equipo específico por código, o a todos los que coincidan con categoría (+ marca si se indicó)
-    let targets = [];
-    if (code) {
-      const eq = equipos.find(e => e.code.toLowerCase() === code.toLowerCase());
-      if (eq) targets = [eq];
-    } else if (category) {
-      const type = types.find(t => t.name.toLowerCase() === category.toLowerCase());
-      targets = equipos.filter(e => (!type || e.typeId === type.id) &&
-        (!brand || (e.brand || '').toLowerCase() === brand.toLowerCase()));
-    }
-    parsed.push({ category, brand, code, point, freq, system, component, targets });
+  const equipmentByCode = new Map(equipos.map(e => [e.code.toLowerCase(), e]));
+  const typesByName = new Map(types.map(t => [t.name.toLowerCase(), t]));
+  const lubricantsByName = new Map(lubricants.map(l => [l.name.toLowerCase(), l]));
+  const allPlans = await DB.allActive('lubrication_plans');
+  const plansByEquipmentId = new Map(allPlans.map(pl => [pl.equipmentId, pl]));
+  const allPoints = await DB.allActive('lubrication_points');
+  const existingPointsByPlanId = new Map();
+  for (const pt of allPoints) {
+    if (!existingPointsByPlanId.has(pt.planId)) existingPointsByPlanId.set(pt.planId, []);
+    existingPointsByPlanId.get(pt.planId).push(pt);
   }
 
-  if (!parsed.length) { alert('No se encontraron filas válidas. Se necesita al menos "Punto de engrase" y "Frecuencia (horas)", y "Categoría" o "Código" para saber a qué equipos aplicar.'); return; }
+  const ctx = { equipmentByCode, equipmentList: equipos, typesByName, plansByEquipmentId, lubricantsByName, existingPointsByPlanId };
+  const results = dataRows.map(row => {
+    const rawRow = {
+      category: pickField(row, 'categoria', 'categoría', 'tipo de equipo', 'tipo'),
+      brand: pickField(row, 'marca', 'brand'),
+      code: pickField(row, 'codigo', 'código', 'code'),
+      point: pickField(row, 'punto de engrase', 'punto', 'point'),
+      freqRaw: pickField(row, 'frecuencia (horas)', 'frecuencia', 'frequency'),
+      system: pickField(row, 'sistema', 'system'),
+      component: pickField(row, 'componente', 'component'),
+      lubricantName: pickField(row, 'lubricante', 'grasa', 'tipo de grasa', 'lubricant'),
+      qtyRaw: pickField(row, 'cantidad recomendada', 'cantidad', 'cantidad (lb)', 'qty'),
+    };
+    return { rawRow, ...validatePointsImportRow(rawRow, ctx) };
+  });
 
-  const totalEquiposAfectados = new Set(parsed.flatMap(p => p.targets.map(t => t.id))).size;
-  const sinCoincidencia = parsed.filter(p => !p.targets.length);
+  const summary = buildImportSummary(results);
+  const blocked = importHasBlockingErrors(results);
 
-  openModal(`Importar puntos de engrase (${parsed.length} filas)`, `
-    <p class="dim">Se aplicará cada punto a todos los equipos cuya categoría (y marca, si se indicó) coincidan — o a un equipo específico si la fila trae "Código". Si un equipo ya tiene un punto con el mismo nombre, no se duplica.</p>
+  openModal(`Importar puntos de engrase (${summary.total} filas)`, `
     <div class="detail-grid" style="margin-bottom:10px">
-      <div><b>Filas válidas</b><div>${parsed.length}</div></div>
-      <div><b>Equipos que recibirán puntos</b><div>${totalEquiposAfectados}</div></div>
+      <div><b>Filas totales</b><div>${summary.total}</div></div>
+      <div><b>Válidas</b><div>${summary.valid}</div></div>
+      <div><b>Warnings</b><div style="color:var(--amber)">${summary.warnings}</div></div>
+      <div><b>Errores</b><div style="color:var(--red)">${summary.errors}</div></div>
+      <div><b>Crear</b><div>${summary.toCreate}</div></div>
+      <div><b>Actualizar</b><div>${summary.toUpdate}</div></div>
+      <div><b>Ignorar</b><div>${summary.toIgnore}</div></div>
     </div>
-    ${sinCoincidencia.length ? `<p style="color:var(--red); font-size:13px">${sinCoincidencia.length} fila(s) no coinciden con ningún equipo registrado (revisa categoría/marca/código): ${sinCoincidencia.slice(0, 8).map(p => p.point).join(', ')}${sinCoincidencia.length > 8 ? '…' : ''}</p>` : ''}
-    <div class="modal-actions"><button class="btn btn-accent" id="btn-confirm-points">Aplicar puntos de engrase</button></div>
+    ${blocked ? `<p style="color:var(--red); font-weight:600">${summary.errors} fila(s) con errores bloqueantes — corrige el archivo y vuelve a subirlo. No se importará nada mientras existan errores.</p>` : ''}
+    <div style="max-height:40vh; overflow:auto; border:1px solid var(--border); border-radius:8px">
+      <table class="data-table">
+        <thead><tr><th>Punto</th><th>Equipo(s)/Categoría</th><th>Acción</th><th>Observaciones</th></tr></thead>
+        <tbody>${results.map(r => `<tr>
+          <td>${esc(r.rawRow.point) || '—'}</td>
+          <td>${esc(r.rawRow.code || r.rawRow.category) || '—'}</td>
+          <td>${r.action}</td>
+          <td style="font-size:12px">${r.issues.map(i => `<div style="color:${i.severity === 'error' ? 'var(--red)' : 'var(--amber)'}">${esc(i.message)}</div>`).join('')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="modal-actions">${blocked ? '' : `<button class="btn btn-accent" id="btn-confirm-points">Aplicar puntos de engrase${summary.warnings ? ` (con ${summary.warnings} warning(s))` : ''}</button>`}</div>
   `);
 
-  $('#btn-confirm-points').addEventListener('click', async () => {
-    let plansCreated = 0, pointsCreated = 0, pointsSkipped = 0;
-    const allPlans = await DB.allActive('lubrication_plans');
-    const allPoints = await DB.allActive('lubrication_points');
+  if (blocked) return;
 
-    for (const p of parsed) {
-      for (const eq of p.targets) {
-        let plan = allPlans.find(pl => pl.equipmentId === eq.id);
-        if (!plan) {
-          plan = stamp({
-            id: uid('plan'), equipmentId: eq.id, controlType: 'Horas de operación',
-            frequency: p.freq, lastGreaseHour: eq.hourmeter, alertYellowHours: App.generalSettings.defaultAlertYellowHours, active: true
-          }, App.currentUser.name);
-          await DB.put('lubrication_plans', plan);
-          allPlans.push(plan);
-          plansCreated++;
-        }
-        const existing = allPoints.find(pt => pt.planId === plan.id && pt.point.toLowerCase() === p.point.toLowerCase());
-        if (existing) { pointsSkipped++; continue; }
+  $('#btn-confirm-points').addEventListener('click', async () => {
+    let pointsCreated = 0, pointsSkipped = 0;
+    for (const r of results) {
+      const d = r.resolved;
+      if (!d) continue;
+      for (const target of d.targets) {
+        if (target.existingPointId) { pointsSkipped++; continue; }
         const newPoint = stamp({
-          id: uid('pt'), planId: plan.id, system: p.system, component: p.component, point: p.point,
-          greaseType: defaultLub, recommendedQty: 0.5, frequency: p.freq, notes: '', active: true
+          id: uid('pt'), planId: target.planId, system: d.system, component: d.component, point: d.point,
+          greaseType: d.lubricantId, recommendedQty: d.recommendedQty, frequency: d.frequency, notes: '', active: true
         }, App.currentUser.name);
         await DB.put('lubrication_points', newPoint);
-        allPoints.push(newPoint);
         pointsCreated++;
       }
     }
-    await logAudit('PUNTOS_IMPORTADOS', `${pointsCreated} puntos creados, ${pointsSkipped} ya existían, ${plansCreated} planes nuevos`, App.currentUser.name);
+    await logAudit('PUNTOS_IMPORTADOS', `${pointsCreated} puntos creados, ${pointsSkipped} ya existían`, App.currentUser.name);
     showInAppToast(`✓ Puntos de engrase importados: ${pointsCreated} nuevos`);
+    closeModal();
+    navigate('plan');
+  });
+}
+
+/* ---------- Importación segura de planes de engrase ----------
+   El gate es el único lugar que decide CREATE/UPDATE/IGNORE y validaciones.
+   Esta capa solo lee Excel/CSV, muestra preview y escribe tras confirmación. */
+async function handlePlansExcelImport(file, equipos, plans) {
+  let rows;
+  try { rows = await readWorkbookRows(file); } catch (err) { alert('No se pudo leer el archivo: ' + err.message); return; }
+  const dataRows = rows.filter(row => Object.values(row).some(v => String(v ?? '').trim()));
+  if (!dataRows.length) { alert('El archivo no tiene filas de datos.'); return; }
+
+  const locations = await DB.allActive('locations');
+  const equipmentByCode = new Map(equipos.map(e => [String(e.code).toLowerCase(), e]));
+  const plansByEquipmentId = new Map();
+  for (const plan of plans) {
+    if (!plansByEquipmentId.has(plan.equipmentId)) plansByEquipmentId.set(plan.equipmentId, []);
+    plansByEquipmentId.get(plan.equipmentId).push(plan);
+  }
+  const ctx = {
+    equipmentByCode, plansByEquipmentId, locationsById: new Map(locations.map(l => [l.id, l])),
+    seenEquipmentCodes: new Set(), defaultAlertYellowHours: App.generalSettings.defaultAlertYellowHours,
+  };
+  const results = dataRows.map(row => {
+    const rawRow = {
+      equipmentCode: pickField(row, 'codigo', 'código', 'codigo equipo', 'código equipo', 'referencia', 'referencia equipo', 'equipment code'),
+      controlType: pickField(row, 'tipo de control', 'control type', 'control'),
+      frequencyRaw: pickField(row, 'frecuencia (horas)', 'frecuencia', 'frequency'),
+      shiftMode: pickField(row, 'modo de turno', 'shiftmode', 'turno', 'shift'),
+      requiredShifts: pickField(row, 'turnos requeridos', 'requiredshifts'),
+      effectiveDate: pickField(row, 'fecha efectiva', 'effectivedate'),
+      assignedDays: pickField(row, 'dias asignados', 'días asignados', 'assigneddays'),
+      lastGreaseHourRaw: pickField(row, 'horometro ultimo engrase', 'horómetro último engrase', 'lastgreasehour'),
+      alertYellowHoursRaw: pickField(row, 'alerta amarilla', 'alert yellow hours', 'alertyellowhours'),
+    };
+    return { rawRow, ...validatePlanImportRow(rawRow, ctx) };
+  });
+  const summary = buildImportSummary(results);
+  const blocked = importHasBlockingErrors(results);
+  openModal(`Importar planes de engrase (${summary.total} filas)`, `
+    <div class="detail-grid" style="margin-bottom:10px">
+      <div><b>TOTAL</b><div>${summary.total}</div></div><div><b>VÁLIDOS</b><div>${summary.valid}</div></div>
+      <div><b>WARNINGS</b><div style="color:var(--amber)">${summary.warnings}</div></div><div><b>ERRORES</b><div style="color:var(--red)">${summary.errors}</div></div>
+      <div><b>CREAR</b><div>${summary.toCreate}</div></div><div><b>ACTUALIZAR</b><div>${summary.toUpdate}</div></div><div><b>IGNORAR</b><div>${summary.toIgnore}</div></div>
+    </div>
+    ${blocked ? `<p style="color:var(--red);font-weight:600">Hay ${summary.errors} fila(s) con ERROR. No se escribirá ningún plan.</p>` : '<p class="dim">Revisa el preview antes de confirmar. Los warnings permiten continuar.</p>'}
+    <div style="max-height:40vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="data-table">
+      <thead><tr><th>Equipo</th><th>Control</th><th>Acción</th><th>Observaciones</th></tr></thead><tbody>${results.map(r => `<tr><td class="mono">${esc(r.rawRow.equipmentCode) || '—'}</td><td>${esc(r.rawRow.controlType) || '—'}</td><td>${r.action}</td><td style="font-size:12px">${r.issues.map(i => `<div style="color:${i.severity === 'error' ? 'var(--red)' : 'var(--amber)'}">${esc(i.message)}</div>`).join('')}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="modal-actions">${blocked ? '' : `<button type="button" class="btn btn-accent" id="btn-confirm-plans">${ic('check')}Confirmar importación${summary.warnings ? ` (${summary.warnings} warning(s))` : ''}</button>`}</div>
+  `);
+  if (blocked) return;
+  $('#btn-confirm-plans').addEventListener('click', async () => {
+    let created = 0, updated = 0;
+    for (const result of results) {
+      const data = result.resolved;
+      if (!data) continue;
+      const existing = data.existingId ? await DB.get('lubrication_plans', data.existingId) : null;
+      const plan = existing ? Object.assign(existing, data) : { id: uid('plan'), equipmentId: data.equipmentId, ...data };
+      delete plan.existingId;
+      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
+      if (existing) updated++; else created++;
+    }
+    await logAudit('PLANES_IMPORTADOS', `${created} creados, ${updated} actualizados`, App.currentUser.name);
+    showInAppToast(`✓ Planes importados: ${created} creados, ${updated} actualizados`);
     closeModal();
     navigate('plan');
   });
@@ -8662,7 +8584,7 @@ async function openPlanForm(equipmentId, planId, lubricants) {
       </label>
 
       <div id="hours-fields" class="span-2 form-grid ${isWeekday ? 'hidden' : ''}" style="padding:0">
-        <label>Frecuencia (horas)<input required type="number" min="1" max="5000" name="frequency" value="${plan ? plan.frequency : 50}"/></label>
+        <label>Frecuencia (horas)<input type="number" name="frequency" value="${plan ? plan.frequency : 50}"/></label>
         <label>Horómetro del último engrase<input type="number" step="0.1" name="lastGreaseHour" value="${plan ? plan.lastGreaseHour : equipment.hourmeter}"/></label>
         <label>Alerta amarilla (horas antes)<input type="number" name="alertYellowHours" value="${plan ? plan.alertYellowHours : App.generalSettings.defaultAlertYellowHours}"/></label>
       </div>
@@ -9968,17 +9890,17 @@ async function startGreaseFlow(equipmentId, target, options) {
             <h4 class="grease-flow-card-head">Puntos de engrase</h4>
             ${points.length ? `<button type="button" class="btn btn-sm" id="btn-check-all">${ic("check")}Marcar todos</button>` : ''}
           </div>
-          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:100%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">${points.length} de ${points.length} puntos marcados</div>` : ''}
+          ${points.length ? `<div class="checklist-progress"><div class="checklist-progress-fill" id="checklist-progress-fill" style="width:0%"></div></div><div class="dim" id="checklist-progress-text" style="padding:4px 4px 8px">0 de ${points.length} puntos marcados</div>` : ''}
           <div id="checklist">
             ${points.length ? points.map(p => `
               <div class="checklist-item" data-point="${p.id}">
                 <label class="check-row">
                   ${p.photo ? `<img src="${p.photo}" class="photo-thumb check-row-thumb" data-full="${p.photo}" data-caption="${esc(p.point)}" alt="Foto de ${esc(p.point)}"/>` : ''}
-                  <input type="checkbox" class="chk-done" checked/>
+                  <input type="checkbox" class="chk-done"/>
                   <span class="check-row-text">${esc(p.point)}</span>
                   <span class="check-row-mark">✓</span>
                 </label>
-                <select class="chk-reason hidden">
+                <select class="chk-reason">
                   <option value="">¿Por qué no se realizó?</option>
                   ${['Punto inaccesible', 'Grasera dañada', 'Línea de engrase obstruida', 'Equipo trabajando', 'Equipo detenido', 'Falta de lubricante', 'Falla mecánica', 'Otro'].map(o => `<option>${o}</option>`).join('')}
                 </select>
@@ -10577,7 +10499,15 @@ async function startGreaseFlow(equipmentId, target, options) {
         if (hayPuntosOAnomaliaHorometro(record)) showInAppToast('El engrase se guardó. La anomalía queda pendiente para reintentar la sincronización.');
       }
 
-      showInAppToast(esRetro ? `✓ Engrase atrasado registrado — ${equipment.code}` : `✓ Engrase registrado — ${equipment.code}`);
+      // Parte T del pedido (UX CAMPO V2): confirmación + estado de envío en
+      // el mismo toast — navigator.onLine es la misma señal que ya decide
+      // el resto de esta pantalla (nunca un estado nuevo); el guardado
+      // local YA ocurrió arriba (queueLubricationExecution) pase lo que
+      // pase con la red, así que "Sincronizado" aquí es siempre honesto
+      // incluso aunque el fullSync() de abajo (fire-and-forget) tarde un
+      // instante más en resolver.
+      const estadoEnvio = navigator.onLine ? 'Sincronizado.' : 'Guardado en el dispositivo. Se enviará al recuperar la conexión.';
+      showInAppToast((esRetro ? `✓ Engrase atrasado registrado — ${equipment.code}` : `✓ Engrase registrado — ${equipment.code}`) + ' · ' + estadoEnvio);
       if (anomaliasCreadas.length) {
         showInAppToast(`⚠ Se abrió ${anomaliasCreadas.length} anomalía(s) automática(s): ${anomaliasCreadas.join(', ')}`);
       }
@@ -14197,9 +14127,27 @@ async function renderAyuda() {
 }
 
 /* ---------- Edición de familias de equipo (solo Administrador) ---------- */
-function openFamilyEditForm(help, existing) {
+// P0-3 (ver docs/STORAGE_PRIVACY_DESIGN.md §7, "limitación conocida
+// restante" cerrada en LOTE B): esta es la ÚNICA pantalla que todavía
+// mostraba `fam.photo`/`p.photo` crudos en un <img src>. fam.photo y las
+// fotos de puntos (store `settings`, documento `help_content`) pasan por
+// el mismo uploadPhotoIfNeeded() genérico que cualquier otro store — una
+// vez sincronizadas desde otro dispositivo dejan de ser base64 y se
+// vuelven una URL de Storage real, que dejará de resolverse sola cuando el
+// bucket sea privado. Se resuelven TODOS los signed URLs necesarios ANTES
+// de abrir el modal (mismo patrón que openPlanForm()/renderAyuda()) —
+// `async` por eso. `data-existing-photo` sigue guardando el valor CRUDO
+// (nunca el signed URL) porque el submit lo relee tal cual si el usuario
+// no cambia la foto — resolver ahí mismo lo que se guarda corrompería el
+// dato con una URL temporal.
+async function openFamilyEditForm(help, existing) {
   const fam = existing || { id: uid('fam'), name: '', svg: 'generico', generic: true, zones: [{ name: 'General', color: 'var(--accent)', points: [] }] };
   const isNew = !existing;
+
+  const famPhotoSrc = fam.photo ? await resolveEvidenceSrc(fam.photo) : null;
+  const allPoints = fam.zones.flatMap(z => z.points);
+  const pointPhotoSrcEntries = await Promise.all(allPoints.filter(p => p.photo).map(async p => [p.photo, await resolveEvidenceSrc(p.photo)]));
+  const pointPhotoSrcs = new Map(pointPhotoSrcEntries);
 
   function bodyHTML() {
     return `
@@ -14214,7 +14162,7 @@ function openFamilyEditForm(help, existing) {
             </select>
           </label>
           <div class="fam-img-preview" id="fam-preview">
-            ${fam.photo ? `<img src="${fam.photo}" alt="Foto del equipo"/>` : familySilhouetteSvg(fam.svg)}
+            ${famPhotoSrc ? `<img src="${famPhotoSrc}" alt="Foto del equipo"${evidenceValueAttr(fam.photo)}/>` : familySilhouetteSvg(fam.svg)}
           </div>
           <div class="dim" style="font-size:12px; margin-bottom:8px">
             Puedes usar una <b>foto real de tu equipo</b> en vez del dibujo — se reconoce mejor en campo.
@@ -14234,6 +14182,7 @@ function openFamilyEditForm(help, existing) {
   }
 
   function pointRowEditorHTML(p) {
+    const resolvedSrc = p.photo ? (pointPhotoSrcs.get(p.photo) || p.photo) : null;
     return `
       <div class="pt-editor-row" data-existing-photo="${p.photo || ''}">
         <div class="pt-editor-top">
@@ -14242,7 +14191,7 @@ function openFamilyEditForm(help, existing) {
         </div>
         ${p.photo ? `
           <div class="pt-current-photo">
-            ${photoThumbHTML(p.photo, p.text)}
+            ${photoThumbHTML(resolvedSrc, p.text, p.photo)}
             <label class="pt-remove-photo-label"><input type="checkbox" class="pt-remove-photo"/> Quitar esta foto</label>
           </div>` : ''}
         ${photoFieldHTML()}
@@ -14281,7 +14230,7 @@ function openFamilyEditForm(help, existing) {
     if (!prev) return;
     const subidas = getPhotoFieldPhotos(cajaImagen);
     if (subidas.length) prev.innerHTML = `<img src="${subidas[0]}" alt="Foto del equipo"/>`;
-    else if (fam.photo && !fotoQuitada) prev.innerHTML = `<img src="${fam.photo}" alt="Foto del equipo"/>`;
+    else if (famPhotoSrc && !fotoQuitada) prev.innerHTML = `<img src="${famPhotoSrc}" alt="Foto del equipo"${evidenceValueAttr(fam.photo)}/>`;
     else prev.innerHTML = familySilhouetteSvg($('#fam-svg').value);
   }
 
@@ -15890,6 +15839,229 @@ function wireConfigCategoryNav(container, categoryKeys) {
   apply();
 }
 
+/* ============================================================
+   Configuración → Diagnóstico de sincronización: operaciones BLOQUEADAS
+   ============================================================
+   Auditoría (lote "DIAGNÓSTICO BLOCKED"): db.js ya marca operation.status =
+   'BLOCKED' cuando el gateway RECHAZA una operación (reply.status !==
+   'APPLIED', o un 403) — en ese momento la escritura NUNCA llegó a
+   aplicarse en el servidor. pushExecutionOperations()/
+   pushEvidenceOperations() (sync.js) saltan para siempre cualquier
+   operación BLOCKED (nunca la reintentan solas) — hasta este lote, sin
+   ninguna pantalla que avisara que existe o permitiera actuar.
+   EXECUTION_ACCOUNT_MISMATCH/AUTHORIZATION_SCOPE_STALE son guardas que
+   sync.js evalúa en caliente en cada ciclo (nunca persisten
+   operation.status) — se calculan aquí mismo, de SOLO lectura, con el
+   mismo criterio exacto, para no dejarlas invisibles.
+
+   Regla de descarte seguro (nunca borra nada que "parezca" un registro
+   real, ver isBlockedOperationSafeToDiscard): SOLO se ofrece "Descartar"
+   para operaciones evidence con kind==='CATALOG' y targetStore
+   'lubrication_assignments'/'lubrication_skips' — las únicas donde
+   blockEvidenceOperation() (db.js) YA restauró el valor local original (o
+   lo borró, si era una creación) en el momento mismo en que se
+   bloquearon — descartar el registro de la operación no cambia ningún
+   dato visible, solo limpia metadata muerta.
+
+   Quedan fuera a propósito (muestran solo "Reintentar"):
+    - Catálogos de equipment/lubrication_plans (MOVE/SHIFT/PAUSE/HOURMETER/
+      REPROGRAM): blockEvidenceOperation() restaura `originalRow` cuando el
+      productor conoce el estado previo. Si una operación histórica no lo
+      tiene, conserva la fila local y queda en Diagnóstico para resolverla;
+      nunca se inventa un rollback ni se ofrece descarte automático.
+   - Cualquier operación EXECUTION (registro de engrase) y cualquier
+     evidence que no sea CATALOG (anomalías, firmas, resolución de
+     conflicto de firma): dejan su fila de negocio con datos reales SIN
+     revertir al bloquearse — descartar la operación la dejaría huérfana
+     (sin forma de sincronizarse nunca) pareciendo un registro real ya
+     guardado.
+   - Cualquier bloqueo CALCULADO (mismatch de cuenta/alcance, nunca
+     persistido): el problema real es la cuenta/sesión activa, no el
+     contenido de la operación — descartar perdería trabajo que podría
+     seguir siendo válido en la cuenta correcta.
+   ============================================================ */
+
+const BLOCKED_OPERATION_REASON_LABELS = {
+  AUTH_FORBIDDEN: 'El servidor rechazó esta acción por permisos (tu rol o alcance actual no la autoriza).',
+  GATEWAY_REJECTED: 'El servidor rechazó esta acción — algo cambió en el registro relacionado antes de que llegara.',
+  EVIDENCE_REJECTED: 'El servidor rechazó esta evidencia — algo cambió en el registro relacionado antes de que llegara.',
+  SIGNED_RECORD_LOCKED: 'Este engrase ya tiene una firma de validación asociada y no puede editarse directamente.',
+  ASSIGNED_COMPLETENESS_IMMUTABLE: 'Esta asignación ya quedó resuelta con otro registro — esta corrección ya no aplica.',
+  CREW_SELECTION_REQUIRED: 'Hacía falta elegir una cuadrilla en el momento de la acción y no se pudo determinar automáticamente.',
+  SIGNATURES_VERSION_CONFLICT: 'Otra firma se agregó o cambió en este mismo engrase antes de que esta se resolviera.',
+  SIGNATURE_BINARY_CONFLICT: 'Ya existe una firma distinta guardada con el mismo nombre de archivo.',
+  EXECUTION_ACCOUNT_MISMATCH: 'Esta acción se guardó con otra cuenta en este dispositivo — inicia sesión con esa cuenta para reintentarla.',
+  EVIDENCE_ACCOUNT_MISMATCH: 'Esta acción se guardó con otra cuenta en este dispositivo — inicia sesión con esa cuenta para reintentarla.',
+  AUTHORIZATION_SCOPE_STALE: 'Tus permisos o cuadrillas autorizadas cambiaron desde que se guardó esta acción — vuelve a sincronizar tu sesión antes de reintentar.',
+};
+// Mensajes humanos, nunca un código técnico crudo como mensaje principal:
+// mapa explícito primero, luego una categoría legible por patrón, y como
+// último recurso un mensaje genérico que SÍ incluye el código entre
+// paréntesis (para que soporte pueda ubicarlo), nunca el código solo.
+function blockedOperationReasonLabel(code) {
+  if (!code) return 'El servidor no pudo completar esta acción por un motivo no especificado.';
+  if (BLOCKED_OPERATION_REASON_LABELS[code]) return BLOCKED_OPERATION_REASON_LABELS[code];
+  if (/NOT_FOUND/.test(code)) return `El equipo, plan o registro relacionado ya no existe o fue eliminado (${code}).`;
+  if (/VERSION_CONFLICT|MISMATCH/.test(code)) return `Alguien más modificó el mismo registro antes de que esta acción llegara al servidor (${code}).`;
+  if (/ALREADY/.test(code)) return `Esta acción ya se había resuelto de otra forma antes de llegar al servidor (${code}).`;
+  if (/DENIED|REQUIRED|ROLE|SCOPE/.test(code)) return `El servidor denegó esta acción por permisos o alcance (${code}).`;
+  if (/INVALID/.test(code)) return `El servidor consideró inválidos los datos de esta acción (${code}).`;
+  return `El servidor rechazó esta acción (${code}).`;
+}
+
+const BLOCKED_OPERATION_TYPE_LABELS = {
+  report_anomaly: 'Reporte de anomalía', report_assignment_anomaly: 'Reporte de anomalía',
+  edit_anomaly: 'Corrección de anomalía', close_anomaly: 'Cierre de anomalía', retire_anomaly: 'Retiro de anomalía',
+  repeat_anomaly_from_execution: 'Anomalía automática (checklist incompleto)',
+  capture_grease_validation: 'Firma de validación', resolve_grease_validation_conflict: 'Resolución de conflicto de firma',
+  manage_lubrication_assignment: 'Asignación manual de engrase', record_lubrication_skip: 'Registro de "no se pudo ejecutar"',
+  move_equipment_master_location: 'Cambio de ubicación de equipo', set_equipment_shift: 'Cambio de turno de equipo',
+  set_equipment_alert_pause: 'Pausa de alertas de equipo', update_equipment_hourmeter: 'Corrección de horómetro',
+  reprogram_lubrication_plan: 'Reprogramación de plan de engrase',
+};
+function blockedOperationTypeLabel(op) {
+  if (op.source === 'execution') return op.params?.p_action === 'EDIT' ? 'Corrección de engrase' : 'Registro de engrase';
+  return BLOCKED_OPERATION_TYPE_LABELS[op.rpc] || 'Operación de sincronización';
+}
+
+// "si existe" (pedido explícito) — mejor esfuerzo por los campos reales que
+// cada tipo de operación ya trae, nunca inventa una relación nueva.
+function resolveBlockedOperationEquipmentId(op, { records, anomalies }) {
+  if (op.params?.p_equipment_id) return op.params.p_equipment_id;
+  if (op.localRow?.equipmentId) return op.localRow.equipmentId;
+  if (op.localRecordSnapshot?.equipmentId) return op.localRecordSnapshot.equipmentId;
+  if (op.params?.p_record_id) {
+    const rec = records.find(r => r.id === op.params.p_record_id);
+    if (rec?.equipmentId) return rec.equipmentId;
+  }
+  if (op.params?.p_id) {
+    const anomaly = anomalies.find(a => a.id === op.params.p_id);
+    if (anomaly?.equipmentId) return anomaly.equipmentId;
+  }
+  return null;
+}
+
+// SOLO lectura: refleja los MISMOS criterios de bloqueo que sync.js ya
+// aplica (pushExecutionOperations()/pushEvidenceOperations()), nunca los
+// reimplementa con otro significado ni cambia su comportamiento.
+function effectiveBlockedReason(op, profile) {
+  if (op.status === 'BLOCKED') return op.code || 'UNKNOWN';
+  if (!profile) return null;
+  if (op.actorId !== profile.appUserId) return op.source === 'execution' ? 'EXECUTION_ACCOUNT_MISMATCH' : 'EVIDENCE_ACCOUNT_MISMATCH';
+  if (!profile.authorizationFingerprint || op.authorizationFingerprint !== profile.authorizationFingerprint) return 'AUTHORIZATION_SCOPE_STALE';
+  return null;
+}
+
+const SAFE_DISCARD_TARGET_STORES = ['lubrication_assignments', 'lubrication_skips'];
+function isBlockedOperationSafeToDiscard(op) {
+  return op.status === 'BLOCKED' && op.source === 'evidence' && op.kind === 'CATALOG' && SAFE_DISCARD_TARGET_STORES.includes(op.targetStore);
+}
+
+async function blockedOperationsDiagnostics() {
+  const profile = typeof Auth !== 'undefined' ? Auth.getProfile?.() : null;
+  const executions = (DB.getExecutionOperations ? await DB.getExecutionOperations() : []).map(op => ({ ...op, source: 'execution' }));
+  const evidences = (DB.getEvidenceOperations ? await DB.getEvidenceOperations() : []).map(op => ({ ...op, source: 'evidence' }));
+  const withReason = [...executions, ...evidences]
+    .map(op => ({ op, reasonCode: effectiveBlockedReason(op, profile) }))
+    .filter(x => x.reasonCode);
+  if (!withReason.length) return [];
+
+  const equipos = await DB.allActive('equipment');
+  const records = await DB.all('lubrication_records');
+  const anomalies = await DB.all('anomalies');
+
+  return withReason.map(({ op, reasonCode }) => {
+    const equipmentId = resolveBlockedOperationEquipmentId(op, { records, anomalies });
+    const equipo = equipmentId ? equipos.find(e => e.id === equipmentId) : null;
+    return {
+      id: op.id, source: op.source,
+      typeLabel: blockedOperationTypeLabel(op),
+      equipmentCode: equipo ? equipo.code : null,
+      date: op.createdAt || null,
+      reasonCode, reasonLabel: blockedOperationReasonLabel(reasonCode),
+      canDiscardSafely: isBlockedOperationSafeToDiscard(op),
+    };
+  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+function blockedOperationRowHTML(item) {
+  return `
+    <tr data-blocked-op-id="${item.id}" data-blocked-op-source="${item.source}">
+      <td>${esc(item.typeLabel)}</td>
+      <td>${item.equipmentCode ? esc(item.equipmentCode) : '<span class="dim">—</span>'}</td>
+      <td>${item.date ? fmtDate(item.date) : '<span class="dim">—</span>'}</td>
+      <td>${esc(item.reasonLabel)}</td>
+      <td class="row-actions">
+        <button type="button" class="btn btn-sm btn-retry-blocked-op">Reintentar</button>
+        ${item.canDiscardSafely
+          ? `<button type="button" class="btn btn-sm btn-danger btn-discard-blocked-op">Descartar</button>`
+          : `<span class="dim" style="font-size:12px">No se puede descartar: ya tiene datos locales reales sin confirmar.</span>`}
+      </td>
+    </tr>`;
+}
+
+function blockedOperationsPanelHTML(items) {
+  if (!items.length) {
+    return `<div id="blocked-ops-area"><p class="dim" style="margin-top:10px">No hay operaciones bloqueadas — todo lo pendiente se sincronizará normalmente.</p></div>`;
+  }
+  return `
+    <div id="blocked-ops-area">
+      <p class="dim" style="margin-top:10px"><b>${items.length}</b> operación(es) bloqueada(s) — no se están sincronizando y no se reintentan solas.</p>
+      <div style="overflow:auto; max-width:100%">
+        <table class="data-table">
+          <thead><tr><th>Tipo</th><th>Equipo</th><th>Fecha</th><th>Motivo</th><th>Acciones</th></tr></thead>
+          <tbody>${items.map(blockedOperationRowHTML).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// Reintentar: SOLO quita la marca BLOCKED/el código guardado localmente —
+// nunca contacta al servidor por su cuenta. El siguiente ciclo de sync
+// (automático o el "Sincronizar ahora" que se dispara aquí mismo, una sola
+// vez, por acción explícita del usuario) la vuelve a intentar con el
+// pushAll() de siempre — no es un mecanismo de reintento nuevo, es el que
+// ya existe para toda operación no bloqueada.
+async function retryBlockedOperation(source, id) {
+  const key = (source === 'execution' ? 'execution:' : 'evidence:') + id;
+  const entry = await DB.get('app_config', key);
+  if (!entry) return;
+  const operation = { ...entry.value, status: 'PENDING' };
+  delete operation.code;
+  if (source === 'execution') await DB.updateExecutionOperation(operation);
+  else await DB.updateEvidenceOperation(operation);
+}
+
+// Descartar: borra SOLO el registro de la operación (app_config). Nunca se
+// llama para una operación que isBlockedOperationSafeToDiscard() no haya
+// aprobado — la UI ni siquiera pinta el botón en ese caso.
+async function discardBlockedOperation(source, id) {
+  const key = (source === 'execution' ? 'execution:' : 'evidence:') + id;
+  await DB.delete('app_config', key);
+}
+
+function wireBlockedOperationsPanel(container) {
+  $$('.btn-retry-blocked-op', container).forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-blocked-op-id]');
+      btn.disabled = true;
+      await retryBlockedOperation(row.dataset.blockedOpSource, row.dataset.blockedOpId);
+      showInAppToast('Reintentando sincronización…');
+      await Sync.fullSync('manual');
+      renderConfig();
+    });
+  });
+  $$('.btn-discard-blocked-op', container).forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-blocked-op-id]');
+      if (!confirm('¿Descartar esta operación? Nunca llegó a aplicarse en el servidor y no afecta ningún registro real. No se puede deshacer.')) return;
+      await discardBlockedOperation(row.dataset.blockedOpSource, row.dataset.blockedOpId);
+      showInAppToast('✓ Operación descartada');
+      renderConfig();
+    });
+  });
+}
+
 async function renderConfig() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -15905,26 +16077,21 @@ async function renderConfig() {
   // habido. getAccountSyncState() es la misma función que sync.js usa
   // internamente — nunca se reimplementa el cálculo de cuenta activa aquí.
   const accountSync = await Sync.getAccountSyncState();
+  // Diagnóstico BLOCKED (lote "DIAGNÓSTICO BLOCKED"): solo tiene sentido
+  // calcularlo si hay servidor configurado — sin eso nunca hay operaciones
+  // en cola que puedan estar bloqueadas.
+  const blockedOps = cfg.url ? await blockedOperationsDiagnostics() : [];
   const notif = mergeNotifSettings(await DB.get('settings', 'notifications'));
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
   const timeVal = (h, m) => `${pad(h)}:${pad(m)}`;
-  // PIN rápido (P0-2): SOLO en AUTH_MODE='supabase' con sesión real ya
-  // autenticada — nunca aparece en modo legacy ni sin login, ver
-  // src/core/quick-unlock.js. Auth.getProfile() es la misma identidad que
-  // Auth.isAuthenticated() ya validó, nunca App.currentUser.id a ciegas
-  // (evita depender del shape armado en currentUserFromAuthProfile()).
-  const quickUnlockAvailable = typeof Auth !== 'undefined' && Auth.isSupabaseMode() && Auth.isAuthenticated();
-  const quickUnlockConfigured = quickUnlockAvailable && await QuickUnlock.isConfigured(Auth.getProfile().appUserId);
-
   // Categorías de Configuración (lote dashboard+config UX): agrupa los
   // MISMOS paneles de siempre bajo tabs/secciones — ningún panel cambia su
-  // HTML interno, ids ni lógica, solo el contenedor que los agrupa. Fuera
-  // de la lista si no aplica (Seguridad sin Quick Unlock disponible),
-  // nunca una tab vacía.
+  // HTML interno, ids ni lógica, solo el contenedor que los agrupa.
+  // "Seguridad" (PIN rápido/Quick Unlock) se retiró por completo (UX CAMPO
+  // V2) — ya no hay nada que mostrar en esa categoría.
   const CONFIG_CATEGORIES = [
     { key: 'general', label: 'General' },
-    { key: 'seguridad', label: 'Seguridad', omit: !quickUnlockAvailable },
     { key: 'operacion', label: 'Operación' },
     { key: 'organizacion', label: 'Organización' },
     { key: 'usuarios', label: 'Usuarios y accesos' },
@@ -15955,18 +16122,6 @@ async function renderConfig() {
       </div>
     </div>
       </div>
-      ${quickUnlockAvailable ? `
-      <div class="config-category hidden" id="config-cat-seguridad" data-category="seguridad" role="tabpanel" aria-labelledby="config-tab-seguridad">
-    <div class="panel config-narrow">
-      <div class="panel-head"><h3>PIN rápido (desbloqueo sin Internet)</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Permite volver a entrar en este dispositivo con un PIN de 4 o 6 dígitos, sin escribir tu contraseña cada vez — incluso sin Internet. Nunca reemplaza tu contraseña real ni tu rol: solo desbloquea la pantalla.</p>
-        ${quickUnlockConfigured
-          ? `<button type="button" class="btn" id="btn-quick-unlock-change">Cambiar PIN</button> <button type="button" class="btn btn-danger" id="btn-quick-unlock-disable">Desactivar PIN rápido</button>`
-          : `<button type="button" class="btn btn-accent" id="btn-quick-unlock-configure">Configurar PIN rápido</button>`}
-      </div>
-    </div>
-      </div>` : ''}
       <div class="config-category hidden" id="config-cat-operacion" data-category="operacion" role="tabpanel" aria-labelledby="config-tab-operacion">
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Turnos y umbrales generales</h3></div>
@@ -16090,6 +16245,7 @@ async function renderConfig() {
             <div><span class="dim">Cambios pendientes por subir</span><div>${pending}</div></div>
             <div><span class="dim">Conflictos sin resolver</span><div>${lastSyncState.conflicts || 0}</div></div>
           </div>
+          ${blockedOperationsPanelHTML(blockedOps)}
         </details>` : ''}
       </div>
     </div>
@@ -16168,15 +16324,6 @@ async function renderConfig() {
   });
 
   $('#btn-theme').addEventListener('click', openThemePicker);
-
-  $('#btn-quick-unlock-configure')?.addEventListener('click', () => quickUnlockConfigureModal('configure'));
-  $('#btn-quick-unlock-change')?.addEventListener('click', () => quickUnlockConfigureModal('change'));
-  $('#btn-quick-unlock-disable')?.addEventListener('click', async () => {
-    await QuickUnlock.disable();
-    await logAudit('QUICK_UNLOCK_DESACTIVADO', App.currentUser.name, App.currentUser.name);
-    showInAppToast('✓ PIN rápido desactivado');
-    renderConfig();
-  });
 
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -16383,6 +16530,7 @@ async function renderConfig() {
     await Sync.fullSync('manual');
     renderConfig();
   });
+  wireBlockedOperationsPanel(c);
 }
 
 /* ============================================================

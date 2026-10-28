@@ -118,3 +118,7 @@ Guía completa paso a paso: `GUIA_COMPLETA_INSTALACION.md`.
 - Medir tiempo de resolución de anomalías (MTTR)
 - Mapa del patio con pines de color por equipo
 - Poner el proyecto en un repositorio con Git para tener historial de versiones
+# HISTORICAL / DEPRECATED — snapshot de una versión legacy.
+# Las referencias a login por PIN, PIN en texto plano y bloqueo local no son
+# el estado vigente. Consulte docs/DOCUMENTATION_STATUS.md.
+

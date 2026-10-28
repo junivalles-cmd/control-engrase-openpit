@@ -54,27 +54,55 @@ function shell(contentHTML, topbarOpts) {
   return `<div class="lub-shell">${topbar(topbarOpts)}<main id="app-content" class="lub-content">${contentHTML}</main>${bottomNav}</div>`;
 }
 
+// UX CAMPO V2 (2026-10-24): header compacto + 3 acordeones reemplazan
+// .lub-context-row/.lub-kpi-row (retirados, sin tarjetas KPI grandes a
+// propósito) — mismas clases reales que accordionHTML()/el header de
+// renderLubricadorHome() en app.js.
 const MI_TURNO_CONTENT = `
-      <div class="lub-context-row">
-        <span class="lub-context-chip">☀ Turno Día</span>
-        <span class="lub-context-chip">📍 Rajo Principal</span>
-        <span class="lub-context-chip">👥 Cuadrilla A</span>
-        <span class="lub-context-chip tone-green"><span class="dot"></span>Sincronizado</span>
+      <div class="lub-turno-header">
+        <div class="lub-turno-header-top">
+          <div class="lub-turno-header-identity">
+            <span class="lub-turno-header-crew">👥 Cuadrilla A</span>
+            <span class="lub-turno-header-detail">
+              <span class="lub-context-chip lub-coverage-chip" title="Rajo Principal" aria-label="Cobertura: Rajo Principal">📍 Rajo Principal</span>
+              ☀ Turno Día
+            </span>
+          </div>
+        </div>
+        <div class="lub-turno-header-summary">0 pendiente · 0 prioridad · 3 turno</div>
       </div>
-      <div class="lub-kpi-row">
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Vencidos por horas</div></div>
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">3</div><div class="lub-kpi-label">Pendientes hoy</div></div>
-        <div class="lub-kpi-card tone-neutral"><div class="lub-kpi-value">0</div><div class="lub-kpi-label">Arrastrados</div></div>
-        <div class="lub-kpi-card tone-green"><div class="lub-kpi-value">2</div><div class="lub-kpi-label">Realizados hoy</div></div>
-      </div>
-      <div class="lub-section-head"><span class="dim">Trabajo del turno actual</span></div>
-      <div class="lub-eq-list">
-        <button class="lub-eq-btn" data-status="AMARILLO">
-          <div class="lub-eq-top"><span class="lub-eq-code">T-09</span><span class="status-chip" style="--c:var(--amber)">PRÓXIMO</span></div>
-          <div class="lub-eq-model">Komatsu WA470</div>
-          <div class="lub-eq-location">📍 Rajo Principal</div>
-          <div class="lub-eq-bottom"><span class="mono">900 h</span></div>
-        </button>
+      <div class="lub-accordions">
+        <section class="lub-accordion">
+          <button type="button" class="lub-accordion-head" id="lub-acc-pendientes-anteriores-btn" aria-expanded="false" aria-controls="lub-acc-pendientes-anteriores-panel" aria-label="Pendientes anteriores, 0 trabajos">
+            <span class="lub-accordion-titles"><span class="lub-accordion-title">Pendientes anteriores</span><span class="lub-accordion-subtitle">Trabajo de turnos anteriores sin completar</span></span>
+            <span class="lub-accordion-count" data-tone="empty">0</span><span class="lub-accordion-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="lub-accordion-panel" id="lub-acc-pendientes-anteriores-panel" role="region" hidden><p class="field-hint lub-accordion-empty">No hay pendientes de turnos anteriores.</p></div>
+        </section>
+        <section class="lub-accordion">
+          <button type="button" class="lub-accordion-head" id="lub-acc-atencion-prioritaria-btn" aria-expanded="false" aria-controls="lub-acc-atencion-prioritaria-panel" aria-label="Atención prioritaria, 0 trabajos">
+            <span class="lub-accordion-titles"><span class="lub-accordion-title">Atención prioritaria</span><span class="lub-accordion-subtitle">Equipos que requieren atención primero</span></span>
+            <span class="lub-accordion-count" data-tone="empty">0</span><span class="lub-accordion-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="lub-accordion-panel" id="lub-acc-atencion-prioritaria-panel" role="region" hidden><p class="field-hint lub-accordion-empty">No hay equipos que requieran atención prioritaria.</p></div>
+        </section>
+        <section class="lub-accordion">
+          <button type="button" class="lub-accordion-head" id="lub-acc-mi-turno-btn" aria-expanded="true" aria-controls="lub-acc-mi-turno-panel" aria-label="Engrases de mi turno, 1 trabajo">
+            <span class="lub-accordion-titles"><span class="lub-accordion-title">Engrases de mi turno</span><span class="lub-accordion-subtitle">Trabajo programado para este turno</span></span>
+            <span class="lub-accordion-count" data-tone="active">1</span><span class="lub-accordion-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="lub-accordion-panel" id="lub-acc-mi-turno-panel" role="region">
+            <div class="lub-eq-list">
+              <div class="lub-eq-btn" data-status="AMARILLO">
+                <div class="lub-eq-top"><span class="lub-eq-code">T-09</span><span class="status-chip" style="--c:var(--amber)">PRÓXIMO</span></div>
+                <div class="lub-eq-model">Komatsu WA470</div>
+                <div class="lub-eq-location">📍 Rajo Principal</div>
+                <div class="lub-eq-bottom"><span class="mono">900 h</span></div>
+                <div class="lub-arrastrado-actions"><button class="btn btn-accent">Registrar engrase</button><button class="btn">Ver ficha</button></div>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>`;
 
 const SIN_CUADRILLA_CONTENT = `

@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$JdkHome = (Join-Path $env:USERPROFILE '.jdks\jbr-17.0.14'),
-    [string]$SocketDirectory
+    [string]$SocketDirectory,
+    [ValidateSet('debug', 'release', 'bundle')]
+    [string]$Variant = 'debug'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,13 +33,25 @@ try {
     $env:JAVA_TOOL_OPTIONS = (@($previousJavaToolOptions, $socketOption) | Where-Object { $_ }) -join ' '
     Push-Location $androidDirectory
     try {
-        & '.\gradlew.bat' 'assembleDebug' '--stacktrace'
+        $gradleTask = switch ($Variant) {
+            'debug' { 'assembleDebug' }
+            'release' { 'assembleRelease' }
+            'bundle' { 'bundleRelease' }
+        }
+        & '.\gradlew.bat' $gradleTask '--stacktrace'
         if ($LASTEXITCODE -ne 0) { throw "Gradle terminó con código $LASTEXITCODE." }
-        $apk = Get-Item -LiteralPath 'app\build\outputs\apk\debug\app-debug.apk'
+        $artifactPath = switch ($Variant) {
+            'debug' { 'app\build\outputs\apk\debug\app-debug.apk' }
+            'release' { 'app\build\outputs\apk\release\app-release.apk' }
+            'bundle' { 'app\build\outputs\bundle\release\app-release.aab' }
+        }
+        $artifact = Get-Item -LiteralPath $artifactPath
         [pscustomobject]@{
-            APK_PATH = $apk.FullName
-            APK_SIZE = $apk.Length
-            BUILD_TIMESTAMP_UTC = $apk.LastWriteTimeUtc.ToString('o')
+            VARIANT = $Variant
+            ARTIFACT_PATH = $artifact.FullName
+            ARTIFACT_SIZE = $artifact.Length
+            SHA256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash
+            BUILD_TIMESTAMP_UTC = $artifact.LastWriteTimeUtc.ToString('o')
         }
     } finally { Pop-Location }
 } finally {

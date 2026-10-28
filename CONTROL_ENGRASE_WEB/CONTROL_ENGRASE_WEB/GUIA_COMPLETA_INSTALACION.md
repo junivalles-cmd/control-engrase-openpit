@@ -159,3 +159,7 @@ Esto no es necesario para que la app funcione — es una mejora aparte. Cuando q
 - Todo funciona sin internet y sincroniza solo al recuperar conexión
 
 Si te trabas en cualquier paso, dime exactamente en cuál y qué mensaje de error te sale, y seguimos desde ahí.
+# HISTORICAL / DEPRECATED — guía de instalación anterior.
+# No usar: referencia `schema.sql` y usuarios/PIN demo del flujo legacy.
+# La guía CURRENT es `docs/ANDROID_INSTALLATION.md` / `docs/WEB_DEPLOYMENT.md`.
+

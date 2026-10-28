@@ -14,7 +14,7 @@ test('sync terminado repinta Mi Turno sin referencias al antiguo panel de broadc
     await onSyncStateChange({status:'ok',pulled:1,pushed:0,at:new Date().toISOString()});
     await window.__syncRender;
   });
-  await expect(page.locator('.lub-welcome-card')).toBeVisible();
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content .loading')).toHaveCount(0);
   await expect(page.locator('#app-content')).not.toContainText('Aviso operativo');
   await expect(page.locator('[data-lub-notification-count]')).toHaveText('1');

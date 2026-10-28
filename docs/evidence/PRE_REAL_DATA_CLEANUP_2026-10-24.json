@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-24",
+  "scope": "Inventario de solo lectura del backend de producción (Supabase, proyecto cont_engrase, ref havrirlapjyqrffgalqx) antes de limpiar datos de prueba confirmados. Ningún dato fue modificado durante esta fase.",
+  "method": "supabase db query --linked (SQL de solo lectura contra engrase_sync/storage.objects), sin tocar schema/RLS/migraciones.",
+  "backend_counts_before": {
+    "anomalies": { "total": 10, "deleted_true": 6 },
+    "audit_log": { "total": 837, "deleted_true": 0 },
+    "broadcast_message_reads": { "total": 1, "deleted_true": 0 },
+    "broadcast_messages": { "total": 6, "deleted_true": 6 },
+    "crew_locations": { "total": 2, "deleted_true": 1 },
+    "cuadrillas": { "total": 4, "deleted_true": 1 },
+    "equipment": { "total": 11, "deleted_true": 4 },
+    "equipment_types": { "total": 11, "deleted_true": 4 },
+    "grease_validations": { "total": 38, "deleted_true": 0 },
+    "locations": { "total": 8, "deleted_true": 4 },
+    "lubricants": { "total": 4, "deleted_true": 2 },
+    "lubrication_assignments": { "total": 8, "deleted_true": 0 },
+    "lubrication_plans": { "total": 7, "deleted_true": 0 },
+    "lubrication_points": { "total": 1050, "deleted_true": 0 },
+    "lubrication_records": { "total": 109, "deleted_true": 4 },
+    "manual_tasks": { "total": 6, "deleted_true": 4 },
+    "notification_dispatch_log": { "total": 4, "deleted_true": 0 },
+    "push_tokens": { "total": 2, "deleted_true": 0 },
+    "settings": { "total": 3, "deleted_true": 0 },
+    "shifts": { "total": 2, "deleted_true": 0 },
+    "users": { "total": 7, "deleted_true": 3 },
+    "lubrication_skips": { "total": 0, "note": "store no aparece en engrase_sync (0 filas) o no se ha usado todavía en producción" },
+    "app_config_evidence_execution": { "note": "app_config es LOCAL_STORES en db.js (STORES vs LOCAL_STORES) — nunca sincroniza a Supabase. evidence:*/execution:* viven SOLO en el dispositivo (IndexedDB), no existen en engrase_sync. No hay nada que limpiar del lado del servidor para esto." }
+  },
+  "storage_before": {
+    "bucket": "engrase-photos",
+    "total_objects": 82,
+    "total_bytes": 4965000
+  },
+  "classification": {
+    "TEST_CONFIRMED": [
+      {
+        "store": "equipment",
+        "ids": ["rec_mufr5k5q9vxupm", "rec_mufr6q4a6u39k7", "rec_mufr80xx8tw2i3", "rec_mufra3d1ih7lbh"],
+        "reason": "code=VERIF-01, brand='Verificación', model='Unidad LB', createdBy='verificacion' — incidente VERIF-01 ya documentado (ver docs/AUTOMATED_TESTS.md). YA estaban soft-deleted (active:false, deleted:true) antes de esta sesión."
+      },
+      {
+        "store": "lubrication_records",
+        "ids": ["greg_mufr5l2o2bptoq", "greg_mufr6r1vg40109", "greg_mufr81s8nivqb1", "greg_mufra44rlflthk"],
+        "reason": "equipmentId apunta a los 4 equipos VERIF-01. YA estaban soft-deleted antes de esta sesión."
+      },
+      {
+        "store": "users",
+        "ids": ["u_lub1", "u_plan", "u_sup"],
+        "reason": "nombre/usuario genérico idéntico al rol (Junior Lubricador/lubricador, Ana Planificadora/planificador, Carlos Supervisor/supervisor) — cuentas semilla de demo. YA estaban soft-deleted antes de esta sesión."
+      },
+      {
+        "store": "lubrication_points",
+        "ids_count": 22,
+        "id_pattern": "pt_eq_demo_{0568,1231,4569,4586}_*",
+        "reason": "ID literal '_demo_', planId 'plan_eq_demo_NNNN' que NUNCA existió en lubrication_plans, createdBy='sistema', equipmentId NNNN (0568/1231/4569/4586) no corresponde a ningún equipo real ni histórico en la tabla equipment. Confirmado huérfano antes de tocar nada. ACTIVOS (active:true) antes de esta sesión — acción pendiente."
+      },
+      {
+        "store": "broadcast_messages",
+        "ids": ["bcast_TEST_E2E_PUSH_957f62a14de74372be1d096069cad0ca", "bcast_TEST_E2E_PUSH2_0dfe70ee66c648f2983261fe2cfe2629"],
+        "reason": "título literal 'TEST E2E PUSH — ignorar'/'TEST E2E PUSH 2 — ignorar', createdBy=u_jvalles (cuenta del desarrollador). ACTIVOS (payload.active:true) antes de esta sesión — acción pendiente.",
+        "already_soft_deleted_for_reference": ["bcast_test_push_20261019", "bcast_test_push_20261019b", "bcast_test_push_crew_20261019"]
+      },
+      {
+        "store": "manual_tasks",
+        "ids": ["mtask_TEST_E2E_PHOTO2_db770c9b026b477eb9d81f23c4f7e84b", "mtask_TEST_E2E_PHOTO_a181cce47d1c4dc5957cb616c638befe", "mtask_TEST_E2E_FIX4_8c6aeeb03ee8418b96d954b4076f5355", "mtask_TEST_E2E_FIX3_526b7c1e79cf42f7b90d9518d8d2728b"],
+        "reason": "título literal 'TEST E2E FOTO/FIX ... — ignorar', createdBy=u_jvalles. ACTIVOS o active:null (=activo efectivo) antes de esta sesión — acción pendiente.",
+        "already_soft_deleted_for_reference": ["mtask_test_push_20261019"]
+      }
+    ],
+    "TEST_STORAGE_OBJECTS": [
+      { "path": "manual_tasks/mtask_TEST_E2E_PHOTO2_db770c9b026b477eb9d81f23c4f7e84b_0.webp", "bytes": 9470 },
+      { "path": "manual_tasks/mtask_TEST_E2E_FIX3_526b7c1e79cf42f7b90d9518d8d2728b_0.webp", "bytes": 9482 },
+      { "path": "manual_tasks/mtask_TEST_E2E_FIX4_8c6aeeb03ee8418b96d954b4076f5355_0.jpg", "bytes": 68 }
+    ],
+    "REAL_CONFIRMED_SAMPLE": [
+      { "store": "equipment", "codes": ["25-46", "A11", "A-02", "T-06", "20-5530", "05-0870", "45-77"], "evidence": "docs/SESSION_HANDOFF.md cita 'A11, 45-77' como códigos reales; 20-5530/05-0870 son casos reales documentados en docs/EXCAVATOR_DUAL_SHIFT.md y en tests/ui/weekly-matrix-dual-shift.spec.js" },
+      { "store": "lubrication_plans", "note": "las 7 filas referencian equipmentId real, ninguna con patrón demo/test" }
+    ],
+    "UNKNOWN_NOT_TOUCHED": [
+      {
+        "item": "968 de 1050 lubrication_points (excluyendo los 22 '_demo_')",
+        "detail": "referencian 80 planId distintos que NO existen hoy en lubrication_plans (solo hay 7 planes reales, a los que solo 60 puntos apuntan correctamente). createdBy mayormente 'Administrador General', createdAt 2026-08-08 (antes de que existiera el equipo real actual, creado desde 2026-10-10). Puede ser catálogo semilla de desarrollo huérfano (seguro de borrar) O catálogo pre-cargado por familia/modelo pensado para reutilizarse en la futura carga de datos reales (NO seguro de borrar). No se pudo determinar con certeza cuál de las dos — requiere tu decisión antes de tocar esto.",
+        "action": "NO TOCADO"
+      },
+      {
+        "item": "usuario 'Planificador' (u_mu2w804yo1n94u, username 'Planificador')",
+        "detail": "nombre idéntico al rol (patrón de cuenta demo), pero a diferencia de los otros 3 demo (Junior Lubricador/Ana Planificadora/Carlos Supervisor), este sigue ACTIVO. Podría ser una cuenta genérica real todavía en uso durante el piloto, o un residuo de demo nunca limpiado — no se pudo confirmar el contexto con certeza.",
+        "action": "NO TOCADO"
+      },
+      {
+        "item": "10 anomalías reales en apariencia, 6 creadas bajo cuentas demo (Junior Lubricador/Carlos Supervisor/Administrador General)",
+        "detail": "descripciones plausibles de fallas reales (Grasera dañada, Manguera dañada, Línea de engrase obstruida, Pin con desgaste) sin ningún marcador TEST/E2E/demo — el usar una cuenta demo no confirma que el contenido sea ficticio.",
+        "action": "NO TOCADO"
+      },
+      {
+        "item": "manual_tasks/manual task 'mtask_mvffsl88ahm98t' (Drenar aceite hidraulico, createdBy u_jvalles)",
+        "detail": "sin marcador de test, descripción de tarea real plausible creada por la cuenta del desarrollador (podría ser una tarea real de admin/planificador).",
+        "action": "NO TOCADO"
+      },
+      {
+        "item": "109 lubrication_records y 38 grease_validations (bulk)",
+        "detail": "búsqueda dirigida de patrones TEST/E2E/DEMO/FIXTURE/SAMPLE/QA/TEMP/VERIF sobre estos stores: 0 resultados. Sin evidencia de contaminación de prueba.",
+        "action": "NO TOCADO"
+      }
+    ]
+  },
+  "device_tablet": {
+    "connected": false,
+    "note": "No se detectó ningún dispositivo Android conectado (adb devices vacío, comando adb no disponible) en esta sesión. Las secciones 10-13 del pedido (reconciliación local, verificación funcional en tablet, 2 ciclos de sync observados en el dispositivo) NO se pudieron ejecutar."
+  }
+}

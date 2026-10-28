@@ -174,6 +174,9 @@ for (const reason of ['PM', 'CORRECTIVO', 'OPORTUNIDAD', 'SUPPORT_OTHER_LOCATION
     await page.locator('#oop-reason-select').selectOption(reason);
     if (reason === 'OTRO') await page.locator('textarea[name="notes"]').fill('Motivo específico');
     await page.locator('input[name="qty"]').fill('1.5');
+    // LUB-02: los puntos nacen desmarcados — para un engrase COMPLETE real hay
+    // que marcarlos explícitamente (ya no vienen pre-marcados por el template).
+    await page.locator('#btn-check-all').click();
     await context.setOffline(true);
     await page.locator('.btn-grease-submit').click();
     await expect(page.locator('#grease-validate-now-btn')).toBeVisible();
@@ -190,7 +193,10 @@ test('submit real: COMPLETE con cantidad cero bloquea; PARTIAL conserva punto pe
   await page.evaluate(() => window.startGreaseFlow('e1', document.getElementById('reg-flow-area')));
   await page.locator('.btn-grease-submit').click();
   expect(await page.evaluate(() => __mockData.lubrication_records)).toHaveLength(0);
-  await page.locator('.check-row').first().click();
+  // LUB-02: los 3 puntos nacen desmarcados — se marcan los puntos 2 y 3 como
+  // realizados; el punto 1 queda pendiente (requiere motivo) para probar PARTIAL.
+  await page.locator('.checklist-item').nth(1).locator('.check-row').click();
+  await page.locator('.checklist-item').nth(2).locator('.check-row').click();
   await page.locator('.chk-reason').first().selectOption({ label: 'Grasera dañada' });
   await page.locator('.btn-grease-submit').click();
   await expect(page.locator('#grease-validate-now-btn')).toBeVisible();
@@ -226,13 +232,23 @@ test('submit real: assignment mantiene prioridad sobre Fuera de plan y no cambia
   expect(await page.evaluate(() => __mockData.equipment[0].locationId)).toBe('l1');
 });
 
-test('C/D — los puntos siguen funcionando: desmarcar exige motivo, "Marcar todos" vuelve a marcar todo', async ({ page }) => {
+test('C/D — los puntos siguen funcionando: nacen desmarcados (LUB-02), marcar/desmarcar expone motivo, "Marcar todos" vuelve a marcar todo', async ({ page }) => {
   await bootPage(page);
   await page.evaluate(() => window.startGreaseFlow('e1', document.getElementById('reg-flow-area')));
+
+  // LUB-02: un engrase NUEVO nace con todos los puntos desmarcados, 0/N.
+  await expect(page.locator('#checklist-progress-text')).toHaveText('0 de 3 puntos marcados');
+  await expect(page.locator('.chk-done:checked')).toHaveCount(0);
 
   // .chk-done es un checkbox nativo oculto (pointer-events:none, patrón de
   // checkbox custom) — se interactúa por su <label class="check-row">,
   // igual que lo haría un usuario real tocando la fila.
+  for (const i of [0, 1, 2]) {
+    await page.locator('.checklist-item').nth(i).locator('.check-row').click();
+  }
+  await expect(page.locator('#checklist-progress-text')).toHaveText('3 de 3 puntos marcados');
+
+  // Desmarcar el primero expone su motivo y el progreso baja a 2/3.
   await page.locator('.checklist-item').first().locator('.check-row').click();
   await expect(page.locator('.checklist-item').first().locator('.chk-reason')).toBeVisible();
   await expect(page.locator('#checklist-progress-text')).toHaveText('2 de 3 puntos marcados');

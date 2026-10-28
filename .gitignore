@@ -49,6 +49,10 @@ tests/ui/screenshots-audit/
 tests/screenshots/
 tests/ui/.playwright-artifacts/
 playwright-report/
+
+# Capturas del pre-check de piloto (tools/pilot-precheck.ps1) — dispositivo
+# real con sesión real de un lubricador real, nunca se versionan.
+docs/pilot-precheck-captures/
 blob-report/
 test-results/
 
@@ -77,6 +81,7 @@ Thumbs.db
 
 # ---- Contraseñas / credenciales sueltas en archivos de texto ----
 CONTROL_ENGRASE_APP_ANDROID/CONTRASENA_KEYSTORE.txt
+CONTROL_ENGRASE_APP_ANDROID/android/keystore.properties
 *CONTRASENA*
 *PASSWORD*
 *credentials*.json

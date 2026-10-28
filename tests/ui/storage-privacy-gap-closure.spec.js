@@ -11,15 +11,58 @@
 
 import { test, expect } from '@playwright/test';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
-import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { APP_JS_PATH, DB_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const appSource = readSource(APP_JS_PATH);
+const dbSource = readSource(DB_JS_PATH);
 const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'GREASE_UNIT', 'photosOf', 'resolveEvidenceSrc', 'evidenceValueAttr',
   'wireEvidenceImgFallbackOnce', 'openPhotoLightbox', 'photoThumbHTML', 'photoThumbsHTML',
   'resolvePhotoThumbSrcs', 'familySilhouetteSvg', 'familyCardHTML', 'pointRow',
 ];
 const appRealSrc = APP_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
+
+// LOTE B ("PRIVATIZAR STORAGE engrase-photos") — openFamilyEditForm() era la
+// ÚNICA pantalla que todavía quedaba en el §7 de docs/STORAGE_PRIVACY_DESIGN.md
+// como "limitación conocida restante": fam.photo/p.photo (store `settings`,
+// documento `help_content`) pasan por el mismo uploadPhotoIfNeeded() genérico
+// que cualquier otro store, así que una vez sincronizados desde otro
+// dispositivo dejan de ser base64 y se vuelven una URL de Storage real. Se
+// carga la función REAL completa (openModal/closeModal/photoFieldHTML/
+// wirePhotoField/getPhotoFieldPhotos reales, mismo patrón que openPlanForm)
+// con DB/Sync espiados — nunca contra Supabase real.
+const FAMILY_FORM_NAMES = [
+  'MAX_PHOTOS', 'openFamilyEditForm', 'openModal', 'closeModal', 'photoFieldHTML', 'wirePhotoField',
+  'getPhotoFieldPhotos', 'getSelectedPhotoDataURL', 'wirePhotoThumbs', 'renderPhotoStrip',
+  'addPhotoToField', 'fileToCompressedDataURL', 'esc', 'ic', '$', '$$',
+  'familySilhouetteSvg', 'photoThumbHTML', 'photoThumbsHTML', 'evidenceValueAttr', 'resolveEvidenceSrc',
+];
+const familyFormRealSrc = extractDeclaration(dbSource, 'uid') + '\n\n' +
+  FAMILY_FORM_NAMES.map(n => extractDeclaration(appSource, n)).join('\n\n');
+
+async function bootFamilyForm(page, { signedUrlMap = {} } = {}) {
+  await page.setContent('<div id="app-content"></div>');
+  await page.addScriptTag({
+    content: `
+      window.DB = { getConfig: async () => (${JSON.stringify(CFG)}) };
+      window.__signedUrlCalls = [];
+      window.Sync = {
+        getSignedPhotoUrl: async (value, cfg, opts) => {
+          window.__signedUrlCalls.push({ value, opts });
+          const map = ${JSON.stringify(signedUrlMap)};
+          return map[value] !== undefined ? map[value] : null;
+        },
+      };
+      window.App = { currentUser: { name: 'Admin de prueba' } };
+      window.stamp = (obj) => obj;
+      window.logAudit = async () => {};
+      window.showInAppToast = () => {};
+      window.renderAyuda = () => {};
+      ${familyFormRealSrc}
+      window.openFamilyEditForm = openFamilyEditForm;
+    `,
+  });
+}
 
 const CFG = { url: 'https://fake.supabase.co', anonKey: 'anon-test' };
 const LEGACY_URL_A = `${CFG.url}/storage/v1/object/public/engrase-photos/lubrication_plans/pt1.jpg`;
@@ -134,6 +177,50 @@ test.describe('Historial/Anomalías (photoThumbsHTML/resolvePhotoThumbSrcs)', ()
     await bootPage(page);
     const html = await page.evaluate(() => window.photoThumbsHTML({ photos: [] }, 'cap', []));
     expect(html).toContain('—');
+  });
+});
+
+test.describe('openFamilyEditForm() — última pantalla con el gap abierto, ahora cerrada (LOTE B)', () => {
+  test('foto de la familia en Storage: la vista previa usa el signed URL, nunca la URL cruda', async ({ page }) => {
+    await bootFamilyForm(page, { signedUrlMap: { [LEGACY_URL_B]: SIGNED_URL_B } });
+    await page.evaluate((url) => window.openFamilyEditForm({ families: [] }, {
+      id: 'fam1', name: 'Excavadoras', svg: 'excavadora', photo: url,
+      zones: [{ name: 'Zona 1', color: 'var(--accent)', points: [] }],
+    }), LEGACY_URL_B);
+    const preview = page.locator('#fam-preview img');
+    await expect(preview).toHaveAttribute('src', SIGNED_URL_B);
+    await expect(preview).toHaveAttribute('data-evidence-value', LEGACY_URL_B);
+  });
+
+  test('foto de un punto en Storage: la miniatura usa el signed URL; data-existing-photo conserva el valor CRUDO (lo que se vuelve a guardar si no se toca la foto)', async ({ page }) => {
+    await bootFamilyForm(page, { signedUrlMap: { [LEGACY_URL_A]: SIGNED_URL_A } });
+    await page.evaluate((url) => window.openFamilyEditForm({ families: [] }, {
+      id: 'fam1', name: 'Excavadoras', svg: 'excavadora', photo: null,
+      zones: [{ name: 'Zona 1', color: 'var(--accent)', points: [{ id: 'pt1', text: 'Cilindro', photo: url }] }],
+    }), LEGACY_URL_A);
+    const thumb = page.locator('.pt-current-photo img');
+    await expect(thumb).toHaveAttribute('src', SIGNED_URL_A);
+    // Crítico: si esto guardara el signed URL en vez del crudo, la próxima vez
+    // que se abra el formulario SIN tocar la foto se persistiría una URL
+    // temporal ya vencida en vez de la referencia real al objeto de Storage.
+    await expect(page.locator('.pt-editor-row')).toHaveAttribute('data-existing-photo', LEGACY_URL_A);
+  });
+
+  test('sin foto (familia nueva): el dibujo SVG se muestra directo, sin pedir ningún signed URL', async ({ page }) => {
+    await bootFamilyForm(page);
+    await page.evaluate(() => window.openFamilyEditForm({ families: [] }, null));
+    await expect(page.locator('#fam-preview img')).toHaveCount(0);
+    const calls = await page.evaluate(() => window.__signedUrlCalls);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('sin sesión/signed URL disponible: cae de vuelta a la URL cruda — nunca deja de mostrar la foto', async ({ page }) => {
+    await bootFamilyForm(page); // sin signedUrlMap -> getSignedPhotoUrl siempre null
+    await page.evaluate((url) => window.openFamilyEditForm({ families: [] }, {
+      id: 'fam1', name: 'Excavadoras', svg: 'excavadora', photo: url,
+      zones: [{ name: 'Zona 1', color: 'var(--accent)', points: [] }],
+    }), LEGACY_URL_B);
+    await expect(page.locator('#fam-preview img')).toHaveAttribute('src', LEGACY_URL_B);
   });
 });
 

@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — diseño y diagnóstico de una transición.
+# Las referencias a bucket público y URLs públicas son estado histórico, no
+# configuración final ni autorización para instalar Storage de esa forma.
+
 # P0-3 — Storage privado/autenticado (`engrase-photos`)
 
 Estado: **preparado, NO aplicado**. El bucket sigue público en producción.
@@ -135,15 +139,17 @@ Conectado (evidencia operativa + todo renderer directo del mismo bucket):
   en Historial por equipo, Historial global y Anomalías) — cada tabla
   resuelve las filas visibles en paralelo antes de dibujarse.
 
-**Limitación conocida restante (documentada a propósito, NO cerrada):** el
-editor de familias de equipo (`openFamilyEditForm()`, solo Administrador —
-la vista previa al editar una familia existente) sigue usando el valor
-crudo directo. Es una superficie admin-only, de uso poco frecuente (editar
-una familia ya creada), con mayor complejidad de refactor (formulario con
-re-render en caliente al agregar/quitar zonas/puntos) — se prioriza cerrar
-primero las pantallas de uso diario/multi-rol. Mientras el bucket siga
-público (estado actual) funciona igual que hoy; antes de aplicar 0005 hace
-falta aplicarle el mismo tratamiento.
+**Gap cerrado (LOTE B, preflight de 0005):** el editor de familias de
+equipo (`openFamilyEditForm()`, solo Administrador) ya resuelve signed URLs
+antes de abrir el modal — tanto la vista previa de `fam.photo` como cada
+miniatura de punto (`pointRowEditorHTML`). `data-existing-photo` sigue
+guardando el valor CRUDO (nunca el signed URL) porque el submit lo relee
+tal cual si el usuario no cambia la foto — resolver ahí mismo lo que se
+guarda habría corrompido el dato con una URL temporal. Cubierto en
+`tests/ui/storage-privacy-gap-closure.spec.js` ("openFamilyEditForm()").
+Con esto, las 6 superficies reales del bucket (§2) ya resuelven signed
+URLs — ya no queda ninguna pantalla real que dependa de que el bucket siga
+público.
 
 ## 7b. Reintento único + placeholder + cache (§38-40 del pedido original)
 
@@ -239,3 +245,47 @@ cutover de Auth/RLS ya aplicado primero).
 
 Nada de este lote tocó producción: sin SQL ejecutado, sin bucket
 modificado, sin objetos borrados/movidos, sin deploy, sin push.
+
+## 15. LOTE B — preflight verificado contra producción (2026-10-25, solo lectura)
+
+Antes de considerar aplicar 0005, se verificó el estado REAL del proyecto
+linked (`havrirlapjyqrffgalqx`, `supabase db query --linked`, solo SELECT):
+
+- `app_profiles`: **4 filas activas, una por rol** (ADMINISTRADOR,
+  PLANIFICADOR, SUPERVISOR, LUBRICADOR) — ya no es "1 sola cuenta"
+  (bloqueador histórico documentado en sesiones anteriores). Precondición
+  de cuentas reales por rol: **cumplida**.
+- `current_app_active()` existe exactamente como 0002/0005 la esperan —
+  compatible con el esquema actual.
+- Policy legacy `"acceso interno con anon key"` (`engrase_sync`, `FOR ALL
+  USING(true)`) **sigue activa** — 0003 (cutover RLS) no se ha aplicado.
+  Es una tabla distinta de `storage.objects`; no bloquea 0005 a nivel de
+  SQL, pero comparte la misma precondición operativa real (ver abajo).
+- Bucket `engrase-photos`: **`public = true`**, con sus 3 policies
+  originales intactas (lectura pública, subir/actualizar con anon key).
+  2 policies nuevas y ajenas a 0005 (`signature_objects_immutable_delete`/
+  `_update`, de un lote de evidence-gateway posterior) ya conviven sin
+  conflicto — son RESTRICTIVE, se combinan con AND sin importar qué
+  policy PERMISSIVE otorgue el acceso.
+- Sitio web (`https://junivalles-cmd.github.io`): **sigue devolviendo 404**
+  (confirmado de nuevo, sin cambios desde 2026-10-02) — no hay tráfico web
+  real que proteger/romper todavía.
+
+**Bloqueador real restante, no resuelto por este lote (requiere
+confirmación explícita del usuario, no verificable por código ni por
+SQL):** `AUTH_MODE` es `'supabase'` en el código fuente committeado
+siempre (no hay rama `'legacy'` alcanzable), y tanto `uploadPhotoIfNeeded`/
+`uploadSignatureIfNeeded`/`getSignedPhotoUrl` como cualquier operación de
+`engrase_sync` **ya exigen sesión Auth real** (`syncAuthHeaders()` lanza
+`AUTH_REQUIRED` si no hay JWT válido) — pero esto solo es cierto si el
+**build realmente instalado en los teléfonos de campo** viene de una
+fuente post-cutover de código. No hay forma de verificar remotamente qué
+versión de la app corre en cada teléfono real de Lubricador/Supervisor
+hoy. Si algún dispositivo de campo sigue en un APK viejo (pre-JWT-real),
+privatizar el bucket lo dejaría sin poder ver/subir evidencia de inmediato.
+Mismo criterio que el proyecto ya exige antes de aplicar 0003 (ver
+`docs/SESSION_HANDOFF.md`, parte 19/20).
+# HISTORICAL / DEPRECATED — diseño y diagnóstico de una transición.
+# Las referencias a bucket público y URLs públicas son estado histórico, no
+# configuración final ni autorización para instalar Storage de esa forma.
+

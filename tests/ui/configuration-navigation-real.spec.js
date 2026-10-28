@@ -8,10 +8,12 @@
 // flujos. Esta suite arranca renderConfig() de verdad (app.js), con sus
 // dependencias reales (cuadrillasPanelHTML/wireCuadrillasPanel,
 // simpleListPanelHTML/wireSimpleListPanel, renderUsuarios/
-// renderUsuariosSupabase, quickUnlockConfigureModal, notifCardHTML/
-// mergeNotifSettings) contra una IndexedDB/Auth/Sync/QuickUnlock fake —
-// solo se stubean las piezas pesadas fuera de alcance (papelera, espacio,
-// tema, push, backup).
+// renderUsuariosSupabase, notifCardHTML/mergeNotifSettings) contra una
+// IndexedDB/Auth/Sync fake — solo se stubean las piezas pesadas fuera de
+// alcance (papelera, espacio, tema, push, backup). (La categoría
+// "Seguridad"/Quick Unlock que este archivo probaba originalmente se
+// retiró por completo en UX CAMPO V2, 2026-10-24 — ver
+// lubricador-session-safety.test.js.)
 //
 // B: Usuarios y accesos ya NO redirige a una pantalla separada — embebe
 // renderUsuarios()/renderUsuariosSupabase() real dentro de su propio
@@ -38,7 +40,7 @@ const appNames = [
   'wireConfigCategoryNav', 'CONFIG_DEFAULT_CATEGORY', 'renderConfig',
   'renderUsuarios', 'renderUsuariosSupabase', 'manageUsersErrorMessage', 'withSubmitGuard',
   'userFormSupabase', 'roleFormSupabase', 'resetPasswordFormSupabase', 'MANAGE_USERS_ERROR_LABELS',
-  'quickUnlockConfigureModal', 'makeTablesResponsive',
+  'makeTablesResponsive',
   // broadcastPanelHTML/wireBroadcastPanel (panel "Mensajes operativos" dentro
   // de Configuración > Notificaciones, ya solo un enlace a Tareas y Mensajes)
   // — renderConfig() los llama desde el lote "Tareas y Mensajes" 2026-10-18;
@@ -46,6 +48,12 @@ const appNames = [
   // correr este spec, no relacionado con la limpieza en sí — harness
   // desactualizado desde ese lote anterior).
   'broadcastPanelHTML', 'wireBroadcastPanel',
+  // Diagnóstico BLOCKED (lote "DIAGNÓSTICO BLOCKED"): renderConfig() ahora
+  // también llama wireBlockedOperationsPanel() al final — nunca se invoca
+  // de verdad aquí (DB.getConfig() no trae `url`, así que el bloque entero
+  // de diagnóstico ni se pinta), pero debe existir como función real o
+  // renderConfig() revienta con un ReferenceError al definirse/llamarse.
+  'wireBlockedOperationsPanel',
 ];
 const app = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const scope = readSource(OPERATIONAL_SCOPE_JS_PATH); // canManageCrewMembership/resolveCrewLocationCoverage/validateCrewLocationCoverage
@@ -102,11 +110,6 @@ async function boot(page, { role = 'ADMINISTRADOR', supabaseMode = true, users =
           if (action === 'LIST_USERS') return { users: ${JSON.stringify(manageUsersList)} };
           return {};
         },
-      };
-      window.QuickUnlock = {
-        isConfigured: async () => false,
-        changePin: async () => {},
-        disable: async () => {},
       };
       window.logAudit = async () => {};
       window.showInAppToast = () => {};
@@ -228,19 +231,6 @@ test('5. Notificaciones > Guardar => sigue en Notificaciones', async ({ page }) 
   await configTab(page, 'notificaciones').click();
   await page.locator('#notif-form button[type="submit"]').click();
   await expect(configCat(page, 'notificaciones')).toBeVisible();
-  await expect(configCat(page, 'general')).toBeHidden();
-});
-
-test('6. Seguridad > Guardar (configurar PIN rápido) => sigue en Seguridad', async ({ page }) => {
-  await page.setViewportSize({ width: 1366, height: 900 });
-  await boot(page);
-  await configTab(page, 'seguridad').click();
-  await page.locator('#btn-quick-unlock-configure').click();
-  await page.locator('[name="pin"]').fill('1234');
-  await page.locator('[name="pinConfirm"]').fill('1234');
-  await page.locator('#quick-unlock-modal-form button[type="submit"]').click();
-  await expect(page.locator('#quick-unlock-modal-form')).toHaveCount(0);
-  await expect(configCat(page, 'seguridad')).toBeVisible();
   await expect(configCat(page, 'general')).toBeHidden();
 });
 

@@ -47,7 +47,21 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
     window.logAudit = async () => {}; window.showInAppToast = () => {};
     window.Auth = { manageUsers: async () => ({ users: [] }) };
     ${source}
-    window.DB = DB; window.renderLubricadorHome = renderLubricadorHome;
+    window.DB = DB;
+    // UX CAMPO V2 (2026-10-24): los 3 acordeones de Mi Turno nacen
+    // colapsados — se expanden automáticamente tras cada render
+    // (idempotente) para no romper la cobertura de cobertura/scope de
+    // este archivo, ajena a la interacción propia del acordeón.
+    renderLubricadorHome = (() => {
+      const real = renderLubricadorHome;
+      return async (...args) => {
+        const result = await real(...args);
+        document.querySelectorAll('.lub-accordion-panel').forEach(p => { p.hidden = false; });
+        document.querySelectorAll('.lub-accordion-head').forEach(b => b.setAttribute('aria-expanded', 'true'));
+        return result;
+      };
+    })();
+    window.renderLubricadorHome = renderLubricadorHome;
     window.getCurrentOperationalScope = getCurrentOperationalScope;
     window.handleOutOfPlanEquipoSelected = handleOutOfPlanEquipoSelected;
     window.startLubricadorGreaseFlow = startLubricadorGreaseFlow;
@@ -77,7 +91,22 @@ async function boot(page, { legacy = false, assignment = false, firstPull = fals
   }, { crew: fixtureCrew, locations: fixtureLocations, coverage: fixtureCoverage, legacy, assignment, firstPull, equipmentRows, assignmentRows });
   return errors;
 }
-const kpi = page => page.locator('.lub-kpi-card', { hasText: 'Pendientes hoy' }).locator('.lub-kpi-value');
+// UX CAMPO V2 (2026-10-24): la fila de 4 .lub-kpi-card se retiró —
+// "Vencidos por horas"/"Pendientes hoy"/"Pendientes del turno anterior"
+// ahora son el contador propio (.lub-accordion-count) de su acordeón;
+// "Realizados hoy" sigue siendo el único contador fuera de los 3
+// acordeones (span dedicado dentro del status-chip "REALIZADOS (N)").
+const kpi = page => page.locator('#lub-acc-mi-turno-btn .lub-accordion-count');
+function kpiByLabel(page, label) {
+  const map = {
+    'Vencidos por horas': '#lub-acc-atencion-prioritaria-btn .lub-accordion-count',
+    'Pendientes hoy': '#lub-acc-mi-turno-btn .lub-accordion-count',
+    'Pendientes del turno anterior': '#lub-acc-pendientes-anteriores-btn .lub-accordion-count',
+    'Realizados hoy': '.lub-realizados-count',
+  };
+  if (!map[label]) throw new Error(`kpiByLabel(): etiqueta desconocida "${label}"`);
+  return page.locator(map[label]);
+}
 
 for (const supportIds of [[], ['mojon'], ['mojon', 'acarreo']]) {
   test(`cobertura independiente del trabajo normal: PRINCIPAL Volcán + APOYO ${supportIds.join(',') || 'ninguno'}`, async ({ page }) => {
@@ -227,7 +256,7 @@ test('Scenario C: Todas 3, Volcán 2, Mojón 1 coinciden en KPI, tarjetas y enca
     await page.locator(`.crew-location-filter[data-location-id="${location}"]`).click();
     await expect(kpi(page)).toHaveText(String(count));
     await expect(page.locator('.lub-mt-reg')).toHaveCount(count);
-    await expect(page.locator('.lub-section-head', { hasText: 'MI TURNO' })).toHaveText(`MI TURNO (${count})`);
+    await expect(kpi(page)).toHaveText(String(count));
   }
   expect(errors).toEqual([]);
 });
@@ -256,7 +285,7 @@ test('los cuatro KPI y secciones usan filas del filtro, conservando clasificaci�
   const labels = ['Vencidos por horas', 'Pendientes hoy', 'Pendientes del turno anterior', 'Realizados hoy'];
   for (const [location, counts] of [['', [2, 3, 2, 2]], ['volcan', [1, 2, 1, 1]], ['mojon', [1, 1, 1, 1]]]) {
     await page.locator(`.crew-location-filter[data-location-id="${location}"]`).click();
-    for (const [i, label] of labels.entries()) await expect(page.locator('.lub-kpi-card', { hasText: label }).locator('.lub-kpi-value')).toHaveText(String(counts[i]));
+    for (const [i, label] of labels.entries()) await expect(kpiByLabel(page, label)).toHaveText(String(counts[i]));
     await expect(page.locator('.lub-mt-reg')).toHaveCount(counts[1]);
     await expect(page.locator('.lub-arr-reg')).toHaveCount(counts[2]);
     await expect(page.locator('.lub-real-ver')).toHaveCount(counts[3]);
@@ -268,13 +297,12 @@ test('Mi Turno consolida principales, filtra listas y KPI por ubicación y manti
   const errors = await boot(page);
   await expect(page.locator('.lub-mt-reg')).toHaveCount(2);
   await expect(kpi(page)).toHaveText('2');
-  expect((await page.locator('.lub-section-head:has-text("MI TURNO") + .lub-eq-list .lub-location-group h3').allTextContents()).sort()).toEqual(['Mojón', 'Volcán']);
+  expect((await page.locator('#lub-acc-mi-turno-panel .lub-location-group h3').allTextContents()).sort()).toEqual(['Mojón', 'Volcán']);
   await expect(page.getByRole('button', { name: 'Volcán (1)', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Mojón (1)', exact: true }).click();
   await expect(page.locator('.lub-mt-reg')).toHaveCount(1);
   await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('MOJON');
   await expect(kpi(page)).toHaveText('1');
-  await expect(page.locator('.lub-section-head', { hasText: 'MI TURNO' })).toHaveText('MI TURNO (1)');
   await page.getByRole('button', { name: 'Volcán (1)', exact: true }).click();
   await expect(page.locator('.lub-eq-btn .lub-eq-code')).toHaveText('VOLCAN');
   await expect(kpi(page)).toHaveText('1');
@@ -449,7 +477,9 @@ test('COMPLETE adelantado en ambas principales no reaparece; PARTIAL y carryover
   await expect(page.locator('#lub-pending-validations .lub-real-ver')).toHaveCount(1);
   await expect(page.locator('#lub-pending-validations')).toContainText('VOLCAN');
   await expect(page.locator('#lub-pending-validations')).not.toContainText('MOJON');
-  await expect(page.locator('.lub-kpi-card', { hasText: 'Realizados hoy' }).locator('.lub-kpi-value')).toHaveText('0');
+  // "Realizados hoy" en 0 oculta su sección por completo (sin cambios,
+  // no es uno de los 3 acordeones) — el contador literalmente no existe.
+  await expect(page.locator('.lub-realizados-count')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -463,7 +493,7 @@ for (const count of [1, 2, 3, 5]) {
     await expect(chip).toContainText(count >= 3 ? count + ' ubicaciones' : locs.map(l => l.name).join(' + '));
     await expect(chip).toHaveAttribute('title', locs.map(l => l.name).join(' + '));
     await expect(chip).toHaveAttribute('aria-label', 'Cobertura: ' + locs.map(l => l.name).join(' + '));
-    await expect(page.locator('.lub-welcome-card')).not.toContainText('APOYO');
+    await expect(page.locator('.lub-turno-header')).not.toContainText('APOYO');
     await expect(page.locator('#lub-change-crew')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (count === 5) await page.screenshot({ path: testInfo.outputPath('header-long-coverage.png'), fullPage: true });
@@ -476,7 +506,7 @@ test('UX change crew belongs to welcome context and invokes existing selection f
     setSelectedCrewId('lub', '76-08');
     await renderLubricadorHome();
   });
-  const btn = page.locator('.lub-welcome-card button#lub-change-crew');
+  const btn = page.locator('.lub-turno-header button#lub-change-crew');
   await expect(btn).toBeVisible();
   await expect(btn).not.toHaveClass(/link-btn/);
   expect((await btn.boundingBox()).height).toBeGreaterThanOrEqual(44);

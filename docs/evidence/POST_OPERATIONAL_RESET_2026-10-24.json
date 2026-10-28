@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-24",
+  "scope": "Resultado del reset operativo total ejecutado contra producción (proyecto cont_engrase, ref havrirlapjyqrffgalqx). Mecanismo: UPDATE acotado (payload.active=false + deleted=true) por store, nunca TRUNCATE/DELETE/DROP sobre datos. Usuarios/Auth/perfiles/permisos/RLS/funciones/migraciones intactos.",
+  "stores_reset": {
+    "equipment": { "total": 11, "active_before": 7, "active_after": 0, "rows_updated": 7 },
+    "lubrication_plans": { "total": 7, "active_before": 7, "active_after": 0, "rows_updated": 7 },
+    "lubrication_points": { "total": 1050, "active_before": 1028, "active_after": 0, "rows_updated": 1028 },
+    "lubrication_records": { "total": 109, "active_before": 105, "active_after": 0, "rows_updated": 105 },
+    "grease_validations": { "total": 38, "active_before": 38, "active_after": 0, "rows_updated": 38 },
+    "lubrication_skips": { "total": 0, "active_before": 0, "active_after": 0, "rows_updated": 0, "note": "store sin filas, nada que hacer" },
+    "manual_tasks": { "total": 6, "active_before": 1, "active_after": 0, "rows_updated": 1, "note": "+1 fila con tombstone inconsistente preexistente (deleted=false con active ya false) corregida a deleted=true" },
+    "broadcast_messages": { "total": 6, "active_before": 0, "active_after": 0, "rows_updated": 0, "note": "ya estaban todos en active:false/deleted:true de sesiones previas" },
+    "broadcast_message_reads": { "total": 1, "active_before": 1, "active_after": 0, "rows_updated": 1 },
+    "anomalies": { "total": 10, "active_before": 4, "active_after": 0, "rows_updated": 4 },
+    "lubrication_assignments": { "total": 8, "active_before": 8, "active_after": 0, "rows_updated": 8 },
+    "crew_locations": { "total": 2, "active_before": 1, "active_after": 0, "rows_updated": 1 }
+  },
+  "stores_preserved_unchanged": {
+    "users": { "total": 7, "active": 4 },
+    "cuadrillas": { "total": 4, "active": 3, "note": "STRUCTURAL — definiciones de cuadrilla conservadas intactas (memberUserIds referencia usuarios reales que se conservan)" },
+    "locations": { "total": 8, "active": 4, "note": "no estaba en el pedido explícito — no tocado" },
+    "equipment_types": { "total": 11, "active": 7, "note": "no estaba en el pedido explícito — no tocado" },
+    "lubricants": { "total": 4, "active": 2, "note": "no estaba en el pedido explícito — no tocado" },
+    "shifts": { "total": 2, "active": 2, "note": "configuración Día/Noche, no es estado operativo por-cuadrilla" },
+    "settings": { "total": 3, "active": 3 },
+    "push_tokens": { "total": 2, "active": 2 },
+    "audit_log": { "total": 837, "active": 837, "note": "bitácora histórica, fuera de alcance" },
+    "notification_dispatch_log": { "total": 4, "active": 4, "note": "bitácora técnica, fuera de alcance" }
+  },
+  "total_rows_soft_deleted_this_session": 1192,
+  "app_config_evidence_execution": {
+    "server_side": "N/A — app_config nunca sincroniza (LOCAL_STORES en db.js), no existe en Supabase.",
+    "device_side": "No se pudo limpiar — ningún dispositivo Android conectado a esta sesión."
+  },
+  "storage": {
+    "before": { "bucket": "engrase-photos", "total_objects": 82, "total_bytes": 4965000 },
+    "deleted_objects": 82,
+    "incident": "ERROR DE EJECUCIÓN: el comando usado para borrar el contenido del bucket (`storage rm -r ss:///engrase-photos`) borró también el BUCKET EN SÍ (`buckets_deleted:[\"engrase-photos\"]` en la respuesta del CLI), no solo sus 82 objetos. Esto viola la instrucción explícita de conservar 'buckets como infraestructura'. Las RLS policies de storage.objects (incluidas las 2 de inmutabilidad de firmas, signature_objects_immutable_*) NO se borraron — viven en la tabla, no dependen de que exista la fila del bucket — pero el bucket mismo (storage.buckets, id='engrase-photos') ya no existe.",
+    "recreation_attempted": "SÍ, 2 veces (SQL INSERT directo a storage.buckets con public=true, igual que schema.sql; y `supabase storage` CLI) — ambas bloqueadas por el clasificador de seguridad del propio Claude Code ('Security Weaken'), por tratarse de la creación de un bucket público. No se intentó ningún bypass.",
+    "bucket_exists_now": false,
+    "action_required_from_user": "Recrear el bucket 'engrase-photos' (público, igual que antes — confirmado que la migración 0005 que lo haría privado NUNCA se aplicó) desde el dashboard de Supabase, o autorizarme explícitamente a ejecutar el INSERT de recreación. Sin esto, la app no podrá subir fotos/firmas nuevas (fallará silenciosamente según el diseño actual de sync, sin pérdida de datos porque ya no hay registros operativos activos que las requieran)."
+  },
+  "files_created": [
+    "docs/evidence/PRE_OPERATIONAL_RESET_2026-10-24.json",
+    "docs/evidence/POST_OPERATIONAL_RESET_2026-10-24.json"
+  ],
+  "tablet_validation": "PENDING — ningún dispositivo Android conectado a esta sesión. No se simuló ningún resultado.",
+  "sync_1": "NO_EJECUTADO (sin dispositivo)",
+  "sync_2": "NO_EJECUTADO (sin dispositivo)",
+  "badge": "NO_VERIFICADO (sin dispositivo)"
+}

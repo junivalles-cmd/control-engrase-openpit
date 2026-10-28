@@ -1,3 +1,7 @@
+# HISTORICAL / DEPRECATED — snapshot de pre-cutover del 2026-09-26.
+# No usar como runbook: documenta deliberadamente auth legacy, policy abierta
+# y Storage público antes de las migraciones posteriores.
+
 # PRE-CUTOVER Auth/RLS aplicado en producción — 2026-09-26
 
 Autorización explícita del usuario, alcance exacto:
@@ -223,3 +227,7 @@ Todos los intentos de escritura de estas pruebas terminaron en
 explícita antes de ejecutarse). Junior Valles es el primer y único
 administrador Auth real de producción. `AUTH_MODE` sigue `'legacy'` —
 esto no activa ningún comportamiento nuevo en el cliente todavía.
+# HISTORICAL / DEPRECATED — snapshot de pre-cutover del 2026-09-26.
+# No usar como runbook: documenta deliberadamente auth legacy, policy abierta
+# y Storage público antes de las migraciones posteriores.
+

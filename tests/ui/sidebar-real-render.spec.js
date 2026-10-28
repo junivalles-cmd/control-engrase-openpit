@@ -14,9 +14,9 @@ test('real boot replaces the shell; each permitted sidebar route appears once af
     window.ic = () => '';
     window.__routes = [];
     window.navigate = route => window.__routes.push(route);
-    ${['updateTareasMensajesNavBadge', 'wireEvidenceImgFallbackOnce', 'refreshLocalNotifications', 'refreshAppBadge', 'startInactivityTracking',
-      'programarCierrePorFinDeTurno', 'updateConnBadge', 'wireShiftTimer', 'updateShiftBadge', 'confirmLogout',
-      'lockApp', 'confirmChangeUser', 'wireQuickFind', 'openQrScanner', 'handleQrDeepLink'].map(name => `window.${name} = () => {};`).join('\n')}
+    ${['updateTareasMensajesNavBadge', 'wireEvidenceImgFallbackOnce', 'refreshLocalNotifications', 'refreshAppBadge',
+      'updateConnBadge', 'wireShiftTimer', 'updateShiftBadge', 'confirmLogout',
+      'confirmChangeUser', 'wireQuickFind', 'openQrScanner', 'handleQrDeepLink'].map(name => `window.${name} = () => {};`).join('\n')}
     ${declarations}
     window.boot = boot;
     window.__allowed = MENU.filter(m => PERMISSIONS.ADMINISTRADOR.includes(m.id) && m.id !== 'usuarios').map(m => m.id);

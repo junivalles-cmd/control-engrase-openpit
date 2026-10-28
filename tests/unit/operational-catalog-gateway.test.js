@@ -34,6 +34,8 @@ describe('operational catalog gateway client queue', () => {
 
     const [operation, changes] = DB.putEvidenceOperation.mock.calls[0];
     expect(operation).toMatchObject({ id: 'op-1', actorId: 'u1', rpc, kind: 'CATALOG', targetStore, status: 'PENDING' });
+    expect(operation.originalRow).toEqual(before);
+    expect(operation.originalRow).not.toBe(before);
     expect(operation.params).not.toHaveProperty('payload');
     expect(operation.params).not.toHaveProperty('store');
     expect(changes[0]).toMatchObject({ store: targetStore, expected: 'v1', row: { id: 'x1' } });
