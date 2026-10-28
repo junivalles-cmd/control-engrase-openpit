@@ -13638,6 +13638,14 @@ async function renderUsuariosSupabase(c) {
   } catch (e) {
     const tbody = $('#usuarios-sb-tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
+    // BUG-AUTH-001: sin sesión válida (ni siquiera tras el intento de
+    // refresh dentro de Auth.manageUsers()), el botón queda deshabilitado
+    // en vez de clickeable-pero-sin-efecto — mismo criterio visual que el
+    // bloque offline de arriba, nunca un cierre de sesión automático.
+    if (e && e.message === 'AUTH_REQUIRED') {
+      const btn = $('#btn-new-user-sb');
+      if (btn) { btn.disabled = true; btn.title = 'Tu sesión expiró — vuelve a iniciar sesión.'; }
+    }
     return;
   }
 

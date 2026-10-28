@@ -335,6 +335,39 @@ const Auth = {
     return { ok: true, context, changed, firstSnapshot: !previous };
   },
 
+  // BUG-AUTH-001: renderAuthGateSupabase()/enterAppAsProfile() (app.js)
+  // construyen App.currentUser desde el snapshot cacheado en IndexedDB
+  // SIN verificar isAuthenticated() — así que la UI puede mostrarse
+  // completamente funcional (incl. el botón "Nuevo usuario") mientras el
+  // access token ya expiró de verdad (típicamente: la persona tardó en
+  // llenar el formulario). Antes de eso, manageUsers() solo miraba
+  // isAuthenticated() crudo y lanzaba AUTH_REQUIRED sin intentar nada —
+  // perdía una sesión perfectamente recuperable con su refresh token
+  // todavía vigente. Esta función intenta ESE refresh, una sola vez,
+  // antes de rendirse — nunca reemplaza la autorización real de rol
+  // (ADMINISTRADOR activo), que sigue siendo exclusiva del servidor
+  // (decideCallerAuthorization() en manage-users/index.ts): si el refresh
+  // funciona, la llamada sigue su curso normal y el servidor decide
+  // 200/403 igual que siempre.
+  // Nunca cierra sesión por un fallo de RED durante el intento (mismo
+  // criterio que restoreSession(): un backend inalcanzable no es lo mismo
+  // que una sesión inválida, y cerrar sesión por eso rompería trabajo
+  // offline en otras pantallas) — solo signOut() si el servidor rechaza
+  // EXPLÍCITAMENTE el refresh token (revocado/expirado de verdad).
+  async ensureFreshSession() {
+    if (this.isAuthenticated()) return true;
+    if (this._signingOut || !this._session || !this._session.refreshToken) return false;
+    if (!navigator.onLine) return false;
+    try {
+      await this._refreshSession();
+      await this.refreshProfile();
+      return this.isAuthenticated();
+    } catch (e) {
+      if (e && e.authRejected) await this.signOut();
+      return false;
+    }
+  },
+
   // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge
   // Function server-side (supabase/functions/manage-users), nunca habla
   // directo con auth.admin.* ni con service_role desde el cliente (esa
@@ -342,7 +375,8 @@ const Auth = {
   // propio de la sesión ya autenticada — la Edge Function es quien vuelve
   // a validar server-side que quien llama es ADMINISTRADOR activo, nunca
   // se confía en el rol local. Requiere red: sin sesión autenticada
-  // (offline o sesión no vigente) lanza sin intentar la llamada.
+  // (offline o sesión no vigente, ni siquiera tras intentar refrescarla
+  // vía ensureFreshSession()) lanza sin intentar la llamada.
   // FIX formulario "Agregar usuario". Auditoría: el wiring con la Edge
   // Function ya era correcto — el problema real era que esta función
   // lanzaba mensajes ya redactados a medias, mezclados con códigos crudos
@@ -353,7 +387,7 @@ const Auth = {
   // (app.js, función manageUsersErrorMessage), una sola vez, para las 4
   // pantallas que llaman esto en vez de repetir el mapeo en cada una.
   async manageUsers(action, payload = {}) {
-    if (!this.isAuthenticated()) {
+    if (!(await this.ensureFreshSession())) {
       throw new Error('AUTH_REQUIRED');
     }
     const cfg = await DB.getConfig();
