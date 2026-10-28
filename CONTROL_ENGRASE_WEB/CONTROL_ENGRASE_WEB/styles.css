@@ -1016,6 +1016,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .eq-anomaly-badge.critical { color: var(--red); background: rgba(229,72,77,0.14); }
 
+/* ---------------- Selector de vista Tarjetas/Tabla (Equipos) ----------------
+   Segmentado de dos .btn.btn-sm ya existentes (mismo tamaño/tap-target que el
+   resto de la toolbar) — solo se quita el espacio entre ambos y se resalta el
+   que está activo, igual criterio visual que .btn-accent. */
+.view-switch { display: inline-flex; }
+.view-switch-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.view-switch .view-switch-btn { border-radius: 0; }
+.view-switch .view-switch-btn:first-child { border-radius: 8px 0 0 8px; }
+.view-switch .view-switch-btn:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+.view-switch-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
 /* ---------------- Reasignación en lote de equipos ---------------- */
 .bulk-bar {
   display: flex; align-items: center; gap: 10px; background: var(--surface-2);

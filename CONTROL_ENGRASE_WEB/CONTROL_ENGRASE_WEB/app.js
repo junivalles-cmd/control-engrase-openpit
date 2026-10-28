@@ -6666,6 +6666,14 @@ async function renderEquipos() {
   let bulkMode = false;
   const selected = new Set();
 
+  // Vista Tarjetas/Tabla: preferencia local al dispositivo (igual patrón que
+  // los demás filtros persistidos en localStorage de este archivo). Tabla es
+  // solo una presentación distinta de LA MISMA colección ya filtrada — nunca
+  // una segunda fuente de datos ni de lógica de negocio.
+  const EQ_VIEW_KEY = 'engrase_equipos_view';
+  let viewMode = 'cards';
+  try { if (localStorage.getItem(EQ_VIEW_KEY) === 'table') viewMode = 'table'; } catch (e) { /* preferencia local opcional */ }
+
   // Índice de búsqueda por equipo: código, ahorrativo, marca/modelo, ubicación y sus
   // puntos de engrase configurados — así "grasera dañada" o "articulación" también encuentra el equipo.
   const searchIndex = new Map();
@@ -6680,6 +6688,10 @@ async function renderEquipos() {
     <div class="layout-wide">
     <div class="toolbar">
       <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
+      <div class="view-switch" id="eq-view-switch" role="group" aria-label="Vista de equipos">
+        <button type="button" class="btn btn-sm view-switch-btn" data-view="cards" aria-pressed="${viewMode === 'cards' ? 'true' : 'false'}">${ic("grid")}Tarjetas</button>
+        <button type="button" class="btn btn-sm view-switch-btn" data-view="table" aria-pressed="${viewMode === 'table' ? 'true' : 'false'}">${ic("matrix")}Tabla</button>
+      </div>
       ${canEdit ? `<button class="btn btn-accent" id="eq-new">${ic("plus")}Nuevo equipo</button>` : ''}
       ${canEdit ? `<button class="btn" id="eq-import">${ic("upload")}Importar desde Excel</button>` : ''}
       ${canEdit ? `<button class="btn" id="eq-bulk-toggle">${ic("edit")}Editar en lote</button>` : ''}
@@ -6693,17 +6705,37 @@ async function renderEquipos() {
       <button class="btn btn-sm" id="eq-bulk-cancel">Cancelar</button>
     </div>
     <div id="eq-recents"></div>
-    <div class="cards-grid" id="eq-list"></div>
+    <div class="cards-grid ${viewMode === 'table' ? 'hidden' : ''}" id="eq-list"></div>
+    <div class="panel ${viewMode === 'table' ? '' : 'hidden'}" id="eq-table-wrap">
+      <table class="data-table" id="eq-table">
+        <thead>
+          <tr>
+            <th>Código</th><th>Código interno</th><th>Equipo / Modelo</th><th>Tipo</th>
+            <th>Ubicación</th><th>Estado</th><th>Horómetro</th><th>Plan</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="eq-table-body"></tbody>
+      </table>
+    </div>
     </div>
   `;
   $('#eq-recents').innerHTML = await recentEquiposHTML();
   $$('.recents-chip', $('#eq-recents')).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.recentId)));
 
+  // Resumen corto del plan para la columna "Plan" de la vista Tabla — mismo
+  // criterio que ya usa renderPlan() (control por horas vs. por día/turno),
+  // ningún cálculo nuevo, solo el texto se arma distinto de las filas .eq-detail-row.
+  function planResumenCorto(plan) {
+    if (!plan) return 'Sin plan';
+    return plan.controlType === 'Día y turno de la semana' ? 'Día y turno' : `Cada ${fmt(plan.frequency)} h`;
+  }
+
   async function draw(filter = '') {
     const list = $('#eq-list');
+    const tbody = $('#eq-table-body');
     const f = filter.toLowerCase();
     const filtered = equipos.filter(e => !f || (searchIndex.get(e.id) || '').includes(f));
-    const withStatus = await computeAllStatuses(filtered);
+    const withStatus = await computeAllStatuses(filtered); // MISMA colección filtrada para tarjetas y tabla
     list.innerHTML = withStatus.map(({ e, s }) => `
       <div class="eq-card clickable ${bulkMode ? 'bulk-selectable' : ''} ${selected.has(e.id) ? 'bulk-selected' : ''}" data-id="${e.id}">
         <div class="eq-card-head">
@@ -6732,10 +6764,54 @@ async function renderEquipos() {
         }
       });
     });
+
+    // Tabla: mismas filas que las tarjetas (withStatus), solo presentación
+    // distinta — sin selección en lote aquí (eso sigue siendo exclusivo de
+    // Tarjetas, ver #eq-bulk-toggle más abajo).
+    tbody.innerHTML = withStatus.map(({ e, s }) => `
+      <tr class="eq-table-row" data-id="${e.id}">
+        <td class="mono">${e.shortCode ? esc(e.shortCode) : '—'}</td>
+        <td class="mono">${esc(e.code)}</td>
+        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td>${esc((types.find(t => t.id === e.typeId) || {}).name || '—')}</td>
+        <td>${esc((locations.find(l => l.id === e.locationId) || {}).name || '—')}</td>
+        <td><span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span></td>
+        <td class="mono">${fmt(e.hourmeter)} h</td>
+        <td>${esc(planResumenCorto(s.plan))}</td>
+        <td class="row-actions">
+          <button type="button" class="btn btn-sm eq-table-ver" data-id="${e.id}">Ver</button>
+          ${canEdit ? `<button type="button" class="btn btn-sm eq-table-edit" data-id="${e.id}">${ic("edit")}Editar</button>` : ''}
+        </td>
+      </tr>`).join('') || `<tr><td colspan="9" class="empty-state">Sin resultados.</td></tr>`;
+    makeTablesResponsive($('#eq-table-wrap'));
+
+    $$('.eq-table-row', tbody).forEach(row => {
+      row.addEventListener('click', (ev) => {
+        if (ev.target.closest('button')) return; // los botones de Acciones ya tienen su propio handler
+        openEquipmentDetail(row.dataset.id);
+      });
+    });
+    $$('.eq-table-ver', tbody).forEach(b => b.addEventListener('click', () => openEquipmentDetail(b.dataset.id)));
+    $$('.eq-table-edit', tbody).forEach(b => b.addEventListener('click', async () => {
+      const eq = equipos.find(x => x.id === b.dataset.id);
+      if (eq) openEquipmentForm(eq, types, locations);
+    }));
   }
   draw();
   $('#eq-search').addEventListener('input', (e) => draw(e.target.value));
   if (canEdit) $('#eq-new')?.addEventListener('click', () => openEquipmentForm(null, types, locations));
+
+  // Selector de vista Tarjetas/Tabla: alterna visibilidad entre #eq-list y
+  // #eq-table-wrap (ambos ya pintados por draw() con la misma colección) y
+  // persiste la preferencia localmente — nunca refetch ni segunda consulta.
+  function setViewMode(mode) {
+    viewMode = mode;
+    try { localStorage.setItem(EQ_VIEW_KEY, mode); } catch (e) { /* preferencia local opcional */ }
+    $('#eq-list').classList.toggle('hidden', mode !== 'cards');
+    $('#eq-table-wrap').classList.toggle('hidden', mode !== 'table');
+    $$('.view-switch-btn', $('#eq-view-switch')).forEach(b => b.setAttribute('aria-pressed', b.dataset.view === mode ? 'true' : 'false'));
+  }
+  $$('.view-switch-btn', $('#eq-view-switch')).forEach(b => b.addEventListener('click', () => setViewMode(b.dataset.view)));
 
   if (canEdit) {
     // S15 (auditoría pre-release 2026-10-21): imprimir el QR de TODOS los
@@ -6758,12 +6834,19 @@ async function renderEquipos() {
     $('#eq-bulk-toggle').addEventListener('click', () => {
       bulkMode = !bulkMode;
       selected.clear();
+      // Edición en lote solo existe en Tarjetas (checkboxes) — la Tabla no
+      // tiene esa UI, así que al activarla se vuelve a Tarjetas para que la
+      // selección sea visible. Nunca queda bulkMode=true con la tabla
+      // visible y sin forma de seleccionar nada.
+      if (bulkMode && viewMode !== 'cards') setViewMode('cards');
+      $$('.view-switch-btn[data-view="table"]', $('#eq-view-switch')).forEach(b => b.disabled = bulkMode);
       $('#eq-bulk-bar').classList.toggle('hidden', !bulkMode);
       $('#eq-bulk-count').textContent = '0 seleccionados';
       draw($('#eq-search').value);
     });
     $('#eq-bulk-cancel').addEventListener('click', () => {
       bulkMode = false; selected.clear();
+      $$('.view-switch-btn[data-view="table"]', $('#eq-view-switch')).forEach(b => b.disabled = false);
       $('#eq-bulk-bar').classList.add('hidden');
       draw($('#eq-search').value);
     });
@@ -8773,9 +8856,28 @@ async function openPlanForm(equipmentId, planId, lubricants) {
     openPointForm(plan.id, null, lubricants);
   });
 
-  $('#btn-copy-points')?.addEventListener('click', () => {
+  // Bug "Copiar puntos de engrase" intermitente (cerrado 2026-10-28): el
+  // síntoma real era que el botón a veces no abría NADA — ni el modal ni
+  // ningún error visible. openCopyPointsForm() hace 4 `await DB.allActive(...)`
+  // antes de su primer openModal()/alert(); sin este guard, un rechazo de
+  // cualquiera de esas promesas (IndexedDB transitoriamente cerrada, etc. —
+  // nunca se tocó esa capa, ver CLAUDE.md "no tocar Auth/RLS") quedaba como
+  // una promise rejection sin manejar: el clic no hacía absolutamente nada
+  // visible. `copiandoPuntos` evita además que un doble-click dispare dos
+  // cargas paralelas.
+  let copiandoPuntos = false;
+  $('#btn-copy-points')?.addEventListener('click', async () => {
     if (!plan) return;
-    openCopyPointsForm(plan, equipment, lubricants);
+    if (copiandoPuntos) return; // ya hay una apertura en curso (doble click)
+    copiandoPuntos = true;
+    try {
+      await openCopyPointsForm(plan, equipment, lubricants);
+    } catch (error) {
+      console.error('openCopyPointsForm', error);
+      showInAppToast('No se pudo abrir "Copiar puntos de otro equipo" — intenta de nuevo.');
+    } finally {
+      copiandoPuntos = false;
+    }
   });
 
   $$('.point-edit', document).forEach(b => b.addEventListener('click', () => openPointForm(plan.id, b.dataset.id, lubricants)));
