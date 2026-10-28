@@ -99,6 +99,13 @@ function isValidProfile(profile) {
   return !!profile && profile.active === true && AUTH_VALID_ROLES.includes(profile.role);
 }
 
+// TEMP DIAGNÓSTICO BUG-AUTH-001 — QUITAR una vez confirmada la causa real
+// (ver restoreSession()/ensureFreshSession()/manageUsers() más abajo).
+// NUNCA imprime tokens/JWT/passwords/keys — solo booleanos/estados cortos.
+function _authDebug(tag, fields) {
+  try { console.debug('[BUG-AUTH-001]', tag, fields); } catch (e) {}
+}
+
 const Auth = {
   _session: null, // { accessToken, refreshToken, expiresAt, authUserId } en memoria
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
@@ -202,25 +209,44 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
-    if (this._signingOut) return null;
+    if (this._signingOut) { _authDebug('restoreSession:exit', { branch: 'signingOut' }); return null; }
     const epoch = this._sessionEpoch;
     const session = await DB.getAuthTokens();
-    if (epoch !== this._sessionEpoch) return null;
-    if (!session) return null;
+    if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_1' }); return null; }
+    if (!session) {
+      _authDebug('restoreSession:exit', { branch: 'no_session_in_db', GET_SESSION_HAS_SESSION: false });
+      return null;
+    }
     this._session = session;
     const snapshot = await DB.getAuthProfileSnapshot();
-    if (epoch !== this._sessionEpoch) return null;
+    if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_2' }); return null; }
     this._profile = snapshot;
+    _authDebug('restoreSession:loaded', {
+      AUTH_CLIENT_READY: true,
+      GET_SESSION_HAS_SESSION: true,
+      HAS_ACCESS_TOKEN: !!this._session.accessToken,
+      HAS_REFRESH_TOKEN: !!this._session.refreshToken,
+      SESSION_EXPIRES_AT_PRESENT: !!this._session.expiresAt,
+      SESSION_EXPIRED: !!this._session.expiresAt && Date.now() >= this._session.expiresAt,
+      NETWORK_ONLINE: navigator.onLine,
+      PROFILE_FOUND: !!snapshot,
+      PROFILE_ACTIVE: snapshot ? snapshot.active : null,
+      PROFILE_ROLE: snapshot ? snapshot.role : null,
+      AUTH_USER_ID_PRESENT: !!this._session.authUserId,
+      PROFILE_AUTH_USER_ID_MATCH: !!(snapshot && snapshot.authUserId === this._session.authUserId),
+    });
     // A valid token and a separately persisted snapshot must belong to the
     // same Auth identity. A crash or account switch may never pair them.
     if (snapshot && snapshot.authUserId !== this._session.authUserId) {
       await this.signOut();
+      _authDebug('restoreSession:exit', { branch: 'authUserId_mismatch_signOut', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
       return null;
     }
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
       this._notify({ status: 'restored', profile: this._profile });
+      _authDebug('restoreSession:exit', { branch: 'stillValid_noRefreshNeeded', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
       return { user: this._profile, session: this._session };
     }
 
@@ -232,18 +258,25 @@ const Auth = {
       // es"), solo bloquea que sync.js intente escribir con un token que
       // el servidor va a rechazar.
       this._notify({ status: 'pending_validation', profile: this._profile });
+      _authDebug('restoreSession:exit', { branch: 'expired_offline_noRefreshAttempted', IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
       return { user: this._profile, session: this._session };
     }
 
+    _authDebug('restoreSession:refresh_attempt', { REFRESH_ATTEMPTED: true });
     try {
       await this._refreshSession();
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_after_refresh' }); return null; }
       await this.refreshProfile();
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_after_refreshProfile' }); return null; }
       this._notify({ status: 'restored', profile: this._profile });
+      _authDebug('restoreSession:exit', {
+        branch: 'refresh_success', REFRESH_SUCCESS: true,
+        PROFILE_FOUND: !!this._profile, PROFILE_ACTIVE: this._profile ? this._profile.active : null, PROFILE_ROLE: this._profile ? this._profile.role : null,
+        IS_AUTHENTICATED_AFTER: this.isAuthenticated(),
+      });
       return { user: this._profile, session: this._session };
     } catch (e) {
-      if (epoch !== this._sessionEpoch) return null;
+      if (epoch !== this._sessionEpoch) { _authDebug('restoreSession:exit', { branch: 'epoch_stale_in_catch' }); return null; }
       if (!e.authRejected && isNetworkFailure(e)) {
         // Backend no disponible ahora mismo (navigator.onLine=true no lo
         // garantiza — ver Bloque B, hallazgo real del piloto Android).
@@ -254,11 +287,13 @@ const Auth = {
         // sigue dando false con el token sin refrescar) si eso alcanza
         // para sincronizar — nunca sincroniza "a medias".
         this._notify({ status: 'pending_validation', profile: this._profile });
+        _authDebug('restoreSession:exit', { branch: 'refresh_network_failure', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, IS_AUTHENTICATED_AFTER: this.isAuthenticated() });
         return { user: this._profile, session: this._session };
       }
       // Rechazo REAL del servidor (refresh token inválido/revocado) -> ya
       // no hay sesión confiable; se limpia y se exige login real de nuevo
       // (nunca fallback a anon).
+      _authDebug('restoreSession:exit', { branch: 'refresh_rejected_signOut', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, authRejected: !!(e && e.authRejected) });
       await this.signOut();
       return null;
     }
@@ -355,15 +390,42 @@ const Auth = {
   // offline en otras pantallas) — solo signOut() si el servidor rechaza
   // EXPLÍCITAMENTE el refresh token (revocado/expirado de verdad).
   async ensureFreshSession() {
-    if (this.isAuthenticated()) return true;
-    if (this._signingOut || !this._session || !this._session.refreshToken) return false;
-    if (!navigator.onLine) return false;
+    const before = this.isAuthenticated();
+    _authDebug('ensureFreshSession:entry', {
+      IS_AUTHENTICATED_BEFORE: before,
+      GET_SESSION_HAS_SESSION: !!this._session,
+      HAS_ACCESS_TOKEN: !!(this._session && this._session.accessToken),
+      HAS_REFRESH_TOKEN: !!(this._session && this._session.refreshToken),
+      SESSION_EXPIRES_AT_PRESENT: !!(this._session && this._session.expiresAt),
+      SESSION_EXPIRED: !!(this._session && this._session.expiresAt && Date.now() >= this._session.expiresAt),
+      NETWORK_ONLINE: navigator.onLine,
+      PROFILE_FOUND: !!this._profile,
+      PROFILE_ACTIVE: this._profile ? this._profile.active : null,
+      PROFILE_ROLE: this._profile ? this._profile.role : null,
+    });
+    if (before) { _authDebug('ensureFreshSession:exit', { branch: 'already_authenticated', IS_AUTHENTICATED_AFTER: true }); return true; }
+    if (this._signingOut || !this._session || !this._session.refreshToken) {
+      _authDebug('ensureFreshSession:exit', { branch: 'no_refresh_token_or_signingOut', REFRESH_ATTEMPTED: false, IS_AUTHENTICATED_AFTER: false });
+      return false;
+    }
+    if (!navigator.onLine) {
+      _authDebug('ensureFreshSession:exit', { branch: 'offline', REFRESH_ATTEMPTED: false, IS_AUTHENTICATED_AFTER: false });
+      return false;
+    }
+    _authDebug('ensureFreshSession:refresh_attempt', { REFRESH_ATTEMPTED: true });
     try {
       await this._refreshSession();
       await this.refreshProfile();
-      return this.isAuthenticated();
+      const after = this.isAuthenticated();
+      _authDebug('ensureFreshSession:exit', {
+        branch: 'refresh_completed', REFRESH_SUCCESS: true,
+        PROFILE_FOUND: !!this._profile, PROFILE_ACTIVE: this._profile ? this._profile.active : null, PROFILE_ROLE: this._profile ? this._profile.role : null,
+        IS_AUTHENTICATED_AFTER: after,
+      });
+      return after;
     } catch (e) {
       if (e && e.authRejected) await this.signOut();
+      _authDebug('ensureFreshSession:exit', { branch: 'refresh_failed', REFRESH_SUCCESS: false, REFRESH_ERROR_CODE: e && e.message, authRejected: !!(e && e.authRejected), IS_AUTHENTICATED_AFTER: false });
       return false;
     }
   },
@@ -388,10 +450,15 @@ const Auth = {
   // pantallas que llaman esto en vez de repetir el mapeo en cada una.
   async manageUsers(action, payload = {}) {
     if (!(await this.ensureFreshSession())) {
+      _authDebug('manageUsers:blocked', { action, MANAGE_USERS_FETCH_REACHED: false, FAIL_POINT: 'ensureFreshSession_false' });
       throw new Error('AUTH_REQUIRED');
     }
     const cfg = await DB.getConfig();
-    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+    if (!cfg || !cfg.url || !cfg.anonKey) {
+      _authDebug('manageUsers:blocked', { action, MANAGE_USERS_FETCH_REACHED: false, FAIL_POINT: 'SYNC_NOT_CONFIGURED' });
+      throw new Error('SYNC_NOT_CONFIGURED');
+    }
+    _authDebug('manageUsers:fetch', { action, MANAGE_USERS_FETCH_REACHED: true });
     let resp;
     try {
       resp = await fetchWithTimeout(`${cfg.url}/functions/v1/manage-users`, {

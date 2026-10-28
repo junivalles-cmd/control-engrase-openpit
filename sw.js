@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v78'; // v78: BUG-AUTH-001 — fix de ensureFreshSession() en auth.js/app.js; sin esto, un SW ya instalado seguiría sirviendo el auth.js viejo desde caché pese al deploy.
+const CACHE = 'engrase-openpit-v79'; // v79: BUG-AUTH-001 — instrumentación TEMPORAL de diagnóstico (console.debug, sin tokens/secrets) en restoreSession()/ensureFreshSession()/manageUsers(); quitar cuando se confirme la causa real.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
