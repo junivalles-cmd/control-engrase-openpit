@@ -173,8 +173,12 @@ const Auth = {
     if (this._signingIn) throw new Error('SIGN_IN_IN_PROGRESS');
     this._signingIn = true;
     try {
+      const epochBefore = this._sessionEpoch;
       const epoch = ++this._sessionEpoch;
-      _epochDebug('SIGNIN_EPOCH_CHANGE', this._sessionEpoch, !!(this._session && this._session.authUserId));
+      _epochDebug('SIGNIN_EPOCH_CHANGE', this._sessionEpoch, !!(this._session && this._session.authUserId), {
+        EPOCH_BEFORE: epochBefore, EPOCH_AFTER: this._sessionEpoch,
+        CALLER_STACK: (new Error().stack || '').split('\n').slice(2, 5).map(s => s.trim()).join(' | '),
+      });
       const identifier = usernameToAuthIdentifier(username);
       const cfg = await DB.getConfig();
       if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
@@ -216,9 +220,14 @@ const Auth = {
   },
 
   async signOut() {
-    _epochDebug('SIGNOUT_CALLED', this._sessionEpoch, !!(this._session && this._session.authUserId));
+    const epochBefore = this._sessionEpoch;
+    _epochDebug('SIGNOUT_CALLED', this._sessionEpoch, !!(this._session && this._session.authUserId), {
+      EPOCH_BEFORE: epochBefore,
+      CALLER_STACK: (new Error().stack || '').split('\n').slice(2, 5).map(s => s.trim()).join(' | '),
+    });
     this._signingOut = true;
     ++this._sessionEpoch;
+    _epochDebug('SIGNOUT_EPOCH_CHANGE', this._sessionEpoch, false, { EPOCH_BEFORE: epochBefore, EPOCH_AFTER: this._sessionEpoch });
     this._session = null;
     this._profile = null;
     // Borra los DOS namespaces — nunca alcanza con limpiar uno solo:

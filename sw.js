@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v82'; // v82: BUG-AUTH-001 — instrumentación TEMPORAL de línea de tiempo de _sessionEpoch (SIGNIN_*/ENTER_APP/BOOT_START/AUTO_SYNC_START/FULLSYNC_CAPTURE_EPOCH/FULLSYNC_COMPARE_EPOCH/RESTORE_*/SIGNOUT_CALLED) para aislar quién muta el epoch durante boot() -> runAutoCycle('auto').
+const CACHE = 'engrase-openpit-v83'; // v83: BUG-AUTH-001 — instrumentación TEMPORAL afinada: EPOCH_BEFORE/EPOCH_AFTER/CALLER_STACK en los 2 únicos sitios reales que mutan _sessionEpoch (signIn/signOut, confirmado por grep exhaustivo de los 3 archivos), SYNC_ID/REASON/CYCLE_EPOCH_CAPTURED/CURRENT_EPOCH_AT_EACH_ASSERT en fullSync().
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',

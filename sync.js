@@ -1290,10 +1290,12 @@ const Sync = {
       // duplicar la condición ni cambiar su comportamiento.
       const assertEpochFresh = (checkpoint) => {
         const current = syncSessionEpoch();
-        _epochDebug('FULLSYNC_COMPARE_EPOCH', current, !!(Auth?.getSession?.()?.authUserId), { cycleEpoch, checkpoint, cycleId, reason });
+        _epochDebug('FULLSYNC_COMPARE_EPOCH', current, !!(Auth?.getSession?.()?.authUserId), {
+          SYNC_ID: cycleId, REASON: reason, CYCLE_EPOCH_CAPTURED: cycleEpoch, CURRENT_EPOCH_AT_EACH_ASSERT: current, checkpoint,
+        });
         if (cycleEpoch !== current) throw new Error('AUTH_REQUIRED');
       };
-      _epochDebug('FULLSYNC_CAPTURE_EPOCH', cycleEpoch, !!(Auth?.getSession?.()?.authUserId), { cycleId, reason });
+      _epochDebug('FULLSYNC_CAPTURE_EPOCH', cycleEpoch, !!(Auth?.getSession?.()?.authUserId), { SYNC_ID: cycleId, REASON: reason, CYCLE_EPOCH_CAPTURED: cycleEpoch });
       if (typeof Auth === 'undefined' || !Auth.isSupabaseMode()) throw new Error('AUTH_REQUIRED');
       if (Auth.isSupabaseMode()) {
         await Auth.restoreSession();
