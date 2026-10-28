@@ -58,23 +58,83 @@ async function weekdayStatusFor(equipment, plan, recordsList) {
   // reloj mal puesto, y darían por cumplido algo que todavía no ocurrió. La validación
   // del formulario no basta, porque estos registros también entran por sincronización.
   const ahora = Date.now() + 5 * 60 * 1000; // 5 min de tolerancia por desfases de reloj
-  const done = records.some(r => r.equipmentId === equipment.id &&
+  const dueKey=computeOccurrenceKey(plan,{dateISO:toISODateUTCLocal(lastDue)});
+  const done = records.some(r => (!r.operationalSnapshot?.assignedOccurrenceKey || (r.operationalSnapshot.assignedOccurrenceKey===dueKey && r.operationalSnapshot.satisfiedOccurrenceKey===dueKey)) && r.equipmentId === equipment.id &&
     new Date(r.date) >= lastDue && new Date(r.date).getTime() <= ahora);
   const isToday = lastDue.toDateString() === new Date().toDateString();
   if (done) return { code: 'VERDE', label: 'AL DÍA', remaining: null, plan, scheduleDate: lastDue };
+
+  // Fix 2026-10-09 ("REALIZADO ADELANTADO", §9/§10/§35/§36 del pedido):
+  // ningún record cae DESPUÉS de lastDue (el `done` de arriba), pero puede
+  // existir uno de HASTA 1 día antes cuyo
+  // operationalSnapshot.satisfiedOccurrenceKey ya certificó esta MISMA
+  // ocurrencia (resolveEarlyOccurrenceSatisfaction(), operational-scope.js,
+  // al guardar un COMPLETE — PLANNED, ASSIGNED u OUT_OF_PLAN, da igual
+  // cómo se ejecutó — ventana de 1 día, nunca más lejos. Fix 2026-10-09
+  // "FIX REALIZADO ADELANTADO + QR INTERNO": antes solo contaba si
+  // executionType era OUT_OF_PLAN).
+  // La Matriz (estadoCelda()) ya lo detecta así por su cuenta, con el
+  // MISMO criterio — esto es lo que le faltaba a este cálculo (Dashboard/
+  // Mi Turno/KPIs) para dejar de mostrarlo como pendiente. Reusa VERDE
+  // (ya es la regla de satisfacción real para Matriz/Cumplimiento, nunca
+  // una segunda regla) + `adelantado:true` para que Mi Turno lo separe en
+  // su propia sección informativa en vez de mezclarlo con "AL DÍA".
+  if (plan.id) {
+    const key = computeOccurrenceKey(plan, { dateISO: toISODateUTCLocal(lastDue) });
+    const satisfactorio = records.find(r => r.equipmentId === equipment.id &&
+      r.operationalSnapshot && r.operationalSnapshot.satisfiedOccurrenceKey === key);
+    if (satisfactorio) {
+      return {
+        code: 'VERDE', label: 'REALIZADO ADELANTADO', remaining: null, plan, scheduleDate: lastDue,
+        adelantado: true, satisfactorio,
+      };
+    }
+  }
+
   if (isToday) return { code: 'AMARILLO', label: 'PROGRAMADO HOY', remaining: null, plan, scheduleDate: lastDue };
   return { code: 'ROJO', label: 'VENCIDO', remaining: null, plan, scheduleDate: lastDue };
 }
 
 // plansList / recordsList son opcionales: si se pasan (precargados una sola vez para
 // varios equipos a la vez), evitamos volver a leer toda la tabla en cada llamada.
-async function statusFor(equipment, plansList, recordsList) {
+function dualShiftStatusFor(equipment, plan, records, { shiftId, now, settings } = {}) {
+  const currentShift = shiftId || currentShiftId();
+  const at = now || new Date();
+  const shiftSettings = settings || App.generalSettings;
+  const operationalDate = operationalDateForShift(at, currentShift, shiftSettings);
+  if (!plan.effectiveDate || operationalDate < plan.effectiveDate) return null;
+  const occurrenceKey = computeOccurrenceKey(plan, { dateISO: operationalDate, shiftId: currentShift });
+  const matches = record => {
+    if (record.active === false || record.equipmentId !== equipment.id || (record.planId && record.planId !== plan.id)) return false;
+    const snap = record.operationalSnapshot || {};
+    const key = snap.assignedOccurrenceKey || snap.satisfiedOccurrenceKey || snap.occurrenceKey;
+    return key ? key === occurrenceKey : record.shiftId === currentShift && snap.operationalDate === operationalDate;
+  };
+  const completed = (records || []).find(record => matches(record)
+    && record.operationalSnapshot?.executionCompleteness !== 'PARTIAL'
+    && computeExecutionCompleteness(record.details) === EXECUTION_COMPLETENESS.COMPLETE
+    && Number(record.qty) > 0);
+  if (completed) return { code: 'VERDE', label: `REALIZADO TURNO ${currentShift === 'shift_dia' ? 'DÍA' : 'NOCHE'}`,
+    remaining: null, plan, scheduleDate: new Date(`${operationalDate}T12:00:00`), shiftId: currentShift, occurrenceKey, record: completed };
+  const partial = (records || []).find(record => matches(record)
+    && computeExecutionCompleteness(record.details) !== EXECUTION_COMPLETENESS.COMPLETE);
+  return { code: 'AMARILLO', label: partial ? `PARCIAL · TURNO ${currentShift === 'shift_dia' ? 'DÍA' : 'NOCHE'}` : `PENDIENTE TURNO ${currentShift === 'shift_dia' ? 'DÍA' : 'NOCHE'}`,
+    remaining: null, plan, scheduleDate: new Date(`${operationalDate}T12:00:00`), shiftId: currentShift, occurrenceKey, partial: partial || null };
+}
+
+async function statusFor(equipment, plansList, recordsList, occurrenceContext) {
   if (equipment.status !== 'Operativo') {
     return { code: 'GRIS', label: 'DETENIDO', remaining: null };
   }
   const plans = plansList || await DB.allActive('lubrication_plans');
   const plan = plans.find(p => p.equipmentId === equipment.id);
   if (!plan) return { code: 'GRIS', label: 'SIN PLAN', remaining: null };
+
+  if (Array.isArray(plan.requiredShifts) && ['shift_dia','shift_noche'].every(id => plan.requiredShifts.includes(id))) {
+    const records = recordsList || await DB.allActive('lubrication_records');
+    const dualStatus = dualShiftStatusFor(equipment, plan, records, occurrenceContext);
+    if (dualStatus) return dualStatus;
+  }
 
   if (plan.controlType === 'Día y turno de la semana') {
     return await weekdayStatusFor(equipment, plan, recordsList);

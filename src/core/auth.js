@@ -1,12 +1,12 @@
 /* ============================================================
    CONTROL DE ENGRASE - OPEN PIT — src/core/auth.js
-   P0-2 Etapa B1 — capa cliente de Supabase Auth, DETRÁS de un feature
-   flag desactivado por defecto (AUTH_MODE = 'legacy'). Mientras el flag
-   siga en 'legacy', NADA de este archivo cambia el comportamiento actual
-   de la app — el login PIN sigue siendo la única autoridad real (ver
-   app.js, renderLogin()). Este módulo es la base para activar
-   AUTH_MODE = 'supabase' en una etapa posterior — ver
-   docs/AUTH_RLS_MIGRATION_DESIGN.md / docs/AUTH_RLS_IMPLEMENTATION_PLAN.md.
+   P0-2 Etapa B1 — capa cliente de Supabase Auth, detrás de un feature
+   flag (AUTH_MODE). AUTH_MODE = 'supabase' es el default real y
+   definitivo ya committeado (ver la constante más abajo) — el login PIN
+   legacy (app.js, renderLogin()) ya no es un flujo normal mientras este
+   flag esté en 'supabase'. Este módulo sigue siendo la base del diseño
+   documentado en docs/AUTH_RLS_MIGRATION_DESIGN.md /
+   docs/AUTH_RLS_IMPLEMENTATION_PLAN.md.
 
    Diseño: SIN @supabase/supabase-js (mismo criterio que sync.js: fetch
    crudo contra los endpoints REST de Supabase, sin SDK) — llama
@@ -102,6 +102,9 @@ function isValidProfile(profile) {
 const Auth = {
   _session: null, // { accessToken, refreshToken, expiresAt, authUserId } en memoria
   _profile: null, // { authUserId, appUserId, displayName, role, active } en memoria
+  _sessionEpoch: 0,
+  _signingOut: false,
+  getSessionEpoch() { return this._sessionEpoch; },
   listeners: [],
 
   getMode() { return AUTH_MODE; },
@@ -122,6 +125,7 @@ const Auth = {
   //     restoreSession()) se cumple exactamente por esto.
   isAuthenticated() {
     return !!(
+      !this._signingOut &&
       this._session && this._session.accessToken &&
       this._session.expiresAt && Date.now() < this._session.expiresAt &&
       isValidProfile(this._profile)
@@ -135,6 +139,8 @@ const Auth = {
   // AUTH_MODE='supabase' (la UI legacy nunca la invoca). Usa la ANON key
   // ya configurada (igual que el resto de la app) — nunca service_role.
   async signIn(username, password) {
+    if (this._signingOut) throw new Error('AUTH_REQUIRED');
+    const epoch = ++this._sessionEpoch;
     const identifier = usernameToAuthIdentifier(username);
     const cfg = await DB.getConfig();
     if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('Sincronización no configurada.');
@@ -148,6 +154,7 @@ const Auth = {
       throw new Error('Usuario o contraseña incorrectos.');
     }
     const data = await resp.json();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     this._session = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
@@ -156,6 +163,7 @@ const Auth = {
     };
 
     const profile = await this._fetchProfile(cfg);
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     if (!isValidProfile(profile)) {
       // Sesión Auth válida pero sin perfil usable (§6: sin fila, inactivo,
       // o rol inválido) -> se niega el acceso a la app y se limpia TODO —
@@ -170,6 +178,8 @@ const Auth = {
   },
 
   async signOut() {
+    this._signingOut = true;
+    ++this._sessionEpoch;
     this._session = null;
     this._profile = null;
     // Borra los DOS namespaces — nunca alcanza con limpiar uno solo:
@@ -177,6 +187,7 @@ const Auth = {
     // siendo Junior Valles" en pantalla sin ninguna sesión real detrás.
     await DB.setAuthTokens(null);
     await DB.setAuthProfileSnapshot(null);
+    this._signingOut = false;
     this._notify({ status: 'signed_out' });
   },
 
@@ -191,10 +202,21 @@ const Auth = {
   //     'pending_validation' — isAuthenticated() sigue dependiendo del
   //     perfil ya cacheado, sync.js decide aparte si permite escribir.
   async restoreSession() {
+    if (this._signingOut) return null;
+    const epoch = this._sessionEpoch;
     const session = await DB.getAuthTokens();
+    if (epoch !== this._sessionEpoch) return null;
     if (!session) return null;
     this._session = session;
-    this._profile = await DB.getAuthProfileSnapshot();
+    const snapshot = await DB.getAuthProfileSnapshot();
+    if (epoch !== this._sessionEpoch) return null;
+    this._profile = snapshot;
+    // A valid token and a separately persisted snapshot must belong to the
+    // same Auth identity. A crash or account switch may never pair them.
+    if (snapshot && snapshot.authUserId !== this._session.authUserId) {
+      await this.signOut();
+      return null;
+    }
 
     const stillValid = this._session.expiresAt && Date.now() < this._session.expiresAt;
     if (stillValid) {
@@ -215,10 +237,13 @@ const Auth = {
 
     try {
       await this._refreshSession();
+      if (epoch !== this._sessionEpoch) return null;
       await this.refreshProfile();
+      if (epoch !== this._sessionEpoch) return null;
       this._notify({ status: 'restored', profile: this._profile });
       return { user: this._profile, session: this._session };
     } catch (e) {
+      if (epoch !== this._sessionEpoch) return null;
       if (!e.authRejected && isNetworkFailure(e)) {
         // Backend no disponible ahora mismo (navigator.onLine=true no lo
         // garantiza — ver Bloque B, hallazgo real del piloto Android).
@@ -245,9 +270,11 @@ const Auth = {
   // rol/estado hecho desde OTRO dispositivo tome efecto de inmediato en
   // vez de seguir confiando en el snapshot local viejo.
   async refreshProfile() {
+    const epoch = this._sessionEpoch;
     const cfg = await DB.getConfig();
     try {
       const profile = await this._fetchProfile(cfg);
+      if (epoch !== this._sessionEpoch) return null;
       this._profile = profile; // puede quedar null/inactivo -> isAuthenticated() pasa a false
       await this._persistState();
       return this._profile;
@@ -259,6 +286,53 @@ const Auth = {
       if (isNetworkFailure(e)) return this._profile;
       throw e;
     }
+  },
+
+  // Server-issued scope snapshot. Called by Sync before any push or pull;
+  // until Phase 2D-2 installs row-scoped RLS, this deliberately keeps sync
+  // disabled even when the identity itself is valid.
+  async refreshAuthorizationContext() {
+    if (!this.isAuthenticated()) return { ok: false, reason: 'AUTH_REQUIRED' };
+    const epoch = this._sessionEpoch;
+    const profile = this._profile;
+    const cfg = await DB.getConfig();
+    const previous = await DB.getAuthorizationContext?.(profile.appUserId) || null;
+    let response;
+    try {
+      response = await fetchWithTimeout(`${cfg.url}/rest/v1/rpc/get_authorization_context`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: '{}'
+      });
+    } catch (error) {
+      if (isNetworkFailure(error)) return { ok: false, reason: 'OFFLINE', context: previous };
+      throw error;
+    }
+    if (epoch !== this._sessionEpoch) return { ok: false, reason: 'AUTH_REQUIRED' };
+    if (classifyAuthStatus(response.status)) return { ok: false, reason: 'AUTH_REQUIRED' };
+    if (!response.ok) return { ok: false, reason: 'AUTHORIZATION_BOOTSTRAP_UNAVAILABLE' };
+    const result = await response.json().catch(() => null);
+    if (!result || result.status !== 'AUTHORIZED' || !result.context) {
+      await this.signOut();
+      return { ok: false, reason: (result && result.code) || 'AUTHORIZATION_DENIED' };
+    }
+    const context = result.context;
+    if (context.authUserId !== this._session.authUserId ||
+        typeof context.appUserId !== 'string' || !context.appUserId ||
+        !isValidProfile({ role: context.role, active: context.active }) ||
+        typeof context.authorizationFingerprint !== 'string') {
+      await this.signOut();
+      return { ok: false, reason: 'AUTHORIZATION_CONTEXT_MISMATCH' };
+    }
+    const changed = !!previous && previous.authorizationFingerprint !== context.authorizationFingerprint;
+    await DB.setAuthorizationContext?.(context.appUserId, context);
+    this._profile = { ...profile, ...context };
+    await this._persistState();
+    return { ok: true, context, changed, firstSnapshot: !previous };
   },
 
   // Administración de usuarios reales (P0-2) — SIEMPRE pasa por la Edge
@@ -310,6 +384,115 @@ const Auth = {
     return data;
   },
 
+  // Autoservicio "Mi Perfil" (lote del mismo nombre) — cambia la propia
+  // contraseña. Primero RE-VERIFICA la contraseña actual repitiendo el
+  // mismo grant_type=password que signIn() (nunca se asume que basta con
+  // tener una sesión ya abierta, que puede llevar horas vigente) — esa
+  // verificación NUNCA reemplaza this._session (solo confirma que la
+  // persona conoce la contraseña vigente). Después aplica la nueva con
+  // PUT /auth/v1/user (autoservicio real de GoTrue contra el access token
+  // YA autenticado) — nunca admin API, nunca service_role. La contraseña
+  // (actual o nueva) nunca se guarda ni se loggea en ningún punto de este
+  // método ni de quien lo llama.
+  async changeOwnPassword(currentPassword, newPassword) {
+    if (!this.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      throw new Error('WEAK_PASSWORD');
+    }
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+
+    // username es la ÚNICA cosa que identifica a la persona ante GoTrue
+    // (ver usernameToAuthIdentifier()) y no se guarda aparte en el
+    // perfil — se deriva de appUserId siguiendo la MISMA convención
+    // aplicada al crearlo (appUserIdFromUsername() en manage-users:
+    // `u_${username}`), nunca inventada aquí.
+    const username = (this._profile && this._profile.appUserId || '').replace(/^u_/, '');
+    let identifier;
+    try {
+      identifier = usernameToAuthIdentifier(username);
+    } catch (e) {
+      throw new Error('PROFILE_INVALID');
+    }
+
+    let verifyResp;
+    try {
+      verifyResp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey },
+        body: JSON.stringify({ email: identifier, password: currentPassword })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    if (!verifyResp.ok) throw new Error('CURRENT_PASSWORD_INVALID');
+
+    let updateResp;
+    try {
+      updateResp = await fetchWithTimeout(`${cfg.url}/auth/v1/user`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    if (!updateResp.ok) throw new Error('UPDATE_FAILED');
+    return true;
+  },
+
+  // Autoservicio "Mi Perfil" — cambia el PROPIO nombre visible
+  // (display_name). app_profiles bloquea por RLS cualquier auto-UPDATE
+  // directo vía PostgREST, incluso para un admin sobre su propia fila
+  // (ver supabase/migrations/0002_auth_profiles_rls_PREPARED.sql, policy
+  // "app_profiles: admin edita otros": `auth.uid() <> auth_user_id` —
+  // evita auto-ascenso/auto-sabotaje) — por eso esto llama a una Edge
+  // Function server-side NUEVA Y ACOTADA (update-own-profile, DESPLEGADA y
+  // ACTIVE en producción — ver supabase/functions/update-own-profile/),
+  // nunca a manage-users (ese exige ADMINISTRADOR para TODAS sus
+  // acciones, ver decideCallerAuthorization() — nunca se debilita ese
+  // gate para colar autoservicio ahí). Mismo patrón que manageUsers():
+  // SOLO anon key + JWT propio, nunca service_role desde el cliente.
+  async updateOwnDisplayName(newDisplayName) {
+    if (!this.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+    const trimmed = typeof newDisplayName === 'string' ? newDisplayName.trim() : '';
+    if (!trimmed) throw new Error('EMPTY_NAME');
+    if (trimmed.length > 80) throw new Error('NAME_TOO_LONG');
+    const cfg = await DB.getConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('SYNC_NOT_CONFIGURED');
+
+    let resp;
+    try {
+      resp = await fetchWithTimeout(`${cfg.url}/functions/v1/update-own-profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+          Authorization: `Bearer ${this._session.accessToken}`
+        },
+        body: JSON.stringify({ display_name: trimmed })
+      });
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw new Error('TIMEOUT');
+      throw new Error('NETWORK');
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error((data && data.error) || `HTTP_${resp.status}`);
+
+    // Refleja el cambio de inmediato en el perfil cacheado localmente — el
+    // servidor ya confirmó que se guardó, no hace falta esperar al próximo
+    // refreshProfile() para que la UI muestre el nombre nuevo.
+    this._profile = { ...this._profile, displayName: trimmed };
+    await this._persistState();
+    return true;
+  },
+
   async _fetchProfile(cfg) {
     if (!this._session || !this._session.accessToken) return null;
     try {
@@ -337,7 +520,9 @@ const Auth = {
   },
 
   async _refreshSession() {
+    const epoch = this._sessionEpoch;
     const cfg = await DB.getConfig();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     if (!this._session || !this._session.refreshToken) throw new Error('Sin refresh token.');
     const resp = await fetchWithTimeout(`${cfg.url}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
@@ -353,6 +538,7 @@ const Auth = {
       throw err;
     }
     const data = await resp.json();
+    if (epoch !== this._sessionEpoch) throw new Error('AUTH_REQUIRED');
     this._session = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,

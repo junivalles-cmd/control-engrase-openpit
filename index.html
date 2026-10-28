@@ -5,15 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>Control de Engrase · Open Pit</title>
 <meta name="theme-color" content="#14171A"/>
+<!-- Aplica el tema guardado ANTES de que el navegador pinte, para evitar el
+     parpadeo oscuro→claro (auditoría UI/UX 2026-10-08, hallazgo #2): mismo
+     default (accent azul-corp/mode light, paleta corporativa final
+     2026-10-09) y misma clave de localStorage que getTheme()/applyTheme()
+     en app.js — app.js sigue siendo la única fuente de la lógica de
+     preferencias (lee/guarda), esto solo repite la LECTURA para el primer
+     pintado, porque app.js es el último script en cargar. -->
+<script>
+(function () {
+  try {
+    var t = Object.assign({ accent: 'azul-corp', mode: 'light' }, JSON.parse(localStorage.getItem('engrase_theme')) || {});
+    var aliases = { blue: 'azul-corp', green: 'verde-bosque', red: 'amarillo-cat', teal: 'petroleo-ejec', amber: 'cobre-ejec', petroleo: 'petroleo-ejec', purpura: 'violeta-ejec', ladrillo: 'amarillo-cat', cobre: 'cobre-ejec', graphite: 'grafito', acero: 'azul-acero', cian: 'azul-acero' };
+    t.accent = aliases[t.accent] || t.accent;
+    if (['azul-corp','verde-bosque','cobre-ejec','azul-acero','violeta-ejec','petroleo-ejec','amarillo-cat','grafito'].indexOf(t.accent) < 0) t.accent = 'azul-corp';
+    if (['contrast','high-contrast','high_contrast'].indexOf(t.mode) >= 0) t.mode = 'sun';
+    if (['light','dark','sun'].indexOf(t.mode) < 0) t.mode = 'light';
+    document.documentElement.setAttribute('data-theme', t.accent);
+    document.documentElement.setAttribute('data-mode', t.mode);
+    var bg = t.mode === 'light' ? '#F4F6F8' : t.mode === 'sun' ? '#FFFFFF' : '#14171A';
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', bg);
+  } catch (e) {}
+})();
+</script>
 <link rel="manifest" href="./manifest.json"/>
 <link rel="icon" href="./favicon.png" type="image/png"/>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png"/>
+<link rel="apple-touch-icon" href="./apple-touch-icon.png"/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<!-- jsQR/qrcode-generator (lote QR offline + lote "QR license fix") —
+     vendorizadas localmente en vez de CDN, para que el escáner/generador de
+     QR funcione incluso en el primer arranque sin Internet. qrcode-generator
+     (MIT) reemplaza a QRious (GPL-3.0, eliminada del proyecto) como
+     generador — mismo formato QR, mismos deep links, ver vendor/LICENSES.md. -->
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsqr.js"></script>
 <!-- El SDK Web de OneSignal (notificaciones push en el NAVEGADOR, que lleguen
      aunque la pestaña esté cerrada) YA NO se carga aquí de forma incondicional.
      app.js -> initWebPush() lo inyecta dinámicamente solo cuando corresponde
@@ -29,9 +58,6 @@
      Auth.isAuthenticated() (P0-2 Etapa B1, inerte mientras AUTH_MODE sea
      'legacy' — ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md). -->
 <script src="src/core/auth.js"></script>
-<!-- Quick unlock offline (P0-2) — depende de DB (db.js) y de nowISO(),
-     independiente de sync.js/Auth en sí, ver src/core/quick-unlock.js. -->
-<script src="src/core/quick-unlock.js"></script>
 <script src="sync.js"></script>
 <!-- Núcleo de lógica extraído de app.js (turnos, horómetro, estado de
      engrase, criticidad de anomalías) — ver docs/MODULARIZATION.md.
@@ -51,6 +77,23 @@
 <!-- Arquitectura de notificaciones (usuario+turno+disponibilidad+scope,
      lote 2026-09-30) — puro, mismo patrón que operational-scope.js. -->
 <script src="src/core/notification-routing.js"></script>
+<!-- Snapshot mínimo para el widget de Android (lote "WIDGET ANDROID",
+     2026-10-09) — puro, mismo patrón que operational-scope.js. Solo se
+     usa de verdad dentro de la app Android/Capacitor (ver isNative() en
+     app.js); en la versión web no hace nada. -->
+<script src="src/core/widget-snapshot.js"></script>
+<!-- Panel de notificaciones/tareas (cierre bloque, 2026-10-18) — puro,
+     mismo patrón que operational-scope.js/weekly-matrix.js. DESPUÉS de
+     grease-validation.js/operational-scope.js: usa sus funciones
+     (isRecordPendingValidation()/isRecordValidationExpired()/
+     parseOccurrenceKeyDate()) ya cargadas como globales, nunca las
+     reimplementa. -->
+<script src="src/core/tasks-notifications-panel.js"></script>
+<script src="src/core/lubricador-notifications.js"></script>
+<!-- LOTE A2 "GATE SEGURO DE DATOS MAESTROS" (2026-10-25) — valida cada fila
+     de importación de equipment/lubrication_points/lubrication_plans ANTES
+     de escribir nada; puro, mismo patrón que operational-scope.js. -->
+<script src="src/core/master-data-import-gate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

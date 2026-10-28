@@ -7,8 +7,29 @@
   --border: #333A40;
   --text: #E9E7E1;
   --text-dim: #9BA3AA;
-  --accent: #F2A900;
-  --accent-dark: #C98A00;
+  --accent: #185ABD;
+  --accent-dark: #123E82;
+  --accent-soft: #EAF2FD;
+  /* Color de texto/ícono SOBRE var(--accent) (botones .btn-accent, tabs
+     activos, chips activos) — depende de si el acento es claro u oscuro.
+     Default = el mismo café-oscuro ya usado para el ámbar (contraste
+     9:1+); cada preset de acento (ver más abajo) lo sobreescribe cuando
+     su color es oscuro, porque el café fallaría WCAG AA sobre un fondo
+     oscuro. */
+  --on-accent: #FFFFFF;
+  /* Biblioteca de temas (rediseño visual 2026-10-08, "ampliar opciones de
+     color"): --focus/--muted/--background/--surface-alt son ALIAS vivos de
+     tokens ya existentes (--accent/--text-dim/--bg/--surface-2) — se
+     agregan con el nombre pedido para la biblioteca de presets SIN
+     renombrar ninguno de los ~100 usos ya existentes de los nombres
+     originales en este archivo (cero riesgo de regresión). Al ser
+     `var(...)`, se recalculan solos con cada preset — nunca hace falta
+     redeclararlos en cada [data-theme]/[data-mode] de abajo. */
+  --focus: var(--accent-ink);
+  --accent-ink: color-mix(in srgb, var(--accent) 45%, #FFFFFF);
+  --muted: var(--text-dim);
+  --background: var(--bg);
+  --surface-alt: var(--surface-2);
   --green: #3FB950;
   --amber: #E8A33D;
   --red: #E5484D;
@@ -46,21 +67,100 @@
   --tap: 44px;
 }
 
-/* ---------------- Paletas de color de acento (elegibles por el usuario) ---------------- */
-[data-theme="amber"]    { --accent: #F2A900; --accent-dark: #C98A00; }
-[data-theme="blue"]     { --accent: #3B82F6; --accent-dark: #1D4ED8; }
-[data-theme="green"]    { --accent: #22C55E; --accent-dark: #15803D; }
-[data-theme="red"]      { --accent: #EF4444; --accent-dark: #B91C1C; }
-[data-theme="graphite"] { --accent: #9CA3AF; --accent-dark: #6B7280; }
+/* Lubricador: operational messages live in a lazy right-hand sheet. */
+.lub-notification-bell { position: relative; flex: 0 0 44px; min-width: 44px; min-height: 44px; }
+.lub-notification-bell svg { display: block; }
+.lub-topbar #conn-badge { min-width: 44px; min-height: 44px; }
+.lub-notification-count {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  min-width: 20px;
+  padding: 2px 4px;
+  border-radius: 10px;
+  background: var(--amber);
+  color: #14171A;
+  font: 700 11px/16px var(--font-body);
+  text-align: center;
+}
+.lub-notification-sheet {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  padding: 0;
+  width: min(440px, 100%);
+  max-width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.lub-notification-sheet[open] { display: flex; flex-direction: column; }
+.lub-notification-sheet::backdrop { background: rgb(0 0 0 / 40%); }
+body:has(.lub-notification-sheet[open]) { overflow: hidden; }
+.lub-notification-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 2px solid var(--accent); }
+.lub-notification-header h2 { margin: 0; font-size: 20px; }
+.lub-notification-header .icon-btn { min-width: var(--tap); min-height: var(--tap); }
+.lub-notification-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px; }
+.lub-notification-item { padding: 14px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.lub-notification-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--text-dim); font-size: 12px; }
+.lub-notification-priority { --c: var(--gray-status); }
+.lub-notification-priority[data-priority="IMPORTANTE"] { --c: var(--amber); }
+.lub-notification-priority[data-priority="CRITICA"] { --c: var(--red); }
+.lub-notification-message { display: flex; flex-direction: column; gap: 6px; width: 100%; min-height: 44px; padding: 10px 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.lub-notification-message span { white-space: pre-wrap; }
+.lub-notification-item > .btn { min-height: 44px; margin-top: 10px; }
+.lub-notification-footer { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+.lub-notification-footer .btn { width: 100%; min-height: 44px; white-space: normal; }
+.lub-notification-empty { padding: 16px 0; color: var(--text-dim); }
+@media (max-width: 767px) {
+  .lub-notification-sheet { width: 100%; border-left: 0; }
+}
+@media (max-width: 900px) {
+  .lub-topbar { flex-wrap: wrap; gap: 6px; }
+  .lub-topbar-right { flex: 1; min-width: 0; justify-content: flex-end; }
+}
 
-/* ---------------- Modo claro (elegible por el usuario) ---------------- */
+/* Acentos Office: ocho IDs persistidos conservados; estados operativos independientes. */
+[data-theme="azul-corp"] { --accent: #185ABD; --accent-dark: #123E82; --accent-soft: #EAF2FD; --on-accent: #FFFFFF; } /* Azul Word */
+[data-theme="verde-bosque"] { --accent: #217346; --accent-dark: #185233; --accent-soft: #EAF6EF; --on-accent: #FFFFFF; } /* Verde Excel */
+[data-theme="cobre-ejec"] { --accent: #D14726; --accent-dark: #9E341A; --accent-soft: #FBEDE8; --on-accent: #FFFFFF; } /* Naranja PowerPoint */
+[data-theme="azul-acero"] { --accent: #1F4E79; --accent-dark: #163A5C; --accent-soft: #E9F2FB; --on-accent: #FFFFFF; } /* Azul Outlook */
+[data-theme="violeta-ejec"] { --accent: #80397B; --accent-dark: #5E295A; --accent-soft: #F4ECF4; --on-accent: #FFFFFF; } /* Morado OneNote */
+[data-theme="petroleo-ejec"] { --accent: #6264A7; --accent-dark: #464775; --accent-soft: #EEEEF8; --on-accent: #FFFFFF; } /* Índigo Teams */
+[data-theme="amarillo-cat"] { --accent: #A4373A; --accent-dark: #742629; --accent-soft: #F8ECEC; --on-accent: #FFFFFF; } /* Burdeos Access */
+[data-theme="grafito"] { --accent: #5E6A71; --accent-dark: #3F494F; --accent-soft: #EFF2F4; --on-accent: #FFFFFF; } /* Grafito Office */
+
+/* ---- Legado (ya NO listados en el selector) — solo compatibilidad con localStorage ya guardado ---- */
+[data-theme="teal"]        { --accent: #0E7490; --accent-dark: #0B4A57; --on-accent: #FFFFFF; }
+[data-theme="amber"]       { --accent: #F2A900; --accent-dark: #C98A00; --on-accent: #1a1400; }
+[data-theme="petroleo"]    { --accent: #0F6A4C; --accent-dark: #0A4A35; --on-accent: #FFFFFF; }
+[data-theme="purpura"]     { --accent: #5B4FBF; --accent-dark: #433790; --on-accent: #FFFFFF; }
+[data-theme="ladrillo"]    { --accent: #A3342A; --accent-dark: #7A2620; --on-accent: #FFFFFF; }
+[data-theme="cobre"]       { --accent: #9C5417; --accent-dark: #7A4012; --on-accent: #FFFFFF; }
+[data-theme="graphite"]    { --accent: #9CA3AF; --accent-dark: #6B7280; --on-accent: #1a1400; }
+[data-theme="acero"]       { --accent: #475569; --accent-dark: #334155; --on-accent: #FFFFFF; }
+[data-theme="cian"]        { --accent: #06B6D4; --accent-dark: #075E76; --on-accent: #1a1400; }
+[data-theme="blue"]        { --accent: #3B82F6; --accent-dark: #1D4ED8; }
+[data-theme="green"]       { --accent: #22C55E; --accent-dark: #15803D; }
+[data-theme="red"]         { --accent: #EF4444; --accent-dark: #B91C1C; }
+
+/* ---------------- Claro (oficina / condiciones normales) ----------------
+   PALETA CORPORATIVA FINAL (2026-10-09): valores base EXACTOS pedidos —
+   antes era #F2F3F1/#F1F2EF/#DADCD7/#1B1F23/#656C73 (rediseño 2026-10-08).
+   La luminancia de fondo es casi idéntica (#F2F3F1 → #F4F6F8, apenas más
+   clara), así que los semánticos ajustados abajo (verificados contra
+   fondo blanco, el peor caso) siguen pasando AA sin recalcular. */
 [data-mode="light"] {
-  --bg: #F2F3F1;
+  --accent-ink: var(--accent-dark);
+  --bg: #F4F6F8;
   --surface: #FFFFFF;
-  --surface-2: #F1F2EF;
-  --border: #DADCD7;
-  --text: #1B1F23;
-  --text-dim: #656C73;
+  --surface-2: #EEF2F5;
+  --border: #CBD5E1;
+  --text: #111827;
+  --text-dim: #5B6573;
   /* --green/--amber/--red del modo oscuro (auditoría de accesibilidad) daban
      ~2.2-3.9:1 de contraste sobre fondo blanco (fallan el mínimo 3:1 de WCAG
      para texto/íconos) — se ajustaron oscureciéndolos hasta pasar 4.5:1,
@@ -70,6 +170,14 @@
   --green: #1E7A34;
   --amber: #8A5A00;
   --red: #C0262B;
+  /* --gray-status (estado GRIS/"Pausado") quedó fuera del ajuste de arriba
+     (auditoría UI/UX 2026-10-08, hallazgo #1): texto blanco sobre el gris
+     oscuro del modo oscuro daba 3.90:1 en fondo claro, bajo el mínimo
+     4.5:1 — oscurecido con la misma fórmula de luminancia relativa WCAG
+     hasta ~6.2:1. Sigue siendo el mismo token que usa el resto del sistema
+     para GRIS (borde de eq-card/lub-eq-btn, status-chip, celda-pausado) —
+     nunca una paleta nueva. */
+  --gray-status: #5C6268;
 }
 [data-mode="light"] .lub-eq-btn,
 [data-mode="light"] .eq-card,
@@ -82,27 +190,45 @@
 [data-mode="light"] .lub-topbar,
 [data-mode="light"] .lub-record-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 
-/* ---------------- Modo de alto contraste (para uso bajo sol directo en campo) ---------------- */
-[data-mode="contrast"] {
+[data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
+
+/* Modo Sol / Alta luz. Los IDs antiguos son aliases CSS de compatibilidad. */
+[data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"] {
+  --accent-ink: var(--accent-dark);
   --bg: #FFFFFF;
   --surface: #FFFFFF;
-  --surface-2: #FFFFFF;
-  --border: #000000;
-  --text: #000000;
-  --text-dim: #000000;
-  --green: #006400;
+  --surface-2: #F5F5F4;
+  --border: #15181C;
+  --text: #0B0D0F;
+  --text-dim: #30353B;
+  --focus: #000000;
+  --green: #1E7A34;
   --amber: #8A5A00;
-  --red: #B30000;
-  --gray-status: #333333;
+  --red: #C0262B;
+  --gray-status: #5C6268;
 }
-[data-mode="contrast"] * { border-width: 2px !important; }
-[data-mode="contrast"] .panel, [data-mode="contrast"] .eq-card, [data-mode="contrast"] .kpi-card,
-[data-mode="contrast"] .lub-eq-btn, [data-mode="contrast"] .modal, [data-mode="contrast"] .login-card {
-  border-color: #000000 !important; box-shadow: none !important;
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) * { border-width: 2px !important; }
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .panel, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .eq-card, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .kpi-card,
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .lub-eq-btn, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .modal, :is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) .login-card {
+  box-shadow: none !important;
 }
-[data-mode="contrast"] .status-chip { outline: 2px solid #000000; }
-[data-mode="contrast"] .btn-accent { background: #000000; color: #FFFFFF; border-color: #000000; }
-[data-mode="light"] .login-screen { background: radial-gradient(circle at 20% 20%, rgba(242,169,0,0.10), transparent 45%), repeating-linear-gradient(135deg, #EAEBE7 0 26px, #F2F3F1 26px 52px); }
+
+/* Solo para lectores de pantalla — nunca visible (auditoría UI/UX
+   2026-10-08, hallazgo #5: alternativa textual del gráfico de Tendencia). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* Coverage controls wrap instead of cutting operational location names. */
+.crew-location-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.crew-location-filters .btn { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.crew-location-filters [aria-pressed="true"] { border-color: var(--accent); font-weight: 700; background: var(--accent); color: var(--on-accent); }
+.lub-location-group { min-width: 0; display: grid; gap: 8px; }
+.lub-location-group h3 { margin: 6px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.crew-coverage-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 1fr); gap: 8px; align-items: center; }
+:where(.crew-coverage-row label) { min-width: 0; overflow-wrap: anywhere; }
+:where(.crew-coverage-row select) { min-height: 44px; width: 100%; }
 
 * { box-sizing: border-box; min-width: 0; }
 html, body { height: 100%; }
@@ -133,11 +259,11 @@ input, select, textarea {
    (label is display:flex;flex-direction:column below) — no extra width rule needed,
    and this avoids forcing width:100% on inputs living in flex toolbars elsewhere. */
 textarea { resize: vertical; min-height: 60px; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 input:disabled { opacity: 0.6; }
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.85); cursor: pointer; }
 input[type="checkbox"], input[type="radio"] {
-  width: 20px; height: 20px; accent-color: var(--accent); flex: none;
+  width: 20px; height: 20px; accent-color: var(--accent); flex: none; cursor: pointer;
 }
 input[type="file"] { padding: 8px; font-size: 13px; }
 input[type="file"]::file-selector-button {
@@ -154,6 +280,8 @@ select {
 /* Any bare <label> wrapping a field (not just inside .form-grid) stacks label above input */
 label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .field-hint { font-size: 11px; color: var(--text-dim); font-weight: 400; margin-top: -2px; }
+.field-notes summary { min-height: 44px; padding: 12px 0; cursor: pointer; color: var(--text); }
+.field-notes :where(summary:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* ---------------- Selector de días (plan de engrase por día/turno) ---------------- */
 .weekday-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
@@ -169,8 +297,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .photo-pick-row { display: flex; gap: 8px; }
 .photo-pick-camera-btn, .photo-pick-gallery-btn { flex: 1; justify-content: center; padding: 12px 8px; font-size: 13px; }
 @media (max-width: 420px) { .photo-pick-row { flex-direction: column; } }
-.photo-preview-wrap { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
-.photo-preview { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+/* Botón estilizado del selector web (§7 del pedido "REDISEÑO UX FORMULARIO
+   REGISTRAR ENGRASE", 2026-10-10) — reemplaza visualmente al <input
+   type="file"> nativo (que queda .sr-only, funcional pero invisible). */
+.photo-pick-web-btn { justify-content: center; width: 100%; }
 
 /* ---------------- Hazard divider (signature element) ---------------- */
 .panel-head {
@@ -202,19 +332,39 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .login-screen {
   min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(circle at 20% 20%, rgba(242,169,0,0.07), transparent 45%),
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
     repeating-linear-gradient(135deg, #16191c 0 26px, #14171A 26px 52px);
   padding: 20px;
 }
 .login-card {
   width: 100%; max-width: 420px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 16px;
-  padding: 32px 26px 26px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  /* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido): un solo
+     padding consistente 360-412-desktop (antes la "versión angosta" de
+     @media max-width:380px dejaba justo a los anchos más comunes —
+     390/412 — cayendo en el valor por defecto, más grande, así que el
+     padding cambiaba de golpe entre 380 y 390px sin motivo real). */
+  padding: 24px 22px 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   position: relative;
 }
 .login-theme-btn { position: absolute; top: 14px; right: 14px; font-size: 18px; }
+/* "←" de Quick Unlock (lote "LOGIN / QUICK UNLOCK / CAMBIO DE USUARIO")
+   — mismo patrón de posición que .login-theme-btn, espejado a la
+   izquierda. Fix 2026-10-09 (§0.5 del pedido): .icon-btn comparte
+   min-width:var(--tap) pero NUNCA tuvo min-height — en la práctica medía
+   ~30px de alto, bajo los 44px táctiles exigidos. Se agrega aquí mismo,
+   acotado a este botón (nunca se toca .icon-btn en general, lo usan
+   decenas de pantallas). */
+.login-back-btn { position: absolute; top: 14px; left: 14px; font-size: 20px; min-height: 44px; }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .brand-login { margin-bottom: 4px; padding-right: 30px; }
+/* Con el botón "←" presente, la marca necesita aire a AMBOS lados (antes
+   solo a la derecha, por .login-theme-btn) — acotado a esta variante con
+   :has() para no afectar el login normal (raíz, sin flecha atrás, §4 del
+   pedido: "no mostrar flecha atrás que no tenga destino"). DESPUÉS de
+   ".brand-login" a propósito (orden de especificidad ascendente que ya
+   sigue este archivo — ver no-descending-specificity). */
+.login-card:has(.login-back-btn) .brand-login { padding-left: 30px; }
 /* Logo de la app: usa el ícono real (engrane con gota), el mismo que se ve en el
    celular. Antes era un "+" dibujado con CSS que no coincidía con el ícono de la app. */
 .brand-mark {
@@ -242,7 +392,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; align-items: center; justify-content: center; font-size: 20px;
 }
 .login-user-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.login-role { font-size: 10px; letter-spacing: 0.1em; color: var(--accent); font-weight: 700; order: 2; }
+.login-role { font-size: 10px; letter-spacing: 0.1em; color: var(--accent-ink); font-weight: 700; order: 2; }
 .login-name { font-weight: 600; font-size: 15px; order: 1; }
 .login-chevron { color: var(--text-dim); font-size: 20px; flex: none; }
 .pin-area { display: flex; gap: 8px; margin-top: 16px; }
@@ -256,18 +406,65 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .login-error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .login-footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 18px; line-height: 1.4; }
 
-/* ---------------- Selector de tema ---------------- */
-.theme-btn { font-size: 17px; line-height: 1; }
-.theme-swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 18px; }
-.theme-swatch {
-  display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  cursor: pointer; font-size: 13px; font-weight: 600;
+/* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido) — espaciado
+   consistente SOLO dentro de los formularios de acceso (login/Quick Unlock/
+   configurar PIN), nunca tocando .form-grid en general (lo usan decenas de
+   formularios del resto de la app, fuera de alcance de este pedido).
+   Reutiliza el MISMO .form-grid/.btn ya existentes, solo ajusta medidas. */
+.login-card .form-grid { gap: 15px; }
+.login-card .form-grid label { gap: 7px; }
+.login-card .form-grid input, .login-card .form-grid select {
+  min-height: 46px; padding: 12px 14px; box-sizing: border-box;
 }
-.theme-swatch.selected { border-color: var(--sw); box-shadow: 0 0 0 2px var(--sw) inset; }
-.theme-swatch-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--sw); flex: none; }
-.theme-mode-toggle { display: flex; gap: 10px; }
-.theme-mode-toggle .btn { flex: 1; }
+/* §0.1: "entre último campo y botón principal: 18-20px" — 15px del gap
+   general + 5px extra en el propio botón, nunca un contenedor nuevo. */
+.login-card .form-grid button[type="submit"],
+/* §0.4: "Entrar con otra cuenta" deja de ser texto subrayado (.link-btn) y
+   pasa a un botón secundario REAL — mismo .btn de siempre (ya es el look
+   "secundario" de la app, btn-accent es el único primario), solo ancho
+   completo + separación clara de Desbloquear. Nunca cambia el handler. */
+.login-btn-secondary { width: 100%; justify-content: center; margin-top: 14px; min-height: 44px; }
+
+/* ---------------- Selector de tema — biblioteca de presets (rediseño
+   visual 2026-10-08, "ampliar opciones de color"): cada preset es una
+   tarjeta con muestra de color real (nunca un selector RGB libre) +
+   nombre claro — reemplaza los botones de solo-texto/punto anteriores. */
+.theme-btn { font-size: 17px; line-height: 1; }
+.theme-preview-grid.theme-mode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.theme-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+@media (max-width: 600px) {
+  .theme-preview-grid.theme-mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.theme-preview-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px;
+  border-radius: 10px; border: 2px solid var(--border); background: var(--surface-2); color: var(--text);
+  cursor: pointer; font-size: 12px; font-weight: 600; text-align: left; min-height: var(--tap, 44px); width: 100%;
+  position: relative;
+}
+.theme-preview-card.selected { border-color: var(--accent-ink); box-shadow: 0 0 0 2px var(--accent-ink) inset; }
+/* "✓" de seleccionado (§11 del pedido: "[ ● ● ] Nombre tema ✓") — visto
+   SOLO en la tarjeta activa, nunca un elemento nuevo que insertar/quitar
+   del DOM en cada clic (ya existe siempre, solo cambia de visibilidad). */
+.theme-preview-check {
+  position: absolute; top: 8px; right: 10px; font-size: 14px; font-weight: 800;
+  color: var(--accent-ink); opacity: 0;
+}
+.theme-preview-card.selected .theme-preview-check { opacity: 1; }
+.theme-preview-swatches { display: flex; align-items: center; gap: 6px; }
+.theme-preview-dot { width: 18px; height: 18px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,0.15); }
+.theme-preview-chip {
+  display: flex; align-items: center; justify-content: center; width: 28px; height: 20px;
+  border-radius: 6px; font-size: 11px; font-weight: 800; flex: none;
+}
+.theme-preview-mode-swatch {
+  width: 100%; height: 32px; border-radius: 8px; border: 2px solid; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 6px; box-sizing: border-box;
+}
+.theme-preview-mode-surface { width: 16px; height: 16px; border-radius: 4px; border: 1px solid; flex: none; }
+.theme-preview-mode-text { font-size: 11px; font-weight: 800; }
+.theme-preview-name { line-height: 1.25; }
+.theme-preview-group-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 14px 0 2px; }
+.theme-preview-group-label:first-child { margin-top: 0; }
 
 /* ---------------- Shell ---------------- */
 .app-shell { display: flex; min-height: 100vh; }
@@ -289,10 +486,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .menu-item {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
   background: transparent; border: none; color: var(--text-dim); text-align: left; cursor: pointer;
-  font-size: 15px; font-weight: 500;
+  font-size: 15px; font-weight: 500; position: relative;
 }
 .menu-item:hover { background: var(--surface-2); color: var(--text); }
-.menu-item.active { background: rgba(242,169,0,0.12); color: var(--accent); }
+.menu-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-ink); }
 .menu-item.logout { margin-top: 8px; border-top: 1px solid var(--border); border-radius: 0; padding-top: 10px; }
 .menu-icon {
   width: 18px; height: 18px; flex: none; background: currentColor; opacity: 0.85;
@@ -326,7 +523,18 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   display: flex; align-items: center; gap: 12px; padding: 12px 20px;
   border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5;
 }
-.topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; }
+/* HALLAZGO (lote "fix: prevent topbar overlap at tablet width"): sin
+   min-width:0, un item flex con texto NUNCA se encoge por debajo del ancho
+   de su palabra más larga (el gotcha clásico de flexbox) — a ~1000-1350px
+   .topbar-right ya no cabe en una sola línea y empieza a envolver
+   internamente (su propio flex-wrap:wrap), pero .topbar-title no cedía nada
+   de espacio y terminaba superpuesto con el buscador/usuario envuelto. Con
+   min-width:0 + nowrap/ellipsis, el título ahora SÍ puede encogerse (y
+   recortarse con "…" si hiciera falta) en vez de invadir a su hermano —
+   nunca vacío, nunca superpuesto. Inerte en >=1440px (hay espacio de sobra,
+   nunca se activa el recorte) y redundante-pero-inofensivo bajo 900px (ya
+   tiene su propia regla idéntica en el media query de abajo). */
+.topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: 0.02em; text-transform: uppercase; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-right {
   margin-left: auto; display: flex; align-items: center; justify-content: flex-end;
   flex-wrap: wrap; row-gap: 8px; gap: 14px; font-size: 12px; color: var(--text-dim);
@@ -359,7 +567,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
     flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
     background: none; border: none; color: var(--text-dim); font-size: 10px; padding: 6px 2px;
   }
-  .bottom-item.active { color: var(--accent); }
+  .bottom-item.active { color: var(--accent-ink); }
   .topbar-user { display: none; }
   .app-content { padding: 14px 12px 96px; }
   /* Topbar compacto: en escritorio hay espacio de sobra para el padding y
@@ -405,6 +613,48 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .lub-heading { font-size: 19px; }
 }
 
+/* ---------------- Topbar global — ancho muy angosto (390/412px) ----------------
+   HALLAZGO (lote "fix: refine global mobile topbar"): a 390/412px, dentro
+   del mismo .topbar-right ya compactado por el media query de arriba
+   (900px), seguían compitiendo por espacio el buscador + QR + conn-badge +
+   .topbar-shift — el conn-badge quedaba truncado a texto sin sentido ("SIN
+   INTERN…") y .topbar-shift se desbordaba a una segunda línea (el ícono de
+   turno quedaba flotando solo, separado del resto de la barra). Acotado a
+   ".topbar" a propósito — el shell del Lubricador (.lub-topbar, pantalla
+   "Mi Turno") NO tiene estos elementos (su turno vive en .lub-user-strip,
+   debajo de la topbar, sin competir por el mismo espacio) y no se toca. */
+@media (max-width: 480px) {
+  /* El turno ya no cabe de forma legible junto a buscador+QR+conexión a
+     este ancho — se oculta aquí (mismo criterio ya aplicado a .topbar-user
+     arriba, que se oculta desde 900px); el valor real sigue disponible vía
+     updateShiftBadge() en el DOM (title del elemento), por si se necesita
+     reactivar en un ancho intermedio más adelante. */
+  .topbar-shift { display: none; }
+  /* Conexión: en vez de texto truncado sin sentido, un punto de color
+     compacto (44x44 de área táctil real, igual que cualquier icon-btn) —
+     el texto completo sigue existiendo en el DOM (aria-label/title, ver
+     updateConnBadge() en app.js, que ahora SIEMPRE los fija) así que un
+     lector de pantalla sigue anunciando el estado real, nunca solo "botón". */
+  /* Lote "mobile UX real Android": el mismo punto compacto que ya tenía
+     ".topbar .conn-badge" (escritorio) faltaba en ".lub-topbar" — ahí el
+     badge seguía mostrando texto completo ("SINCRONIZADO"/"SIN PERMISO
+     PARA SINCRONIZAR") sin comprimir, compitiendo por espacio con QR/
+     detalle/cuenta/salir y empujando el alto real de la franja. Mismo
+     selector combinado en vez de duplicar la regla. */
+  .topbar .conn-badge, .lub-topbar .conn-badge {
+    width: var(--tap); height: var(--tap); min-width: var(--tap); padding: 0; margin: 0;
+    max-width: none; border-radius: 50%; background: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    overflow: hidden; text-indent: -9999px; white-space: nowrap;
+  }
+  .topbar .conn-badge::before, .lub-topbar .conn-badge::before {
+    content: ''; display: block; width: 11px; height: 11px; border-radius: 50%;
+    background: currentColor; text-indent: 0; flex: none;
+  }
+  .topbar { gap: 4px; }
+  .topbar-right { gap: 4px; }
+}
+
 /* min-width (auditoría de accesibilidad): a diferencia de .btn/.menu-item/etc,
    .icon-btn puede quedar solo-ícono sin texto al lado — su ancho real quedaba
    en ~26-34px (18px de ícono + 4px/8px de padding), bajo el objetivo táctil
@@ -432,7 +682,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .kpi-card.tone-green { border-left-color: var(--green); }
 .kpi-card.tone-amber { border-left-color: var(--amber); }
 .kpi-card.tone-red { border-left-color: var(--red); }
-.kpi-value { font-family: var(--font-mono); font-size: 28px; font-weight: 700; }
+.kpi-value { font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 700; }
 .kpi-label { font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.06em; margin-top: 4px; text-transform: uppercase; }
 
 /* ---------------- Dashboard operativo (rediseño): jerarquía Estado de
@@ -443,8 +693,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-section-title { font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 8px; }
 
 .dash-hero-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-@media (min-width: 560px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1024px) { .dash-hero-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 768px) { .dash-hero-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1024px) { .dash-hero-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } }
+@media (min-width: 1440px) { .dash-hero-grid { grid-template-columns: repeat(6, 1fr); } }
 .dash-hero-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 11px 12px; border-top: 4px solid var(--border); min-height: 44px;
@@ -468,7 +719,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    fila nueva con el mismo ancho de columna). */
 .dash-section-secondary { margin-top: 2px; }
 .dash-activity-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-@media (min-width: 601px) { .dash-activity-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 601px) { .dash-activity-row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); } }
 .dash-activity-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-height: 44px;
@@ -516,18 +767,11 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .dash-op-line1 { display: flex; align-items: center; gap: 8px; }
 .dash-op-line2 { font-size: 12.5px; color: var(--text-dim); }
 .dash-op-line3 { font-size: 12.5px; }
-.dash-op-line4 { font-size: 12.5px; color: var(--text-dim); }
 
-/* "Mayor tiempo sin engrasar": lista/ranking operativo compacto (patrón
-   KPI/resumen → lista → drill-down tipo Fiix/UpKeep/Fracttal), NUNCA grid de
-   cards, ranking #1/#2/#3 ni tabla pesada. REDISEÑO: el dato clave (días) ya
-   no es un texto aislado a la derecha — es un bloque destacado (número +
-   etiqueta corta) con "Historial" como acción PRINCIPAL visible debajo
-   (antes solo la fila entera era clickable, sin ningún control visible). La
-   fila con más días (is-max) recibe un acento ámbar discreto (borde + fondo
-   muy sutil en el bloque de días), nunca una tarjeta separada. */
+/* Base compartida del listado y "Ver todos". El panel del Dashboard tiene
+   ajustes de ranking y responsive al final del archivo. */
 .link-btn {
-  background: none; border: none; padding: 4px; color: var(--accent); font-size: 12.5px; font-weight: 700;
+  background: none; border: none; padding: 4px; color: var(--accent-ink); font-size: 12.5px; font-weight: 700;
   cursor: pointer; text-decoration: underline; min-height: var(--tap, 44px);
 }
 /* "Ver todos" del header: mismo .link-btn de siempre, pero con más peso
@@ -538,6 +782,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   border-radius: 20px; padding: 6px 12px;
 }
 .dash-exc-head .link-btn:hover { background: var(--surface); border-color: var(--accent); }
+/* Consulta universal desde el Dashboard (§21 del lote): el código de
+   equipo (cola de atención / mayor tiempo sin engrasar) abre la Ficha ya
+   existente (openEquipmentDetail). Reset de <button> a texto-con-acento —
+   antes en el archivo que .dash-exc-code/.dash-cola-code a propósito (ver
+   abajo), para que su font-size/weight explícito siga ganando; aquí NUNCA
+   se toca tamaño/peso, solo color/cursor/estado de foco. */
+.dash-code-link {
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer; text-align: left;
+  font: inherit; color: inherit;
+}
+.dash-code-link:hover, .dash-code-link:focus-visible { color: var(--accent-ink); text-decoration: underline; }
+.dash-code-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+
 .dash-exc-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 14px 10px; font-size: 12.5px; }
 .dash-exc-summary { color: var(--text-dim); white-space: nowrap; }
 .dash-exc-summary .mono { color: var(--text); font-weight: 700; }
@@ -637,14 +894,13 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 
 /* ---------------- Panels & tables ---------------- */
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; overflow-x: auto; }
 .pill { background: var(--surface-2); color: var(--text-dim); font-size: 11px; padding: 4px 10px; border-radius: 20px; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.panel { overflow-x: auto; }
-.data-table th { text-align: left; padding: 10px 14px; color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); white-space: nowrap; }
-.data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.data-table th { text-align: left; padding: 10px 14px; color: var(--text-dim); font-weight: 600; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: var(--fs-base); }
 .data-table tbody tr:last-child td { border-bottom: none; }
-.data-table tbody tr:hover { background: var(--surface-2); }
+.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 .mono { font-family: var(--font-mono); }
 .dim { color: var(--text-dim); font-size: 12px; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
@@ -652,6 +908,82 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .empty-state.success { color: var(--green); font-weight: 600; }
 .progress-track { height: 10px; background: var(--surface-2); border-radius: 20px; margin: 4px 16px 16px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 20px; transition: width 0.4s ease; }
+
+/* Configuración — navegación vertical + contenido (lote UX fix: reemplaza
+   los tabs horizontales del lote anterior, que a 1024-1920px mostraban
+   scroll horizontal propio y dejaban el panel activo angosto y pegado a la
+   izquierda con ~60-70% de la pantalla vacía a la derecha). Mismo
+   contenedor `.panel` de siempre, solo cambia cómo se agrupa — nunca toca
+   Dashboard/Reportes/Historial/Plan.
+   Desktop (≥1024px): sidebar vertical compacta (220px) + área de contenido
+   que usa el resto del ancho real — SOLO la categoría activa visible.
+   Móvil (<1024px): lista de categorías primero, categoría elegida +
+   "Volver" después — nunca los 13 paneles seguidos, nunca la sidebar
+   angosta ni tabs horizontales comprimidas. Ambos chrome (sidebar y lista)
+   viven siempre en el DOM; este bloque decide cuál se VE según el ancho,
+   wireConfigCategoryNav() (app.js) decide cuál .config-category está
+   visible. */
+.config-desktop-grid { display: block; }
+.config-content { display: block; min-width: 0; }
+
+.config-tabs {
+  display: none; gap: 2px;
+}
+.config-tab {
+  flex: none; width: 100%; display: flex; align-items: center; text-align: left;
+  background: none; border: none; border-left: 3px solid transparent; border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--text-dim); padding: 10px 14px; font-size: var(--fs-sm); font-weight: 600;
+  cursor: pointer; white-space: nowrap; min-height: var(--tap);
+}
+.config-tab:hover { color: var(--text); background: var(--surface-2); }
+/* Estado activo: 3 señales a la vez (fondo + borde + color/peso de texto),
+   nunca solo color — ver §5 del lote (no depender únicamente del color). */
+.config-tab.active { color: var(--accent-ink); font-weight: 700; background: var(--surface-2); border-left-color: var(--accent); }
+.config-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.config-mobile-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.config-mobile-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text);
+  cursor: pointer; min-height: var(--tap); text-align: left;
+}
+.config-mobile-item:hover { border-color: var(--accent); }
+.config-mobile-chevron { color: var(--text-dim); font-size: 18px; }
+.config-mobile-back {
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: none;
+  color: var(--accent-ink); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  padding: 10px 2px; margin-bottom: 10px; min-height: var(--tap);
+}
+
+/* ≥1024px: sidebar vertical + contenido lado a lado; lista/volver de móvil
+   nunca se muestran (aunque wireConfigCategoryNav() los deje hidden=false
+   por estado, CSS manda). Sidebar compacta y fija (220px, dentro del rango
+   200-240px pedido) — el contenido usa TODO el resto del ancho real, nunca
+   un segundo ancho fijo que vuelva a dejar hueco vacío. sticky con top
+   propio para que la navegación siga visible en paneles largos (Papelera/
+   Auditoría) sin duplicar el chrome global de la app. */
+@media (min-width: 1024px) {
+  .config-desktop-grid { display: flex; align-items: flex-start; gap: 24px; }
+  .config-tabs {
+    display: flex; flex-direction: column; flex: 0 0 220px; width: 220px;
+    position: sticky; top: 16px; padding-right: 4px; border-right: 1px solid var(--border);
+  }
+  .config-content { flex: 1 1 auto; }
+  .config-mobile-menu, .config-mobile-back { display: none !important; }
+}
+
+/* 1 panel por categoría (General/Seguridad/Operación/Usuarios/Sincronización):
+   ancho legible, nunca un formulario corto estirado a 1900px. */
+.config-narrow { max-width: 760px; }
+
+/* 2+ paneles relacionados (Organización: Ubicaciones+Categorías; Administración:
+   Papelera+Liberar espacio+Respaldo) — auto-fit, nunca repeat(2,1fr) fijo: a
+   1440/1920px pasa a 3 columnas solas si el ancho real alcanza, en vez de
+   dejar mitad de pantalla vacía. align-items:start evita estirar un panel
+   corto para igualar al más alto del mismo grupo. */
+.config-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.config-grid-2 > .panel { margin-bottom: 0; }
 
 /* ---------------- Equipment cards / semaforo ---------------- */
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 14px; }
@@ -663,11 +995,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .eq-card[data-status="AMARILLO"] { border-top-color: var(--amber); }
 .eq-card[data-status="ROJO"] { border-top-color: var(--red); }
 .eq-card[data-status="GRIS"] { border-top-color: var(--gray-status); }
-.eq-card.clickable { cursor: pointer; }
+.eq-card.clickable { cursor: pointer; transition: transform 0.08s ease, border-color 0.15s ease; }
 .eq-card.clickable:hover { border-color: var(--accent); }
 .eq-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .eq-code { font-family: var(--font-mono); font-weight: 700; font-size: 14px; }
 .status-chip { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; padding: 3px 8px; border-radius: 20px; color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); }
+/* Fix 2026-10-09 (§12, "PROGRAMADO HOY" vs "ASIGNADO" claramente
+   diferenciadas): ASIGNADO es origen/prioridad de la tarea, no estado de
+   ejecución (§4 del pedido) — por eso va con contorno (sin relleno) en vez
+   del chip de ESTADO macizo que ya se usa al lado. Mismo --c/color, mismo
+   texto: solo la forma cambia. */
+.status-chip.chip-origen { background: transparent; border: 1.5px solid var(--c); }
 .eq-name { font-weight: 600; margin-bottom: 8px; font-size: 14px; }
 .eq-hourmeter { font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: 0.02em; }
 .eq-hourmeter .unit { font-size: 13px; color: var(--text-dim); font-weight: 500; }
@@ -710,7 +1048,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer;
   min-height: var(--tap, 44px);
 }
-.ayuda-family-chip.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.ayuda-family-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .ayuda-family-card { margin: 0 14px 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .ayuda-family-card .family-card { border: none; margin: 0; }
 
@@ -783,18 +1121,25 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   padding: 10px 12px; border-radius: 8px; font-size: 15px;
 }
-.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .big-input { font-size: 20px !important; font-family: var(--font-mono); font-weight: 700; padding: 12px !important; }
 
+/* Jerarquía de botones (lote UI/UX, auditoría pre-release) — ya existía en la
+   práctica, se documenta explícitamente para que no se inventen variantes
+   nuevas para la misma acción:
+     PRIMARY   .btn.btn-accent   — UNA sola acción principal por pantalla/form.
+     SECONDARY .btn (sin modificador) — el resto de acciones no-destructivas.
+     DANGER    .btn.btn-danger  — SOLO acciones destructivas (eliminar/desactivar).
+     GHOST     .icon-btn        — solo-ícono (tema, cerrar, búsqueda, menú). */
 .btn {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
   display: inline-flex; align-items: center;
 }
 .btn:hover { border-color: var(--accent); }
-.btn-sm { padding: 6px 10px; font-size: 12px; }
-.btn-accent { background: var(--accent); border-color: var(--accent); color: #1a1400; }
-.btn-accent:hover { background: var(--accent-dark); }
+.btn-sm { padding: 6px 10px; font-size: 12px; min-height: 36px; position: relative; }
+.btn-accent { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-accent:hover { background: var(--accent-dark); color: var(--on-accent-hover, var(--on-accent)); }
 .btn-danger { color: var(--red); border-color: var(--red); }
 
 @media (max-width: 640px) {
@@ -859,24 +1204,40 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .grease-flow-points-head .grease-flow-card-head { margin-bottom: 0; }
 
-/* ---- Acción final: fuera de las cards, como cierre de página (no otra card) ---- */
-.grease-flow-final { margin-top: var(--sp-3); }
-/* Guardar fácil en móvil (cierre operativo §19) — sticky SOLO dentro del
-   shell del Lubricador (donde existe .lub-bottom-nav fija) y solo en
-   anchos móviles (en tablet/desktop el formulario ya no compite con una
-   sola mano ni con una barra inferior). `bottom` despega lo suficiente
-   para NUNCA tapar la barra inferior (68px cubre su alto real + el
-   safe-area de notch, con margen) — verificado en
-   tests/ui/lubricador-grease-form.spec.js contra el markup real de
-   .lub-bottom-nav. Fondo igual al de la página (nunca un recuadro flotante
-   que no combine) + sombra sutil hacia arriba para separarlo del
-   contenido que queda debajo al hacer scroll. */
+/* ---- Acción final: barra de acciones (§8/§9 del pedido "REDISEÑO UX
+   FORMULARIO REGISTRAR ENGRASE", 2026-10-10) ----
+   Jerarquía: "Finalizar engrase" es la única acción primaria
+   (.btn-grease-submit, ya era .btn-accent), "No se pudo ejecutar"/"Reportar
+   anomalía" quedan agrupadas aparte como secundarias — nunca las 3 con el
+   mismo peso visual.
+   Flotante ("sticky", §9) — PROBADO y descartado, con autorización
+   explícita del usuario: se implementó con position:fixed (corrige un bug
+   real de position:sticky, que al ser .grease-flow-final el ÚLTIMO hijo
+   sin hermanos después se "pegaba" desde el primer pixel de scroll,
+   verificado con getBoundingClientRect() en una ejecución real de
+   startGreaseFlow()) — pero incluso corregido así, en equipos con pocos
+   puntos de engrase la barra flotante SÍ llegaba a tapar parcialmente el
+   último punto del checklist en ciertas posiciones de scroll (inherente a
+   cualquier barra siempre-visible superpuesta al contenido). Eso es
+   exactamente lo que el pedido pidió evitar ("SIN tapar campos ni
+   teclado") — se le presentó la disyuntiva al usuario (aceptar ese
+   riesgo vs. quedarse en flujo normal) y se confirmó MANTENER
+   position:static (misma decisión seguridad-primero que el pedido
+   explícito 2026-10-08 que había quitado el sticky original). */
+.grease-flow-final { margin-top: var(--sp-3); position: static !important; }
+.grease-flow-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.grease-flow-actions-secondary { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.grease-flow-actions .btn-grease-submit { font-weight: 700; }
 @media (max-width: 640px) {
-  .lub-shell .grease-flow-final {
-    position: sticky; bottom: 68px; z-index: 20;
-    background: var(--bg); padding: 10px 0 4px;
-    box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.3);
-  }
+  .grease-flow-actions { flex-direction: column-reverse; align-items: stretch; }
+  .grease-flow-actions-secondary { justify-content: center; }
+  /* Teclado virtual abierto: el footer ya es static siempre (arriba) — lo
+     único que sigue cambiando con .keyboard-open es ocultar la barra
+     inferior fija (.lub-bottom-nav), que sí compite por espacio con el
+     teclado. Reaparece sola al cerrarse, vía el blur+timeout de
+     wireKeyboardOpenWatcher() en app.js. */
+  .lub-shell.keyboard-open .lub-bottom-nav { display: none; }
+  .lub-shell.keyboard-open .lub-content { padding-bottom: var(--sp-3); }
 }
 
 /* ---- Iteración 3: ancho de página y layout tablet/desktop ----
@@ -884,10 +1245,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    .app-content. Tablet (≥768): contenedor propio ~720px, centrado — se
    neutraliza el límite de 560px que .lub-content aplica a otras pantallas
    del Lubricador (Mi Turno, etc.) SOLO cuando contiene .grease-flow-panel,
-   vía :has() (ya usado en este archivo, líneas 157/1182). Desktop (≥1024):
-   contenedor ~960px; Horómetro y Lubricante comparten una fila de 2
-   columnas, el resto (Puntos/Condición/Evidencia/Finalizar) ocupa todo el
-   ancho del contenedor. */
+   vía :has() (ya usado en este archivo, líneas 157/1182). */
 .grease-flow-panel { width: 100%; }
 @media (min-width: 768px) {
   .grease-flow-panel { max-width: 720px; margin: 0 auto; }
@@ -895,13 +1253,31 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .grease-flow-equipo-card { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: var(--sp-3); }
   .grease-flow-equipo-meta { flex-basis: 100%; }
 }
+/* Fix 2026-10-10 ("REDISEÑO UX FORMULARIO REGISTRAR ENGRASE", §1): Horómetro
+   y Puntos vivían en la MISMA fila de un grid 1fr/1fr — con
+   align-items:stretch (default) la card de Horómetro (poca altura real) se
+   estiraba hasta igualar la de Puntos (bastante más alta), dejando un hueco
+   enorme. Reemplazado por: columna izquierda ~34% (Horómetro, Lubricante,
+   Condición — cada card con SU propia altura, apiladas por orden de fuente
+   vía grid-column:1 + auto-placement, nunca una 2a envoltura en el DOM) y
+   columna derecha ~66% (Puntos, grid-row:1/span 3 para cubrir las 3 filas
+   de la izquierda). Evidencia y Acciones ocupan todo el ancho debajo
+   (grid-column:1/-1, se auto-colocan en la siguiente fila libre). El orden
+   real del DOM (Horómetro, Puntos, Lubricante, Condición, Evidencia) NO
+   cambia — sigue siendo el orden correcto en móvil (§12 del pedido) sin
+   necesitar ninguna regla aparte ahí. align-items:start es la otra mitad
+   del fix: ningún item se estira a la altura de su fila. */
 @media (min-width: 1024px) {
   .grease-flow-panel { max-width: 960px; }
-  .grease-flow-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+  .grease-flow-form {
+    display: grid; grid-template-columns: minmax(260px, 34%) 1fr;
+    gap: var(--sp-3); align-items: start;
+  }
   .grease-flow-form > .grease-flow-card { margin-bottom: 0; }
-  /* Hijos 3 en adelante (Puntos, Condición, Evidencia, Finalizar): todo el ancho. */
-  .grease-flow-form > *:nth-child(n+3) { grid-column: 1 / -1; }
-  .grease-flow-panel .check-row { padding: 18px 10px; gap: 18px; }
+  .grease-flow-card-horometro, .grease-flow-card-lubricante, .grease-flow-card-condicion { grid-column: 1; }
+  .grease-flow-card-puntos { grid-column: 2; grid-row: 1 / span 3; }
+  .grease-flow-card-evidencia, .grease-flow-final { grid-column: 1 / -1; }
+  .grease-flow-panel .check-row { padding: 14px 10px; gap: 14px; }
 }
 
 /* ---------------- Checklist ---------------- */
@@ -947,7 +1323,16 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 @media (max-width: 480px) {
   .point-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .row-actions { width: 100%; }
-  .row-actions .btn { flex: 1; }
+  /* Causa raíz real (auditoría UI mobile 2026-10-08, Usuarios): esta regla
+     era ".row-actions .btn" sin acotar — "Editar"/"Eliminar" en .point-row
+     (2 botones de largo similar) quedaban bien forzados a ancho igual, pero
+     el MISMO selector también alcanzaba cualquier otro ".row-actions" de la
+     app, incluida la celda de acciones de la tabla Usuarios (Rol/Desactivar/
+     Reset password — 3 largos de texto distintos). Forzado a ancho igual,
+     "Reset password" no entraba en una línea y se partía en 2, quedando más
+     alto que sus 2 hermanos — el "desbalanceado" reportado. Acotado a su
+     contexto real: .point-row. */
+  .point-row .row-actions .btn { flex: 1; }
 }
 
 /* ---------------- Modal ---------------- */
@@ -956,7 +1341,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   align-items: center; justify-content: center; z-index: 100; padding: 16px;
 }
 .modal-overlay.open { display: flex; }
-.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 620px; max-height: 88vh; overflow-y: auto; overflow-x: hidden; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 620px; max-height: 88vh; overflow-y: auto; overflow-x: hidden; box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
 .modal-head h3 { margin: 0; font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.03em; }
 .modal-body { padding: 18px; }
@@ -993,10 +1378,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .recents-chip {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px;
   padding: 6px 14px; font-size: 13px; font-family: var(--font-mono); color: var(--text);
-  cursor: pointer; font-weight: 600;
+  cursor: pointer; font-weight: 600; min-height: var(--tap, 44px);
 }
-.recents-chip:hover, .recents-chip:active { border-color: var(--accent); color: var(--accent); }
-.recents-chip { min-height: var(--tap, 44px); }
+.recents-chip:hover, .recents-chip:active { border-color: var(--accent); color: var(--accent-ink); }
 
 /* ---------------- Registrar Engrase — pantalla inicial (antes de elegir
    equipo): seleccionar equipo es la acción principal, no un campo perdido
@@ -1088,7 +1472,6 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    disponible en vez de un valor fijo por breakpoint. aspect-ratio reemplaza el
    height fijo para que la proporción del gráfico sea consistente sin importar
    cuántas columnas entren. */
-.charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 14px; }
 .chart-box { position: relative; aspect-ratio: 16 / 9; min-height: 200px; padding: 10px 14px 16px; }
 
 /* ---------------- Reportes: rediseño análisis-por-período (no Dashboard) —
@@ -1240,7 +1623,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   padding: 7px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 600; cursor: pointer;
   min-height: var(--tap, 44px);
 }
-.rep-tab.active { background: var(--accent); border-color: var(--accent); color: #1a1400; }
+.rep-tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (max-width: 560px) { .rep-tabs { flex-wrap: nowrap; } .rep-tab { flex: 1; text-align: center; padding: 7px 8px; } }
 .rep-chart-consumo-box { aspect-ratio: auto; min-height: 120px; }
 
@@ -1258,30 +1641,28 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ============================================================
    INTERFAZ SIMPLIFICADA — LUBRICADOR (móvil, un toque, campo)
    ============================================================ */
-.lub-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.lub-shell {
+  /* Operación de campo: controles con guantes deben tener 48px efectivos.
+     El token se redefine solo aquí, sin afectar el escritorio administrativo. */
+  --tap: 48px;
+  min-height: 100vh; display: flex; flex-direction: column; background: var(--bg);
+}
 /* UI/Responsive Fase 4 (docs/UI_RESPONSIVE.md): topbar, user-strip y lub-content
    comparten el mismo margen lateral (--sp-3, 12px) para que el borde izquierdo
    de marca / usuario / tarjetas quede alineado en vez de saltar entre 16px y
    12px. Se mantienen como bloques separados a pedido del usuario (no fusionar
    usuario+turno dentro del topbar: en 360-412px ya lleva marca + estado de
    sincronización + salir). */
-.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border); }
+/* "A. HEADER compacto" (rediseño visual 2026-10-08, §3A): el fondo se
+   mantiene claro/`var(--surface)` a propósito — invertirlo a un fondo
+   oscuro obligaría a re-derivar el contraste de cada ícono/badge/chip que
+   vive adentro (conn-badge semántico, buscador, menú de cuenta…), un
+   riesgo de accesibilidad real para un cambio puramente cosmético. El
+   "primario" se expresa con un borde inferior más grueso del nuevo acento
+   en vez de invertir el fondo. */
+.lub-topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--sp-3); background: var(--surface); border-bottom: 3px solid var(--accent); }
 .lub-topbar-right { display: flex; align-items: center; gap: 10px; }
 .lub-topbar-right .btn-icon { width: 18px; height: 18px; margin-right: 0; }
-/* UI-VIS-302 (docs/UI_VISUAL_COMPOSITION_AUDIT.md): el botón de salir era solo
-   un ícono de 18px con 4px de padding — muy por debajo del mínimo táctil. Se
-   agrega min-width/min-height:44px en todos los anchos, y el texto (ya en el
-   HTML, oculto por defecto) se muestra desde tablet/desktop. */
-.lub-logout-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-width: var(--tap); min-height: var(--tap); border-radius: 8px;
-}
-.lub-logout-btn:hover, .lub-logout-btn:active { background: var(--surface-2); }
-.lub-logout-text { display: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
-@media (min-width: 768px) {
-  .lub-logout-text { display: inline; }
-  .lub-logout-btn { padding: 8px 12px; }
-}
 /* Vertical compactado de 8px a var(--sp-2) (6px): es texto informativo de una
    sola línea (usuario + turno), no un control táctil, así que no aplica el
    mínimo de 44px de --tap. */
@@ -1294,28 +1675,28 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    para alinear con el nuevo padding de topbar/user-strip. No reduce ningún
    área táctil: solo el espacio antes del primer encabezado. */
 .lub-content { flex: 1; padding: var(--sp-3) var(--sp-3) 100px; }
-.lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; }
-/* El turno (Día/Noche) ya se muestra en .lub-user-strip — este encabezado dejó
-   de repetirlo ("Equipos del turno Noche" → "Equipos asignados", app.js). El
-   margen inferior baja de 14px a --sp-3 (12px), atado a la escala existente. */
-.lub-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 var(--sp-3); }
-
+.lub-heading { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; font-size: 22px; margin: 4px 0 2px; overflow-wrap: break-word; }
 .lub-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-.lub-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.lub-scan-btn, .lub-outofplan-btn { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 13px; min-height: 44px; }
 
 .lub-section-head { margin: var(--sp-3) 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .lub-eq-list { display: flex; flex-direction: column; gap: 12px; }
 .lub-eq-list + .lub-section-head { margin-top: var(--sp-4, 20px); }
+/* Fix 2026-10-09 ("PULIDA MI TURNO", §0.8/§0.12 del pedido): esta tarjeta
+   es un CONTENEDOR informativo, nunca un botón — ya era un <div> (sin
+   onclick ni role="button"), pero cursor:pointer + el :active de abajo
+   (ahora quitado, ver §6 "Estados de interacción claros") daban la
+   impresión visual de que TODA la tarjeta era clicable. Las únicas
+   acciones reales son los <button> explícitos de .lub-arrastrado-actions
+   (Registrar engrase / Ver ficha), que ya tienen su propio feedback vía
+   .btn:active — cursor por defecto (nunca pointer) en el resto. */
 .lub-eq-btn {
   display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
-  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); cursor: pointer; color: var(--text);
+  border-left: 6px solid var(--border); border-radius: 12px; padding: 16px var(--sp-3); color: var(--text);
 }
 .lub-eq-btn[data-status="VERDE"] { border-left-color: var(--green); }
 .lub-eq-btn[data-status="AMARILLO"] { border-left-color: var(--amber); }
 .lub-eq-btn[data-status="ROJO"] { border-left-color: var(--red); }
 .lub-eq-btn[data-status="GRIS"] { border-left-color: var(--gray-status); }
-.lub-eq-btn:active { background: var(--surface-2); }
 .lub-eq-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .lub-eq-code { font-family: var(--font-mono); font-weight: 700; font-size: 20px; }
 .lub-eq-model { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
@@ -1338,6 +1719,159 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   background: rgba(229,72,77,0.12); border: 1px solid var(--red); color: var(--red);
   font-weight: 700; font-size: 15px; cursor: pointer;
 }
+
+/* ---------------- Dashboard del Lubricador (Mi Turno) ----------------
+   Contexto compacto (turno/ubicación/cuadrilla/sincronización), 4 KPIs
+   fijos y tarjetas de "Pendientes arrastrados" — mismo lenguaje visual
+   .lub-* ya establecido (nunca se importan clases .dash-* del Dashboard
+   administrativo, son pantallas distintas con necesidades distintas). */
+/* "B. TARJETA DE CONTEXTO" (rediseño visual 2026-10-08): tarjeta de
+   bienvenida — nombre + rol del usuario actual, con la fila de chips de
+   contexto (turno/ubicación/cuadrilla/sincronización) ya existente debajo.
+   Ningún dato nuevo: App.currentUser.name/.role ya se mostraban en
+   .lub-user-strip (shell persistente) — esto solo los repite dentro del
+   contenido de "Mi Turno" con más jerarquía visual, nunca un cálculo. */
+/* Fix 2026-10-09 (§8 del pedido, "compactar sin achicar texto"): padding y
+   márgenes verticales reducidos (12/10px → 10/8px, margin-bottom 12px →
+   10px, separación nombre→rol→chips 10px → 6px) — NINGÚN font-size cambia
+   aquí (19px/10.5px/11.5px intactos, ver abajo). */
+/* UX CAMPO V2 (2026-10-24): header compacto de Mi Turno — reemplaza
+   .lub-welcome-card/.lub-context-row/.lub-kpi-row (retirados, sin tarjetas
+   KPI grandes a propósito). Cuadrilla/ubicación/turno en una fila
+   compacta + "Cambiar cuadrilla" (min-width:0 en el texto, shrink-0 en el
+   botón, soporta nombres largos sin truncar) + resumen de 3 números. */
+.lub-turno-header {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 10px var(--sp-3) 8px; margin-bottom: 10px; border-top: 3px solid var(--accent);
+}
+.lub-turno-header-top { display: flex; align-items: flex-start; gap: 8px; }
+.lub-turno-header-identity { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.lub-turno-header-crew { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: 0.01em; overflow-wrap: anywhere; }
+.lub-turno-header-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
+.lub-turno-header .lub-change-crew { flex-shrink: 0; }
+.lub-turno-header-summary { margin-top: 6px; font-size: 11.5px; color: var(--text-dim); font-weight: 600; }
+/* Parte S del pedido: offline nunca es un error en Mi Turno — tono neutro
+   (--text-dim), nunca --red. */
+.lub-turno-header-offline { margin-top: 4px; font-size: 11px; color: var(--text-dim); }
+
+.lub-context-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 0; }
+.lub-context-chip {
+  display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px 4px 8px;
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.4;
+  min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere;
+}
+.lub-context-chip .dot { width: 7px; height: 7px; margin-right: 0; }
+.lub-context-chip.tone-green .dot { background: var(--green); }
+.lub-context-chip.tone-amber .dot { background: var(--amber); }
+.lub-context-chip.tone-red .dot { background: var(--red); }
+
+/* UX CAMPO V2 (2026-10-24): acordeones de Mi Turno (Pendientes
+   anteriores/Atención prioritaria/Engrases de mi turno) — <button> real +
+   aria-expanded/aria-controls, SIEMPRE presentes (incluso en 0, con su
+   propio estado vacío), todos colapsados al entrar a una navegación real. */
+.lub-accordions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.lub-accordion { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.lub-accordion-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--tap);
+  padding: 10px 12px; background: transparent; border: none; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.lub-accordion-head:hover { background: var(--surface-2); }
+.lub-accordion-head:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.lub-accordion-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.lub-accordion-title { font-weight: 700; font-size: 13.5px; }
+.lub-accordion-subtitle { font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
+.lub-accordion-count {
+  flex: none; font-family: var(--font-mono); font-weight: 800; font-size: 14px;
+  min-width: 26px; text-align: center; padding: 2px 6px; border-radius: 20px;
+  background: var(--surface-2); color: var(--text-dim);
+}
+.lub-accordion-count[data-tone="active"] { background: color-mix(in srgb, var(--amber) 16%, var(--surface-2)); color: color-mix(in srgb, var(--amber) 70%, var(--text)); }
+.lub-accordion-chevron { flex: none; font-size: 14px; color: var(--text-dim); transition: transform 0.15s ease; }
+.lub-accordion-head[aria-expanded="true"] .lub-accordion-chevron { transform: rotate(180deg); }
+.lub-accordion-panel { padding: 0 12px 12px; }
+.lub-accordion-empty { margin: 0; color: var(--text-dim); }
+
+/* Pull-to-sync (UX CAMPO V2, Parts O-R) — SOLO Mi Turno. Altura 0 en
+   reposo (ver wirePullToSync(), nunca reserva espacio permanente);
+   durante el gesto, JS fija su altura real (hasta 72px) vía style.height.
+   Vive FUERA de #app-content (topbar/.lub-shell), por eso no usa las
+   clases .lub-* scopeadas a #app-content. */
+.lub-pull-indicator {
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; height: 0; font-size: 12px; font-weight: 600;
+  color: var(--text-dim); background: var(--surface-2);
+  transition: height 0.1s ease-out;
+}
+.lub-pull-indicator[data-state="ready"] { color: var(--accent-ink); }
+.lub-pull-indicator[data-state="syncing"] { color: var(--accent-ink); }
+.lub-pull-indicator[data-state="done"] { color: var(--green); }
+.lub-pull-indicator[data-state="offline"] { color: var(--amber); }
+
+.lub-arrastrado-card {
+  background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--amber);
+  border-radius: 12px; padding: 14px var(--sp-3); margin-bottom: 10px;
+}
+.lub-arrastrado-card.tone-red { border-left-color: var(--red); }
+/* "Mi Turno" simplificado (hardening UI 2026-10-08): REALIZADOS reusa
+   .lub-arrastrado-card con tone-green — mismo token --green ya usado en
+   toda la app, nunca una paleta nueva (tone-amber ya funcionaba gratis:
+   es el valor por defecto de la clase base, arriba). */
+/* "REALIZADOS debe tener menor peso visual que pendientes" (rediseño visual
+   2026-10-08, §4) — mismo .lub-arrastrado-card, SIN ninguna clase/dato
+   nuevo: solo reduce peso tipográfico y opacidad para que, a simple vista,
+   se note que ya no requiere acción (a diferencia de tone-amber/tone-red,
+   que SIGUEN con el mismo peso de siempre — nunca tocados). */
+.lub-arrastrado-card.tone-green { border-left-color: var(--green); opacity: 0.82; }
+.lub-arrastrado-card.tone-green .lub-eq-code { font-weight: 600; }
+/* Fix 2026-10-09 ("REALIZADO ADELANTADO", §33 del pedido): MISMO azul ya
+   usado por .celda-hecho-adelantado en la Matriz (#5B7FBF) — reutilizado
+   aquí, nunca una paleta nueva. Peso visual reducido (como tone-green):
+   es informativo, no una tarea pendiente. */
+.lub-arrastrado-card.tone-adelantado { border-left-color: #5B7FBF; opacity: 0.85; }
+.lub-arrastrado-origen {
+  display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--amber); background: rgba(232,163,61,0.12);
+  border-radius: 20px; padding: 2px 9px; margin-bottom: 8px;
+}
+.lub-arrastrado-origen.tone-red { color: var(--red); background: rgba(229,72,77,0.12); }
+.lub-arrastrado-motivo { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; }
+.lub-arrastrado-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.lub-arrastrado-actions .btn { min-height: var(--tap, 44px); flex: 1 1 140px; }
+
+/* "C. ACCIÓN PRINCIPAL" (rediseño visual 2026-10-08, §3C): tarjeta/botón
+   grande para "Registrar engrase" — la acción visualmente dominante de la
+   pantalla, antes una celda más dentro de la grilla 2x2 de abajo. MISMO id
+   (#lub-quick-registrar) y MISMO handler ya wireado (abre
+   openOutOfPlanEquipmentPicker(), cero lógica nueva) — solo cambia el
+   contenedor/estilo. */
+/* Fix 2026-10-09 (§11, "subir Accesos rápidos sin bajar de 44px táctil"):
+   padding vertical 16px → 13px y margin-bottom 12px → 10px — min-height
+   44px se mantiene explícito, así que el objetivo táctil real nunca baja
+   de eso aunque el padding visual se reduzca. */
+.lub-hero-action-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lub-hero-action-title {
+  display: flex; align-items: center; gap: 8px; font-family: var(--font-display);
+  font-weight: 800; font-size: 18px; letter-spacing: 0.02em; text-transform: uppercase;
+}
+.lub-hero-action-title .btn-icon { width: 18px; height: 18px; margin-right: 0; }
+.lub-hero-action-sub { font-size: 12.5px; opacity: 0.9; }
+.lub-hero-action-arrow { font-size: 22px; font-weight: 700; flex: none; }
+
+/* "D. ACCESOS RÁPIDOS 2x2" (§3D): cards táctiles ícono-arriba/texto-abajo
+   (antes una fila de botones angostos con texto truncado) — misma grilla
+   .lub-quick-actions, mismos 4 botones/ids/handlers reales, solo cambia la
+   presentación visual. "Reportar anomalía" se integra aquí como 4ta
+   tarjeta (antes un botón flotante aparte con el mismo id/handler). */
+.lub-quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 4px; }
+@media (min-width: 480px) { .lub-quick-actions { grid-template-columns: repeat(4, 1fr); } }
+.lub-quick-action {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 72px; font-size: 12px; font-weight: 600; padding: 10px 6px; text-align: center;
+  white-space: normal; overflow: visible; text-overflow: clip; border-radius: var(--radius);
+}
+.lub-quick-action .btn-icon { width: 20px; height: 20px; margin-right: 0; opacity: 1; }
 .lub-back { margin-bottom: 12px; }
 .lub-record-list { display: flex; flex-direction: column; gap: 10px; }
 .lub-record-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
@@ -1385,16 +1919,73 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .grease-flow-contexto dd { font-size: 13px; margin: 1px 0 0; overflow-wrap: break-word; }
 @media (min-width: 640px) { .grease-flow-contexto { grid-template-columns: repeat(3, 1fr); } }
 
+/* Programación/Turno como chips compactos (§2 del pedido "REDISEÑO UX
+   FORMULARIO REGISTRAR ENGRASE", 2026-10-10) en vez de texto largo "Lun ·
+   Mié · Vie · Noche" — mismo dato (plan.assignedDays), solo presentación.
+   Tono neutro (var(--surface)/var(--border)), igual que el resto de
+   .grease-flow-contexto — nunca un color nuevo. */
+.grease-flow-chip-row { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.grease-flow-daychip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; padding: 2px 7px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--text);
+}
+
+/* Sufijo visual "h"/"lb" (§3/§5): el valor numérico del <input> nunca
+   incluye la unidad como texto — solo se superpone visualmente encima. */
+.input-suffix-group { position: relative; display: block; }
+.input-suffix-group input { padding-right: 34px; width: 100%; box-sizing: border-box; }
+.input-suffix-group .input-suffix {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; font-weight: 700; color: var(--text-dim); pointer-events: none;
+}
+
+/* ---------------- Mostrar/ocultar contraseña (pulido UX global, §8 del
+   pedido) — MISMO patrón relativo/absoluto de .input-suffix-group de
+   arriba, pero el elemento sí es interactivo (botón real, no overlay de
+   solo lectura). Un solo wrapper .pw-field envuelve cualquier
+   <input type="password"> existente sin tocar name/validación/autocomplete
+   — wirePasswordReveal() (app.js) solo alterna el atributo type. El campo
+   sube a min-height:var(--tap) (44px, mismo criterio "guantes en el pit"
+   de arriba) para que el botón ojo quepa como objetivo táctil completo,
+   sin depender de que cada pantalla ya le diera esa altura. */
+.pw-field { position: relative; display: block; }
+.pw-field input { padding-right: 44px; width: 100%; box-sizing: border-box; min-height: var(--tap, 44px); }
+.pw-toggle {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: var(--tap, 44px); height: var(--tap, 44px); min-height: unset; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: 8px; cursor: pointer; color: var(--text-dim); padding: 0;
+}
+.pw-toggle:hover { color: var(--text); background: var(--surface-2); }
+.pw-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pw-toggle .btn-icon { margin-right: 0; width: 18px; height: 18px; }
+
 .lub-bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;
-  background: var(--surface); border-top: 1px solid var(--border); padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--border); padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   z-index: 30;
 }
 .lub-nav-item {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 8px 2px; cursor: pointer;
+  position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: none; color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 6px 2px; cursor: pointer;
+  min-height: var(--tap);
 }
-.lub-nav-item.active { color: var(--accent); }
+.lub-nav-item.active { color: var(--accent-ink); }
+
+/* Badge único (módulo "Tareas y Mensajes", 2026-10-18) — mismo cálculo que
+   el pill de Mi Turno (computeTasksMensajesBadgeCount(), app.js), nunca un
+   contador aparte. Punto discreto sobre el ícono del nav, nunca sobre el
+   texto (evita recortes/overflow en 390-412px). */
+.nav-badge-dot {
+  position: absolute; top: 2px; right: calc(50% - 20px); min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 999px; background: var(--amber); color: #1a1a1a; font-size: 10px; font-weight: 700;
+  line-height: 16px; text-align: center; box-sizing: border-box;
+}
+.nav-badge-dot.hidden { display: none; }
+/* .menu-item { position: relative; } ya declarado más arriba (línea ~487) */
+.menu-item .nav-badge-dot { position: static; display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }
+.menu-item .nav-badge-dot.hidden { display: none; }
 /* UI-VIS-302: la barra se mantiene completa (fondo full-width, position:fixed
    sin cambios) pero desde 1024px los 4 ítems dejan de estirarse (flex:1) a lo
    ancho de todo el monitor — se limitan a un ancho cómodo y se centran. */
@@ -1402,6 +1993,142 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .lub-bottom-nav { justify-content: center; }
   .lub-nav-item { flex: 0 1 170px; }
 }
+
+/* ============================================================
+   MOBILE UX REAL ANDROID (lote del mismo nombre) — prueba en teléfono
+   Android real detectó que ".lub-topbar" nunca recibió el mismo
+   tratamiento de compactado que ".topbar" (escritorio): a lo largo de
+   varios lotes se le fueron agregando controles (QR, conn-badge, botón
+   de detalle de sync, Mi Perfil, Bloquear, Cambiar usuario, Cerrar
+   sesión) sin reducir nunca padding/gap — en 360-412px CSS px eso medía
+   overflow horizontal REAL (document.documentElement.scrollWidth >
+   clientWidth, confirmado con Playwright, no solo "se ve apretado").
+   Playwright a 390/412 pasaba porque sus specs miden fragmentos
+   estáticos más simples que el shell real, no porque el shell real
+   quepa — ver Playwright móvil de este mismo lote, que sí mide el shell
+   completo. Solo se reduce "aire" (padding/gap/texto), NUNCA el área
+   táctil real (sigue >=44px en todo). */
+@media (max-width: 600px) {
+  .lub-topbar { padding: 8px var(--sp-3); gap: 6px; }
+  .lub-topbar-right { gap: 4px; min-width: max-content; }
+  .lub-topbar .quick-find { flex-shrink: 0; }
+  /* "OPEN PIT" bajo "ENGRASE" no aporta nada que el usuario no sepa ya
+     (está en la app que está usando) — en una franja de 360-412px de
+     ancho compitiendo con 7+ controles, cuesta más de lo que vale. */
+  .lub-topbar .brand-sub.small { display: none; }
+  .lub-topbar .brand-mark.small { width: 24px; height: 24px; }
+  .lub-topbar .brand-title.small { font-size: 13px; }
+}
+@media (max-width: 480px) {
+  /* Mismo criterio que ".topbar-shift"/".topbar .conn-badge" (lote
+     anterior): comprimir visualmente, nunca perder la función — el
+     estado real sigue en aria-label/title (updateConnBadge() los fija
+     siempre), y el botón de detalle (ⓘ) sigue aparte, intacto. */
+  .lub-topbar-right { gap: 2px; }
+}
+
+/* Títulos de pantalla del Lubricador (Mi Turno/Mis Engrases/Elige tu
+   cuadrilla/Sin cuadrilla) — mismo problema de fondo que el resto de este
+   lote: 22px + mayúsculas + letter-spacing en un ancho de 336-366px de
+   contenido puede ocupar 2-3 líneas y "comerse" media pantalla antes de
+   mostrar nada útil. Clase propia del shell Lubricador — nunca toca
+   ningún encabezado del shell de escritorio. */
+@media (max-width: 480px) {
+  .lub-heading { font-size: 17px; line-height: 1.25; }
+}
+/* Defensivo (mismo patrón ya probado en ".topbar-title" para el overflow
+   de la topbar de escritorio, lote "fix: prevent topbar overlap at
+   tablet width"): un <div> hijo de flex sin min-width:0 no se encoge por
+   debajo del ancho intrínseco de su contenido — con un título largo esto
+   puede desbordar el lado del contenedor. Nunca se oculta con
+   overflow:hidden a secas: el texto sigue envolviéndose completo, solo
+   deja de poder forzar el contenedor a crecer más allá de su ancho real. */
+.lub-header-row > div { min-width: 0; }
+/* .lub-heading { overflow-wrap: break-word; } ya declarado más arriba (línea ~1696) */
+
+/* Menú "Mi cuenta" del Lubricador (Mi Perfil/Bloquear/Cambiar usuario) —
+   mismo openModal() real de siempre, solo el contenido de ESTE modal:
+   lista vertical de botones de ancho completo, cada uno >=44px. */
+.lub-account-menu { display: flex; flex-direction: column; gap: 8px; }
+.lub-account-menu .btn { width: 100%; justify-content: flex-start; min-height: var(--tap); }
+/* Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §5 del pedido): "Cerrar sesión"
+   separado visualmente del resto de Mi Cuenta — nunca mezclado con las
+   acciones normales. */
+.lub-account-menu-divider { border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+
+/* §4 del pedido: preview pequeño de color junto al nombre del tema actual
+   en Configuración → Apariencia. */
+.lub-theme-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle; border: 1px solid var(--border);
+}
+
+/* Estado "sin cuadrilla autorizada" — compacto (icono + título corto +
+   un párrafo breve + UN botón), nunca una pantalla casi completa de texto
+   largo repetido entre el título y el párrafo. */
+.lub-empty-crew {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 10px; padding: 32px var(--sp-3) 16px; max-width: 320px; margin: 0 auto;
+}
+.lub-empty-crew > .btn-icon { width: 34px; height: 34px; opacity: 0.6; margin-right: 0; }
+.lub-empty-crew h2 { margin: 0; font-size: 17px; }
+.lub-empty-crew p { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.lub-empty-crew .lub-anomaly-fab { margin-top: 6px; }
+
+/* Mis Engrases — tarjetas más compactas (lote "mobile UX real Android"):
+   menos padding/separación vertical para ver más de un registro completo
+   sin desplazarse, sin quitar ningún dato (equipo/modelo/fecha/horómetro/
+   turno/cantidad/estado de validación/Ver validación/Editar siguen
+   todos). Acotado a ".lub-record-card" — no es una clase compartida con
+   ninguna tabla/pantalla de escritorio. */
+@media (max-width: 600px) {
+  .lub-record-card { padding: 10px 12px; }
+  .lub-record-meta { margin-top: 4px; gap: 3px 8px; }
+  .lub-record-validacion { margin-top: 6px; gap: 6px; }
+  .lub-record-validacion .btn { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+  .lub-record-card .lub-edit-record { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+}
+
+/* Ayuda del Lubricador — paneles compactos (lote "mobile UX real
+   Android"): ".panel-head h3" a 23px en móvil (regla global, pensada
+   para pantallas de escritorio con 1 solo panel grande en foco) hacía que
+   "Ayuda y soporte"/"Guía de puntos de engrase..."/"Preguntas frecuentes"
+   dominaran la pantalla antes de mostrar contenido real. Acotado con
+   ":has(.ayuda-page)" (mismo patrón ya usado para el ancho de esta
+   pantalla, ver ".lub-content:has(.ayuda-page)" más abajo) — nunca toca
+   ".panel-head"/"h3" del resto del sistema (Ayuda vista desde el shell de
+   escritorio queda intacta). */
+/* Compact operational context: presentation only. */
+.lub-profile-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 12px; width: 100%; max-width: 920px; margin: 0 auto; }
+.lub-profile-layout .panel { margin-bottom: 0; min-width: 0; }
+.lub-profile-layout .config-narrow { max-width: none; }
+.lub-profile-layout .detail-grid { min-width: 0; overflow-wrap: anywhere; }
+.authorized-crew-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.authorized-crew-chip { padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); font-size: 12px; overflow-wrap: anywhere; max-width: 100%; }
+.crew-coverage-detail { grid-column: 1 / -1; }
+.crew-coverage-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.crew-coverage-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.crew-coverage-name { min-width: 0; overflow-wrap: anywhere; }
+.crew-coverage-role { flex-shrink: 0; border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 700; color: var(--text-dim); background: var(--surface-2); }
+.crew-coverage-role.principal { color: var(--green); border-color: var(--green); }
+
+.lub-change-crew { min-height: 44px; padding: 8px 12px; font-size: 12px; white-space: nowrap; gap: 6px; }
+.lub-context-row .lub-change-crew { margin-left: auto; }
+.crew-location-filter-label { margin-top: 10px; font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--text-dim); }
+.crew-location-filter-hint { font-size: 11px; color: var(--text-dim); }
+.lub-account-summary { display: grid; gap: 3px; padding-bottom: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.lub-account-summary span { color: var(--text-dim); font-size: 12px; }
+@media (min-width: 1024px) { .lub-profile-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.lub-content:has(> .lub-profile-layout) { max-width: 960px; }
+
+.lub-content:has(.ayuda-page) .panel-head { padding: 8px 12px; margin-bottom: 2px; }
+.lub-content:has(.ayuda-page) .panel-head h3 { font-size: 15px; }
+.lub-content:has(.ayuda-page) .panel { margin-bottom: 10px; }
+.lub-content:has(.ayuda-page) .ayuda-guia-sub,
+.lub-content:has(.ayuda-page) .ayuda-guia-toolbar,
+.lub-content:has(.ayuda-page) .ayuda-family-chips,
+.lub-content:has(.ayuda-page) .ayuda-faq-list { padding-left: 12px; padding-right: 12px; }
 
 /* En pantallas grandes centramos la vista del lubricador para que no se estire de forma extraña */
 @media (min-width: 640px) {
@@ -1458,15 +2185,19 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ---------------- Ajustes finos por tamaño de dispositivo ---------------- */
 /* Teléfonos angostos (la mayoría de gama media/baja: 320–380px de ancho) */
 @media (max-width: 380px) {
-  .login-card { padding: 24px 18px 20px; border-radius: 12px; }
+  /* Fix 2026-10-09 ("PULIDA LOGIN/QUICK UNLOCK", §0.1 del pedido): el
+     padding de .login-card ya NO se redefine aquí — debe ser el MISMO
+     valor consistente (24px 22px 22px, ver arriba) en 360/390/412, nunca
+     un segundo salto solo por este breakpoint. */
+  .login-card { border-radius: 12px; }
   .brand-title { font-size: 20px; }
   .login-user { padding: 12px; min-height: 50px; }
   .login-user-icon { width: 34px; height: 34px; font-size: 17px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
   .kpi-value { font-size: 19px; }
   .lub-eq-code { font-size: 16px; }
-  .theme-swatches { gap: 8px; }
-  .theme-swatch { padding: 8px 10px; font-size: 12px; }
+  .theme-preview-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+  .theme-preview-card { padding: 8px; font-size: 11.5px; }
 }
 /* Tablets y celulares grandes en horizontal */
 @media (min-width: 601px) and (max-width: 900px) {
@@ -1489,21 +2220,22 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .lub-content:has(.lub-record-list),
   .lub-content:has(#anom-table) { max-width: 1500px; }
 }
-/* UI-FULL-304 (docs/UI_RESPONSIVE_FULL_AUDIT.md, LOTE P2-A): Configuración tenía
-   ~12 .panel apilados en 1 sola columna en TODOS los anchos — en desktop cada
-   uno se ensancha pero su contenido (2-4 campos, o un botón) deja mucho espacio
-   vacío. Desde 1024px (pedido explícito: "1024+, 2 columnas para paneles
-   pequeños/medianos" — NO desde 768, para no encoger de más el .form-grid
-   interno de cada panel, que reacciona al ancho del VIEWPORT, no de su columna).
-   #audit-log-panel/#notif-panel (tabla de hasta 50 filas, 6 tarjetas de aviso)
-   siguen ocupando el ancho completo — :has(#audit-log-panel) identifica esta
-   pantalla sin necesidad de una clase nueva en el HTML. */
-@media (min-width: 1024px) {
-  .app-content:has(#audit-log-panel) {
-    display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); align-items: start;
-  }
-  #notif-panel, #audit-log-panel { grid-column: 1 / -1; }
-}
+/* (UI-FULL-304 histórico, ELIMINADO en el lote "fix: refine settings layout
+   and matrix status styling" — HALLAZGO 1): esta regla era de la época en
+   que Configuración era ~12 .panel apilados sueltos, directos dentro de
+   .app-content, SIN el sistema de categorías/sidebar actual. Desde el lote
+   de tabs (y ahora el de sidebar vertical), #config-root es un único hijo
+   de .app-content con SU PROPIO layout interno (.config-desktop-grid >
+   .config-tabs + .config-content) — esta regla seguía viva y forzaba
+   .app-content ENTERO a 2 columnas, metiendo a #config-root (sidebar +
+   contenido juntos) dentro de una sola de esas 2 columnas (~mitad del
+   ancho real). Esa era la causa raíz del "contenido estrecho + hueco vacío
+   a la derecha" reportado: el culpable no eran los tabs/la sidebar, era
+   este override de un diseño anterior que nunca se limpió. #notif-panel/
+   #audit-log-panel ya NO son hijos directos de .app-content (viven dentro
+   de .config-content), así que su "grid-column:1/-1" tampoco tenía efecto
+   real desde el lote de tabs — confirmado por grep: ambos ids solo existen
+   dentro de renderConfig(). */
 /* Modo horizontal en celular: la barra inferior no debe robar tanta altura */
 @media (max-height: 420px) and (orientation: landscape) {
   .lub-bottom-nav { padding: 4px 4px; }
@@ -1533,7 +2265,13 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
     text-align: left; flex: none; margin-right: 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em;
   }
   .data-table td:empty { display: none; }
-  .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .data-table .row-actions { justify-content: flex-end; flex-wrap: wrap; gap: 8px 6px; }
+  /* El "label" fantasma de arriba (content:attr(data-label)) no tiene nada
+     que mostrar aquí (la celda de acciones nunca lleva data-label) pero
+     seguía generándose vacío igual, con su propio margin-right:10px — un
+     hueco a la izquierda que descompensaba el margen visual de los 3
+     botones (auditoría UI mobile 2026-10-08, Usuarios). */
+  .data-table td.row-actions::before { content: none; }
 
   /* Columnas marcadas como secundarias (ver UI-ANDROID-005 / docs/UI_RESPONSIVE.md):
      se ocultan solo en esta tarjeta apilada móvil, nunca en escritorio, para reducir
@@ -1580,6 +2318,14 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .icon-check {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%2210%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m9%2012%202%202%204-4%22%20/%3E%0A%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%2210%22%20/%3E%0A%20%20%3Cpath%20d%3D%22m9%2012%202%202%204-4%22%20/%3E%0A%3C/svg%3E");
+}
+.icon-eye {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M2.062%2012.348a1%201%200%200%201%200-.696%2010.75%2010.75%200%200%201%2019.876%200%201%201%200%200%201%200%20.696%2010.75%2010.75%200%200%201-19.876%200%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%20%2F%3E%0A%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M2.062%2012.348a1%201%200%200%201%200-.696%2010.75%2010.75%200%200%201%2019.876%200%201%201%200%200%201%200%20.696%2010.75%2010.75%200%200%201-19.876%200%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%20%2F%3E%0A%3C%2Fsvg%3E");
+}
+.icon-eye-off {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M10.733%205.076a10.744%2010.744%200%200%201%2011.205%206.575%201%201%200%200%201%200%20.696%2010.747%2010.747%200%200%201-1.444%202.49%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M14.084%2014.158a3%203%200%200%201-4.242-4.242%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M17.479%2017.499a10.75%2010.75%200%200%201-15.417-5.151%201%201%200%200%201%200-.696%2010.75%2010.75%200%200%201%204.446-5.143%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22m2%202%2020%2020%22%20%2F%3E%0A%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22M10.733%205.076a10.744%2010.744%200%200%201%2011.205%206.575%201%201%200%200%201%200%20.696%2010.747%2010.747%200%200%201-1.444%202.49%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M14.084%2014.158a3%203%200%200%201-4.242-4.242%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M17.479%2017.499a10.75%2010.75%200%200%201-15.417-5.151%201%201%200%200%201%200-.696%2010.75%2010.75%200%200%201%204.446-5.143%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22m2%202%2020%2020%22%20%2F%3E%0A%3C%2Fsvg%3E");
 }
 .icon-gauge {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%0A%20%20%3Cpath%20d%3D%22m12%2014%204-4%22%20/%3E%0A%20%20%3Cpath%20d%3D%22M3.34%2019a10%2010%200%201%201%2017.32%200%22%20/%3E%0A%3C/svg%3E");
@@ -1762,6 +2508,18 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 }
 .pendiente-nota { font-size: 11px; color: var(--amber); margin-top: 4px; line-height: 1.4; }
 
+/* Fix 2026-10-09 ("TRAZABILIDAD DE FOTOS", §9/§10 del pedido): indicador
+   compacto "📷 N foto(s)" en Ficha del equipo/Mis Engrases — NUNCA un
+   thumbnail grande ahí (eso vive en el detalle, al tocar este indicador).
+   Mismo criterio de tamaño que .dash-code-link/.motivo-tag (acción
+   secundaria de baja frecuencia, no un botón primario de 44px). */
+.lub-photo-indicator {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px;
+  padding: 5px 10px; font-size: 11.5px; font-weight: 600; color: var(--text); cursor: pointer;
+}
+.lub-photo-indicator:active { background: var(--border); }
+
 /* ---------------- Anomalías automáticas ---------------- */
 .auto-tag {
   display: inline-block; font-size: 9.5px; font-weight: 700; text-transform: uppercase;
@@ -1854,14 +2612,56 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .matriz-wrap {
   overflow: auto; max-height: 68vh; margin-bottom: 20px; border-radius: 12px;
   border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  /* display:grid con un solo "grid-area" compartido (abajo) deja la tabla y
+     las 2 pistas de scroll superpuestas sin tocar el layout de la tabla en
+     sí ni su propio scroll — sigue siendo tabla, sigue siendo el mismo
+     elemento el que hace overflow:auto. */
+  display: grid;
+  /* Causa raíz real del "filas gigantes" en el modal del Lubricador
+     (2026-10-09, confirmado con getComputedStyle()/boundingBox() antes de
+     tocar nada): `align-content` de un grid container default a `normal`,
+     que la spec resuelve como `stretch` cuando sobra alto — eso nunca se
+     notaba mientras `.matriz-wrap` media SOLO lo que su contenido pedía
+     (max-height aquí es un TOPE, no una altura impuesta). Pero
+     `.modal-lub-matriz .matriz-wrap` (más abajo) SÍ le impone una altura
+     externa (`flex:1`, para aprovechar el modal casi pantalla completa) —
+     con eso, el único renglón implícito del grid (y la <table> dentro de
+     él, `grid-area:1/1`) se estiraba a esa altura completa, y el algoritmo
+     de layout de tablas del navegador reparte ese sobrante entre las <tr>
+     (3 equipos en 390px: cada fila terminaba en ~176px). `align-content:
+     start` deja el renglón del tamaño de su contenido SIEMPRE — la tabla
+     vuelve a tener alto natural/intrínseco, y el espacio sobrante (si lo
+     hay) queda vacío debajo, nunca repartido en las filas. No cambia nada
+     en la Matriz Semanal de escritorio (nunca tuvo alto sobrante que
+     repartir) ni en el scroll (overflow:auto sigue actuando cuando el
+     contenido es más alto que el contenedor, independiente de
+     align-content). */
+  align-content: start;
 }
 table.matriz { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 680px; }
 table.matriz th, table.matriz td {
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  padding: 7px 9px; text-align: center; font-size: 12px; white-space: nowrap;
+  padding: 7px 9px; text-align: center; vertical-align: middle; font-size: 12px; white-space: nowrap;
 }
 table.matriz tr td:last-child, table.matriz tr th:last-child { border-right: none; }
 table.matriz tbody tr:last-child td { border-bottom: none; }
+/* Grid-area compartido (abajo), DESPUÉS del "table.matriz" de arriba para no
+   invertir el orden de especificidad ascendente que ya sigue este archivo
+   (".matriz-wrap > table.matriz" es más específico que "table.matriz"). */
+.matriz-wrap > table.matriz { grid-area: 1 / 1; }
+/* Pista de scroll horizontal (auditoría UI/UX 2026-10-08, hallazgo #3): sombra
+   discreta en el borde que SÍ tiene contenido oculto, nunca tapa celdas (18px,
+   semitransparente) ni intercepta touch (pointer-events:none) — se calcula con
+   JS (wireMatrizScrollHint() en app.js) y desaparece sola cuando ya no hay más
+   contenido hacia ese lado, incluyendo cuando la tabla no tiene overflow. */
+.matriz-scroll-hint {
+  grid-area: 1 / 1; position: sticky; align-self: stretch; width: 18px;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s ease; z-index: 5;
+}
+.matriz-scroll-hint-left { left: 0; justify-self: start; background: linear-gradient(to right, rgba(0,0,0,0.25), transparent); }
+.matriz-scroll-hint-right { right: 0; justify-self: end; background: linear-gradient(to left, rgba(0,0,0,0.25), transparent); }
+.matriz-wrap.has-scroll-left .matriz-scroll-hint-left { opacity: 1; }
+.matriz-wrap.has-scroll-right .matriz-scroll-hint-right { opacity: 1; }
 
 .matriz-titulo {
   background: linear-gradient(180deg, #26457A 0%, #1F3864 100%);
@@ -1876,8 +2676,13 @@ table.matriz tbody tr:last-child td { border-bottom: none; }
   font-size: 11px; font-weight: 400; opacity: 0.85; margin-top: 2px;
 }
 /* Encabezado de días: sticky DENTRO de .matriz-wrap (que ahora sí tiene su
-   propio scroll vertical vía max-height) — nunca sticky contra la página. */
-table.matriz thead tr:nth-child(2) th {
+   propio scroll vertical vía max-height) — nunca sticky contra la página.
+   ":nth-child(2)" cubre la Matriz Semanal de escritorio (fila de título +
+   fila de días = 2 filas en thead); ":only-child" cubre el modal del
+   Lubricador (openLubricadorMatrizModal(), sin fila de título — thead tiene
+   una sola fila) — mismo <th>, mismo CSS, nunca una tabla distinta. */
+table.matriz thead tr:nth-child(2) th,
+table.matriz thead tr:only-child th {
   background: var(--surface-2); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
   padding-top: 8px; padding-bottom: 8px;
@@ -1887,14 +2692,15 @@ table.matriz thead tr:nth-child(2) th {
 /* Día actual: acento MUY discreto (fondo tenue + borde superior), nunca toca
    el color de estado de la celda — se ve igual "REALIZADO"/"NO REALIZADO"/
    etc. que en cualquier otro día, solo la columna queda trazada. */
-table.matriz thead tr:nth-child(2) th.is-today {
-  background: rgba(242,169,0,0.14); color: var(--text); border-top: 2px solid var(--accent);
+table.matriz thead tr:nth-child(2) th.is-today,
+table.matriz thead tr:only-child th.is-today {
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); border-top: 2px solid var(--accent);
 }
 .matriz-hoy-tag {
-  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent);
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent-ink);
   margin-top: 1px;
 }
-table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 rgba(242,169,0,0.5), inset -2px 0 0 rgba(242,169,0,0.5); }
+table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent), inset -2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
 
 /* Columna "Equipo/No.": sticky a la izquierda (siempre visible al deslizar
    horizontalmente en móvil) Y, en el encabezado, sticky también hacia
@@ -1905,7 +2711,8 @@ table.matriz tbody td.is-today { box-shadow: inset 2px 0 0 rgba(242,169,0,0.5), 
   position: sticky; left: 0; z-index: 1; font-size: 12.5px;
   box-shadow: 1px 0 0 var(--border);
 }
-table.matriz thead tr:nth-child(2) th.matriz-eq { z-index: 3; }
+table.matriz thead tr:nth-child(2) th.matriz-eq,
+table.matriz thead tr:only-child th.matriz-eq { z-index: 3; }
 /* Filas alternas para seguir la línea con la vista en tablas largas */
 table.matriz tbody tr:nth-child(even) .matriz-eq { background: var(--surface); }
 table.matriz tbody tr:hover td { background: rgba(255,255,255,0.03); }
@@ -1915,12 +2722,18 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
   background: #00B050; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
-/* "Realizado atrasado" (lote occurrences/carryover) — mismo turquesa que
-   .hist-compliance-teal (Historial/Reportes), para que sea el MISMO color
-   en toda la app cuando un engrase se hizo en un turno distinto al
-   planificado el mismo día (ej. Noche cerrando lo pendiente de Día). */
+/* "Realizado atrasado" (lote UX fix — HALLAZGO 2/7): trabajo COMPLETADO
+   pero ejecutado fuera del turno/fecha prevista — un estado propio, nunca
+   igual a Realizado (verde)/No realizado (rojo)/Pendiente (naranja pálido).
+   #8A5A00 es una derivación EXISTENTE de --amber (es, literalmente, el
+   valor que --amber ya usa en modo oscuro/contraste, ver :root.dark/
+   :root.contrast arriba) — nunca una paleta nueva. Antes usaba el mismo
+   turquesa de .hist-compliance-teal; se cambia a ámbar porque además de la
+   corrección de hover (ver tr:hover .celda-hecho-atrasado abajo) el pedido
+   explícito es "usar un estado propio ÁMBAR/NARANJA accesible". Contraste
+   con texto blanco: 5.9:1 (AA). */
 .celda-hecho-atrasado {
-  background: #2DB6A3; color: #fff; font-weight: 700; font-style: italic;
+  background: #8A5A00; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
 /* "Realizado adelantado" (lote engrase fuera de plan) — un OUT_OF_PLAN que
@@ -1932,19 +2745,43 @@ table.matriz tbody tr:hover .matriz-eq { background: var(--surface-2); }
   background: #5B7FBF; color: #fff; font-weight: 700; font-style: italic;
   font-size: 10.5px; letter-spacing: 0.03em;
 }
-.celda-pendiente { background: #F4B183; }
+.celda-pendiente { background: #F4B183; font-size: 9px; font-weight: 700; color: #7A3B0A; letter-spacing: 0.02em; }
 .celda-futuro { background: #F4B183; opacity: 0.5; }
 /* Equipo no operativo (Detenido/En mantenimiento/Fuera de servicio): gris, igual
    código de color que "GRIS" en el resto del sistema (statusFor()/STATUS_COLOR) —
    nunca rojo/naranja, para no leerse como una falta del lubricador. */
 .celda-pausado { background: var(--gray-status); color: #fff; font-size: 10px; }
-/* Al pasar el mouse sobre una celda hecha, se resalta sin perder el color */
+/* Al pasar el mouse sobre una celda hecha, se resalta sin perder el color.
+   HALLAZGO 2/8 (lote UX fix): ".celda-hecho-atrasado"/".celda-hecho-adelantado"/
+   ".celda-pausado" NO tenían esta excepción — "table.matriz tbody tr:hover td"
+   (arriba) les ganaba por especificidad (2 clases: .matriz+:hover > 1 clase
+   del estado) aunque esa regla esté definida DESPUÉS en el archivo: la
+   especificidad decide, no el orden de aparición. El resultado era el
+   reportado: la celda se veía casi blanca/vacía en hover, con poco
+   contraste. Mismo patrón que .celda-hecho/.celda-pendiente para que CADA
+   estado quede cubierto, no solo el que se reportó. */
 table.matriz tbody tr:hover .celda-hecho { background: #009648; }
+table.matriz tbody tr:hover .celda-hecho-atrasado { background: #754C00; }
+table.matriz tbody tr:hover .celda-hecho-adelantado { background: #4A6BA8; }
+table.matriz tbody tr:hover .celda-pausado { background: #5F666D; }
 table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
+/* El hover de arriba (#5F666D) está pensado para el --gray-status oscuro
+   (#7A828A) — en modo claro, con --gray-status ya oscurecido a #5C6268
+   (hallazgo #1), ese mismo valor casi no se distinguiría del color base.
+   Override propio para modo claro: oscurece un paso más (~8.3:1 con texto
+   blanco, sigue sobre 4.5:1) para que el hover siga siendo visible. */
+[data-mode="light"] table.matriz tbody tr:hover .celda-pausado { background: #4A4F54; }
 
 @media (max-width: 640px) {
   table.matriz th, table.matriz td { padding: 6px 7px; font-size: 11px; }
-  .celda-hecho { font-size: 9px; }
+  /* Piso de legibilidad en campo (auditoría UI/UX 2026-10-08, hallazgo #4):
+     antes .celda-hecho/.celda-no-realizado/.celda-pendiente bajaban hasta
+     ~7.5-9px en este breakpoint (y se quedaban así hasta 360px, ningún
+     override a 420px los subía de nuevo) — ahora usan var(--fs-xs), el
+     mismo token de 11px ya definido para "etiquetas, pies de tabla" en
+     lugar de un valor nuevo. La densidad no cambia: mismo padding/ancho de
+     columna, el wrap de texto de abajo sigue absorbiendo el espacio extra. */
+  .celda-hecho, .celda-no-realizado, .celda-pendiente { font-size: var(--fs-xs); }
   .matriz-eq { font-size: 11px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
   /* Las celdas de estado ("NO REALIZADO", "PENDIENTE HOY"…) ya no fuerzan el
      ancho de columna al de su palabra más larga en una sola línea — al
@@ -1965,6 +2802,68 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   .mtz-nav-label { display: none; }
   .matriz-rango { font-size: 12px; text-transform: uppercase; order: -1; flex: 1 1 100%; text-align: center; padding: 2px 0 6px; }
   .mtz-nav-row { justify-content: center; }
+}
+
+/* ---------------- Matriz semanal del Lubricador (modal, Acciones rápidas) ----------------
+   Auditoría UI UX Pro Max 2026-10-09: la ventana era un modal genérico
+   (max-width 620px) — demasiado angosta para una tabla de 8 columnas
+   (Equipo + 7 días), el último día quedaba parcialmente cortado y el
+   scroll horizontal aparecía casi de inmediato. `.modal-lub-matriz` es un
+   modificador SOLO de este modal (ver 3er argumento de openModal() en
+   openLubricadorMatrizModal()) — nunca toca `.modal`/`.modal-overlay` base,
+   usados por otros ~60 modales de la app. La tabla en sí (table.matriz,
+   celdas, leyenda, sticky, scroll-hint, día actual) es EXACTAMENTE la misma
+   de arriba — ni el cálculo ni los estados se tocan, solo el contenedor. */
+.modal-lub-matriz {
+  width: 94vw; max-width: 1200px; height: 88vh; max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-lub-matriz .modal-head { flex: none; }
+.modal-lub-matriz .modal-body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto;
+}
+.lub-mtz-context { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text); }
+.lub-mtz-nav-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.lub-mtz-nav-row .matriz-rango { flex: 1 1 auto; text-align: center; }
+.modal-lub-matriz .lub-mtz-context,
+.modal-lub-matriz .lub-mtz-nav-row, .modal-lub-matriz .color-legend { flex: none; }
+/* La tabla se queda con el espacio vertical que sobra (nunca un % fijo
+   adivinado) — resuelve directamente "demasiada altura de leyenda/contexto
+   respecto al área útil", sin importar cuánto mida el contexto en cada caso. */
+.modal-lub-matriz .matriz-wrap { flex: 1; min-height: 220px; max-height: none; margin-bottom: 12px; }
+
+@media (max-width: 640px) {
+  /* Casi pantalla completa en móvil — una pantalla de consulta, no un modal
+     flotante pequeño. Mantiene header/botón cerrar/tabla/scroll/sticky.
+     `.modal-overlay` tiene un bug preexistente (sin relación con este
+     lote): su override móvil real (`padding:0`, dentro del bloque
+     "@media (max-width: 900px)" más arriba en este archivo) queda
+     clobbereado por la regla BASE `.modal-overlay{padding:16px}", que
+     aparece DESPUÉS en el archivo y gana el empate de especificidad por
+     orden de cascada — así que TODOS los modales conservan 16px de aire
+     alrededor en móvil, nunca el bottom-sheet pegado a los bordes que esa
+     regla quería dar. Corregir esa regla general queda fuera de alcance
+     de este lote (afectaría ~60 modales sin auditar aquí); en su lugar,
+     `:has()` acota el override SOLO al overlay que contiene este modal
+     — nunca toca el comportamiento de ningún otro modal de la app. */
+  .modal-overlay:has(> .modal-lub-matriz) { padding: 0; }
+  .modal-lub-matriz {
+    width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; border-radius: 0;
+  }
+  /* Altura de fila FIJA/mínima (fix "filas gigantes", 2026-10-09): `height`
+     en una celda de tabla es un MÍNIMO para el algoritmo de layout de
+     tablas (CSS 2.1 §17.5.3), nunca un máximo forzado — el contenido
+     normal queda centrado dentro de ~46px (header)/~58px (fila de equipo)
+     sin estirarse al alto del modal (eso ya lo corrige `align-content:
+     start` en `.matriz-wrap`, arriba); una celda excepcional (texto
+     envuelto en 2 líneas en un día muy angosto) puede crecer un poco más,
+     nunca se fuerza hacia abajo. Objetivo pedido: header ~44-48px, fila
+     ~56-64px, nunca por encima de ~72px salvo contenido excepcional.
+     Acotado a `.modal-lub-matriz` — la Matriz Semanal de escritorio
+     (renderMatrizSemanal(), misma tabla/clases) no se toca, no fue
+     reportada como un problema y queda fuera de este pedido. */
+  .modal-lub-matriz table.matriz thead th { height: 46px; }
+  .modal-lub-matriz table.matriz tbody td { height: 58px; }
 }
 
 /* ---------------- Panel de notificaciones por tipo ---------------- */
@@ -2000,7 +2899,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   padding: 4px 11px; font-size: 12px; cursor: pointer;
 }
 .notif-rol input { width: 15px; height: 15px; flex: none; }
-.notif-rol:has(input:checked) { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.notif-rol:has(input:checked) { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .notif-extra {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
   flex-wrap: wrap; /* si no cabe en una línea, baja en vez de aplastar los campos */
@@ -2041,7 +2940,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
   height: 34px;
   cursor: pointer;
 }
-.notif-num:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.notif-num:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* ═══════════════════════════════════════════════════════════════
    MEJORAS DE DISEÑO Y ACCESIBILIDAD
@@ -2051,7 +2950,7 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 /* ---- 1. Foco visible al navegar con teclado ----
    Antes no existía: quien navega con Tab no veía dónde estaba parado. */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -2077,20 +2976,12 @@ table.matriz tbody tr:hover .celda-pendiente { background: #EFA772; }
 .btn, .icon-btn, .lub-nav-item, .menu-item, .bottom-item {
   min-height: var(--tap);
 }
-.btn-sm {
-  min-height: 36px; /* los secundarios pueden ser algo menores */
-  position: relative;
-}
+/* min-height/position de .btn-sm ya declarados más arriba (línea ~1161, "los secundarios pueden ser algo menores") */
 .btn-sm::after {
   content: ''; position: absolute; inset: -6px; /* amplía el área sin cambiar el aspecto */
 }
 
-/* Casillas e interruptores: tamaño uniforme y cómodo */
-input[type="checkbox"], input[type="radio"] {
-  width: 20px; height: 20px; flex: none;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
+/* Casillas e interruptores: tamaño uniforme y cómodo (regla base más arriba, línea ~265) */
 /* En el checklist de engrase, que es lo que más se toca en campo, más grandes aún */
 .checklist-item input[type="checkbox"],
 .chk-done { width: 26px; height: 26px; }
@@ -2106,7 +2997,6 @@ input[type="checkbox"], input[type="radio"] {
 
 /* ---- 4. Jerarquía tipográfica consistente ----
    Se normalizan los tamaños al sistema de escalas, respetando la intención original. */
-.kpi-value { font-size: var(--fs-xl); }
 .panel-head h3 { font-size: var(--fs-lg); }
 /* Móvil (pulido pre-cutover): ver el comentario junto a `.panel-head` más
    arriba — títulos largos dominaban la pantalla en 390/412px. Declarada
@@ -2116,8 +3006,6 @@ input[type="checkbox"], input[type="radio"] {
   .panel-head h3 { font-size: 23px; line-height: 1.15; }
 }
 .dim, .field-hint { font-size: var(--fs-sm); }
-.data-table th { font-size: var(--fs-xs); }
-.data-table td { font-size: var(--fs-base); }
 
 /* ---- 5. Profundidad discreta ----
    Los paneles se distinguían solo por el borde; una sombra sutil separa mejor las
@@ -2125,43 +3013,36 @@ input[type="checkbox"], input[type="radio"] {
 .panel, .kpi-card {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
-.modal {
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
-}
+/* .modal { box-shadow } ya declarado más arriba (línea ~1365) */
 
 /* ---- 6. Estados de interacción claros ----
    Antes muchos elementos clicables no daban señal de que respondían al toque. */
-.btn:active, .eq-card.clickable:active, .lub-eq-btn:active {
+.btn:active, .eq-card.clickable:active {
   transform: scale(0.985);
 }
-.eq-card.clickable, .lub-eq-btn { transition: transform 0.08s ease, border-color 0.15s ease; }
+/* .eq-card.clickable { transition } ya declarado más arriba (línea ~1019) */
 
 /* ---- 7. Tablas más legibles en jornadas largas ----
    Filas alternas suaves para no perder el renglón al leer listados largos. */
 .data-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
-.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 [data-mode="light"] .data-table tbody tr:nth-child(even) { background: rgba(0, 0, 0, 0.015); }
 [data-mode="light"] .data-table tbody tr:hover { background: rgba(0, 0, 0, 0.035); }
 
-/* ---- 8. Modo alto contraste: foco aún más marcado ---- */
-[data-mode="contrast"] :where(button, a, input, select, textarea):focus-visible {
-  outline: 4px solid #000;
-  outline-offset: 3px;
-}
+/* Modo Sol y aliases antiguos: foco fuerte para lectura en campo. */
+:is([data-mode="sun"], [data-mode="contrast"], [data-mode="high-contrast"]) :where(button, a, input, select, textarea):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 /* Celda de la matriz: le tocaba engrase ese día y no se registró (día ya pasado) */
 .celda-no-realizado {
   background: #C00000; color: #fff; font-weight: 700;
   font-size: 9.5px; letter-spacing: 0.02em;
 }
-.celda-pendiente {
-  font-size: 9px; font-weight: 700; color: #7A3B0A; letter-spacing: 0.02em;
-}
+/* .celda-pendiente { font-size/font-weight/color/letter-spacing } ya declarado más arriba (línea ~2742) */
 table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
-@media (max-width: 640px) {
-  .celda-no-realizado { font-size: 8px; }
-  .celda-pendiente { font-size: 7.5px; }
-}
+/* El piso de 11px (var(--fs-xs)) para estas 2 clases en móvil ya se define
+   una sola vez más arriba, junto a .celda-hecho (hallazgo #4 de la
+   auditoría UI/UX 2026-10-08) — este archivo ya tenía un @media(640px)
+   propio aquí que las volvía a bajar a 8px/7.5px (ganaba por venir después
+   en el archivo, misma especificidad); se quita para no pisar el fix. */
 
 /* ---- Opciones extra de notificación: recordatorio y escalamiento ----
    Antes el número y los cuatro roles iban en un solo renglón, y el campo quedaba
@@ -2196,6 +3077,65 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   padding: 6px 0; font-size: 12.5px; border-bottom: 1px solid var(--border);
 }
 .ficha-fila:last-child { border-bottom: none; }
+.ficha-fila.manual-task-row { cursor: pointer; }
+.ficha-fila.manual-task-row:hover, .ficha-fila.manual-task-row:focus-visible { background: var(--surface-hover, rgba(0,0,0,0.03)); }
+.lub-arrastrado-card.broadcast-read { opacity: 0.6; }
+
+/* "Pulida profunda — Ficha del equipo" (2026-10-09): header con jerarquía
+   real (código grande / marca-modelo debajo / badge de estado), nunca una
+   sola línea larga con todo mezclado. Reusa .status-chip (ya existente, sin
+   paleta nueva). */
+.modal-ficha-equipo { max-width: 860px; }
+.ficha-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.ficha-code { font-family: var(--font-display); font-size: 21px; font-weight: 800; letter-spacing: 0.01em; line-height: 1.15; }
+.ficha-brand { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+
+/* "Semana actual" (Ficha → Programación, 2026-10-10): 7 indicadores de solo
+   lectura, nunca botones (ver .ficha-dia abajo — sin cursor:pointer/role).
+   Mismos colores EXACTOS que la Matriz Semanal (.celda-hecho/.celda-no-
+   realizado/etc, --c vía inline style, mismo patrón que .status-chip/.dot
+   del resto de la Ficha) — una sola fuente de verdad, nunca una paleta
+   nueva. Grid de 7 columnas fijas: a 360px con el padding del modal/bloque
+   ya restado siguen cabiendo sin scroll horizontal ni carrusel (§A11). */
+.ficha-semana { margin-top: 12px; }
+.ficha-semana-titulo {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); margin-bottom: 6px;
+}
+.ficha-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.ficha-dia {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 30px; border-radius: 6px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.01em; color: var(--text-dim); background: var(--surface);
+  border: 1px solid var(--border);
+}
+.ficha-dia-relleno { background: var(--c); color: #fff; border-color: transparent; }
+.ficha-dia-dual { min-height: 50px; flex-direction: column; gap: 2px; padding: 3px 2px; }
+.ficha-dia-dual > span:first-child { color: var(--text-dim); font-size: 9px; line-height: 1; }
+.ficha-turno-mini { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; min-height: 16px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); font-size: 9px; line-height: 1; }
+.ficha-turno-mini + .ficha-turno-mini { margin-left: 2px; }
+.ficha-turno-mini-relleno { color: #fff; background: var(--c); border-color: transparent; }
+.ficha-week-legend {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;
+  font-size: 11px; color: var(--text-dim);
+}
+@media (max-width: 400px) {
+  .ficha-dia { font-size: 9px; min-height: 26px; }
+}
+
+/* Filas de "Últimos engrases" rediseñadas: apiladas (fecha/hora, lubricador,
+   horómetro+cantidad, badges) en vez de una sola línea de texto corrido —
+   mismos datos de siempre, solo mejor jerarquía (§7 del pedido). */
+.ficha-record-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 0; font-size: 12.5px; border-bottom: 1px solid var(--border);
+}
+.ficha-record-card:last-child { border-bottom: none; }
+.ficha-record-top { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.ficha-record-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 
 /* ---------------- Buscador rápido de la barra superior ---------------- */
 .quick-find { position: relative; display: flex; align-items: center; }
@@ -2247,7 +3187,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .copy-plan-opcion {
   display: flex; flex-direction: row; align-items: flex-start; gap: 9px;
   padding: 11px 13px; margin-bottom: 12px; cursor: pointer;
-  background: rgba(242,169,0,0.07); border: 1px solid var(--accent); border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); border: 1px solid var(--accent); border-radius: 9px;
   font-size: 13px; line-height: 1.5;
 }
 .copy-plan-opcion input { width: 20px; height: 20px; flex: none; margin-top: 2px; }
@@ -2283,8 +3223,175 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   margin-bottom: -1px;
 }
 .hist-tab:hover { color: var(--text); }
-.hist-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.hist-tab.active { color: var(--accent-ink); border-bottom-color: var(--accent); }
 @media (max-width: 480px) { .hist-tab { flex: 1; text-align: center; padding: 12px 8px; font-size: 12px; } }
+
+/* ---------------- Tareas y Mensajes: pestañas Bandeja / Enviados-Historial ----------------
+   Mismo componente visual que .hist-tabs/.hist-tab (ver arriba) — clase propia
+   para no acoplar esta pantalla a Historial. Cambiar de pestaña solo alterna
+   [data-tym-panel] vía .hidden — ningún dato se recarga (renderTareasYMensajes()). */
+.tym-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.tym-tab {
+  background: none; border: none; color: var(--text-dim); font-family: var(--font-display);
+  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; font-size: 13px;
+  padding: 12px 16px; min-height: var(--tap); cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tym-tab:hover { color: var(--text); }
+.tym-tab.active { color: var(--accent-ink); border-bottom-color: var(--accent); }
+@media (max-width: 480px) { .tym-tab { flex: 1; text-align: center; padding: 12px 8px; font-size: 12px; } }
+
+/* ---------------- Tareas y Mensajes: patrón Inbox/List+Detail ----------------
+   (lote "patrón Inbox", 2026-10-19) Lista compacta a la izquierda + panel de
+   detalle a la derecha en >=768px (ambos visibles a la vez, la lista NUNCA
+   se oculta); en <768px el detalle ocupa la pantalla completa y reemplaza la
+   lista (mismo HTML, solo cambia qué pane se muestra). Referencia de
+   interacción tipo Asana/ClickUp — NUNCA su branding/estilo visual. */
+.tym-layout { display: flex; align-items: flex-start; gap: 0; }
+.tym-list-pane { flex: 1 1 auto; min-width: 0; }
+.tym-list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.tym-detail-pane { display: none; }
+@media (min-width: 768px) {
+  .tym-layout { gap: 16px; }
+  .tym-has-selection .tym-detail-pane {
+    display: block; flex: 0 0 clamp(420px, 38vw, 520px); align-self: stretch;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+    max-height: calc(100vh - 160px); overflow-y: auto; position: sticky; top: 12px;
+  }
+}
+@media (max-width: 767px) {
+  .tym-has-selection .tym-list-pane { display: none; }
+  .tym-has-selection .tym-detail-pane { display: block; }
+}
+
+/* Fila compacta (§3/§11/§12 del pedido): SOLO tipo/título/contexto/hora
+   corta/estado/indicador ●/chevron › — CERO botones dentro de la fila
+   (ni primario ni ⋮, eso vive en el panel de detalle). Toda la fila es un
+   <button> clicable. Altura objetivo: 56-72px desktop, 88-120px mobile
+   (ver media query más abajo, mismo breakpoint 480px que el resto de la
+   app usa para "mobile real"). */
+.tym-row-list { display: flex; flex-direction: column; }
+.tym-row {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; min-height: 56px; border: none; border-bottom: 1px solid var(--border);
+  background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.tym-row:hover, .tym-row:focus-visible { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.tym-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tym-row.broadcast-read { opacity: 0.65; }
+.tym-row-main { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.tym-row-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.tym-row-dot { color: var(--amber); font-size: 10px; flex: none; }
+.tym-row-title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.tym-row-sub { font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tym-row-chevron { flex: none; color: var(--text-dim); font-size: 18px; }
+@media (max-width: 480px) {
+  .tym-row { flex-direction: row; align-items: center; min-height: 88px; padding: 12px 14px; }
+  .tym-row-top { flex-wrap: wrap; }
+  .tym-row-title, .tym-row-sub { white-space: normal; }
+}
+
+/* Header de la lista: botón único "Crear ▾" (§1 del pedido) — reemplaza
+   los 2 botones "Nueva tarea"/"Nuevo mensaje" separados. Reusa el MISMO
+   panel flotante que el menú ⋮ (.tym-row-menu-items/.tym-menu-item),
+   clase propia solo para que el <summary> se vea como botón, no como ⋮. */
+.tym-create-menu { position: relative; display: inline-block; }
+.tym-create-menu > summary { list-style: none; cursor: pointer; }
+.tym-create-menu > summary::-webkit-details-marker { display: none; }
+
+/* Filtros pequeños de Enviados (§9 del pedido): Todos/Tareas/Mensajes,
+   puro CSS .hidden sobre la MISMA lista — nunca una 2da consulta/subsección. */
+.tym-enviados-filters { display: flex; gap: 6px; margin-bottom: 10px; }
+.tym-filter-chip {
+  background: none; border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+  padding: 5px 12px; font-size: 12px; color: var(--text-dim); min-height: 30px;
+  position: relative;
+}
+.tym-filter-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* El chip mide ~30px de alto (medido real) — bajo los 48px táctiles exigidos.
+   Se agranda SOLO el área de toque (pseudo-elemento invisible, sin afectar
+   el pill visual ni el layout): el click dentro de esta zona sigue
+   resolviendo al botón real, nunca un hitbox/componente nuevo. Ancho ya
+   supera 48px en los 3 chips, por eso solo se extiende arriba/abajo. */
+.tym-filter-chip::after {
+  content: ''; position: absolute; left: 0; right: 0; top: -9px; bottom: -9px;
+}
+
+/* Panel/pantalla de detalle (§4/§5 del pedido): header compacto con
+   estado a la derecha, cuerpo con grid denso, footer de acciones directas
+   + ⋮ para la menos frecuente. El botón "volver/cerrar" cambia de glifo
+   por CSS según el breakpoint (✕ en desktop junto al panel, ← en móvil a
+   pantalla completa) — mismo botón, sin JS ni 2 markups distintos. */
+.tym-detail-headbar {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+.tym-detail-back {
+  flex: none; width: 36px; height: 36px; min-width: var(--tap); min-height: var(--tap);
+  display: flex; align-items: center; justify-content: center; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; font-size: 16px;
+}
+.tym-detail-back::before { content: '✕'; }
+.tym-detail-headtext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tym-detail-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tym-detail-title { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tym-detail-body { padding: 16px; }
+.tym-detail-desc { font-size: 14px; }
+.tym-detail-actions { padding: 0 16px 16px; }
+@media (max-width: 767px) {
+  .tym-detail-back::before { content: '←'; }
+}
+
+/* Menú ⋮ (ver §4/§5 del pedido): <details> nativo, mismo patrón que
+   .reg-advanced/.pt-more, SIN JS de posicionamiento — solo
+   position:relative/absolute. renderTareasYMensajes() cierra cualquier
+   otro menú abierto al abrir uno nuevo (evento 'toggle'). */
+.tym-row-menu { position: relative; }
+.tym-row-menu > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; min-width: var(--tap); min-height: var(--tap);
+  font-size: 18px; line-height: 1; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-dim);
+}
+.tym-row-menu > summary::-webkit-details-marker { display: none; }
+.tym-row-menu[open] > summary { color: var(--text); border-color: var(--accent-ink); }
+.tym-row-menu-items {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 190px;
+  display: flex; flex-direction: column; gap: 2px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+}
+.tym-menu-item {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: 10px 12px; min-height: var(--tap); font-size: 13px; color: var(--text);
+  cursor: pointer; border-radius: var(--radius-sm);
+}
+.tym-menu-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tym-menu-item.danger { color: var(--red); }
+
+/* Tareas y Mensajes — LUBRICADOR (lote "eliminar clicks innecesarios",
+   2026-10-19): card autosuficiente, reusa lub-arrastrado-card/lub-eq-head/
+   lub-record-meta/lub-arrastrado-actions/lub-eq-list TAL CUAL (cero
+   componente nuevo de contenedor) — solo las líneas de datos de cierre
+   (Solicitada/Vence/Completada/Atendida por/Respuesta) necesitan su
+   propia regla mínima. "Ver evidencia" reusa .reg-advanced (mismo patrón
+   ya usado en openPointForm()/openManualTaskForm()), cero CSS nuevo ahí. */
+.tym-lub-lines { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.tym-lub-line b { color: var(--text-dim); font-weight: 600; }
+.tym-lub-evidence-body { margin-top: 8px; }
+
+/* Deep link desde push (§7/§9/§12 del pedido "push real para Tareas y
+   Mensajes", 2026-10-19): al tocar la notificación, enfoca la fila/card
+   exacta con scrollIntoView() + un resalte breve — NUNCA abre un modal.
+   prefers-reduced-motion ya apaga toda transición/animación declarada en
+   CSS globalmente (ver arriba en este archivo), esta regla no necesita
+   su propio guard aparte. */
+.tym-focus-flash { animation: tym-focus-pulse 2.4s ease-out 1; }
+@keyframes tym-focus-pulse {
+  0%, 100% { background: transparent; }
+  15% { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+}
+
 /* CAUSA RAÍZ del reporte "el buscador no funciona": .panel trae
    overflow:hidden (y una regla posterior solo pisa overflow-x, dejando
    overflow-y:hidden vigente) — el dropdown de resultados (position:absolute,
@@ -2340,7 +3447,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
   color: var(--text-dim); font-size: 12px; cursor: pointer; padding: 6px 4px; text-decoration: underline;
   align-self: flex-end; margin-bottom: 2px;
 }
-.hist-eq-clear-dates:hover { color: var(--accent); }
+.hist-eq-clear-dates:hover { color: var(--accent-ink); }
 #hist-area .hist-table th, #hist-area .hist-table td { padding: 11px 14px; }
 .hist-cond-badge { font-size: 13px; }
 /* Cumplimiento del plan (B): insignia discreta, nunca un bloque de color grande
@@ -2364,7 +3471,12 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
    formulario + canvas de firma manuscrita. ---- */
 .val-info { display: flex; flex-direction: column; gap: 4px; padding: 0 0 14px; font-size: 13px; }
 .val-info-row { display: flex; justify-content: space-between; gap: 10px; }
+.val-info-row span { min-width: 0; overflow-wrap: anywhere; }
 .val-info-row span:first-child { color: var(--text-dim); }
+:where(#anom-form, #grease-form, #val-reason-wrap, #val-other-wrap) :is(input:not([type="checkbox"], [type="file"], [type="hidden"]), select, textarea) { min-height: 44px; min-width: 0; max-width: 100%; }
+#oop-reason-select { min-height: 44px; min-width: 0; width: 100%; }
+#btn-check-all { min-height: 44px; }
+:where(#val-name, #val-role) { min-height: 44px; }
 .val-signature-wrap { margin-top: 14px; }
 .val-signature-label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
 .val-signature-canvas {
@@ -2385,7 +3497,7 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .grease-validate-choice-actions { display: flex; gap: 8px; margin-top: 8px; }
 .grease-validate-choice-actions .btn { flex: 1; min-height: var(--tap, 44px); }
 .hist-cond-link {
-  display: block; background: none; border: none; color: var(--accent); font-size: 11px;
+  display: block; background: none; border: none; color: var(--accent-ink); font-size: 11px;
   font-weight: 600; cursor: pointer; padding: 2px 0 0; text-decoration: underline;
 }
 /* Eliminar como acción secundaria discreta (antes .btn-danger dominaba cada fila) —
@@ -2393,6 +3505,36 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 .hist-del-btn { color: var(--text-dim); border-radius: 8px; }
 .hist-del-btn:hover, .hist-del-btn:focus-visible { color: var(--red); background: rgba(229,72,77,0.12); }
 #hist-area .photo-thumb { width: 52px; height: 52px; }
+
+/* Campo: los controles de estas rutas tenían alturas fijas de 44px o una
+   fila demasiado compacta. El token de .lub-shell ya lleva botones, nav,
+   iconos, tabs y acciones de sincronización a 48px; estas reglas cubren las
+   excepciones hard-coded de Registrar, Historial y sus modales. */
+.lub-shell .grease-flow-toggle-row,
+.lub-shell .retro-toggle,
+.lub-shell .check-row { min-height: var(--tap); box-sizing: border-box; }
+.lub-shell .hist-eq-search,
+.lub-shell .hist-eq-period-filter .input,
+.lub-shell .hist-global-search,
+.lub-shell .hist-global-filter .input,
+.lub-shell :where(#anom-form, #grease-form, #val-reason-wrap, #val-other-wrap) :is(input:not([type="checkbox"], [type="file"], [type="hidden"]), select, textarea),
+.lub-shell #oop-reason-select,
+.lub-shell #btn-check-all,
+.lub-shell :where(#val-name, #val-role) { min-height: var(--tap); }
+.lub-shell .hist-eq-clear-dates,
+.lub-shell .hist-cond-link { min-height: var(--tap); display: inline-flex; align-items: center; }
+
+/* La X de evidencia conserva su apariencia de 20px, pero su pseudo-elemento
+   amplía la zona que recibe el toque a 48px sin agrandar la miniatura. */
+.lub-shell .photo-slot { overflow: visible; }
+.lub-shell .photo-slot img { border-radius: inherit; }
+.lub-shell .photo-slot-remove::before { content: ''; position: absolute; inset: -14px; }
+
+/* openModal() monta el diálogo al final de body. Mientras la ruta de campo
+   está activa, su overlay hereda el mismo objetivo de 48px sin cambiar los
+   modales de administración. */
+body:has(.lub-shell) #modal-overlay { --tap: 48px; }
+body:has(.lub-shell) #modal-overlay :is(input:not([type="checkbox"], [type="file"], [type="hidden"]), select, textarea) { min-height: var(--tap); }
 
 /* ---------------- Historial: buscador + filtros GLOBALES ----------------
    Contenedor único con el padding (16px lateral, 16px abajo, 0 arriba —
@@ -2435,3 +3577,365 @@ table.matriz tbody tr:hover .celda-no-realizado { background: #A50000; }
 }
 .mtz-sin-plan-note:hover { border-color: var(--accent); color: var(--text); }
 .mtz-sin-plan-note .btn-icon { width: 14px; height: 14px; flex: none; }
+
+/* Compact operational dashboard: layout only, established semantic tokens. */
+#app-content .dash-admin-dashboard { display: grid; gap: 12px; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-section { margin: 0; min-width: 0; }
+#app-content .dash-admin-dashboard .panel { margin: 0; min-width: 0; }
+#app-content .dash-admin-dashboard .panel-head { padding: 10px 12px; }
+#app-content .dash-admin-dashboard .dash-filters-row { display: flex; align-items: center; gap: 8px 14px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.dash-filter-title { flex-basis: 100%; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.dash-filter-scope { font-size: 12px; color: var(--text-dim); }
+#app-content .dash-admin-dashboard .filter-label { flex: 1 1 130px; min-width: 0; }
+#app-content .dash-admin-dashboard .filter-label select { width: 100%; min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#app-content .dash-admin-dashboard .dash-hero-card { padding: 8px 10px; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-hero-value { display: block; font-size: 30px; }
+#app-content .dash-admin-dashboard .dash-hero-label { display: block; font-size: 12px; letter-spacing: 0.03em; text-align: left; }
+#app-content .dash-admin-dashboard button.kpi-clickable { appearance: none; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer; min-height: 44px; text-align: left; width: 100%; text-decoration: none; transition: background-color 0.1s ease; transform: none; }
+#app-content .dash-admin-dashboard button.kpi-clickable:hover { text-decoration: none; background: var(--surface-2); }
+#app-content .dash-admin-dashboard button.kpi-clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+#app-content .dash-admin-dashboard button.kpi-clickable:active { transform: none; background: var(--surface-2); }
+#app-content .dash-admin-dashboard .dash-hero-card:not(button),
+#app-content .dash-admin-dashboard .dash-activity-card:not(button) { cursor: default; }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id] { cursor: pointer; }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id]:hover { background: var(--surface); }
+#app-content .dash-admin-dashboard .dash-cola-row[data-equipment-id]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+#app-content .dash-admin-dashboard .dash-hero-card:last-child { grid-column: 1 / -1; }
+#app-content .dash-admin-dashboard .progress-track { margin-top: 6px; }
+#app-content .dash-admin-dashboard .tone-green .progress-fill { color: var(--green); }
+#app-content .dash-admin-dashboard .tone-amber .progress-fill { color: var(--amber); }
+#app-content .dash-admin-dashboard .tone-red .progress-fill { color: var(--red); }
+#app-content .dash-admin-dashboard .dash-activity-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#app-content .dash-admin-dashboard .dash-activity-card { padding: 12px; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; justify-content: flex-start; }
+#app-content .dash-admin-dashboard .dash-activity-value { font-size: 25px; }
+#app-content .dash-admin-dashboard .dash-activity-label { font-size: 12px; overflow-wrap: anywhere; line-height: 1.3; }
+.dash-work-grid { display: grid; gap: 12px; align-items: start; min-width: 0; }
+#app-content .dash-admin-dashboard .dash-cola-atencion { gap: 4px; padding: 0 10px 10px; }
+#app-content .dash-admin-dashboard .dash-cola-row { padding: 6px 8px; gap: 4px 8px; min-width: 0; }
+#app-content .dash-admin-dashboard .panel-head h3 { font-size: 16px; line-height: 1.25; }
+#app-content .dash-admin-dashboard .dash-cola-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-cola-plan { white-space: normal; overflow: visible; }
+#app-content .dash-admin-dashboard .dash-cola-actions .btn { min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-code-link { min-height: 44px; min-width: 44px; }
+#app-content .dash-admin-dashboard .btn-sm::after { inset: 0; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown { margin: 8px 10px 10px; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown table { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown thead { display: table-header-group; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown tbody { display: table-row-group; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown tr { display: table-row; width: auto; padding: 0; margin: 0; border: 0; background: transparent; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td { display: table-cell; width: auto; text-align: left; height: 40px; font-variant-numeric: tabular-nums; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td::before { display: none; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown th { white-space: normal; letter-spacing: 0; font-weight: 600; padding: 10px 4px; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown th,
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td { padding: 8px 4px; font-size: 12px; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-empty-shift { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 8px 12px; }
+#app-content .dash-admin-dashboard .dash-empty-shift .panel-head { padding: 0; border: 0; }
+#app-content .dash-admin-dashboard .dash-empty-shift h3 { font-size: 13px; }
+#app-content .dash-admin-dashboard .dash-empty-shift .empty-state { padding: 0; font-size: 13px; }
+#app-content .dash-admin-dashboard .dash-exc-sub { padding: 0 12px 4px; }
+#app-content .dash-admin-dashboard .dash-exc-row { padding-top: 4px; padding-bottom: 4px; padding: 8px 0; }
+#app-content .dash-admin-dashboard .dash-exc-main { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 10px; align-items: center; }
+#app-content .dash-admin-dashboard .dash-exc-line1 { grid-column: 1; grid-row: 1 / 3; }
+#app-content .dash-admin-dashboard .dash-exc-line2 { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
+#app-content .dash-admin-dashboard .dash-exc-line3 { grid-column: 2; grid-row: 2; white-space: normal; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; }
+#app-content .dash-admin-dashboard .dash-exc-hist-btn { min-height: 44px; }
+#app-content .dash-admin-dashboard .dash-compliance-note { padding-bottom: 4px; }
+#app-content .dash-admin-dashboard .dash-compliance-grid { padding-bottom: 10px; }
+#app-content .dash-admin-dashboard .dash-compliance-card { padding: 7px 10px; }
+#app-content #dash-secondary .dash-activity-card { padding: 8px 10px; background: var(--surface-2); }
+#app-content #dash-secondary .dash-activity-value { font-size: 19px; }
+@media (min-width: 768px) {
+  #app-content .dash-admin-dashboard .dash-activity-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #app-content #dash-secondary .dash-activity-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #app-content .dash-admin-dashboard .dash-cola-row { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) auto; gap: 2px 10px; }
+  #app-content .dash-admin-dashboard .dash-cola-badge { grid-column: 1; grid-row: 1; }
+  #app-content .dash-admin-dashboard .dash-cola-code { grid-column: 2; grid-row: 1 / 3; }
+  #app-content .dash-admin-dashboard .dash-cola-meta { grid-column: 3; grid-row: 1; }
+  #app-content .dash-admin-dashboard .dash-cola-prog-tag { grid-column: 1; grid-row: 2; text-align: left; }
+  #app-content .dash-admin-dashboard .dash-cola-plan { grid-column: 3; grid-row: 2; }
+  #app-content .dash-admin-dashboard .dash-cola-actions { grid-column: 4; grid-row: 1 / 3; margin: 0; }
+}
+@media (min-width: 1024px) {
+  #app-content .dash-admin-dashboard .dash-filter-title { flex-basis: auto; }
+  #app-content .dash-admin-dashboard .dash-hero-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #app-content .dash-admin-dashboard .dash-hero-card:last-child { grid-column: auto; }
+  #app-content .dash-admin-dashboard .dash-filter-scope { flex-basis: 100%; }
+}
+@media (min-width: 1200px) {
+  .dash-work-grid { grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr); }
+}
+
+/* Shared administrative table surfaces; existing semantic colors stay intact. */
+#app-content .dash-admin-dashboard .operational-table-header { background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+#app-content .dash-admin-dashboard .operational-table-shell { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+#app-content .dash-admin-dashboard .operational-number { font-variant-numeric: tabular-nums; text-align: center; }
+#app-content .dash-admin-dashboard .operational-value { font-weight: 600; }
+#app-content .dash-admin-dashboard .operational-table-row { border-bottom: 1px solid var(--border); }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown th:not(:first-child),
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td:not(:first-child) { text-align: center; width: 18%; }
+#app-content .dash-admin-dashboard .dash-ubic-breakdown td:first-child { font-weight: 600; }
+#app-content #dash-requires-attention .dash-activity-row { grid-template-columns: 1fr; }
+#app-content #dash-requires-attention .dash-activity-card { display: flex; align-items: flex-start; }
+#app-content .dash-admin-dashboard .dash-exc-table-head { display: none; }
+#app-content .dash-admin-dashboard .dash-exc-list { padding: 0 12px 6px; }
+#app-content .dash-admin-dashboard .dash-exc-days-label { font-size: 11px; }
+@media (max-width: 600px) {
+  #app-content .dash-admin-dashboard .operational-responsive-table { display: block; }
+  #app-content .dash-admin-dashboard .operational-responsive-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #app-content .dash-admin-dashboard .operational-responsive-table tbody { display: block; }
+  #app-content .dash-admin-dashboard .operational-responsive-table tbody tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 8px 4px; gap: 4px; }
+  #app-content .dash-admin-dashboard .operational-responsive-table td { display: block; height: auto; padding: 4px 0; }
+  #app-content .dash-admin-dashboard .operational-responsive-table td:first-child { grid-column: 1 / -1; font-size: 13px; }
+  #app-content .dash-admin-dashboard .operational-responsive-table td:not(:first-child) { width: auto; font-size: 14px; }
+  #app-content .dash-admin-dashboard .operational-responsive-table td[data-label]::before { display: block; content: attr(data-label); color: var(--text-dim); font-size: 12px; font-weight: 400; margin: 0 0 2px; text-align: center; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+}
+@media (hover: hover) {
+  #app-content .dash-admin-dashboard .dash-operational-table .operational-table-row:hover { background: var(--surface-2); }
+}
+@media (min-width: 768px) {
+  #app-content #dash-requires-attention .dash-activity-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #app-content #dash-requires-attention .dash-activity-card { display: flex; align-items: flex-start; }
+  #app-content .dash-admin-dashboard .dash-exc-table-head,
+  #app-content .dash-admin-dashboard .dash-exc-row { display: grid; grid-template-columns: minmax(80px, 0.65fr) minmax(0, 1.9fr) minmax(0, 1.5fr) minmax(120px, 0.85fr) 84px; align-items: center; gap: 10px; }
+  #app-content .dash-admin-dashboard .dash-exc-table-head { margin: 0 12px; padding: 10px 0; }
+  #app-content .dash-admin-dashboard .dash-exc-main,
+  #app-content .dash-admin-dashboard .dash-exc-side { display: contents; }
+  #app-content .dash-admin-dashboard .dash-exc-line1,
+  #app-content .dash-admin-dashboard .dash-exc-line2,
+  #app-content .dash-admin-dashboard .dash-exc-line3 { grid-column: auto; grid-row: auto; }
+  #app-content .dash-admin-dashboard .dash-exc-days-wrap { min-width: 0; padding: 4px; text-align: center; }
+  #app-content .dash-admin-dashboard .dash-exc-days-label { white-space: normal; }
+  #app-content .dash-admin-dashboard .dash-exc-date-label { display: none; }
+}
+/* Occurrence detail: contextual panel on desktop, field sheet on phones. */
+.matrix-occurrence-cell { cursor: pointer; touch-action: manipulation; }
+.matrix-occurrence-cell:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; }
+.matrix-occurrence-overlay { position: fixed; inset: 0; z-index: 1200; background: rgb(0 0 0 / 12%); }
+#matrix-occurrence-card { position: absolute; width: min(440px, calc(100vw - 16px)); max-height: 75dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
+#matrix-occurrence-card header { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--border); }
+#matrix-occurrence-card .matrix-occurrence-title, #matrix-occurrence-card p { margin: 0 0 6px; overflow-wrap: anywhere; }
+#matrix-occurrence-card h4 { margin: 12px 0 8px; font-size: 12px; }
+.matrix-state { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.matrix-occurrence-content { overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
+#matrix-occurrence-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; }
+#matrix-occurrence-card dt { font-size: 11px; color: var(--muted); }
+#matrix-occurrence-card dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+#matrix-occurrence-card footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+#matrix-occurrence-card button { min-height: 44px; min-width: 44px; }
+.matrix-evidence { display: flex; gap: 8px; }
+#matrix-occurrence-card .matrix-evidence button { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+#matrix-occurrence-card .matrix-evidence .photo-thumb { width: 72px; height: 64px; object-fit: cover; margin: 0; }
+@media (max-width: 767px) {
+  .matrix-occurrence-overlay { background: rgb(0 0 0 / 40%); }
+  #matrix-occurrence-card { bottom: 0; left: 8px; width: calc(100% - 16px); max-height: 80dvh; border-radius: 12px 12px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+}
+/* Longest unlubricated: presentation only; ranking follows the existing order. */
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 0 12px 10px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-summary { margin-left: auto; font-size: 12px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-head { flex-wrap: wrap; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-head-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { --dash-priority: var(--text); --dash-priority-ink: color-mix(in srgb, var(--dash-priority) 80%, var(--text)); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 6px 8px; border-left: 3px solid var(--border); background: transparent; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-age-severity="critical"] { --dash-priority: var(--red); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 2%, var(--surface)); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row[data-age-severity="attention"] { --dash-priority: var(--amber); border-left-color: var(--amber); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-row:hover { background: color-mix(in srgb, var(--text) 3%, var(--surface)); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-main { display: flex; flex-direction: column; align-items: stretch; gap: 4px; text-align: left; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-line1 { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 0 6px; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-rank { padding-top: 6px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-priority { grid-column: 2; grid-row: 2; justify-self: start; align-self: end; color: var(--dash-priority-ink); font-size: 10px; font-weight: 700; line-height: 1.4; text-transform: uppercase; pointer-events: none; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-code { grid-column: 2; grid-row: 1 / 3; display: flex; align-items: flex-start; padding: 4px 0; color: var(--text); font-size: 15px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-line2 { color: var(--text-dim); font-size: 12px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-model { color: var(--text); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-location { color: var(--text-dim); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-line3 { font-size: 14px; line-height: 1.5; white-space: normal; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-date-label { display: block; font-size: 11px; }
+#app-content #dash-tiempo-sin-engrase-panel time { display: flex; flex-wrap: wrap; gap: 0 8px; color: var(--text); font-variant-numeric: tabular-nums; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-time { color: var(--text-dim); }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-side { display: flex; flex-direction: column; justify-content: space-between; align-items: center; flex-basis: auto; gap: 6px; margin: 0; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-wrap { display: flex; flex-direction: row; align-items: baseline; gap: 4px; min-width: 44px; padding: 0; background: transparent; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days { color: var(--dash-priority-ink); font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#app-content #dash-tiempo-sin-engrase-panel .dash-exc-days-label { color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+#app-content #dash-tiempo-sin-engrase-panel button { min-height: 44px; min-width: 44px; }
+#app-content #dash-tiempo-sin-engrase-panel button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 767px) {
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-head-actions { flex-basis: 100%; justify-content: space-between; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-summary { margin-left: 0; }
+}
+@media (min-width: 768px) {
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-table-head,
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.7fr) minmax(112px, 1fr) 148px; gap: 10px; align-items: center; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-table-head { margin: 0 12px; padding: 10px 8px; color: var(--text-dim); border-bottom: 1px solid var(--border); font-size: 10px; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-main { display: contents; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-side { flex-direction: row; justify-content: flex-end; gap: 10px; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line1,
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line2,
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-line3 { grid-column: auto; grid-row: auto; }
+  #app-content #dash-tiempo-sin-engrase-panel .dash-exc-date-label { display: none; }
+  #app-content #dash-tiempo-sin-engrase-panel time { flex-direction: column; }
+}
+
+/* Informational follow-up remains separate from formal work and its counters. */
+#app-content #lub-pending-follow-up h2 { font-size: 14px; font-weight: 700; }
+#app-content #lub-pending-follow-up h3 { font-size: 12px; font-weight: 600; }
+#app-content #lub-follow-up .lub-eq-list, #app-content #lub-follow-up .lub-follow-up-expanded { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+#app-content #lub-follow-up .lub-follow-up-row { --age-tone: var(--text); --age-ink: color-mix(in srgb, var(--age-tone) 80%, var(--text)); display: grid; grid-template-areas: "heading" "code" "model" "location" "date" "actions"; grid-template-rows: 24px 24px minmax(17px, auto) 17px minmax(17px, auto) 44px; gap: 2px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--age-tone) 30%, var(--border)); border-left: 4px solid var(--gray-status); border-radius: var(--radius-sm); background: var(--surface); min-width: 0; }
+#app-content #lub-follow-up [data-age-severity="critical"] { --age-tone: var(--red); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 6%, var(--surface)); }
+#app-content #lub-follow-up [data-age-severity="attention"] { --age-tone: var(--amber); border-left-color: var(--amber); background: color-mix(in srgb, var(--amber) 4%, var(--surface)); }
+#app-content #lub-follow-up .lub-follow-up-heading { grid-area: heading; display: grid; grid-template-columns: minmax(0, 1fr) 72px; align-items: center; gap: 8px; }
+#app-content #lub-follow-up .lub-follow-up-age, #app-content #lub-follow-up .lub-follow-up-priority { color: var(--age-ink); }
+#app-content #lub-follow-up .lub-follow-up-age { display: flex; justify-content: flex-end; align-items: baseline; gap: 4px; width: 72px; font-size: 11px; line-height: 24px; white-space: nowrap; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+#app-content #lub-follow-up .lub-follow-up-age strong { font-size: 22px; font-weight: 700; }
+#app-content #lub-follow-up .lub-follow-up-priority { font-size: 12px; line-height: 20px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+#app-content #lub-follow-up .lub-eq-code { grid-area: code; font-size: 17px; line-height: 1.3; font-weight: 700; margin: 2px 0; overflow-wrap: anywhere; }
+#app-content #lub-follow-up .lub-eq-model, #app-content #lub-follow-up .lub-follow-up-location, #app-content #lub-follow-up .lub-follow-up-date { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+#app-content #lub-follow-up .lub-eq-model { grid-area: model; font-weight: 400; }
+#app-content #lub-follow-up .lub-follow-up-location { grid-area: location; }
+#app-content #lub-follow-up .lub-follow-up-date { grid-area: date; margin: 0; }
+#app-content #lub-follow-up .lub-follow-up-date time { white-space: nowrap; }
+#app-content #lub-follow-up .lub-arrastrado-actions { grid-area: actions; display: flex; justify-content: space-between; align-items: end; flex-wrap: nowrap; gap: 8px; margin: 0; }
+#app-content #lub-follow-up .lub-arrastrado-actions .btn, #app-content #lub-follow-up summary { min-width: 44px; min-height: 44px; }
+#app-content #lub-follow-up .lub-arrastrado-actions .btn { flex: 0 0 auto; width: auto; height: 44px; padding: 6px 10px; gap: 6px; border-radius: var(--radius-sm); font-size: 12px; }
+#app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-ver { margin-right: auto; background: transparent; border-color: var(--border); color: var(--text); }
+#app-content #lub-follow-up .lub-follow-up-more { grid-column: 1 / -1; }
+#app-content #lub-follow-up summary { display: flex; align-items: center; cursor: pointer; font-weight: 600; padding: 0 10px; }
+#app-content #lub-follow-up .lub-arrastrado-actions .btn:focus-visible, #app-content #lub-follow-up summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+#app-content .lub-global-register { --oop-tone: #1F4E79; --oop-ink: color-mix(in srgb, var(--oop-tone) 55%, var(--text)); display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 440px; min-height: 56px; gap: 12px; margin-top: 10px; padding: 8px 12px; background: color-mix(in srgb, var(--oop-tone) 5%, var(--surface)); color: var(--oop-ink); border: 1px solid color-mix(in srgb, var(--oop-ink) 65%, var(--border)); border-radius: var(--radius-sm); box-shadow: none; cursor: pointer; }
+#app-content .lub-global-register .lub-hero-action-text { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 10px; row-gap: 3px; min-width: 0; text-align: left; }
+#app-content .lub-global-register .lub-hero-action-text::before { content: ""; grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 32px; height: 32px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--oop-tone) 10%, var(--surface)); }
+#app-content .lub-global-register .lub-hero-action-title { grid-column: 2; grid-row: 1; font-size: 14px; font-weight: 600; line-height: 1.35; }
+#app-content .lub-global-register .lub-hero-action-sub { grid-column: 2; grid-row: 2; font-size: 12px; line-height: 1.4; opacity: 1; color: var(--text-dim); }
+@media (min-width: 768px) {
+  #app-content #lub-follow-up .lub-eq-list, #app-content #lub-follow-up .lub-follow-up-expanded { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+}
+/* Scope primary/secondary hierarchy so unrelated buttons cannot wash out the CTA. */
+#app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#app-content #lub-follow-up .lub-arrastrado-actions .lub-follow-up-reg:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent-hover, var(--on-accent)); }
+:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-follow-up .lub-follow-up-row { border-left-width: 4px !important; }
+
+/* Mi Turno operational actions: existing palette, scoped visual identity only. */
+#app-content .lub-quick-actions { --lub-action-qr: #0E7490; --lub-action-search: #1F4E79; --lub-action-matrix: #5B4A7A; }
+#app-content #lub-quick-qr { --quick-tone: var(--lub-action-qr); }
+#app-content #lub-quick-buscar { --quick-tone: var(--lub-action-search); }
+#app-content #lub-quick-matriz { --quick-tone: var(--lub-action-matrix); }
+#app-content #lub-fab-anomaly { --quick-tone: var(--amber); }
+#app-content .lub-quick-actions .lub-quick-action { --quick-ink: color-mix(in srgb, var(--quick-tone) 55%, var(--text)); min-height: 80px; padding: 10px 8px; gap: 6px; color: var(--text); background: color-mix(in srgb, var(--quick-tone) 4%, var(--surface)); border-color: color-mix(in srgb, var(--quick-tone) 35%, var(--border)); border-top: 2px solid var(--quick-ink); border-radius: var(--radius-sm); }
+#app-content .lub-quick-actions .btn-icon { display: block; flex: none; width: 24px; height: 24px; padding: 0; margin: 0; color: var(--quick-ink); background: currentColor; }
+#app-content .lub-quick-actions .lub-quick-action:hover { background: color-mix(in srgb, var(--quick-tone) 9%, var(--surface)); border-color: var(--quick-ink); }
+#app-content .lub-quick-actions .lub-quick-action:active { background: color-mix(in srgb, var(--quick-tone) 15%, var(--surface)); border-color: var(--quick-ink); box-shadow: inset 0 0 0 1px var(--quick-ink); }
+#app-content .lub-global-register .btn-icon, #app-content .lub-global-register .lub-hero-action-arrow { flex: none; color: var(--oop-ink); }
+#app-content .lub-global-register .btn-icon { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; margin: 0; }
+#app-content .lub-global-register .lub-hero-action-arrow { font-size: 20px; line-height: 1; }
+#app-content .lub-global-register:hover { background: color-mix(in srgb, var(--oop-tone) 10%, var(--surface)); border-color: var(--oop-ink); }
+#app-content .lub-global-register:active { background: color-mix(in srgb, var(--oop-tone) 16%, var(--surface)); border-color: var(--oop-ink); box-shadow: inset 0 0 0 1px var(--oop-ink); }
+#app-content .lub-quick-actions .lub-quick-action:focus-visible, #app-content .lub-global-register:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+#app-content .lub-quick-actions .lub-quick-action:disabled, #app-content .lub-global-register:disabled { opacity: 1; cursor: not-allowed; color: var(--text-dim); background: var(--surface-2); border-color: var(--border); box-shadow: none; }
+#app-content .lub-quick-actions .lub-quick-action:disabled .btn-icon { color: var(--text-dim); background: currentColor; }
+
+/* Final shift workspace polish: presentation only, scoped to Mi Turno.
+   UX CAMPO V2 (2026-10-24): #lub-pending-follow-up ya NO está siempre
+   presente (solo cuando hay "Requieren seguimiento") y "Pendientes
+   anteriores" vive ahora en su propio acordeón — el ancla de pantalla
+   completa pasa a .lub-turno-header (SIEMPRE presente en Mi Turno), y la
+   densidad de .lub-pending-card pasa a su acordeón real. */
+#app-content.lub-content:has(.lub-turno-header) { margin-inline: auto; width: 100%; }
+/* Gap entre tarjetas de "Requieren seguimiento" igual de compacto en
+   TODOS los anchos (antes solo <=600px bajaba a 8px; 768+ seguía en los
+   12px genéricos de .lub-eq-list). */
+#app-content #lub-pending-follow-up > .lub-eq-list { gap: 8px; }
+#app-content:has(.lub-turno-header) .lub-turno-header { padding: 8px 12px 6px; margin-bottom: 8px; }
+#app-content:has(.lub-turno-header) .lub-section-head { margin-top: 10px; margin-bottom: 6px; }
+#app-content #lub-acc-pendientes-anteriores-panel > .lub-eq-list .lub-pending-card { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card.tone-red { background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-origen { font-size: 12px; line-height: 18px; margin-bottom: 6px; color: color-mix(in srgb, var(--amber) 65%, var(--text)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-origen.tone-red { color: color-mix(in srgb, var(--red) 65%, var(--text)); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-eq-code { font-size: 17px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card .lub-arrastrado-actions { margin-top: auto; padding-top: 6px; flex-wrap: nowrap; justify-content: space-between; }
+#app-content #lub-acc-pendientes-anteriores-panel > .lub-eq-list .lub-pending-card .btn { flex: none; min-height: 44px; padding: 6px 10px; font-size: 12px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-arr-ver { order: -1; background: transparent; border-color: var(--border); color: var(--text); }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-arr-reg { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#app-content:has(.lub-turno-header) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; box-shadow: none; }
+#app-content:has(.lub-turno-header) button:focus:not(:focus-visible) { outline: none; }
+:is([data-mode="contrast"], [data-mode="high-contrast"], [data-mode="sun"]) #app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card { border-left-width: 4px !important; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-card { border-left-width: 4px; }
+#app-content #lub-acc-pendientes-anteriores-panel .lub-pending-context { font-size: 12px; line-height: 1.4; margin-top: 4px; }
+@media (min-width: 768px) {
+  #app-content.lub-content:has(.lub-turno-header) { max-width: none; }
+  #app-content #lub-pending-follow-up > .lub-eq-list { align-items: stretch; }
+}
+@media (min-width: 1200px) {
+  #app-content.lub-content:has(.lub-turno-header) { max-width: 1220px; }
+  #app-content #lub-follow-up .lub-eq-list:has(> .lub-follow-up-row:nth-child(3)),
+  #app-content #lub-follow-up .lub-follow-up-expanded:has(> .lub-follow-up-row:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Reportes: densidad ejecutiva sobre los componentes operativos existentes. */
+:where(.rep-page) { max-width: 1600px; margin-inline: auto; min-width: 0; }
+:where(.rep-page) .panel { min-width: 0; }
+:where(.rep-page) .panel-head { padding: 12px 14px; border-bottom: 1px solid var(--border); border-image: none; margin-bottom: 12px; }
+:where(.rep-page) .panel-head h3 { font-size: 15px; letter-spacing: -0.01em; }
+:where(.rep-page) .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0 14px 12px; margin-bottom: 0; }
+:where(.rep-page) .kpi-card { min-width: 0; padding: 10px 12px; border-radius: 8px; }
+:where(.rep-page) .kpi-value { font-size: 26px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+:where(.rep-page) .kpi-label { font-size: 12px; line-height: 1.4; margin-top: 4px; overflow-wrap: anywhere; }
+:where(.rep-page) .empty-state { padding: 14px; min-height: 0; font-size: 13px; }
+:where(.rep-page) .rep-filters-row { gap: 10px; }
+:where(.rep-page) .rep-filters-row .input-sm,
+:where(.rep-page) .rep-filter-apply,
+:where(.rep-page) .btn,
+:where(.rep-page) .rep-tab { min-height: 44px; }
+:where(.rep-page) .rep-filters-row .filter-label { font-size: 12px; font-weight: 600; gap: 4px; }
+:where(.rep-page) .rep-tendencia-turno-grid { align-items: start; }
+:where(.rep-page) .rep-tendencia-turno-grid > .panel { width: 100%; }
+:where(.rep-page) .rep-turno-grid { flex: none; align-content: start; gap: 8px; }
+:where(.rep-page) .rep-turno-card { padding: 10px 12px; text-align: left; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+:where(.rep-page) .rep-turno-pct { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+:where(.rep-page) .rep-turno-frac { grid-column: 1; }
+:where(.rep-page) .rep-turno-bar { grid-column: 1 / -1; margin-top: 4px; }
+:where(.rep-page) .rep-summary-progress { margin-top: 8px; height: 4px; }
+:where(.rep-page) #rep-consumo-stats .kpi-grid,
+:where(.rep-page) .rep-validation-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+:where(.rep-page) .rep-validation-heading { padding: 0 14px; }
+:where(.rep-page) .rep-validation-summary { grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); }
+:where(.rep-page) .rep-pending-total { padding: 0 14px 8px; font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+:where(.rep-page) .skipped-summary { gap: 6px; padding: 0 14px 12px; }
+:where(.rep-page) .skipped-chip { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-size: 12px; cursor: default; }
+:where(.rep-page) .rep-two-col .skipped-summary { padding: 0; }
+:where(.rep-page) .rep-consumo-row { min-height: 36px; align-items: center; padding-inline: 6px; font-variant-numeric: tabular-nums; }
+:where(.rep-page) .rep-consumo-row:first-of-type { background: var(--surface-2); font-weight: 600; }
+:where(.rep-page) .data-table { width: 100%; table-layout: fixed; }
+:where(.rep-page) .data-table th { background: var(--surface-2); color: var(--text-dim); font-size: 11px; letter-spacing: 0.025em; text-transform: uppercase; padding: 10px 12px; }
+:where(.rep-page) .data-table td { padding: 10px 12px; font-size: 13px; overflow-wrap: anywhere; }
+:where(.rep-page) .data-table tbody tr:hover { background: var(--surface-2); }
+:where(.rep-page) .rep-equipo-table th:nth-child(n+3),
+:where(.rep-page) .rep-equipo-table td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+:where(.rep-page) .motivo-tag { display: inline-block; max-width: 100%; white-space: normal; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; }
+:where(.rep-page) .rep-tab { border-radius: 7px; color: var(--text); }
+:where(.rep-page) .rep-tab.active { color: var(--on-accent); }
+:where(.rep-page) .rep-tab:hover { border-color: var(--accent-ink); }
+:where(.rep-page) .rep-tab:active { transform: translateY(1px); }
+:where(.rep-page) .btn:focus-visible,
+:where(.rep-page) .rep-tab:focus-visible,
+:where(.rep-page) .input:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+:where(.rep-page) .rep-actividad-table { counter-reset: report-rank; max-width: 900px; }
+:where(.rep-page) .rep-actividad-row:not(.rep-actividad-head) { counter-increment: report-rank; padding: 6px; }
+:where(.rep-page) .rep-actividad-nombre::before { content: "#" counter(report-rank); display: inline-block; min-width: 26px; color: var(--text-dim); font-family: var(--font-mono); margin-right: 6px; }
+:where(.rep-page) .rep-actividad-row:nth-child(2) { background: var(--surface-2); border-radius: 6px; }
+:where(.rep-page) .rep-actividad-bar-fill { background: var(--text-dim); opacity: 1; }
+:where(.rep-page) .photo-report-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; padding: 0 14px 14px; }
+:where(.rep-page) .photo-report-grid.hidden { display: none; }
+:where(.rep-page) .photo-report-item { min-width: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+:where(.rep-page) .photo-thumb-lg { width: 100%; height: 144px; object-fit: cover; display: block; cursor: pointer; border-radius: 0; }
+:where(.rep-page) .photo-report-caption { padding: 8px 10px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+:where(.rep-page) #exp-excel { background: var(--surface); color: var(--text); border-color: var(--border); }
+:where(.rep-page) #exp-excel:hover { background: var(--surface-2); border-color: var(--accent-ink); }
+@media (max-width: 600px) {
+  :where(.rep-page) .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :where(.rep-page) .data-table thead { display: none; }
+  :where(.rep-page) .data-table tbody { display: block; }
+  :where(.rep-page) .data-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 8px; border-bottom: 1px solid var(--border); }
+  :where(.rep-page) .data-table td { display: block; padding: 6px; border: 0; text-align: left; min-width: 0; }
+  :where(.rep-page) .data-table td::before { content: attr(data-label); display: block; font-size: 10px; font-weight: 600; color: var(--text-dim); margin-bottom: 3px; }
+  :where(.rep-page) .rep-equipo-table td:nth-child(n+3) { text-align: left; }
+  :where(.rep-page) .photo-report-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  :where(.rep-page) .photo-thumb-lg { height: 116px; }
+}

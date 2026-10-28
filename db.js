@@ -11,14 +11,22 @@ const DB_NAME = 'engrase_openpit';
 // engrase. Migración NO destructiva: onupgradeneeded ya crea genéricamente
 // cualquier store nuevo que aparezca en STORES (ver v6) — no hace falta
 // tocar esa función, ningún store existente se toca ni se vacía.
-const DB_VERSION = 8;
+// v9: additive crew coverage store; existing records and catalogs stay intact.
+// v10: agrega 'manual_tasks' (tareas operativas equipo+cuadrilla, RLS 0017
+// ya ACTIVE en producción). Store directo sobre engrase_sync (sin RPC) —
+// onupgradeneeded lo crea genéricamente (ver v6), ningún store existente se toca.
+// v11: agrega 'broadcast_messages'/'broadcast_message_reads' (mensajes
+// operativos + recibos de lectura, mismo RLS 0017 ya ACTIVE). Igual que
+// manual_tasks: stores directos sobre engrase_sync, sin RPC.
+const DB_VERSION = 11;
 
 // Almacenes que se sincronizan con el servidor remoto (todo excepto configuración local del dispositivo)
 const STORES = [
   'users', 'shifts', 'locations', 'equipment_types', 'equipment',
   'lubricants', 'lubrication_plans', 'lubrication_points',
   'lubrication_records', 'anomalies', 'audit_log', 'settings', 'cuadrillas', 'push_tokens',
-  'grease_validations', 'lubrication_assignments', 'lubrication_skips'
+  'grease_validations', 'lubrication_assignments', 'lubrication_skips', 'crew_locations',
+  'manual_tasks', 'broadcast_messages', 'broadcast_message_reads'
 ];
 
 // app_config y grease_drafts viven solo en el dispositivo (credenciales de conexión,
@@ -46,6 +54,18 @@ function openDB() {
     };
     req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };
     req.onerror = (e) => reject(e.target.error);
+    // Auditoría de sincronización (2026-10-20): sin este handler, un
+    // open() bloqueado por OTRA pestaña/conexión con una versión vieja
+    // (p.ej. una instalación PWA duplicada, o un upgrade de DB_VERSION
+    // mientras una pestaña anterior sigue abierta) nunca dispara
+    // onsuccess NI onerror — la promesa quedaba colgada para siempre, y
+    // como DB.init() es el primer await de arranque (ver DOMContentLoaded
+    // en app.js), TODA la app se quedaba en blanco sin ningún mensaje.
+    // onblocked no implica fallo definitivo (puede resolver solo cuando
+    // la conexión vieja cierra) — solo se deja registrado para que el
+    // watchdog de arranque (bootApp() en app.js) tenga algo que mostrar
+    // si el timeout se cumple primero.
+    req.onblocked = () => { console.warn('IndexedDB open() bloqueado por otra conexión con una versión anterior'); };
   });
 }
 
@@ -53,7 +73,408 @@ function tx(storeName, mode = 'readonly') {
   return _db.transaction(storeName, mode).objectStore(storeName);
 }
 
+function orderExecutionOperations(operations) {
+  const remaining = [...operations].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const ordered = [];
+  while (remaining.length) {
+    const ids = new Set(remaining.map(op => op.id));
+    const index = remaining.findIndex(op => Object.values(op.dependencies || {}).every(dep => !ids.has(dep.operationId)));
+    if (index < 0) return [...ordered, ...remaining]; // Cycle remains pending, never dispatched blindly.
+    ordered.push(...remaining.splice(index, 1));
+  }
+  return ordered;
+}
+
+function sameExecutionVersion(left, right) {
+  const normalize = value => typeof value === 'string' ? value.replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/,
+    (_, seconds, fraction) => `${seconds}.${(fraction || '').padEnd(6, '0')}Z`) : value;
+  return normalize(left) === normalize(right);
+}
+
+function localAuthorizationState(store, row, context, currentAppUserId) {
+  if (!row || !context || !currentAppUserId || row.__authorizationAppUserId !== currentAppUserId ||
+      context.appUserId !== currentAppUserId || context.active !== true) return 'OUT_OF_SCOPE';
+  const pending = row._pushedVersion !== row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+  const state = pending ? 'PENDING_LOCAL' : 'AUTHORIZED';
+  if (context.scopeType === 'GLOBAL') return state;
+  if (context.scopeType !== 'CREW_SCOPED') return 'OUT_OF_SCOPE';
+  const crews = new Set(context.authorizedCrewIds || []);
+  const locations = new Set(context.authorizedLocationIds || []);
+  if (store === 'users' || store === 'audit_log') return 'OUT_OF_SCOPE';
+  if (store === 'push_tokens') return row.userId === currentAppUserId ? state : 'OUT_OF_SCOPE';
+  if (store === 'cuadrillas') return crews.has(row.id) ? state : 'OUT_OF_SCOPE';
+  const support = context.supportGrants;
+  if (support?.appUserId === currentAppUserId && support.authUserId === context.authUserId
+      && support.authorizationFingerprint === context.authorizationFingerprint
+      && (support.rows || []).some(ref => ref.store === store && ref.id === row.id)) return state;
+  // Una ubicacion maestra puede venir de un grant puntual de soporte de
+  // 0014/0016. Evaluarlo antes del alcance base permite resolver SU nombre,
+  // sin agregarla a authorizedLocationIds ni conceder otros equipos de alli.
+  if (store === 'locations') return locations.has(row.id) ? state : 'OUT_OF_SCOPE';
+  if (store === 'equipment') return locations.has(row.locationId) ? state : 'OUT_OF_SCOPE';
+  if (store==='lubrication_assignments' && row.assignedCrewId) {
+    if (!crews.has(row.assignedCrewId)) return 'OUT_OF_SCOPE';
+    if (row.locationId && !locations.has(row.locationId)) return 'OUT_OF_SCOPE';
+    return state;
+  }
+  // broadcast_messages/broadcast_message_reads (0017, ACTIVE en producción)
+  // — mismo criterio de targeting que broadcast_row_in_scope: ALL_LUBRICATORS
+  // siempre, USER exacto, CREW contra authorizedCrewIds (reactivo a cambios
+  // de cuadrilla, nunca "si está local ya es válido"). targetType
+  // desconocido falla cerrado, igual que el RLS.
+  // LOCATION es la EXCEPCIÓN deliberada: `locations` (authorizedLocationIds)
+  // es el alcance de SYNC/EQUIPO (qué equipment/locations ve este usuario),
+  // un concepto DISTINTO de la cobertura OPERATIVA real de una cuadrilla
+  // (crew_locations, PRINCIPAL+APOYO, con fallback legacy SOLO si no
+  // existen filas) — mezclar ambos amplía o reduce el acceso real respecto
+  // al RLS (broadcast_row_in_scope usa crew_locations, nunca
+  // authorizedLocationIds). Esta función es pura/síncrona y no puede leer
+  // crew_locations — por eso LOCATION se resuelve en
+  // DB.authorizationStateForRow() (async, el único punto con acceso a DB),
+  // reusando resolveCrewLocationCoverage() tal cual (nunca una 2da
+  // implementación de "qué cubre esta cuadrilla"). Acá siempre falla
+  // cerrado por diseño — jamás debe ampliar el acceso por sí sola.
+  if (store === 'broadcast_messages') {
+    if (row.targetType === 'ALL_LUBRICATORS') return state;
+    if (row.targetType === 'USER') return row.targetId === currentAppUserId ? state : 'OUT_OF_SCOPE';
+    if (row.targetType === 'CREW') return crews.has(row.targetId) ? state : 'OUT_OF_SCOPE';
+    return 'OUT_OF_SCOPE'; // LOCATION y cualquier targetType desconocido: ver authorizationStateForRow().
+  }
+  if (store === 'broadcast_message_reads') return row.userId === currentAppUserId ? state : 'OUT_OF_SCOPE';
+  const snapshot = row.operationalSnapshot || {};
+  const crewId = row.crewId || row.cuadrillaId || snapshot.crewId;
+  const locationId = row.locationId || snapshot.equipmentLocationIdAtExecution || snapshot.executionLocationId;
+  if (crewId && !crews.has(crewId)) return 'OUT_OF_SCOPE';
+  if (locationId && !locations.has(locationId)) return 'OUT_OF_SCOPE';
+  if (crewId || locationId) return state;
+  if (['equipment_types','lubricants','shifts','settings'].includes(store)) return state;
+  return 'OUT_OF_SCOPE';
+}
+
+async function tagRowsForCurrentAccount(changes) {
+  const appUserId = typeof Auth !== 'undefined' ? Auth.getProfile?.()?.appUserId : null;
+  if (!appUserId) throw new Error('AUTH_REQUIRED');
+  const context = await DB.getAuthorizationContext(appUserId);
+  return Promise.all(changes.map(async ({ store, row, ...change }) => {
+    const tagged = { ...row, __authorizationAppUserId: appUserId };
+    tagged.__authorizationState = context
+      ? await DB.authorizationStateForRow(store, tagged, context, appUserId)
+      : 'PENDING_LOCAL';
+    return { store, row: tagged, ...change };
+  }));
+}
+
 const DB = {
+  async getEvidenceOperations() {
+    const rows = await DB.all('app_config');
+    return rows.filter(r => r.key.startsWith('evidence:')).map(r => r.value)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  },
+  updateEvidenceOperation(operation) {
+    return DB.put('app_config', { key: 'evidence:' + operation.id, value: operation });
+  },
+  blockEvidenceOperation(operation, canonicalRows = []) {
+    return new Promise((resolve, reject) => {
+      const rollbackStore = operation.kind === 'CATALOG' ? operation.targetStore : null;
+      const stores = ['app_config', 'grease_validations'];
+      if (rollbackStore && !stores.includes(rollbackStore)) stores.push(rollbackStore);
+      const transaction = _db.transaction(stores, 'readwrite');
+      transaction.objectStore('app_config').put({ key: 'evidence:' + operation.id, value: operation });
+      if (rollbackStore && operation.localRow?.id) {
+        const store = transaction.objectStore(rollbackStore);
+        const read = store.get(operation.localRow.id);
+        read.onsuccess = () => {
+          const current = read.result;
+          if (current?._evidenceOperationId !== operation.id) return;
+          // Only undo a projected catalog row when the producer captured the
+          // exact prior state.  A missing originalRow is deliberately not an
+          // instruction to delete: it can mean the client does not know the
+          // prior business state, and the BLOCKED operation remains available
+          // for resolution in Diagnostics.
+          if (operation.originalRow) store.put(operation.originalRow);
+        };
+      }
+      if (operation.rpc === 'resolve_grease_validation_conflict') {
+        const store = transaction.objectStore('grease_validations');
+        const read = store.getAll();
+        read.onsuccess = () => {
+          for (const row of read.result.filter(v => v._evidenceOperationId === operation.id)) {
+            const remote = canonicalRows.find(r => r.id === row.id);
+            if (remote) {
+              const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+              const authorization=row.__authorizationAppUserId ? {__authorizationAppUserId:row.__authorizationAppUserId,__authorizationState:'AUTHORIZED'} : {};
+              store.put({ ...payload, signatureLocal: row.signatureLocal, ...authorization, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+            } else store.put({ ...row, _validationResolutionConflict: true });
+          }
+        };
+      }
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  async putEvidenceOperation(operation, changes = []) {
+    changes = await tagRowsForCurrentAccount(changes);
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(changes.map(c => c.store))], 'readwrite');
+      let remaining = changes.length, failure;
+      const save = () => {
+        for (const { store, row } of changes) transaction.objectStore(store).put({ ...row, _evidenceOperationId: operation.id });
+        transaction.objectStore('app_config').add({ key: 'evidence:' + operation.id, value: operation });
+      };
+      if (!remaining) save();
+      for (const change of changes) {
+        const read = transaction.objectStore(change.store).get(change.row.id);
+        read.onsuccess = () => {
+          if ((read.result?.updatedAt || null) !== change.expected) {
+            failure = new Error('LOCAL_VERSION_CONFLICT'); transaction.abort(); return;
+          }
+          if (--remaining === 0) save();
+        };
+      }
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(failure || transaction.error);
+    });
+  },
+  projectEvidenceOperation(operation, changes) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', 'anomalies'], 'readwrite');
+      const read = transaction.objectStore('app_config').get('evidence:' + operation.id);
+      read.onsuccess = () => {
+        if (!read.result || read.result.value.projected) return;
+        let remaining = changes.length;
+        const save = () => {
+          for (const { row } of changes) transaction.objectStore('anomalies').put({ ...row, _evidenceOperationId: operation.id });
+          transaction.objectStore('app_config').put({ key: 'evidence:' + operation.id, value: { ...read.result.value, projected: true } });
+        };
+        if (!remaining) save();
+        for (const change of changes) {
+          const current = transaction.objectStore('anomalies').get(change.row.id);
+          current.onsuccess = () => {
+            if ((current.result?.updatedAt || null) !== change.expected) { transaction.abort(); return; }
+            if (--remaining === 0) save();
+          };
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  finishEvidenceOperation(operation, rows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(rows.map(r => r.store))], 'readwrite');
+      for (const remote of rows) {
+        const store = transaction.objectStore(remote.store);
+        const read = store.get(remote.id);
+        read.onsuccess = () => {
+          const local = read.result;
+          if (local?._evidenceOperationId && local._evidenceOperationId !== operation.id) return;
+          if (local && !local._evidenceOperationId && local.updatedAt !== local._pushedVersion) return;
+          const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+          store.put({ ...payload, ...(local?.signatureLocal ? { signatureLocal: local.signatureLocal } : {}),
+            ...(local?.__authorizationAppUserId ? { __authorizationAppUserId: local.__authorizationAppUserId,
+              __authorizationState: 'AUTHORIZED' } : {}),
+            updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+        };
+      }
+      transaction.objectStore('app_config').delete('evidence:' + operation.id);
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  getExecutionOperations() {
+    return new Promise((resolve, reject) => {
+      const request = tx('app_config').getAll();
+      request.onsuccess = () => resolve(orderExecutionOperations(request.result.filter(r => r.key.startsWith('execution:')).map(r => r.value)));
+      request.onerror = () => reject(request.error);
+    });
+  },
+  // Business rows and their restricted transport intent commit together locally.
+  async putExecutionOperation(operation, changes) {
+    changes = await tagRowsForCurrentAccount(changes);
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set([...changes, ...operation.localBases].map(c => c.store))], 'readwrite');
+      let remaining = operation.localBases.length;
+      let failure;
+      for (const base of operation.localBases) {
+        const request = transaction.objectStore(base.store).get(base.id);
+        request.onsuccess = () => {
+          if ((request.result?.updatedAt || null) !== base.updatedAt) {
+            failure = new Error('LOCAL_VERSION_CONFLICT'); transaction.abort(); return;
+          }
+          if (--remaining !== 0) return;
+          for (const { store, row } of changes) {
+            transaction.objectStore(store).put({ ...row, _executionOperationId: operation.id });
+          }
+          transaction.objectStore('app_config').add({ key: 'execution:' + operation.id, value: operation });
+          if (operation.automaticAnomaly) transaction.objectStore('app_config').add({
+            key: 'evidence:' + operation.automaticAnomaly.id, value: operation.automaticAnomaly,
+          });
+        };
+      }
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(failure || transaction.error);
+      transaction.onerror = () => reject(failure || transaction.error || new Error('LOCAL_VERSION_CONFLICT'));
+    });
+  },
+  updateExecutionOperation(operation) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction('app_config', 'readwrite');
+      transaction.objectStore('app_config').put({ key: 'execution:' + operation.id, value: operation });
+      transaction.oncomplete = () => resolve(operation);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+  blockSignedExecution(operation, canonicalRows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(canonicalRows.map(r => r.store))], 'readwrite');
+      const config = transaction.objectStore('app_config');
+      const request = config.getAll();
+      request.onsuccess = () => {
+        const blockedIds = new Set();
+        for (const entry of request.result.filter(r => r.key.startsWith('execution:'))) {
+          const op = entry.value;
+          if (op.params.p_record_id !== operation.params.p_record_id || op.params.p_action !== 'EDIT') continue;
+          op.status = 'BLOCKED'; op.code = 'SIGNED_RECORD_LOCKED';
+          blockedIds.add(op.id); config.put(entry);
+        }
+        for (const remote of canonicalRows) {
+          const store = transaction.objectStore(remote.store);
+          const read = store.get(remote.id);
+          read.onsuccess = () => {
+            if (!blockedIds.has(read.result?._executionOperationId)) return;
+            const payload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+            const original = operation.originalRecord;
+            const photos = remote.store === 'lubrication_records' && original && sameExecutionVersion(original._pushedVersion, remote.updated_at)
+              ? { photos: original.photos, photo: original.photo } : {};
+            const authorization=read.result?.__authorizationAppUserId ? {__authorizationAppUserId:read.result.__authorizationAppUserId,__authorizationState:'AUTHORIZED'} : {};
+            store.put({ ...payload, ...photos, ...authorization, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+          };
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error || new Error('SIGNED_RECORD_RESTORE_FAILED'));
+      transaction.onerror = () => reject(transaction.error || new Error('SIGNED_RECORD_RESTORE_FAILED'));
+    });
+  },
+  finishExecutionOperation(operation, canonicalRows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['app_config', ...new Set(canonicalRows.map(r => r.store))], 'readwrite');
+      const config = transaction.objectStore('app_config');
+      config.delete('execution:' + operation.id);
+      const confirmedRecord = canonicalRows.find(r => r.store === 'lubrication_records');
+      if (confirmedRecord) config.put({ key: 'execution-ack:' + operation.id, value: confirmedRecord.updated_at });
+      for (const remote of canonicalRows) {
+        const canonicalPayload = Object.fromEntries(Object.entries(remote.payload).filter(([key]) => !key.startsWith('_')));
+        const store = transaction.objectStore(remote.store);
+        const request = store.get(remote.id);
+        request.onsuccess = () => {
+          const local = request.result;
+          if (!local) return;
+          if (local._executionOperationId === operation.id && local.updatedAt === operation.localVersions[remote.store]) {
+            // Preserve already stamped local evidence for offline viewing.
+            const photos = remote.store === 'lubrication_records' ? { photos: local.photos, photo: local.photo } : {};
+            const authorization=local.__authorizationAppUserId ? {__authorizationAppUserId:local.__authorizationAppUserId,__authorizationState:'AUTHORIZED'} : {};
+            store.put({ ...canonicalPayload, ...photos, ...authorization, updatedAt: remote.updated_at, _pushedVersion: remote.updated_at });
+          } else if (local._executionOperationId === operation.id) {
+            // Another local catalog operation happened during dispatch. Preserve its delta
+            // against the exact submitted local row; remove only the completed transport tag.
+            const base = operation.localRows[remote.store];
+            const delta = Object.fromEntries(Object.entries(local).filter(([key, value]) =>
+              !key.startsWith('_') && JSON.stringify(value) !== JSON.stringify(base[key])));
+            const authorization=local.__authorizationAppUserId ? {__authorizationAppUserId:local.__authorizationAppUserId,__authorizationState:local.__authorizationState} : {};
+            store.put({ ...canonicalPayload, ...delta, ...authorization, updatedAt: local.updatedAt, _pushedVersion: remote.updated_at });
+          } else if (local._executionOperationId) {
+            store.put({ ...local, _pushedVersion: remote.updated_at });
+          }
+        };
+      }
+      const pendingRequest = config.getAll();
+      pendingRequest.onsuccess = () => {
+        for (const entry of pendingRequest.result.filter(r => r.key.startsWith('evidence:'))) {
+          if (entry.value.recordDependency !== operation.params.p_record_id) continue;
+          if (entry.value.executionDependencyId && entry.value.executionDependencyId !== operation.id) continue;
+          const remote = canonicalRows.find(r => r.store === 'lubrication_records');
+          if (!remote) continue;
+          entry.value.params.p_expected = remote.updated_at;
+          entry.value.recordDependency = null;
+          config.put(entry);
+        }
+        for (const entry of pendingRequest.result.filter(r => r.key.startsWith('execution:'))) {
+          const next = entry.value;
+          for (const [field, dependency] of Object.entries(next.dependencies || {})) {
+            if (dependency.operationId !== operation.id) continue;
+            const remote = canonicalRows.find(r => r.store === dependency.store && r.id === dependency.id);
+            if (!remote || next.frozen) { transaction.abort(); return; }
+            next.params[field] = remote.updated_at;
+            delete next.dependencies[field];
+          }
+          config.put(entry);
+        }
+      };
+      transaction.oncomplete = () => resolve(true);
+      transaction.onabort = () => reject(transaction.error || new Error('EXECUTION_ACK_CONFLICT'));
+    });
+  },
+  resolveValidationConflict(recordId, expected, officialId, reason, actor) {
+    if (!actor || actor.active === false || actor.role !== 'ADMINISTRADOR' || !actor.id) {
+      return Promise.reject(new Error('Solo ADMINISTRADOR puede resolver el conflicto.'));
+    }
+    if (!reason || !reason.trim()) return Promise.reject(new Error('El motivo es obligatorio.'));
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(['grease_validations', 'app_config'], 'readwrite');
+      const store = transaction.objectStore('grease_validations');
+      let saved, failure;
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const rows = request.result.filter(v => v.lubricationRecordId === recordId && v.active !== false)
+          .sort((a, b) => a.id.localeCompare(b.id));
+        const versions = rows.map(v => ({ id: v.id, updatedAt: v.updatedAt }));
+        if (rows.length < 2 || !rows.some(v => v.id === officialId) ||
+            JSON.stringify(versions) !== JSON.stringify(expected)) {
+          failure = new Error('El conflicto cambió. Recarga las firmas antes de resolver.');
+          transaction.abort(); return;
+        }
+        const anchor = rows[0];
+        if (anchor._validationResolutionConflict) {
+          failure = new Error('Existe un conflicto CAS pendiente de sincronización.');
+          transaction.abort(); return;
+        }
+        const previous = anchor.conflictResolution;
+        const resolution = {
+          id: uid('resolution'), officialValidationId: officialId,
+          signatureIds: rows.map(v => v.id).sort(), resolvedById: actor.id,
+          resolvedByName: actor.name, resolvedAt: nowISO(), reason: reason.trim(),
+          history: previous ? [...(previous.history || []), { ...previous, history: undefined }] : [],
+        };
+        saved = stamp({ ...anchor, conflictResolution: resolution }, actor.name);
+        // Keep the CAS revision distinct even with a frozen/coarse device clock.
+        const previousTime = Date.parse(anchor.updatedAt);
+        if (Number.isFinite(previousTime) && Date.parse(saved.updatedAt) <= previousTime) {
+          saved.updatedAt = new Date(previousTime + 1).toISOString();
+        }
+        const operation = { id: resolution.id, actorId: actor.id, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: 'resolve_grease_validation_conflict',
+          status: 'PENDING', createdAt: nowISO(), resolutionVersions: versions, attemptedResolution: resolution,
+          params: { p_operation_id: resolution.id, p_record_id: recordId, p_id: officialId,
+            p_note: reason.trim(), p_expected_signatures: rows.map(v => ({ id: v.id, updatedAt: v._pushedVersion || v.updatedAt })) } };
+        store.put({ ...saved, _evidenceOperationId: operation.id });
+        transaction.objectStore('app_config').add({ key: 'evidence:' + operation.id, value: operation });
+      };
+      transaction.oncomplete = () => resolve(saved);
+      transaction.onabort = () => reject(failure || transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  },
+  async putMany(store, rows) {
+    return new Promise((resolve, reject) => {
+      const transaction = _db.transaction(store, 'readwrite');
+      const objectStore = transaction.objectStore(store);
+      rows.forEach(row => objectStore.put(row));
+      transaction.oncomplete = () => resolve(rows);
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  },
   async init() {
     await openDB();
     await ensureDefaultSyncConfig();
@@ -68,7 +489,36 @@ const DB = {
     await ensureDefaultSyncConfig();
   },
 
-  put(store, obj) {
+  put(store, obj, options = {}) {
+    if (STORES.includes(store) && typeof Auth !== 'undefined' && Auth.isSupabaseMode?.()) {
+      const appUserId = Auth.getProfile?.()?.appUserId;
+      if (!appUserId) throw new Error('AUTH_REQUIRED');
+      return this.getRaw(store,obj.id).then(existing => {
+        if (!options.source && existing?.__authorizationAppUserId && existing.__authorizationAppUserId !== appUserId) {
+          throw new Error('AUTHORIZATION_ACCOUNT_MISMATCH');
+        }
+        const tagged = { ...obj, __authorizationAppUserId: appUserId };
+        return this.getAuthorizationContext(appUserId).then(context => {
+          // `options.coverageCache`: caller opcional (pullAll(), perf 2026-
+          // 10-18) que comparte UN cache por ciclo entre varios put()
+          // seguidos — nunca obligatorio, un put() aislado sigue funcionando
+          // igual (cache de un solo uso).
+          const state=context
+            ? this.authorizationStateForRow(store,tagged,context,appUserId,options.coverageCache)
+            : Promise.resolve('PENDING_LOCAL');
+          return Promise.resolve(state).then(value=>{
+          tagged.__authorizationState=value;
+          return new Promise((res,rej) => {
+            const transaction = _db.transaction(store,'readwrite');
+            transaction.objectStore(store).put(tagged);
+            transaction.oncomplete=()=>res(tagged);
+            transaction.onabort=()=>rej(transaction.error || new Error('LOCAL_WRITE_ABORTED'));
+            transaction.onerror=()=>rej(transaction.error);
+          });
+          });
+        });
+      });
+    }
     return new Promise((res, rej) => {
       const r = tx(store, 'readwrite').put(obj);
       r.onsuccess = () => res(obj);
@@ -76,18 +526,133 @@ const DB = {
     });
   },
   get(store, id) {
+    return this.getRaw(store,id).then(async row => {
+      if (!row || !STORES.includes(store) || typeof Auth === 'undefined' || !Auth.isSupabaseMode?.()) return row;
+      const appUserId=Auth.getProfile?.()?.appUserId;
+      const context=appUserId && await this.getAuthorizationContext(appUserId);
+      return await this.authorizationStateForRow(store,row,context,appUserId)==='OUT_OF_SCOPE' ? null : this.decorateSupportRow(store,row,context);
+    });
+  },
+  getRaw(store, id) {
     return new Promise((res, rej) => {
       const r = tx(store).get(id);
       r.onsuccess = () => res(r.result || null);
       r.onerror = (e) => rej(e.target.error);
     });
   },
-  all(store) {
+  // `contextOverride` (perf 2026-10-18, lote SYNC_PERFORMANCE): opcional —
+  // SIN el 2do argumento, el comportamiento es IDÉNTICO a siempre (lee el
+  // contexto fresco de IndexedDB, como todo caller existente espera).
+  // pushAll() lo usa para leer app_config UNA sola vez y reusarlo en sus 18
+  // llamadas a all() (una por store) en vez de releer el mismo blob 18
+  // veces por ciclo de sync — nunca cambia qué filas se consideran
+  // autorizadas, solo de dónde sale el `context` que ya se usaba igual.
+  all(store, contextOverride) {
+    return this.allRaw(store).then(async rows => {
+      if (!STORES.includes(store) || typeof Auth === 'undefined' || !Auth.isSupabaseMode?.()) return rows;
+      const appUserId=Auth.getProfile?.()?.appUserId;
+      const context=contextOverride!==undefined ? contextOverride : (appUserId && await this.getAuthorizationContext(appUserId));
+      if (!appUserId || !context) return [];
+      // UN cache por llamada a all() — antes cada fila de `rows` releía
+      // cuadrillas/crew_locations por separado (ver authorizationStateForRow).
+      const coverageCache={};
+      const states=await Promise.all(rows.map(row=>this.authorizationStateForRow(store,row,context,appUserId,coverageCache)));
+      return rows.filter((row,index)=>states[index]!=='OUT_OF_SCOPE').map(row=>this.decorateSupportRow(store,row,context));
+    });
+  },
+  allRaw(store) {
     return new Promise((res, rej) => {
       const r = tx(store).getAll();
       r.onsuccess = () => res(r.result || []);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+  decorateSupportRow(store,row,context) {
+    if (store !== 'lubrication_assignments') return row;
+    const support=context?.supportGrants;
+    const grant=support?.authUserId===context?.authUserId && support?.authorizationFingerprint===context?.authorizationFingerprint
+      && support?.operational?.find(g=>g.assignmentId===row.id && g.equipmentId===row.equipmentId && g.planId===row.planId
+        && g.assignedCrewId===row.assignedCrewId && g.occurrenceKey===row.occurrenceKey);
+    return {...row,_supportOperational:!!grant};
+  },
+  // `coverageCache`: plano, vive SOLO mientras dure ESTA llamada (o, si el
+  // caller comparte el mismo objeto entre varias filas — ver all()/pullAll()
+  // más abajo —, SOLO durante ese ciclo puntual de sync/lectura). Nunca se
+  // guarda en `this`/IndexedDB/config: una vez termina la función que lo
+  // creó, se pierde — no es estado stale persistente, es memoización de un
+  // solo paso (perf, lote "SYNC_PERFORMANCE" 2026-10-18: antes
+  // broadcast_messages targetType=LOCATION releía cuadrillas/crew_locations
+  // con un `allRaw()` POR FILA, hasta 2 lecturas IndexedDB extra por cada
+  // broadcast LOCATION durante un pull de cientos de filas).
+  async authorizationStateForRow(store,row,context,appUserId,coverageCache={}) {
+    // Relational fallbacks must never turn a foreign/unowned pending row into
+    // an authorized row merely because its equipment location matches.
+    if (!row || !context || !appUserId || row.__authorizationAppUserId!==appUserId ||
+        context.appUserId!==appUserId || context.active!==true) return 'OUT_OF_SCOPE';
+    if ((context.supportGrants?.rows || []).some(ref=>ref.store===store && ref.id===row.id)) {
+      const supported=localAuthorizationState(store,row,context,appUserId);
+      if (supported!=='OUT_OF_SCOPE') return supported;
+    }
+    if (store==='grease_validations' && context?.scopeType==='CREW_SCOPED') {
+      const record=await this.getRaw('lubrication_records',row?.lubricationRecordId || row?.recordId);
+      if (!record) return 'OUT_OF_SCOPE';
+      const snapshot=record.operationalSnapshot || {};
+      const equipment=record.equipmentId ? await this.getRaw('equipment',record.equipmentId) : null;
+      const scopedValidation={...row,
+        crewId:row.crewId || record.crewId || record.cuadrillaId || snapshot.crewId,
+        locationId:row.locationId || record.locationId || snapshot.equipmentLocationIdAtExecution || snapshot.executionLocationId || equipment?.locationId};
+      return localAuthorizationState(store,scopedValidation,context,appUserId);
+    }
+    // broadcast_messages targetType=LOCATION (0017): cobertura OPERATIVA
+    // real de cuadrilla, NUNCA authorizedLocationIds (ese es el alcance de
+    // sync/equipo — ver corrección 2026-10-18, el reporte previo lo usaba
+    // mal como sustituto). Reusa resolveCrewLocationCoverage() TAL CUAL
+    // (operational-scope.js) — PRINCIPAL+APOYO cuentan, fallback legacy
+    // locationId SOLO si la cuadrilla no tiene ninguna fila crew_locations
+    // — exactamente lo que broadcast_row_in_scope resuelve server-side vía
+    // SECURITY DEFINER. `allRaw()` (no `all()`/`allActive()`) a propósito:
+    // necesitamos los datos CRUDOS de crew_locations/cuadrillas (incluida
+    // cualquier fila inactiva/soft-deleted, que el RLS usa para decidir si
+    // corresponde o no el fallback legacy) — nunca filtrados por el propio
+    // wrapper de autorización de ESTOS stores (evita una recursión inútil
+    // y, más importante, replica el bypass SECURITY DEFINER real). El
+    // filtro local nunca debe AMPLIAR acceso respecto al RLS: si esta
+    // cuenta no cubre `targetId`, OUT_OF_SCOPE sin excepción.
+    if (store==='broadcast_messages' && row?.targetType==='LOCATION' && context?.scopeType==='CREW_SCOPED') {
+      const crewIds=context.authorizedCrewIds||[];
+      // Promesa cacheada (no el valor ya resuelto): varias filas de la MISMA
+      // tanda (Promise.all de all()/pullAll()) pueden llegar aquí
+      // "simultáneamente" (antes de que la primera await resuelva) — cachear
+      // la promesa evita una carrera que dispare el mismo par de allRaw()
+      // más de una vez por ciclo.
+      if (!coverageCache.crewLocationCoverageData) {
+        coverageCache.crewLocationCoverageData = Promise.all([this.allRaw('cuadrillas'), this.allRaw('crew_locations')]);
+      }
+      const [cuadrillas,crewLocations]=await coverageCache.crewLocationCoverageData;
+      const covered=crewIds.some(crewId=>resolveCrewLocationCoverage(crewId,cuadrillas,crewLocations).allAuthorizedLocationIds.includes(row.targetId));
+      if (!covered) return 'OUT_OF_SCOPE';
+      const pending=row._pushedVersion!==row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+      return pending?'PENDING_LOCAL':'AUTHORIZED';
+    }
+    const direct=localAuthorizationState(store,row,context,appUserId);
+    if (context?.scopeType!=='CREW_SCOPED') return direct;
+    const locations=new Set(context.authorizedLocationIds||[]);
+    let equipmentId=row?.equipmentId;
+    if (store==='lubrication_points' && row?.planId) {
+      const plan=await this.getRaw('lubrication_plans',row.planId);
+      equipmentId=plan?.equipmentId;
+    }
+    if (equipmentId) {
+      const equipment=await this.getRaw('equipment',equipmentId);
+      if (equipment && locations.has(equipment.locationId) &&
+          (!row.locationId || row.locationId===equipment.locationId) &&
+          (!row.crewId || (context.authorizedCrewIds||[]).includes(row.crewId)) &&
+          (direct!=='OUT_OF_SCOPE' || ['lubrication_plans','lubrication_points'].includes(store))) {
+        const pending=row._pushedVersion!==row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+        return pending?'PENDING_LOCAL':'AUTHORIZED';
+      }
+    }
+    return direct;
   },
   delete(store, id) {
     return new Promise((res, rej) => {
@@ -111,9 +676,11 @@ const DB = {
   },
   async setConfig(value) {
     return new Promise((res, rej) => {
-      const r = tx('app_config', 'readwrite').put({ key: 'sync', value });
-      r.onsuccess = () => res(value);
-      r.onerror = (e) => rej(e.target.error);
+      const transaction = _db.transaction('app_config','readwrite');
+      transaction.objectStore('app_config').put({key:'sync',value});
+      transaction.oncomplete=()=>res(value);
+      transaction.onabort=()=>rej(transaction.error || new Error('LOCAL_WRITE_ABORTED'));
+      transaction.onerror=()=>rej(transaction.error);
     });
   },
 
@@ -137,6 +704,10 @@ const DB = {
     const existing = await this.getSyncConflicts();
     const byKey = new Map(existing.map(c => [`${c.store}:${c.id}`, c]));
     for (const c of newConflicts) byKey.set(`${c.store}:${c.id}`, c);
+    for (const c of newConflicts.filter(c => c.store === 'grease_validations')) {
+      const row = await this.get(c.store, c.id);
+      if (row?.conflictResolution) await this.put(c.store, { ...row, _validationResolutionConflict: true });
+    }
     return new Promise((res, rej) => {
       const r = tx('app_config', 'readwrite').put({ key: 'sync_conflicts', value: Array.from(byKey.values()) });
       r.onsuccess = () => res(true);
@@ -165,8 +736,9 @@ const DB = {
   // app_config (LOCAL_STORES, NUNCA sincroniza — nunca viaja por
   // pushAll()/pullAll(), ver STORES arriba). NUNCA contiene PIN ni
   // password — eso vive únicamente en auth.users, gestionado por
-  // Supabase Auth, jamás en el cliente. Mientras AUTH_MODE sea 'legacy'
-  // (default), nada llama a estos métodos.
+  // Supabase Auth, jamás en el cliente. Con AUTH_MODE='supabase' (el
+  // default real y definitivo, ver src/core/auth.js), estos métodos se
+  // usan activamente en cada login/restoreSession.
   async getAuthTokens() {
     return new Promise((res, rej) => {
       const r = tx('app_config').get('auth_tokens');
@@ -203,26 +775,42 @@ const DB = {
     });
   },
 
-  // Quick unlock local (P0-2, ver src/core/quick-unlock.js) — { appUserId,
-  // salt, hash, iterations, createdAt, failedAttempts, lockedUntil } o null.
-  // NUNCA contiene el PIN en texto plano, solo su hash PBKDF2. Mismo
-  // patrón que auth_tokens/auth_profile_snapshot: un blob en app_config
-  // (LOCAL_STORES, nunca sincroniza). Vive en su PROPIA key, separada de
-  // auth_tokens y auth_profile_snapshot — el PIN nunca sustituye ni toca
-  // esos dos namespaces.
-  async getQuickUnlock() {
+  // Authorization context is namespaced by app_user_id so a later login
+  // cannot accidentally reuse another account's scope/fingerprint. This is
+  // cache metadata only; the server bootstrap remains authoritative.
+  async getAuthorizationContext(appUserId) {
+    if (!appUserId) return null;
     return new Promise((res, rej) => {
-      const r = tx('app_config').get('auth_quick_unlock');
+      const r = tx('app_config').get('authorization_context:' + appUserId);
       r.onsuccess = () => res(r.result ? r.result.value : null);
       r.onerror = (e) => rej(e.target.error);
     });
   },
-  async setQuickUnlock(value) {
+  async setAuthorizationContext(appUserId, value) {
+    if (!appUserId) throw new Error('AUTH_REQUIRED');
+    if (value && !value.supportGrants) {
+      const previous=await this.getAuthorizationContext(appUserId);
+      if (previous && previous.authUserId===value.authUserId && previous.authorizationFingerprint===value.authorizationFingerprint) {
+        value={...value,supportGrants:previous.supportGrants};
+      }
+    }
     return new Promise((res, rej) => {
-      const r = tx('app_config', 'readwrite').put({ key: 'auth_quick_unlock', value });
+      const key = 'authorization_context:' + appUserId;
+      const store = tx('app_config', 'readwrite');
+      const r = value == null ? store.delete(key) : store.put({ key, value });
       r.onsuccess = () => res(value);
       r.onerror = (e) => rej(e.target.error);
     });
+  },
+
+  queueCatalogOperation(action, before, values) {
+    return queueCatalogOperationIntent(action, before, values);
+  },
+  queueAssignmentOperation(action, before, row) {
+    return queueAssignmentOperationIntent(action, before, row);
+  },
+  queueSkipOperation(row) {
+    return queueSkipOperationIntent(row);
   }
 };
 
@@ -271,7 +859,233 @@ function stamp(obj, user) {
   return obj;
 }
 
+// manual_tasks (0017, ACTIVE en producción, store directo sobre
+// engrase_sync, SIN RPC) — construye la fila de cierre que un LUBRICADOR
+// puede escribir. authorization_private.manual_task_row_in_scope() exige
+// que, fuera del allowlist de cierre (status/completedBy/completedAt/
+// completionComment/photos/photo/photoUploaded), el payload sea BYTE
+// IDÉNTICO al ya persistido — pero ese allowlist NO incluye `updatedAt`,
+// y pushAll() necesita bumpearlo siempre para detectar la fila como dirty
+// y subirla. `__freezeEmbeddedUpdatedAt` (ver Sync.stripLocalAuthorization
+// Metadata) congela el `updatedAt` EMBEBIDO en el jsonb enviado al valor
+// que el servidor ya tiene, mientras el `updatedAt` LOCAL (y la columna
+// top-level `updated_at` que viaja aparte) sigue avanzando normal — la
+// completitud real queda registrada en `completedAt`, no en `updatedAt`.
+function buildManualTaskCompletionRow(currentRow, { completedBy, completionComment, photos }) {
+  return {
+    ...currentRow,
+    status: 'COMPLETED',
+    completedBy,
+    completedAt: nowISO(),
+    completionComment: completionComment || '',
+    photos: photos || [],
+    photo: (photos && photos[0]) || null,
+    updatedAt: nowISO(),
+    __freezeEmbeddedUpdatedAt: currentRow.updatedAt,
+  };
+}
+
+// Fixed execution DTO: never transports arbitrary catalog fields or a store name.
+async function queueLubricationExecution({ action, record, recordBefore, equipmentBefore, planBefore, assignmentBefore,
+  equipmentAfter, planAfter, assignmentAfter, crewId, actorId }) {
+  if (!actorId) throw new Error('AUTH_REQUIRED');
+  // Do not absorb an earlier catalog mutation into the execution's restricted fields.
+  // Its scope/version must reach the server through its own authorized workflow first.
+  for (const row of [equipmentBefore, planBefore, assignmentBefore, recordBefore]) {
+    if (row?.updatedAt && row._pushedVersion !== row.updatedAt && !row._executionOperationId) {
+      throw new Error('CATALOG_SYNC_REQUIRED');
+    }
+  }
+  const id = action === 'CREATE' ? record.id : uid('gedit');
+  const snapshot = record.operationalSnapshot || {};
+  const params = {
+    p_operation_id: id, p_action: action, p_record_id: record.id,
+    p_equipment_id: record.equipmentId, p_plan_id: record.planId || planBefore?.id || null,
+    p_crew_id: crewId || snapshot.crewId || null,
+    p_assignment_id: snapshot.assignmentId || null,
+    p_execution_date: record.date, p_client_captured_at: record.createdAt || record.date, p_shift_id: record.shiftId,
+    p_execution_type: snapshot.executionType || 'PLANNED',
+    p_out_of_plan_reason: snapshot.outOfPlanReason || null,
+    p_performed_by: record.userId, p_retroactive: !!record.retroactivo,
+    p_hourmeter: Number(record.hourmeter), p_no_hourmeter: !!record.sinHorometro,
+    p_no_hourmeter_reason: record.noHourmeterReason || null,
+    p_lubricant_id: record.greaseType || null, p_quantity: Number(record.qty || 0),
+    p_condition: record.condition || 'Normal', p_notes: record.notes || '',
+    p_details: record.details || [], p_photos: record.photos || [],
+    p_expected_record: record._pushedVersion || null,
+    p_expected_equipment: equipmentBefore?._pushedVersion || null,
+    p_expected_plan: planBefore?._pushedVersion || null,
+    p_expected_assignment: assignmentBefore?._pushedVersion || null,
+  };
+  const dependencies = {};
+  for (const [field, store, row] of [
+    ['p_expected_record', 'lubrication_records', action === 'EDIT' ? record : null],
+    ['p_expected_equipment', 'equipment', equipmentBefore],
+    ['p_expected_plan', 'lubrication_plans', planBefore],
+    ['p_expected_assignment', 'lubrication_assignments', assignmentBefore],
+  ]) {
+    if (row?._executionOperationId) dependencies[field] = { operationId: row._executionOperationId, store, id: row.id };
+  }
+  const changes = [{ store: 'lubrication_records', row: record }];
+  if (equipmentAfter) changes.push({ store: 'equipment', row: equipmentAfter });
+  if (planAfter) changes.push({ store: 'lubrication_plans', row: planAfter });
+  if (assignmentAfter) changes.push({ store: 'lubrication_assignments', row: assignmentAfter });
+  const operation = { id, actorId, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, params, dependencies, status: 'PENDING',
+    originalRecord: recordBefore ? structuredClone(recordBefore) : null,
+    localVersions: Object.fromEntries(changes.map(c => [c.store, c.row.updatedAt])),
+    localRows: Object.fromEntries(changes.map(c => [c.store, structuredClone(c.row)])),
+    localBases: [
+      { store: 'lubrication_records', id: record.id, updatedAt: action === 'EDIT' ? recordBefore.updatedAt || null : null },
+      ...[['equipment', equipmentBefore], ['lubrication_plans', planBefore], ['lubrication_assignments', assignmentBefore]]
+        .filter(([, row]) => row).map(([store, row]) => ({ store, id: row.id, updatedAt: row.updatedAt || null })),
+    ],
+    localPhotos: params.p_photos, createdAt: nowISO() };
+  if (action === 'CREATE' && ((record.details || []).some(d => !d.done) || record.sinHorometro)) {
+    const evidenceId = 'auto:' + id;
+    operation.automaticAnomaly = { id: evidenceId, actorId, authorizationFingerprint: operation.authorizationFingerprint, status: 'PENDING', createdAt: nowISO(),
+      rpc: 'repeat_anomaly_from_execution', recordDependency: record.id, executionDependencyId: id,
+      localRecordSnapshot: structuredClone(record),
+      params: { p_operation_id: evidenceId, p_record_id: record.id, p_crew_id: params.p_crew_id, p_expected: null } };
+  }
+  await DB.putExecutionOperation(operation, changes);
+  return operation;
+}
+
+async function queueAnomalyOperation(action, row, before = null, note = null, crewId = row.crewId) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false) throw new Error('AUTH_REQUIRED');
+  if (before?._evidenceOperationId) throw new Error('EVIDENCE_SYNC_REQUIRED');
+  if (before && before.updatedAt !== before._pushedVersion) throw new Error('EVIDENCE_LEGACY_REVIEW_REQUIRED');
+  const id = uid('aop');
+  const params = { p_operation_id: id, p_id: row.id };
+  if (action==='REPORT' && row.supportAssignmentId) params.p_assignment_id=row.supportAssignmentId;
+  if (action !== 'RETIRE') params.p_crew_id = crewId || null;
+  if (action !== 'REPORT') params.p_expected = before?._pushedVersion || null;
+  if (action === 'REPORT') params.p_equipment_id = row.equipmentId;
+  if (['REPORT', 'EDIT'].includes(action)) Object.assign(params, { p_component: row.component,
+    p_description: row.description, p_criticality: row.criticality, p_photos: [] });
+  if (action === 'EDIT') params.p_status = row.status;
+  if (action === 'CLOSE') params.p_note = note;
+  const operation = { id, actorId: actor.id, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: { REPORT: row.supportAssignmentId ? 'report_assignment_anomaly' : 'report_anomaly', EDIT: 'edit_anomaly',
+    CLOSE: 'close_anomaly', RETIRE: 'retire_anomaly' }[action], params, status: 'PENDING', createdAt: nowISO(),
+    supportAssignmentId:row.supportAssignmentId || null,
+    localPhotos: ['REPORT', 'EDIT'].includes(action) ? row.photos || [] : null };
+  if (!operation.rpc) throw new Error('INVALID_OPERATION');
+  await DB.putEvidenceOperation(operation, [{ store: 'anomalies', row, expected: before?.updatedAt || null }]);
+  return operation;
+}
+
+async function queueGreaseValidation(validation, record) {
+  const actorId = App.currentUser?.id;
+  if (!actorId) throw new Error('AUTH_REQUIRED');
+  const operation = { id: validation.id, actorId, authorizationFingerprint: typeof Auth!=='undefined' ? Auth.getProfile?.()?.authorizationFingerprint || null : null, rpc: 'capture_grease_validation', status: 'PENDING', createdAt: nowISO(),
+    supportAssignmentId:record.operationalSnapshot?.assignmentId || null,
+    recordDependency: record._executionOperationId ? record.id : null, signatureLocal: validation.signatureLocal,
+    executionDependencyId: record._executionOperationId || null,
+    params: { p_operation_id: validation.id, p_id: validation.id, p_record_id: record.id,
+      p_crew_id: record.operationalSnapshot?.crewId || null, p_expected: record._pushedVersion || null,
+      p_signer_name: validation.signerName, p_signer_role: validation.signerRole,
+      p_note: validation.reason || null, p_signature_url: null } };
+  if (operation.executionDependencyId) {
+    const acknowledgment = await DB.get('app_config', 'execution-ack:' + operation.executionDependencyId);
+    if (acknowledgment) { operation.params.p_expected = acknowledgment.value; operation.recordDependency = null; }
+  }
+  if (!operation.executionDependencyId && (!record._pushedVersion || record.updatedAt !== record._pushedVersion)) {
+    throw new Error('RECORD_SYNC_REQUIRED');
+  }
+  await DB.putEvidenceOperation(operation, [{ store: 'grease_validations', expected: null,
+    row: { ...validation, recordVersion: operation.params.p_expected, recordSnapshot: structuredClone(record) } }]);
+}
+
+async function queueCatalogOperationIntent(action, before, values = {}) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'].includes(actor.role)) throw new Error('ROLE_DENIED');
+  if (actor.role === 'SUPERVISOR' && !['PAUSE','REPROGRAM'].includes(action)) throw new Error('ROLE_DENIED');
+  if (!before?._pushedVersion || before.updatedAt !== before._pushedVersion || before._executionOperationId || before._evidenceOperationId) {
+    throw new Error('CATALOG_SYNC_REQUIRED');
+  }
+  const rpc = { MOVE:'move_equipment_master_location',SHIFT:'set_equipment_shift',PAUSE:'set_equipment_alert_pause',
+    HOURMETER:'update_equipment_hourmeter',REPROGRAM:'reprogram_lubrication_plan' }[action];
+  if (!rpc) throw new Error('INVALID_OPERATION');
+  const id=uid('catalog'), params={p_operation_id:id,p_id:before.id,p_expected:before._pushedVersion};
+  const row=structuredClone(before);
+  if (action==='MOVE') {params.p_location_id=values.locationId;row.locationId=values.locationId;}
+  if (action==='SHIFT') {params.p_shift_id=values.shiftId;row.shiftId=values.shiftId;}
+  if (action==='HOURMETER') {
+    const newValue=Number(values.hourmeter), oldValue=Number(before.hourmeter||0);
+    if (!Number.isFinite(newValue) || newValue<oldValue || newValue<0) throw new Error('INVALID_HOURMETER');
+    if (newValue===oldValue) return null;
+    if (newValue-oldValue>500 && values.confirmLargeJump!==true) throw new Error('HOURMETER_CONFIRMATION_REQUIRED');
+    params.p_hourmeter=newValue;params.p_confirm_large_jump=values.confirmLargeJump===true;row.hourmeter=newValue;
+  }
+  if (['PAUSE','REPROGRAM'].includes(action)) {
+    params.p_crew_id=values.crewId||null;params.p_until=values.until||null;params.p_reason=values.reason||null;
+    if (action==='PAUSE') {
+      row.avisosPausadosHasta=values.until?new Date(values.until+'T23:59:59').toISOString():null;
+      if(values.until)row.avisosPausaMotivo=values.reason;
+    } else {
+      row.reprogramadoHasta=values.until?new Date(values.until+'T12:00:00').toISOString():null;
+      row.reprogramadoMotivo=values.until?values.reason:null;
+    }
+  }
+  if (action === 'REPROGRAM' && actor.role === 'SUPERVISOR' && !params.p_crew_id) throw new Error('SCOPE_REQUIRED');
+  stamp(row,actor.name);
+  const store=action==='REPROGRAM'?'lubrication_plans':'equipment';
+  const operation={id,actorId:actor.id,authorizationFingerprint:typeof Auth!=='undefined'?Auth.getProfile?.()?.authorizationFingerprint||null:null,rpc,params,status:'PENDING',createdAt:nowISO(),kind:'CATALOG',
+    targetStore:store,localVersion:row.updatedAt,localRow:structuredClone(row),originalRow:structuredClone(before)};
+  await DB.putEvidenceOperation(operation,[{store,row,expected:before.updatedAt}]);
+  return operation;
+}
+
+async function queueAssignmentOperationIntent(action, before, row) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !['ADMINISTRADOR','PLANIFICADOR','SUPERVISOR'].includes(actor.role)) throw new Error('ROLE_DENIED');
+  if (!['CREATE','REASSIGN','CANCEL'].includes(action) || !row?.id) throw new Error('INVALID_OPERATION');
+  if (action !== 'CREATE' && (!before?._pushedVersion || before.updatedAt !== before._pushedVersion)) throw new Error('ASSIGNMENT_SYNC_REQUIRED');
+  const id = uid('asgop');
+  const operation = {
+    id, actorId: actor.id, authorizationFingerprint: Auth.getProfile?.()?.authorizationFingerprint || null,
+    rpc: 'manage_lubrication_assignment', kind: 'CATALOG', targetStore: 'lubrication_assignments',
+    status: 'PENDING', createdAt: nowISO(),
+    params: { p_operation_id: id, p_action: action, p_id: row.id,
+      p_expected: before?._pushedVersion || null, p_equipment_id: row.equipmentId || before?.equipmentId || null,
+      p_plan_id: row.planId || before?.planId || null, p_occurrence_key: row.occurrenceKey || before?.occurrenceKey || null,
+      p_crew_id: action === 'CANCEL' ? null : row.assignedCrewId,
+      p_notes: row.notes || before?.notes || '' },
+    localVersion: row.updatedAt, localRow: structuredClone(row),
+    originalRow: before ? structuredClone(before) : null
+  };
+  const localRow = { ...row, __authorizationAppUserId: actor.id, __authorizationState: 'PENDING_LOCAL' };
+  operation.localRow = structuredClone(localRow);
+  await DB.putEvidenceOperation(operation, [{ store: 'lubrication_assignments', row: localRow,
+    expected: action === 'CREATE' ? null : before.updatedAt }]);
+  return operation;
+}
+
+async function queueSkipOperationIntent(row) {
+  const actor = App.currentUser;
+  if (!actor?.id || actor.active === false || !row?.id) throw new Error('AUTH_REQUIRED');
+  const id = uid('skipop');
+  const operation = {
+    id, actorId: actor.id, authorizationFingerprint: Auth.getProfile?.()?.authorizationFingerprint || null,
+    rpc: 'record_lubrication_skip', kind: 'CATALOG', targetStore: 'lubrication_skips',
+    status: 'PENDING', createdAt: nowISO(),
+    params: { p_operation_id: id, p_id: row.id, p_expected: null,
+      p_equipment_id: row.equipmentId, p_plan_id: row.planId || null, p_occurrence_key: row.occurrenceKey || null,
+      p_crew_id: row.crewId || row.cuadrillaId || null, p_date: row.date, p_shift_id: row.shiftId,
+      p_reason: row.reason, p_observacion: row.observacion || null, p_linked_record_id: row.linkedRecordId || null },
+    localVersion: row.updatedAt || row.createdAt, localRow: structuredClone(row), originalRow: null
+  };
+  const localRow = { ...row, __authorizationAppUserId: actor.id, __authorizationState: 'PENDING_LOCAL' };
+  operation.localRow = structuredClone(localRow);
+  await DB.putEvidenceOperation(operation, [{ store: 'lubrication_skips', row: localRow, expected: null }]);
+  return operation;
+}
+
 async function logAudit(action, detail, user) {
+  // Supabase-mode audit entries are written by the authoritative RPC that
+  // performs an operation. Never enqueue client-authored generic audit rows.
+  if (isSupabaseAuthMode()) return null;
   await DB.put('audit_log', stamp({
     id: uid('log'), action, detail, user: user || (App.currentUser && App.currentUser.name) || 'sistema'
   }));
@@ -305,6 +1119,9 @@ function isSupabaseAuthMode() {
    cuadrillas, lubricantes, settings) se sigue sembrando igual — no tiene
    nada que ver con identidad/autenticación. */
 async function seedSoloSiElSistemaEstaVacio() {
+  // Production bootstrap is schema/config only. Remote state is NOT_CHECKED
+  // until the first authenticated pull; never seed operational demo data.
+  if (isSupabaseAuthMode() || globalThis.CONTROL_ENGRASE_ALLOW_DEMO_SEED !== true) return { remoteState: 'NOT_CHECKED' };
   const usuariosLocales = await DB.all('users');
   // OR con el flag: en AUTH_MODE='supabase', `users` se deja vacío a
   // propósito, así que `usuariosLocales.length` solo, por sí solo, ya NO
@@ -319,22 +1136,7 @@ async function seedSoloSiElSistemaEstaVacio() {
     return;
   }
 
-  let servidorTieneDatos = false;
-  try {
-    const cfg = await DB.getConfig();
-    if (cfg && cfg.url && cfg.anonKey && navigator.onLine) {
-      const r = await fetch(
-        `${cfg.url}/rest/v1/engrase_sync?select=id&limit=1`,
-        { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${cfg.anonKey}` } }
-      );
-      if (r.ok) {
-        const filas = await r.json();
-        servidorTieneDatos = Array.isArray(filas) && filas.length > 0;
-      }
-    }
-  } catch (e) {
-    // Sin internet o servidor inalcanzable: se siembra local para poder trabajar
-  }
+  const servidorTieneDatos = false; // Explicit local demo only; no remote probe.
 
   if (servidorTieneDatos) {
     // El sistema ya existe: en AUTH_MODE='legacy', este dispositivo solo

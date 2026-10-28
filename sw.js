@@ -1,10 +1,14 @@
-const CACHE = 'engrase-openpit-v67'; // v67: DATA-PENDING-A02 resuelto (docs/BUG_REGISTER.md) — un equipo con su ubicación/familia ya desactivada (soft-delete, el equipo nunca pierde su propio locationId/typeId) dejaba de mostrar el nombre real ("—" para siempre) en Dashboard/Historial/Reportes/Matriz Semanal, porque el lookup de nombre se construía desde la lista YA FILTRADA a activas-solo. Corregido en los 4 sitios: el lookup de nombre ahora usa DB.all() (todas), el <select> de filtro sigue activas-solo. Nada tocó producción/Supabase.
+const CACHE = 'engrase-openpit-v77'; // v77: LOTE A2 — master-data-import-gate.js agregado al precache.
 const ASSETS = [
+  './src/core/tasks-notifications-panel.js',
+  './src/core/lubricador-notifications.js',
+  './src/core/widget-snapshot.js',
+  './src/core/master-data-import-gate.js',
   './', './index.html', './styles.css', './app.js', './db.js', './sync.js', './manifest.json',
   // Núcleo de lógica extraído de app.js (ver docs/MODULARIZATION.md) — deben
   // precachearse igual que app.js/db.js/sync.js para que el modo offline
   // siga funcionando.
-  './src/core/auth.js', './src/core/quick-unlock.js', './src/core/shifts.js', './src/core/hourmeter.js',
+  './src/core/auth.js', './src/core/shifts.js', './src/core/hourmeter.js',
   './src/core/lubrication-status.js', './src/core/anomalies.js',
   './src/core/weekly-matrix.js', './src/core/anomaly-actions.js',
   './src/core/plan-compliance.js', './src/core/grease-validation.js',
@@ -12,7 +16,14 @@ const ASSETS = [
   './favicon.png', './apple-touch-icon.png',
   './icon-72.png', './icon-96.png', './icon-128.png', './icon-144.png', './icon-152.png',
   './icon-192.png', './icon-384.png', './icon-512.png',
-  './icon-maskable-192.png', './icon-maskable-512.png'
+  './icon-maskable-192.png', './icon-maskable-512.png',
+  // jsQR/qrcode-generator (lote QR offline + lote QR license fix): antes
+  // vivían en CDN_ASSETS (mejor esfuerzo, abajo) — el escáner/generador de
+  // QR podía no estar disponible si el primer arranque era sin conexión.
+  // Ahora son propios de la app (vendor/, mismo origen) y van en el
+  // precache obligatorio, igual que app.js/db.js/sync.js. qrcode.js (MIT)
+  // reemplaza a qrious.min.js (GPL-3.0, eliminada).
+  './vendor/qrcode.js', './vendor/jsqr.js'
 ];
 
 // Librerías externas (gráficas, Excel, PDF) que también queremos disponibles sin internet
@@ -22,9 +33,7 @@ const CDN_ASSETS = [
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js',
   'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
   'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
-  'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js',
-  'https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js',
-  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'
+  'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js'
 ];
 
 self.addEventListener('install', (e) => {
