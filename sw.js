@@ -1,4 +1,4 @@
-const CACHE = 'engrase-openpit-v77'; // v77: LOTE A2 — master-data-import-gate.js agregado al precache.
+const CACHE = 'engrase-openpit-v78'; // v78: BUG-AUTH-001 — fix de ensureFreshSession() en auth.js/app.js; sin esto, un SW ya instalado seguiría sirviendo el auth.js viejo desde caché pese al deploy.
 const ASSETS = [
   './src/core/tasks-notifications-panel.js',
   './src/core/lubricador-notifications.js',
