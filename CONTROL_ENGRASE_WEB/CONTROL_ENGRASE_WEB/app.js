@@ -8205,7 +8205,18 @@ async function deleteEquipmentCascade(equipment, opts = {}) {
 
 async function openEquipmentForm(equipment, types, locations) {
   const isNew = !equipment;
-  const e = equipment || { code: '', shortCode: '', description: '', brand: '', model: '', serial: '', typeId: types[0]?.id, locationId: locations[0]?.id, status: 'Operativo', hourmeter: 0, shiftId: 'shift_dia', cuadrillaId: '' };
+  // Bug real de datos maestros (auditoría 2026-10-29, "CATEGORÍAS MEZCLADAS"):
+  // un equipo NUEVO pre-seleccionaba `typeId: types[0]?.id` — el PRIMER tipo
+  // de la lista, SIN que el operador tuviera que elegirlo a propósito. Si
+  // "Camión Articulado" resultaba ser ese primer tipo, cualquier equipo
+  // nuevo guardado sin tocar el selector de Categoría quedaba silenciosamente
+  // como Articulado aunque fuera una excavadora/retroexcavadora/etc. — la
+  // causa UI más probable de los typeId incorrectos encontrados en
+  // producción (ver tools/diagnose-equipment-types-readonly.js). Ahora un
+  // equipo nuevo NUNCA trae una categoría preseleccionada: `typeId: ''` +
+  // option placeholder + `required` obligan a elegirla a propósito. Editar
+  // un equipo EXISTENTE no cambia: sigue preseleccionando su e.typeId real.
+  const e = equipment || { code: '', shortCode: '', description: '', brand: '', model: '', serial: '', typeId: '', locationId: locations[0]?.id, status: 'Operativo', hourmeter: 0, shiftId: 'shift_dia', cuadrillaId: '' };
   if (isNew) e.code = await generateNextEquipmentCode();
   const cuadrillas = await DB.allActive('cuadrillas');
 
@@ -8218,7 +8229,11 @@ async function openEquipmentForm(equipment, types, locations) {
       <label>Modelo<input required name="model" value="${esc(e.model)}"/></label>
       <label>N° de serie<input name="serial" value="${e.serial || ''}"/></label>
       <label>Categoría
-        <select name="typeId">${types.map(t => `<option value="${t.id}" ${t.id === e.typeId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+        <select required name="typeId">
+          ${isNew ? '<option value="" disabled selected>— Selecciona una categoría —</option>' : ''}
+          ${types.map(t => `<option value="${t.id}" ${t.id === e.typeId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+        </select>
+        <span class="field-hint">Debe corresponder al tipo real del equipo — lo usa "Copiar puntos de otro equipo" para no mezclar categorías.</span>
       </label>
       <label>Ubicación
         <select name="locationId">${locations.map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
