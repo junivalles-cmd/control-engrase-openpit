@@ -9241,18 +9241,26 @@ function pointRow(p, lubricants, resolvedPhotoSrc) {
   </div>`;
 }
 
-/* ---------- Copiar puntos de engrase de otro equipo (agrupados por familia) ----------
+/* ---------- Copiar puntos de engrase de otro equipo (SOLO del mismo tipo/categoría) ----------
    Evita tener que escribir a mano los mismos 20 puntos en cada excavadora: se eligen
-   los puntos de un equipo que ya está configurado y se copian a este. Los equipos se
-   agrupan por categoría (Excavadora, Tractor, etc.), poniendo primero la del equipo actual. */
+   los puntos de un equipo que ya está configurado y se copian a este.
+   BUG REAL reportado en vivo (categorías mezcladas, 2026-10-29): la versión anterior
+   armaba un <select> con un <optgroup> POR TIPO pero incluía TODOS los tipos a la vez
+   (solo ponía primero el del equipo destino) — un Camión Articulado podía terminar
+   copiando puntos de una Excavadora por error de selección. Ahora se FILTRA antes de
+   construir el modal: la única fuente de "tipo" es equipment.typeId (el mismo campo
+   maestro que "Categoría" en el formulario de Equipos, ver openEquipmentForm) — nunca
+   marca/modelo/prefijo de código/regex textual. Un destino sin typeId no tiene "mismo
+   tipo" verificable, así que no se le ofrece ninguna fuente (mejor nada que adivinar). */
 async function openCopyPointsForm(plan, equipment, lubricants) {
   const equipos = await DB.allActive('equipment');
   const plans = await DB.allActive('lubrication_plans');
   const allPoints = await DB.allActive('lubrication_points');
   const types = await DB.allActive('equipment_types');
 
-  const conPuntos = equipos
-    .filter(e => e.id !== equipment.id)
+  const targetTypeId = equipment.typeId || null;
+  const conPuntos = !targetTypeId ? [] : equipos
+    .filter(e => e.id !== equipment.id && e.typeId === targetTypeId)
     .map(e => {
       const p = plans.find(pl => pl.equipmentId === e.id);
       const pts = p ? allPoints.filter(pt => pt.planId === p.id) : [];
@@ -9261,31 +9269,17 @@ async function openCopyPointsForm(plan, equipment, lubricants) {
     .filter(x => x.pts.length > 0);
 
   if (!conPuntos.length) {
-    alert('Todavía no hay ningún otro equipo con puntos de engrase configurados para copiar. Configura uno primero y luego podrás reutilizarlo en los demás.');
+    alert('No hay equipos del mismo tipo con puntos configurados.');
     return;
   }
 
-  const porTipo = {};
-  conPuntos.forEach(x => {
-    const t = types.find(ty => ty.id === x.e.typeId);
-    const nombre = t ? t.name : 'Sin categoría';
-    (porTipo[nombre] = porTipo[nombre] || []).push(x);
-  });
-  const tipoActual = (types.find(t => t.id === equipment.typeId) || {}).name;
-  const nombresOrdenados = Object.keys(porTipo).sort((a, b) => {
-    if (a === tipoActual) return -1;
-    if (b === tipoActual) return 1;
-    return a.localeCompare(b);
-  });
+  const tipoActual = (types.find(t => t.id === targetTypeId) || {}).name || 'Sin categoría';
 
   openModal(`Copiar puntos a ${equipment.code}`, `
-    <p class="dim">Elige un equipo que ya tenga sus puntos configurados y cópialos a <b>${esc(equipment.code)}</b>. Después puedes editarlos o quitar los que no apliquen.</p>
+    <p class="dim">Equipos compatibles — misma categoría que <b>${esc(equipment.code)}</b>: <b>${esc(tipoActual)}</b>. Elige uno que ya tenga sus puntos configurados y cópialos aquí. Después puedes editarlos o quitar los que no apliquen.</p>
     <label>Copiar desde
       <select id="copy-source" class="input" style="width:100%">
-        ${nombresOrdenados.map(nombre => `
-          <optgroup label="${esc(nombre)}${nombre === tipoActual ? ' (misma categoría)' : ''}">
-            ${porTipo[nombre].map(x => `<option value="${x.plan.id}">${esc(x.e.code)} · ${esc(x.e.brand)} ${esc(x.e.model)} — ${x.pts.length} punto(s)</option>`).join('')}
-          </optgroup>`).join('')}
+        ${conPuntos.map(x => `<option value="${x.plan.id}">${esc(x.e.code)} · ${esc(x.e.brand)} ${esc(x.e.model)} — ${x.pts.length} punto(s)</option>`).join('')}
       </select>
     </label>
     <div id="copy-preview" style="margin-top:14px"></div>
