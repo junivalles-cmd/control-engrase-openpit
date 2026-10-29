@@ -8310,78 +8310,277 @@ async function renderPlan() {
   let bulkMode = false;
   const selected = new Set();
 
+  // Fila precomputada por equipo — una sola vez por render (misma idea que
+  // puntosPorPlan arriba): búsqueda, filtros, orden y pintado de la tabla
+  // leen SIEMPRE estos mismos campos, nunca un cálculo paralelo.
+  const planRows = equipos.map(e => {
+    const plan = plans.find(p => p.equipmentId === e.id);
+    const points = plan ? (puntosPorPlan[plan.id] || []) : [];
+    const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
+    const configuredShifts = plan ? requiredShiftsForPlan(plan, plan.effectiveDate || todayDateISO()) : [];
+    const dualShiftPlan = configuredShifts.includes('shift_dia') && configuredShifts.includes('shift_noche') && !!plan?.effectiveDate;
+    const shiftsLabel = !plan ? '—' : dualShiftPlan
+      ? `Día + Noche · desde ${fmtDateOnly(new Date(`${plan.effectiveDate}T12:00:00`))}`
+      : configuredShifts.filter(Boolean).map(id => id === 'shift_dia' ? 'Día' : id === 'shift_noche' ? 'Noche' : '').filter(Boolean).join(' + ') || 'Flexible';
+    const frequencyLabel = !plan ? '—' : (isWeekday ? (plan.assignedDays || []).map(d => d.slice(0, 3)).join(', ') || 'sin días' : plan.frequency + ' h');
+    const referenceLabel = plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—';
+    const controlLabel = plan ? plan.controlType : '—';
+    const modelLabel = `${e.brand || ''} ${e.model || ''}`.trim();
+    return { e, plan, points, isWeekday, configuredShifts, shiftsLabel, frequencyLabel, referenceLabel, controlLabel, modelLabel };
+  });
+
+  // Índice de búsqueda de esta pantalla (pedido explícito): solo código
+  // ahorrativo, código interno y equipo/modelo — a diferencia de Equipos,
+  // acá NO se busca por ubicación ni por punto de engrase.
+  const searchIndex = new Map();
+  planRows.forEach(r => searchIndex.set(r.e.id, [r.e.shortCode, r.e.code, r.modelLabel].filter(Boolean).join(' ').toLowerCase()));
+
+  const PLAN_SORT_FIELDS = [
+    { key: 'shortCode', label: 'Código ahorrativo' },
+    { key: 'code', label: 'Código interno' },
+    { key: 'model', label: 'Equipo / Modelo' },
+    { key: 'control', label: 'Control' },
+    { key: 'frequency', label: 'Frecuencia / Días' },
+    { key: 'shift', label: 'Turno' },
+    { key: 'points', label: 'Puntos' },
+  ];
+  const PLAN_SORT_FIELD_KEYS = new Set(PLAN_SORT_FIELDS.map(f => f.key));
+  const DIAS_SEMANA_FILTRO = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+  // Opciones de filtro generadas de los datos reales (pedido explícito) —
+  // nunca una lista hardcodeada. Mismo criterio que Equipos (statusFilterOptions).
+  const shortCodeOptions = [...new Set(planRows.map(r => r.e.shortCode).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const codeOptions = [...new Set(planRows.map(r => r.e.code).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const modelOptions = [...new Set(planRows.map(r => r.modelLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const controlOptions = [...new Set(planRows.map(r => r.controlLabel).filter(x => x && x !== '—'))];
+  const availableShifts = new Set(planRows.flatMap(r => r.configuredShifts || []));
+  const shiftFilterOptions = [
+    ...(availableShifts.has('shift_dia') ? [{ value: 'shift_dia', label: 'Turno Día' }] : []),
+    ...(availableShifts.has('shift_noche') ? [{ value: 'shift_noche', label: 'Turno Noche' }] : []),
+  ];
+  const usedWeekdays = new Set(planRows.filter(r => r.isWeekday).flatMap(r => r.plan.assignedDays || []));
+  const weekdayFilterOptions = DIAS_SEMANA_FILTRO.filter(d => usedWeekdays.has(d));
+
+  // Ordenar/Filtrar — SOLO sessionStorage (preferencia de esta pestaña/sesión,
+  // nunca localStorage): ver misma regla ya establecida en Equipos.
+  const PLAN_FILTERS_SESSION_KEY = 'engrase_plan_sort_filter';
+  let sortState = { field: 'code', dir: 'asc' };
+  let filterState = { shortCode: '', code: '', model: '', control: '', shift: '', planFilter: '', weekday: '' };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(PLAN_FILTERS_SESSION_KEY) || 'null');
+    if (saved && typeof saved === 'object') {
+      if (saved.sort && PLAN_SORT_FIELD_KEYS.has(saved.sort.field)) {
+        sortState = { field: saved.sort.field, dir: saved.sort.dir === 'desc' ? 'desc' : 'asc' };
+      }
+      if (saved.filters && typeof saved.filters === 'object') {
+        filterState = {
+          shortCode: saved.filters.shortCode || '', code: saved.filters.code || '', model: saved.filters.model || '',
+          control: saved.filters.control || '', shift: saved.filters.shift || '',
+          planFilter: saved.filters.planFilter || '', weekday: saved.filters.weekday || '',
+        };
+      }
+    }
+  } catch (e) { /* preferencia de sesión opcional */ }
+  function persistSortFilterState() {
+    try { sessionStorage.setItem(PLAN_FILTERS_SESSION_KEY, JSON.stringify({ sort: sortState, filters: filterState })); }
+    catch (e) { /* preferencia de sesión opcional */ }
+  }
+  function activeFilterCount() {
+    return ['shortCode', 'code', 'model', 'control', 'shift', 'planFilter', 'weekday'].filter(k => filterState[k]).length;
+  }
+  function updateSortFilterButtonLabel() {
+    const n = activeFilterCount();
+    $('#plan-sort-filter-btn').innerHTML = n ? `${ic("list")}Filtrar (${n})` : `${ic("list")}Ordenar / Filtrar`;
+  }
+
+  function sortValueFor(field, row) {
+    switch (field) {
+      case 'shortCode': return (row.e.shortCode || '').toLowerCase();
+      case 'code': return (row.e.code || '').toLowerCase();
+      case 'model': return row.modelLabel.toLowerCase();
+      case 'control': return row.controlLabel.toLowerCase();
+      case 'frequency': return row.frequencyLabel.toLowerCase();
+      case 'shift': return row.shiftsLabel.toLowerCase();
+      case 'points': return row.points.length;
+      default: return '';
+    }
+  }
+
+  // Pipeline único (pedido explícito): búsqueda → filtros → orden → render.
+  function applyFiltersAndSort(rowsIn) {
+    let out = rowsIn;
+    if (filterState.shortCode) out = out.filter(r => r.e.shortCode === filterState.shortCode);
+    if (filterState.code) out = out.filter(r => r.e.code === filterState.code);
+    if (filterState.model) out = out.filter(r => r.modelLabel === filterState.model);
+    if (filterState.control) out = out.filter(r => r.controlLabel === filterState.control);
+    if (filterState.shift) out = out.filter(r => (r.configuredShifts || []).includes(filterState.shift));
+    if (filterState.planFilter === 'con') out = out.filter(r => !!r.plan);
+    if (filterState.planFilter === 'sin') out = out.filter(r => !r.plan);
+    if (filterState.weekday) out = out.filter(r => r.isWeekday && (r.plan.assignedDays || []).includes(filterState.weekday));
+    const dir = sortState.dir === 'desc' ? -1 : 1;
+    return [...out].sort((a, b) => {
+      const va = sortValueFor(sortState.field, a), vb = sortValueFor(sortState.field, b);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+  }
+
   c.innerHTML = `
     <div class="toolbar">
+      <input id="plan-search" class="input input-search" placeholder="Buscar por código ahorrativo, código interno o equipo…" />
+      <button type="button" class="btn btn-sm" id="plan-sort-filter-btn">${ic("list")}Ordenar / Filtrar</button>
       <button class="btn btn-accent" id="plan-matrix">${ic("grid")}Ver matriz semanal</button>
       <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
       <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
-      ${canEdit ? `<button class="btn" id="pts-import">${ic("upload")}Importar puntos de engrase desde Excel</button>` : ''}
-       ${canEdit ? `<button class="btn" id="plans-import">${ic("upload")}Importar planes desde Excel</button>` : ''}
       ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
-      <input type="file" id="pts-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
-       <input type="file" id="plans-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div id="plan-bulk-bar" class="bulk-bar hidden">
       <span id="plan-bulk-count">0 seleccionados</span>
       <button class="btn btn-sm btn-accent" id="plan-bulk-apply">${ic("check")}Aplicar plan a seleccionados</button>
       <button class="btn btn-sm" id="plan-bulk-cancel">Cancelar</button>
     </div>
-    <div class="panel">
+    <div class="dim plan-results-summary" id="plan-results-count"></div>
+    <div class="panel plan-table-panel" id="plan-table-wrap">
       <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
-      <table class="data-table">
-        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código</th><th>Equipo</th><th>Control</th><th>Frecuencia / Días</th><th>Turnos</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
-        <tbody>
-          ${(await Promise.all(equipos.map(async e => {
-            const plan = plans.find(p => p.equipmentId === e.id);
-            // Los puntos se cargan UNA vez fuera del bucle (antes se recargaba la tabla
-            // completa por cada equipo: con 300 equipos eran 300 lecturas de 4.500 puntos).
-            const points = plan ? (puntosPorPlan[plan.id] || []) : [];
-            const isWeekday = plan && plan.controlType === 'Día y turno de la semana';
-            const configuredShifts = plan ? requiredShiftsForPlan(plan, plan.effectiveDate || todayDateISO()) : [];
-            const dualShiftPlan = configuredShifts.includes('shift_dia') && configuredShifts.includes('shift_noche') && !!plan?.effectiveDate;
-            const shiftsLabel = !plan ? '—' : dualShiftPlan
-              ? `Día + Noche · desde ${fmtDateOnly(new Date(`${plan.effectiveDate}T12:00:00`))}`
-              : configuredShifts.filter(Boolean).map(id => id === 'shift_dia' ? 'Día' : id === 'shift_noche' ? 'Noche' : '').filter(Boolean).join(' + ') || 'Flexible';
-            return `<tr data-row-id="${e.id}">
-              ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${e.id}"/></td>` : ''}
-              <td class="mono">${esc(e.code)}</td>
-              <td>${esc(e.brand)} ${esc(e.model)}</td>
-              <td>${plan ? plan.controlType : '—'}</td>
-              <td class="mono">${plan ? (isWeekday ? (plan.assignedDays || []).map(d => d.slice(0, 3)).join(', ') || 'sin días' : plan.frequency + ' h') : '—'}</td>
-              <td>${esc(shiftsLabel)}</td>
-              <td class="mono">${plan ? (isWeekday ? '—' : fmt(plan.lastGreaseHour) + ' h · alerta ' + plan.alertYellowHours + ' h') : '—'}</td>
-              <td>${points.length}</td>
-              <td><button class="btn btn-sm" data-eq="${e.id}" data-plan="${plan ? plan.id : ''}">${ic("edit")}Configurar</button></td>
-            </tr>`;
-          }))).join('')}
-        </tbody>
+      <table class="data-table" id="plan-table">
+        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código ahorrativo</th><th>Código interno</th><th>Equipo / Modelo</th><th>Control</th><th>Frecuencia / Días</th><th>Turnos</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
+        <tbody id="plan-table-body"></tbody>
       </table>
     </div>`;
-  makeTablesResponsive(c);
 
-  if (canEdit) {
-    $('#pts-import').addEventListener('click', () => $('#pts-import-file').click());
-    $('#pts-import-file').addEventListener('change', async (ev) => {
-      const file = ev.target.files[0];
-      if (!file) return;
-      await handlePointsExcelImport(file, equipos, types, lubricants);
-      ev.target.value = '';
-    });
-    $('#plans-import').addEventListener('click', () => $('#plans-import-file').click());
-    $('#plans-import-file').addEventListener('change', async (ev) => {
-      const file = ev.target.files[0];
-      if (!file) return;
-      await handlePlansExcelImport(file, equipos, plans);
-      ev.target.value = '';
-    });
+  function rowHTML(r) {
+    return `<tr data-row-id="${r.e.id}">
+      ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${r.e.id}" ${selected.has(r.e.id) ? 'checked' : ''}/></td>` : ''}
+      <td class="mono">${r.e.shortCode ? esc(r.e.shortCode) : '—'}</td>
+      <td class="mono">${esc(r.e.code)}</td>
+      <td>${esc(r.e.brand)} ${esc(r.e.model)}</td>
+      <td>${esc(r.controlLabel)}</td>
+      <td class="mono">${esc(r.frequencyLabel)}</td>
+      <td>${esc(r.shiftsLabel)}</td>
+      <td class="mono">${esc(r.referenceLabel)}</td>
+      <td class="plan-points-cell">${r.points.length}</td>
+      <td><button class="btn btn-sm" data-eq="${r.e.id}" data-plan="${r.plan ? r.plan.id : ''}">${ic("edit")}Configurar</button></td>
+    </tr>`;
   }
+
+  function draw(filterText = '') {
+    const f = filterText.toLowerCase();
+    const searched = planRows.filter(r => !f || (searchIndex.get(r.e.id) || '').includes(f));
+    const finalRows = applyFiltersAndSort(searched);
+    $('#plan-results-count').textContent = `${finalRows.length} de ${planRows.length} equipo(s)`;
+    const tbody = $('#plan-table-body');
+    tbody.innerHTML = finalRows.map(rowHTML).join('') || `<tr><td colspan="${canEdit ? 9 : 8}" class="empty-state">Sin resultados.</td></tr>`;
+    makeTablesResponsive($('#plan-table-wrap'));
+
+    $$('button[data-eq]', tbody).forEach(btn => {
+      btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
+    });
+    if (canEdit) {
+      $$('.plan-bulk-check', tbody).forEach(chk => {
+        chk.addEventListener('change', () => {
+          chk.checked ? selected.add(chk.dataset.id) : selected.delete(chk.dataset.id);
+          $('#plan-bulk-count').textContent = `${selected.size} seleccionados`;
+        });
+      });
+    }
+  }
+
+  draw();
+  updateSortFilterButtonLabel();
+  $('#plan-search').addEventListener('input', (e) => draw(e.target.value));
 
   $('#plan-matrix').addEventListener('click', () => navigate('matriz'));
   $('#plan-print-week').addEventListener('click', () => printGreasePlan('semana', equipos, plans, types));
   $('#plan-print-month').addEventListener('click', () => printGreasePlan('mes', equipos, plans, types));
 
-  $$('button[data-eq]', c).forEach(btn => {
-    btn.addEventListener('click', () => openPlanForm(btn.dataset.eq, btn.dataset.plan || null, lubricants));
+  // Modal "Ordenar / Filtrar" — mismo patrón que Equipos: Aplicar/Limpiar
+  // comparten la MISMA applyFiltersAndSort() + persistSortFilterState().
+  $('#plan-sort-filter-btn').addEventListener('click', () => {
+    openModal('Ordenar y filtrar plan de engrase', `
+      <form id="plan-sort-filter-form" class="form-grid">
+        <label class="span-2">Ordenar por
+          <select name="sortField">
+            ${PLAN_SORT_FIELDS.map(f => `<option value="${f.key}" ${sortState.field === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="span-2">Orden
+          <select name="sortDir">
+            <option value="asc" ${sortState.dir === 'asc' ? 'selected' : ''}>Ascendente</option>
+            <option value="desc" ${sortState.dir === 'desc' ? 'selected' : ''}>Descendente</option>
+          </select>
+        </label>
+        <label>Código ahorrativo
+          <select name="shortCode">
+            <option value="">Todos</option>
+            ${shortCodeOptions.map(v => `<option value="${esc(v)}" ${filterState.shortCode === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Código interno
+          <select name="code">
+            <option value="">Todos</option>
+            ${codeOptions.map(v => `<option value="${esc(v)}" ${filterState.code === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Equipo / Modelo
+          <select name="model">
+            <option value="">Todos</option>
+            ${modelOptions.map(v => `<option value="${esc(v)}" ${filterState.model === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Control
+          <select name="control">
+            <option value="">Todos</option>
+            ${controlOptions.map(v => `<option value="${esc(v)}" ${filterState.control === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Turno
+          <select name="shift">
+            <option value="">Todos</option>
+            ${shiftFilterOptions.map(s => `<option value="${s.value}" ${filterState.shift === s.value ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Plan
+          <select name="planFilter">
+            <option value="">Todos</option>
+            <option value="con" ${filterState.planFilter === 'con' ? 'selected' : ''}>Con plan</option>
+            <option value="sin" ${filterState.planFilter === 'sin' ? 'selected' : ''}>Sin plan</option>
+          </select>
+        </label>
+        <label>Día de la semana
+          <select name="weekday">
+            <option value="">Todos</option>
+            ${weekdayFilterOptions.map(d => `<option value="${esc(d)}" ${filterState.weekday === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="plan-sort-filter-clear">Limpiar</button>
+          <button type="submit" class="btn btn-accent" id="plan-sort-filter-apply">${ic("check")}Aplicar</button>
+        </div>
+      </form>
+    `);
+    $('#plan-sort-filter-form').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      sortState = { field: fd.get('sortField'), dir: fd.get('sortDir') === 'desc' ? 'desc' : 'asc' };
+      filterState = {
+        shortCode: fd.get('shortCode') || '', code: fd.get('code') || '', model: fd.get('model') || '',
+        control: fd.get('control') || '', shift: fd.get('shift') || '',
+        planFilter: fd.get('planFilter') || '', weekday: fd.get('weekday') || '',
+      };
+      persistSortFilterState();
+      updateSortFilterButtonLabel();
+      draw($('#plan-search').value);
+      closeModal();
+    });
+    $('#plan-sort-filter-clear').addEventListener('click', () => {
+      sortState = { field: 'code', dir: 'asc' };
+      filterState = { shortCode: '', code: '', model: '', control: '', shift: '', planFilter: '', weekday: '' };
+      persistSortFilterState();
+      updateSortFilterButtonLabel();
+      draw($('#plan-search').value);
+      closeModal();
+    });
   });
 
   if (!canEdit) return;
@@ -8396,17 +8595,13 @@ async function renderPlan() {
     bulkMode = !bulkMode;
     selected.clear();
     updateBulkUI();
+    draw($('#plan-search').value);
   });
   $('#plan-bulk-cancel').addEventListener('click', () => {
     bulkMode = false;
     selected.clear();
     updateBulkUI();
-  });
-  $$('.plan-bulk-check', c).forEach(chk => {
-    chk.addEventListener('change', () => {
-      chk.checked ? selected.add(chk.dataset.id) : selected.delete(chk.dataset.id);
-      $('#plan-bulk-count').textContent = `${selected.size} seleccionados`;
-    });
+    draw($('#plan-search').value);
   });
   $('#plan-bulk-apply').addEventListener('click', () => {
     if (!selected.size) { alert('Selecciona al menos un equipo.'); return; }
@@ -8765,175 +8960,6 @@ async function openBulkPlanForm(equipmentIds) {
     }
     await logAudit('PLAN_LOTE_APLICADO', `${created} creados, ${updated} actualizados`, App.currentUser.name);
     showInAppToast(`✓ Plan aplicado en lote: ${created} creados, ${updated} actualizados`);
-    closeModal();
-    navigate('plan');
-  });
-}
-
-/* ---------- Importación masiva de puntos de engrase desde Excel ---------- */
-// LOTE A2 "GATE SEGURO DE DATOS MAESTROS" (2026-10-25): cada fila pasa por
-// validatePointsImportRow() (src/core/master-data-import-gate.js) ANTES de
-// escribir nada. Cambios de comportamiento respecto a la versión anterior:
-// - Ya NO crea planes automáticamente — un equipo sin plan es un error
-//   bloqueante (POINT_EQUIPMENT_WITHOUT_PLAN), nunca un plan "de cortesía".
-// - Ya NO asume el primer lubricante de la lista ni una cantidad fija de
-//   0.5 lb — el archivo debe traer "Lubricante" y "Cantidad recomendada",
-//   y ambos deben existir/ser válidos.
-// - Una categoría que no coincide con ningún tipo YA NO aplica el punto a
-//   TODOS los equipos (bug real encontrado en la auditoría: `!type` hacía
-//   el filtro verdadero para cualquier equipo) — ahora es un error.
-// Gate atómico a nivel de archivo: si existe al menos un error bloqueante,
-// no se escribe nada (ver importHasBlockingErrors()).
-async function handlePointsExcelImport(file, equipos, types, lubricants) {
-  let rows;
-  try { rows = await readWorkbookRows(file); } catch (err) { alert('No se pudo leer el archivo: ' + err.message); return; }
-  if (!rows.length) { alert('El archivo no tiene filas de datos.'); return; }
-
-  const dataRows = rows.filter(row => Object.values(row).some(v => String(v ?? '').trim()));
-  if (!dataRows.length) { alert('El archivo no tiene filas de datos.'); return; }
-
-  const equipmentByCode = new Map(equipos.map(e => [e.code.toLowerCase(), e]));
-  const typesByName = new Map(types.map(t => [t.name.toLowerCase(), t]));
-  const lubricantsByName = new Map(lubricants.map(l => [l.name.toLowerCase(), l]));
-  const allPlans = await DB.allActive('lubrication_plans');
-  const plansByEquipmentId = new Map(allPlans.map(pl => [pl.equipmentId, pl]));
-  const allPoints = await DB.allActive('lubrication_points');
-  const existingPointsByPlanId = new Map();
-  for (const pt of allPoints) {
-    if (!existingPointsByPlanId.has(pt.planId)) existingPointsByPlanId.set(pt.planId, []);
-    existingPointsByPlanId.get(pt.planId).push(pt);
-  }
-
-  const ctx = { equipmentByCode, equipmentList: equipos, typesByName, plansByEquipmentId, lubricantsByName, existingPointsByPlanId };
-  const results = dataRows.map(row => {
-    const rawRow = {
-      category: pickField(row, 'categoria', 'categoría', 'tipo de equipo', 'tipo'),
-      brand: pickField(row, 'marca', 'brand'),
-      code: pickField(row, 'codigo', 'código', 'code'),
-      point: pickField(row, 'punto de engrase', 'punto', 'point'),
-      freqRaw: pickField(row, 'frecuencia (horas)', 'frecuencia', 'frequency'),
-      system: pickField(row, 'sistema', 'system'),
-      component: pickField(row, 'componente', 'component'),
-      lubricantName: pickField(row, 'lubricante', 'grasa', 'tipo de grasa', 'lubricant'),
-      qtyRaw: pickField(row, 'cantidad recomendada', 'cantidad', 'cantidad (lb)', 'qty'),
-    };
-    return { rawRow, ...validatePointsImportRow(rawRow, ctx) };
-  });
-
-  const summary = buildImportSummary(results);
-  const blocked = importHasBlockingErrors(results);
-
-  openModal(`Importar puntos de engrase (${summary.total} filas)`, `
-    <div class="detail-grid" style="margin-bottom:10px">
-      <div><b>Filas totales</b><div>${summary.total}</div></div>
-      <div><b>Válidas</b><div>${summary.valid}</div></div>
-      <div><b>Warnings</b><div style="color:var(--amber)">${summary.warnings}</div></div>
-      <div><b>Errores</b><div style="color:var(--red)">${summary.errors}</div></div>
-      <div><b>Crear</b><div>${summary.toCreate}</div></div>
-      <div><b>Actualizar</b><div>${summary.toUpdate}</div></div>
-      <div><b>Ignorar</b><div>${summary.toIgnore}</div></div>
-    </div>
-    ${blocked ? `<p style="color:var(--red); font-weight:600">${summary.errors} fila(s) con errores bloqueantes — corrige el archivo y vuelve a subirlo. No se importará nada mientras existan errores.</p>` : ''}
-    <div style="max-height:40vh; overflow:auto; border:1px solid var(--border); border-radius:8px">
-      <table class="data-table">
-        <thead><tr><th>Punto</th><th>Equipo(s)/Categoría</th><th>Acción</th><th>Observaciones</th></tr></thead>
-        <tbody>${results.map(r => `<tr>
-          <td>${esc(r.rawRow.point) || '—'}</td>
-          <td>${esc(r.rawRow.code || r.rawRow.category) || '—'}</td>
-          <td>${r.action}</td>
-          <td style="font-size:12px">${r.issues.map(i => `<div style="color:${i.severity === 'error' ? 'var(--red)' : 'var(--amber)'}">${esc(i.message)}</div>`).join('')}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <div class="modal-actions">${blocked ? '' : `<button class="btn btn-accent" id="btn-confirm-points">Aplicar puntos de engrase${summary.warnings ? ` (con ${summary.warnings} warning(s))` : ''}</button>`}</div>
-  `);
-
-  if (blocked) return;
-
-  $('#btn-confirm-points').addEventListener('click', async () => {
-    let pointsCreated = 0, pointsSkipped = 0;
-    for (const r of results) {
-      const d = r.resolved;
-      if (!d) continue;
-      for (const target of d.targets) {
-        if (target.existingPointId) { pointsSkipped++; continue; }
-        const newPoint = stamp({
-          id: uid('pt'), planId: target.planId, system: d.system, component: d.component, point: d.point,
-          greaseType: d.lubricantId, recommendedQty: d.recommendedQty, frequency: d.frequency, notes: '', active: true
-        }, App.currentUser.name);
-        await DB.put('lubrication_points', newPoint);
-        pointsCreated++;
-      }
-    }
-    await logAudit('PUNTOS_IMPORTADOS', `${pointsCreated} puntos creados, ${pointsSkipped} ya existían`, App.currentUser.name);
-    showInAppToast(`✓ Puntos de engrase importados: ${pointsCreated} nuevos`);
-    closeModal();
-    navigate('plan');
-  });
-}
-
-/* ---------- Importación segura de planes de engrase ----------
-   El gate es el único lugar que decide CREATE/UPDATE/IGNORE y validaciones.
-   Esta capa solo lee Excel/CSV, muestra preview y escribe tras confirmación. */
-async function handlePlansExcelImport(file, equipos, plans) {
-  let rows;
-  try { rows = await readWorkbookRows(file); } catch (err) { alert('No se pudo leer el archivo: ' + err.message); return; }
-  const dataRows = rows.filter(row => Object.values(row).some(v => String(v ?? '').trim()));
-  if (!dataRows.length) { alert('El archivo no tiene filas de datos.'); return; }
-
-  const locations = await DB.allActive('locations');
-  const equipmentByCode = new Map(equipos.map(e => [String(e.code).toLowerCase(), e]));
-  const plansByEquipmentId = new Map();
-  for (const plan of plans) {
-    if (!plansByEquipmentId.has(plan.equipmentId)) plansByEquipmentId.set(plan.equipmentId, []);
-    plansByEquipmentId.get(plan.equipmentId).push(plan);
-  }
-  const ctx = {
-    equipmentByCode, plansByEquipmentId, locationsById: new Map(locations.map(l => [l.id, l])),
-    seenEquipmentCodes: new Set(), defaultAlertYellowHours: App.generalSettings.defaultAlertYellowHours,
-  };
-  const results = dataRows.map(row => {
-    const rawRow = {
-      equipmentCode: pickField(row, 'codigo', 'código', 'codigo equipo', 'código equipo', 'referencia', 'referencia equipo', 'equipment code'),
-      controlType: pickField(row, 'tipo de control', 'control type', 'control'),
-      frequencyRaw: pickField(row, 'frecuencia (horas)', 'frecuencia', 'frequency'),
-      shiftMode: pickField(row, 'modo de turno', 'shiftmode', 'turno', 'shift'),
-      requiredShifts: pickField(row, 'turnos requeridos', 'requiredshifts'),
-      effectiveDate: pickField(row, 'fecha efectiva', 'effectivedate'),
-      assignedDays: pickField(row, 'dias asignados', 'días asignados', 'assigneddays'),
-      lastGreaseHourRaw: pickField(row, 'horometro ultimo engrase', 'horómetro último engrase', 'lastgreasehour'),
-      alertYellowHoursRaw: pickField(row, 'alerta amarilla', 'alert yellow hours', 'alertyellowhours'),
-    };
-    return { rawRow, ...validatePlanImportRow(rawRow, ctx) };
-  });
-  const summary = buildImportSummary(results);
-  const blocked = importHasBlockingErrors(results);
-  openModal(`Importar planes de engrase (${summary.total} filas)`, `
-    <div class="detail-grid" style="margin-bottom:10px">
-      <div><b>TOTAL</b><div>${summary.total}</div></div><div><b>VÁLIDOS</b><div>${summary.valid}</div></div>
-      <div><b>WARNINGS</b><div style="color:var(--amber)">${summary.warnings}</div></div><div><b>ERRORES</b><div style="color:var(--red)">${summary.errors}</div></div>
-      <div><b>CREAR</b><div>${summary.toCreate}</div></div><div><b>ACTUALIZAR</b><div>${summary.toUpdate}</div></div><div><b>IGNORAR</b><div>${summary.toIgnore}</div></div>
-    </div>
-    ${blocked ? `<p style="color:var(--red);font-weight:600">Hay ${summary.errors} fila(s) con ERROR. No se escribirá ningún plan.</p>` : '<p class="dim">Revisa el preview antes de confirmar. Los warnings permiten continuar.</p>'}
-    <div style="max-height:40vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="data-table">
-      <thead><tr><th>Equipo</th><th>Control</th><th>Acción</th><th>Observaciones</th></tr></thead><tbody>${results.map(r => `<tr><td class="mono">${esc(r.rawRow.equipmentCode) || '—'}</td><td>${esc(r.rawRow.controlType) || '—'}</td><td>${r.action}</td><td style="font-size:12px">${r.issues.map(i => `<div style="color:${i.severity === 'error' ? 'var(--red)' : 'var(--amber)'}">${esc(i.message)}</div>`).join('')}</td></tr>`).join('')}</tbody>
-    </table></div>
-    <div class="modal-actions">${blocked ? '' : `<button type="button" class="btn btn-accent" id="btn-confirm-plans">${ic('check')}Confirmar importación${summary.warnings ? ` (${summary.warnings} warning(s))` : ''}</button>`}</div>
-  `);
-  if (blocked) return;
-  $('#btn-confirm-plans').addEventListener('click', async () => {
-    let created = 0, updated = 0;
-    for (const result of results) {
-      const data = result.resolved;
-      if (!data) continue;
-      const existing = data.existingId ? await DB.get('lubrication_plans', data.existingId) : null;
-      const plan = existing ? Object.assign(existing, data) : { id: uid('plan'), equipmentId: data.equipmentId, ...data };
-      delete plan.existingId;
-      await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
-      if (existing) updated++; else created++;
-    }
-    await logAudit('PLANES_IMPORTADOS', `${created} creados, ${updated} actualizados`, App.currentUser.name);
-    showInAppToast(`✓ Planes importados: ${created} creados, ${updated} actualizados`);
     closeModal();
     navigate('plan');
   });
