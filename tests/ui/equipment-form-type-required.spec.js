@@ -106,6 +106,9 @@ test('Nuevo equipo: eligiendo explícitamente una categoría SÍ guarda ese type
   await page.locator('#eq-form [name="brand"]').fill('Caterpillar');
   await page.locator('#eq-form [name="model"]').fill('336D2L');
   await page.locator('#eq-form [name="typeId"]').selectOption('type_excavadora');
+  // Ubicación también es obligatoria para un alta nueva; la prueba aísla la
+  // persistencia de Categoría cumpliendo el otro requisito explícitamente.
+  await page.locator('#eq-form [name="locationId"]').selectOption('loc1');
   await page.locator('#eq-form button[type="submit"]').click();
   const saved = await page.evaluate(() => window.__mockData.equipment[0]);
   expect(saved.typeId).toBe('type_excavadora');

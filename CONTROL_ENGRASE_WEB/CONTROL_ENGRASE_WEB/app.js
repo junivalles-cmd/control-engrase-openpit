@@ -8216,7 +8216,11 @@ async function openEquipmentForm(equipment, types, locations) {
   // equipo nuevo NUNCA trae una categoría preseleccionada: `typeId: ''` +
   // option placeholder + `required` obligan a elegirla a propósito. Editar
   // un equipo EXISTENTE no cambia: sigue preseleccionando su e.typeId real.
-  const e = equipment || { code: '', shortCode: '', description: '', brand: '', model: '', serial: '', typeId: '', locationId: locations[0]?.id, status: 'Operativo', hourmeter: 0, shiftId: 'shift_dia', cuadrillaId: '' };
+  // Igual que la categoría: la ubicación de un equipo NUEVO solamente puede
+  // venir de una selección explícita del operador. Nunca se infiere de la
+  // primera opción, turno, cuadrilla ni de otro dato del formulario. Al
+  // editar se conserva exactamente el locationId ya guardado.
+  const e = equipment || { code: '', shortCode: '', description: '', brand: '', model: '', serial: '', typeId: '', locationId: '', status: 'Operativo', hourmeter: 0, shiftId: 'shift_dia', cuadrillaId: '' };
   if (isNew) e.code = await generateNextEquipmentCode();
   const cuadrillas = await DB.allActive('cuadrillas');
 
@@ -8236,7 +8240,10 @@ async function openEquipmentForm(equipment, types, locations) {
         <span class="field-hint">Debe corresponder al tipo real del equipo — lo usa "Copiar puntos de otro equipo" para no mezclar categorías.</span>
       </label>
       <label>Ubicación
-        <select name="locationId">${locations.map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+        <select required name="locationId">
+          ${isNew ? '<option value="" disabled selected>— Selecciona una ubicación —</option>' : ''}
+          ${locations.map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+        </select>
       </label>
       <label>Estado
         <select name="status">
