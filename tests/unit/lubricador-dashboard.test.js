@@ -368,8 +368,30 @@ describe('Fix 2026-10-17 ("RACE BOOTSTRAP/SCOPE") — bootstrap se resuelve ANTE
   });
 
   it('distingue "sync en curso/sin empezar" de "ya falló" leyendo lastSyncState.status — nunca Sync.syncing reimplementado ni un segundo estado', () => {
-    expect(bootstrapBlock).toContain("const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE', 'stalled']);");
+    expect(bootstrapBlock).toContain("const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'stalled']);");
     expect(bootstrapBlock).toContain('ESTADOS_FALLO_SYNC.has(lastSyncState.status)');
+  });
+
+  // Fix 2026-10-28 ("HIDRATACIÓN VS ERROR DE ASIGNACIÓN"): 'AUTHORIZATION_
+  // BOOTSTRAP_INCOMPLETE' (pullAll(), sync.js) significa "el pull SÍ
+  // funcionó pero el bootstrap de cuadrillas/ubicaciones todavía no
+  // terminó" — sigue hidratando, nunca un fallo real. Antes vivía (mal)
+  // dentro de ESTADOS_FALLO_SYNC, mostrando "No se pudo cargar…" al mismo
+  // tiempo que el topbar (updateConnBadge()) ya decía "DATOS PENDIENTES DE
+  // HIDRATAR" (ámbar, conn-warn) — dos lecturas contradictorias del mismo
+  // status. Debe caer al mismo "Sincronizando datos…" que 'idle'/'syncing'.
+  it('AUTHORIZATION_BOOTSTRAP_INCOMPLETE NUNCA está en ESTADOS_FALLO_SYNC — es hidratación, no un fallo real (coincide con el topbar, "DATOS PENDIENTES DE HIDRATAR" es ámbar/conn-warn, nunca rojo/conn-off)', () => {
+    // El literal 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE' SÍ puede seguir
+    // apareciendo en comentarios explicando el porqué — lo que nunca debe
+    // pasar es que esté DENTRO del Set de fallos reales.
+    const iSet = bootstrapBlock.indexOf('const ESTADOS_FALLO_SYNC = new Set([');
+    const iSetEnd = bootstrapBlock.indexOf(']);', iSet);
+    const setLiteral = bootstrapBlock.slice(iSet, iSetEnd);
+    expect(setLiteral).not.toContain('AUTHORIZATION_BOOTSTRAP_INCOMPLETE');
+    // El topbar (updateConnBadge(), fuera de renderLubricadorHome) sigue
+    // tratando este status como hidratación — se lee del archivo completo,
+    // nunca de `src` (que es solo renderLubricadorHome).
+    expect(appSource).toContain("text = 'DATOS PENDIENTES DE HIDRATAR';");
   });
 
   // Auditoría de sincronización 2026-10-20 (§13 "WATCHDOG UX"): 'stalled'
@@ -391,12 +413,26 @@ describe('Fix 2026-10-17 ("RACE BOOTSTRAP/SCOPE") — bootstrap se resuelve ANTE
 
   it('el botón "Reintentar" llama Sync.fullSync() — EXACTAMENTE el mismo mecanismo real de sync (nunca runAutoCycle() ni uno alternativo), fuerza el re-render inmediato a "Sincronizando" (App._lubBootstrapRetrying) y vuelve a renderizar cuando fullSync() termina, sin reload manual', () => {
     const iBtn = bootstrapBlock.indexOf("$('#lub-retry-bootstrap')");
-    const btnBlock = bootstrapBlock.slice(iBtn, iBtn + 400);
+    // Ventana ampliada (2026-10-28, fix "HIDRATACIÓN VS ERROR DE
+    // ASIGNACIÓN", REINTENTO): el handler ahora también deshabilita el
+    // botón de forma síncrona (anti-doble-click) antes de estas líneas.
+    const btnBlock = bootstrapBlock.slice(iBtn, iBtn + 700);
     expect(btnBlock).toContain('App._lubBootstrapRetrying = true;');
     expect(btnBlock).toContain('renderLubricadorHome();');
     expect(btnBlock).toContain('Sync.fullSync().finally(() => {');
     expect(btnBlock).not.toContain('runAutoCycle');
     expect(btnBlock).toContain('App._lubBootstrapRetrying = false;');
+  });
+
+  // Fix 2026-10-28 (REINTENTO): guard anti-doble-click síncrono — el botón
+  // se deshabilita ANTES de cualquier await, nunca después de que
+  // renderLubricadorHome()/Sync.fullSync() ya arrancaron.
+  it('el botón "Reintentar" se deshabilita de forma SÍNCRONA en su propio handler, antes de App._lubBootstrapRetrying', () => {
+    const iBtn = bootstrapBlock.indexOf("$('#lub-retry-bootstrap')");
+    const iDisabled = bootstrapBlock.indexOf('ev.currentTarget.disabled = true;', iBtn);
+    const iRetryFlag = bootstrapBlock.indexOf('App._lubBootstrapRetrying = true;', iBtn);
+    expect(iDisabled).toBeGreaterThan(iBtn);
+    expect(iDisabled).toBeLessThan(iRetryFlag);
   });
 
   it('scope.kind === "NO_CREW_ASSIGNED" (Estado C real) es ahora un chequeo SOLO de scope — nunca vuelve a leer accountBootstrap/Sync.getAccountSyncState()', () => {

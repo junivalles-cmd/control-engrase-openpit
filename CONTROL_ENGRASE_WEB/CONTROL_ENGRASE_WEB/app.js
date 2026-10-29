@@ -3970,7 +3970,20 @@ async function renderLubricadorHome(options = {}) {
     // armSyncWatchdog()/onSyncStateChange()). Mismo criterio que los demás
     // estados de esta lista: sin cache local todavía, nunca queda mudo en
     // "Sincronizando datos…" para siempre — ofrece Reintentar.
-    const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE', 'stalled']);
+    //
+    // Fix 2026-10-28 ("HIDRATACIÓN VS ERROR DE ASIGNACIÓN"): bug real —
+    // 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE' NO es un fallo, es exactamente lo
+    // contrario: pullAll() (sync.js) lo devuelve cuando la página de pull
+    // SÍ funcionó pero el bootstrap (cuadrillas/ubicaciones aún resolviendo)
+    // todavía no terminó — sigue hidratando, solo le falta otra vuelta. El
+    // propio topbar (updateConnBadge()) ya lo trata así ("DATOS PENDIENTES
+    // DE HIDRATAR", conn-warn ámbar, nunca conn-off rojo) — este Set lo
+    // tenía mal clasificado como error, por eso aparecía "No se pudo
+    // cargar..." EN SIMULTÁNEO con el badge de hidratación, dos lecturas
+    // contradictorias del mismo estado. Estaba aquí ANTES de que existiera
+    // ese status (sync.js lo introdujo después) y nunca se revisó esta
+    // lista — nunca se tocó pullAll()/sync.js para esta corrección.
+    const ESTADOS_FALLO_SYNC = new Set(['offline', 'backend_unreachable', 'error', 'AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'unconfigured', 'stalled']);
     // App._lubBootstrapRetrying fuerza "Sincronizando" de inmediato al
     // reintentar (§2: "mientras reintenta, volver a Sincronizando"), sin
     // esperar el primer notify({status:'syncing'}) async de fullSync().
@@ -3986,7 +3999,13 @@ async function renderLubricadorHome(options = {}) {
           <p>Verifica la conexión e inténtalo nuevamente.</p>
           <button type="button" class="btn btn-accent" id="lub-retry-bootstrap">${ic('check')}Reintentar</button>
         </div>`;
-      $('#lub-retry-bootstrap').addEventListener('click', () => {
+      $('#lub-retry-bootstrap').addEventListener('click', (ev) => {
+        // Guard anti-doble-click SINCRÓNICO: deshabilita el botón antes de
+        // cualquier await — renderLubricadorHome() de la línea siguiente
+        // reemplaza este innerHTML entero recién en su primer `await`, así
+        // que sin este disabled=true un segundo clic en ese instante
+        // todavía alcanzaría a disparar un segundo Sync.fullSync().
+        ev.currentTarget.disabled = true;
         App._lubBootstrapRetrying = true;
         renderLubricadorHome();
         Sync.fullSync().finally(() => {
@@ -3998,7 +4017,16 @@ async function renderLubricadorHome(options = {}) {
       // Estado A: todavía no hay evidencia de que el bootstrap haya
       // terminado (ni éxito ni fallo) — nunca se afirma "sin cuadrilla" ni
       // "elige cuadrilla" sin haber terminado de descargarla primero.
-      c.innerHTML = `
+      // Texto distinto si es un reintento EXPLÍCITO del usuario
+      // (App._lubBootstrapRetrying, puesto por el botón de arriba) — para
+      // que no parezca que volvió al principio, sino que está reintentando
+      // lo mismo que falló.
+      c.innerHTML = App._lubBootstrapRetrying ? `
+        <div class="lub-empty-crew">
+          ${ic('clock')}
+          <h2>Reintentando…</h2>
+          <p>Verificando tu asignación de trabajo.</p>
+        </div>` : `
         <div class="lub-empty-crew">
           ${ic('clock')}
           <h2>Sincronizando datos…</h2>

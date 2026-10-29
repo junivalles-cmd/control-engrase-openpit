@@ -111,6 +111,10 @@ async function bootPage(page, { cuadrillas = [], cfg = null, syncState = { statu
       window.openEquipmentDetail = () => {}; window.startLubricadorGreaseFlow = () => {};
       window.openValidationDetailModal = () => {}; window.refreshPushTokenCrewScope = async () => {};
       window.updateLubricadorWidgetSnapshot = () => {};
+      // onSyncStateChange() real llama esto en su rama 'ok' (notificaciones
+      // locales de vencidos/pendientes) — fuera de alcance de este archivo,
+      // que nunca prueba notificaciones push/locales reales.
+      window.refreshLocalNotifications = async () => {};
       window.__mockData = {
         equipment: [], locations: ${JSON.stringify(LOCATIONS)}, cuadrillas: ${JSON.stringify(cuadrillas)},
         lubrication_plans: [], lubrication_records: [], lubrication_skips: [],
@@ -246,10 +250,14 @@ test('E — Reintentar (mismo Sync.fullSync real) + sync exitoso → desaparece 
   });
   await page.click('#lub-retry-bootstrap');
 
-  // Mientras la promesa de Sync.fullSync() sigue pendiente: vuelve a
-  // "Sincronizando" de inmediato (§2 del pedido), nunca se queda mostrando
-  // el error viejo.
-  await expect(page.locator('#app-content')).toContainText('Sincronizando datos…');
+  // Mientras la promesa de Sync.fullSync() sigue pendiente: vuelve a un
+  // estado neutral de inmediato (§2 del pedido), nunca se queda mostrando
+  // el error viejo. Fix 2026-10-28 ("HIDRATACIÓN VS ERROR DE ASIGNACIÓN",
+  // REINTENTO): un reintento EXPLÍCITO del usuario ahora dice "Reintentando…"
+  // en vez del genérico "Sincronizando datos…" del primer arranque — texto
+  // distinto, mismo estado conceptual (HYDRATING), para que no parezca que
+  // volvió al principio.
+  await expect(page.locator('#app-content')).toContainText('Reintentando…');
   await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
 
   // Resuelve el sync simulando EXACTAMENTE lo que pullAll()/notify('ok')
@@ -284,7 +292,9 @@ test('E2 — Reintentar y el sync vuelve a fallar → se mantiene el estado de e
     window.__fullSyncImpl = () => new Promise((resolve) => { window.__fullSyncResolve = resolve; });
   });
   await page.click('#lub-retry-bootstrap');
-  await expect(page.locator('#app-content')).toContainText('Sincronizando datos…');
+  // Reintento EXPLÍCITO -> "Reintentando…" (fix 2026-10-28, REINTENTO),
+  // nunca el genérico "Sincronizando datos…" del primer arranque.
+  await expect(page.locator('#app-content')).toContainText('Reintentando…');
 
   // El segundo intento también falla — mismo contrato REAL de Sync.fullSync()
   // (sync.js): su propio try/catch interno atrapa cualquier error y SIEMPRE
@@ -299,6 +309,7 @@ test('E2 — Reintentar y el sync vuelve a fallar → se mantiene el estado de e
   await expect(page.locator('#app-content')).toContainText('No se pudo cargar tu asignación de trabajo.');
   await expect(page.locator('#lub-retry-bootstrap')).toBeVisible();
   await expect(page.locator('#app-content')).not.toContainText('Sincronizando datos…');
+  await expect(page.locator('#app-content')).not.toContainText('Reintentando…');
   await expect(page.locator('#app-content')).not.toContainText('Sin cuadrilla autorizada');
   // Nunca dos botones Reintentar acumulados de renders superpuestos.
   await expect(page.locator('#lub-retry-bootstrap')).toHaveCount(1);
@@ -546,6 +557,102 @@ test('FIX "BOOTSTRAP HANG EN ERROR": una vez bootstrapComplete es true, un error
 
   await expect(page.locator('.lub-turno-header')).toBeVisible();
   await expect(page.locator('#app-content')).not.toContainText('Sincronizando datos…');
+  await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
+  expect(errors).toEqual([]);
+});
+
+// ============================================================
+// Fix 2026-10-28 ("HIDRATACIÓN VS ERROR DE ASIGNACIÓN") — bug real
+// reportado: al entrar como LUBRICADOR aparecía SIMULTÁNEAMENTE el badge
+// "DATOS PENDIENTES DE HIDRATAR" (topbar, updateConnBadge() — ámbar,
+// conn-warn, estado de hidratación) y, en el contenido, "No se pudo cargar
+// tu asignación de trabajo. Verifica la conexión…" (error real). Son dos
+// lecturas CONTRADICTORIAS del mismo lastSyncState.status ===
+// 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE' — ese status lo devuelve pullAll()
+// (sync.js) cuando el pull SÍ funcionó pero el bootstrap de cuadrillas/
+// ubicaciones todavía no terminó (sigue hidratando, le falta otra vuelta),
+// nunca un fallo de red/servidor. renderLubricadorHome() lo tenía mal
+// metido en ESTADOS_FALLO_SYNC — este bloque prueba la causa raíz real
+// (nunca solo un patrón de texto aislado) y la consistencia topbar↔contenido.
+// ============================================================
+test('HIDRATACIÓN H1 — AUTHORIZATION_BOOTSTRAP_INCOMPLETE mientras el bootstrap sigue incompleto → "Sincronizando…", NUNCA "No se pudo cargar"', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, { cuadrillas: [], cfg: { url: 'x', anonKey: 'k' }, syncState: { status: 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE' } });
+  await page.evaluate(() => window.renderLubricadorHome());
+
+  expect(errors).toEqual([]);
+  await expect(page.locator('#app-content')).toContainText('Sincronizando datos…');
+  await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
+  await expect(page.locator('#app-content')).not.toContainText('Sin cuadrilla autorizada');
+  await expect(page.locator('#lub-retry-bootstrap')).toHaveCount(0); // sin botón Reintentar mientras ya está hidratando
+});
+
+test('HIDRATACIÓN H2 — topbar y contenido deben coincidir: AUTHORIZATION_BOOTSTRAP_INCOMPLETE es "DATOS PENDIENTES DE HIDRATAR" (ámbar) en el badge Y "Sincronizando…" (nunca error) en el contenido', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, { shell: true, cuadrillas: [], cfg: { url: 'x', anonKey: 'k' }, syncState: { status: 'AUTHORIZATION_BOOTSTRAP_INCOMPLETE' } });
+  await page.evaluate(() => {
+    const badge = document.createElement('button');
+    badge.id = 'conn-badge';
+    document.querySelector('.lub-shell').prepend(badge);
+    window.updateConnBadge();
+    return window.renderLubricadorHome();
+  });
+
+  expect(errors).toEqual([]);
+  const badgeText = await page.locator('#conn-badge').textContent();
+  const badgeClass = await page.locator('#conn-badge').getAttribute('class');
+  console.log('BADGE', badgeText, badgeClass);
+  expect(badgeText).toBe('DATOS PENDIENTES DE HIDRATAR');
+  expect(badgeClass).toContain('conn-warn'); // ámbar, nunca conn-off (rojo/error)
+  await expect(page.locator('#app-content')).toContainText('Sincronizando datos…');
+  await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
+});
+
+test('HIDRATACIÓN H3 — reintento con doble click: solo se dispara UN Sync.fullSync(), el botón queda disabled de inmediato', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, { cuadrillas: [], cfg: { url: 'x', anonKey: 'k' }, syncState: { status: 'backend_unreachable' } });
+  await page.evaluate(() => window.renderLubricadorHome());
+  await expect(page.locator('#lub-retry-bootstrap')).toBeVisible();
+
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    let calls = 0;
+    window.__fullSyncImpl = () => { calls++; return new Promise(() => {}); }; // nunca resuelve: solo interesa el conteo
+    const btn = document.getElementById('lub-retry-bootstrap');
+    btn.click();
+    const disabledRightAfterFirstClick = btn.disabled;
+    btn.click(); // segundo click SINCRÓNICO inmediato — el guard debe bloquearlo
+    btn.click();
+    setTimeout(() => resolve({ calls, disabledRightAfterFirstClick }), 50);
+  }));
+  console.log('DOUBLE_CLICK_RESULT', JSON.stringify(result));
+  expect(result.calls).toBe(1);
+  expect(result.disabledRightAfterFirstClick).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('HIDRATACIÓN H4 — reconnect (evento "online") reintenta/hidrata automáticamente y termina en Mi Turno, sin que el usuario presione nada', async ({ page }) => {
+  const errors = []; page.on('pageerror', (e) => errors.push(e));
+
+  await bootPage(page, { shell: true, cuadrillas: [], cfg: { url: 'x', anonKey: 'k' }, syncState: { status: 'offline' } });
+  await page.evaluate(() => window.renderLubricadorHome());
+  await expect(page.locator('#app-content')).toContainText('No se pudo cargar');
+
+  // Mismo mecanismo real que Sync.js (window.addEventListener('online', ...)
+  // -> runAutoCycle('reconnect') -> fullSync() -> notify() ->
+  // onSyncStateChange()) — se dispara aquí onSyncStateChange() directamente
+  // (igual que el test "BOOTSTRAP HANG EN ERROR" de arriba) simulando el
+  // efecto que ese ciclo real deja, sin reimplementar sync.js.
+  await page.evaluate(() => {
+    window.__mockCfg = { url: 'x', anonKey: 'k', lastPull: '2026-10-28T00:00:00.000Z' };
+    window.__mockData.cuadrillas = [{ id: 'crew1', name: 'Cuadrilla A', active: true, locationId: 'l1', isDefault: true, memberUserIds: ['lub1'] }];
+    return window.onSyncStateChange({ status: 'ok', pulled: 1 });
+  });
+
+  await expect(page.locator('.lub-turno-header')).toBeVisible();
+  await expect(page.locator('#app-content')).toContainText('Cuadrilla A');
   await expect(page.locator('#app-content')).not.toContainText('No se pudo cargar');
   expect(errors).toEqual([]);
 });
