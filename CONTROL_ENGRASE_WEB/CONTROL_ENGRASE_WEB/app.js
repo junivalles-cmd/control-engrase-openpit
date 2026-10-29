@@ -6694,13 +6694,77 @@ async function renderEquipos() {
   let bulkMode = false;
   const selected = new Set();
 
-  // Vista Tarjetas/Tabla: preferencia local al dispositivo (igual patrón que
-  // los demás filtros persistidos en localStorage de este archivo). Tabla es
-  // solo una presentación distinta de LA MISMA colección ya filtrada — nunca
-  // una segunda fuente de datos ni de lógica de negocio.
-  const EQ_VIEW_KEY = 'engrase_equipos_view';
-  let viewMode = 'cards';
-  try { if (localStorage.getItem(EQ_VIEW_KEY) === 'table') viewMode = 'table'; } catch (e) { /* preferencia local opcional */ }
+  // Ordenar/Filtrar (2026-10-29) — opciones de Estado generadas de forma
+  // DINÁMICA a partir de los equipos reales (nunca hardcodeadas): solo
+  // aparecen los códigos que de verdad existen en esta colección, con la
+  // MISMA etiqueta exacta que ya muestra el chip de la tabla/tarjeta
+  // (s.label de computeAllStatuses() — cero texto nuevo, cero cálculo
+  // nuevo). Orden de severidad ya establecido en el resto del archivo
+  // (ver `order = { ROJO:0, AMARILLO:1, VERDE:2, GRIS:3 }`, línea ~4231).
+  const allWithStatus = await computeAllStatuses(equipos);
+  const EQ_STATUS_SEVERITY = { ROJO: 0, AMARILLO: 1, VERDE: 2, GRIS: 3 };
+  const statusFilterOptions = [...new Map(allWithStatus.map(({ s }) => [s.code, s.label])).entries()]
+    .sort((a, b) => (EQ_STATUS_SEVERITY[a[0]] ?? 9) - (EQ_STATUS_SEVERITY[b[0]] ?? 9))
+    .map(([code, label]) => ({ code, label }));
+
+  const EQ_SORT_FIELDS = [
+    { key: 'code', label: 'Código' },
+    { key: 'shortCode', label: 'Código interno' },
+    { key: 'model', label: 'Equipo / Modelo' },
+    { key: 'type', label: 'Tipo' },
+    { key: 'location', label: 'Ubicación' },
+    { key: 'status', label: 'Estado' },
+    { key: 'hourmeter', label: 'Horómetro' },
+    { key: 'plan', label: 'Plan' },
+  ];
+  const EQ_SORT_FIELD_KEYS = new Set(EQ_SORT_FIELDS.map(f => f.key));
+  // Mismo criterio que EQ_VIEW_SESSION_KEY (arriba): sessionStorage, NUNCA
+  // localStorage — orden/filtros son una preferencia de ESTA pestaña/
+  // sesión, no algo que deba sobrevivir a otro dispositivo u otro login.
+  const EQ_FILTERS_SESSION_KEY = 'engrase_equipos_sort_filter';
+  let sortState = { field: 'code', dir: 'asc' };
+  let filterState = { typeId: '', locationId: '', statusCode: '', planFilter: '' };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(EQ_FILTERS_SESSION_KEY) || 'null');
+    if (saved && typeof saved === 'object') {
+      if (saved.sort && EQ_SORT_FIELD_KEYS.has(saved.sort.field)) {
+        sortState = { field: saved.sort.field, dir: saved.sort.dir === 'desc' ? 'desc' : 'asc' };
+      }
+      if (saved.filters && typeof saved.filters === 'object') {
+        filterState = {
+          typeId: saved.filters.typeId || '', locationId: saved.filters.locationId || '',
+          statusCode: saved.filters.statusCode || '', planFilter: saved.filters.planFilter || '',
+        };
+      }
+    }
+  } catch (e) { /* preferencia de sesión opcional */ }
+  function persistSortFilterState() {
+    try { sessionStorage.setItem(EQ_FILTERS_SESSION_KEY, JSON.stringify({ sort: sortState, filters: filterState })); }
+    catch (e) { /* preferencia de sesión opcional */ }
+  }
+  function activeFilterCount() {
+    return ['typeId', 'locationId', 'statusCode', 'planFilter'].filter(k => filterState[k]).length;
+  }
+
+  // Vista Tarjetas/Tabla: el DEFAULT depende del viewport (nunca un
+  // dispositivo "recuerda" la vista del otro — por eso NUNCA localStorage
+  // aquí): >=1024px (desktop/PC) → Tabla, <1024px (tablet/móvil) → Tarjetas.
+  // Se calcula UNA sola vez, antes de armar el HTML (sin listener de
+  // resize) — así nunca hay flicker ni cambia de vista sola por un resize
+  // chico de la ventana.
+  //
+  // Si el usuario cambia manualmente Tarjetas/Tabla, esa elección se
+  // respeta por el resto de ESTA sesión de pestaña (sessionStorage, que se
+  // borra solo al cerrar la pestaña/navegador) — nunca localStorage, que
+  // sobrevivería al cambiar de dispositivo y rompería la regla "la vista
+  // inicial depende del dispositivo real, no de un recuerdo permanente".
+  const EQ_VIEW_SESSION_KEY = 'engrase_equipos_view_manual';
+  const EQ_TABLE_BREAKPOINT = 1024;
+  let viewMode = window.innerWidth >= EQ_TABLE_BREAKPOINT ? 'table' : 'cards';
+  try {
+    const manual = sessionStorage.getItem(EQ_VIEW_SESSION_KEY);
+    if (manual === 'table' || manual === 'cards') viewMode = manual;
+  } catch (e) { /* preferencia de sesión opcional */ }
 
   // Índice de búsqueda por equipo: código, ahorrativo, marca/modelo, ubicación y sus
   // puntos de engrase configurados — así "grasera dañada" o "articulación" también encuentra el equipo.
@@ -6712,10 +6776,19 @@ async function renderEquipos() {
     searchIndex.set(e.id, [e.code, e.shortCode, e.brand, e.model, e.description, locName, ...eqPoints].join(' ').toLowerCase());
   });
 
+  // Encabezado de Tabla: cada columna de datos (todas menos "Acciones")
+  // lleva data-sort + un span.sort-arrow propio — clic en el header reusa
+  // EXACTAMENTE la misma ruta (aplicarOrdenFiltro) que el modal "Ordenar/
+  // Filtrar" (ver más abajo), nunca una segunda implementación de orden.
+  const eqTableTheadHTML = () => EQ_SORT_FIELDS.map(f =>
+    `<th class="eq-th-sort" data-sort="${f.key}" role="columnheader" aria-sort="${sortState.field === f.key ? (sortState.dir === 'desc' ? 'descending' : 'ascending') : 'none'}" tabindex="0">${esc(f.label)}<span class="sort-arrow">${sortState.field === f.key ? (sortState.dir === 'desc' ? '▼' : '▲') : ''}</span></th>`
+  ).join('') + '<th></th>';
+
   c.innerHTML = `
     <div class="layout-wide">
     <div class="toolbar">
       <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
+      <button type="button" class="btn btn-sm" id="eq-sort-filter-btn">${ic("list")}Ordenar / Filtrar</button>
       <div class="view-switch" id="eq-view-switch" role="group" aria-label="Vista de equipos">
         <button type="button" class="btn btn-sm view-switch-btn" data-view="cards" aria-pressed="${viewMode === 'cards' ? 'true' : 'false'}">${ic("grid")}Tarjetas</button>
         <button type="button" class="btn btn-sm view-switch-btn" data-view="table" aria-pressed="${viewMode === 'table' ? 'true' : 'false'}">${ic("matrix")}Tabla</button>
@@ -6732,15 +6805,13 @@ async function renderEquipos() {
       <button class="btn btn-sm btn-danger" id="eq-bulk-delete">Eliminar seleccionados</button>
       <button class="btn btn-sm" id="eq-bulk-cancel">Cancelar</button>
     </div>
+    <div class="dim eq-results-summary" id="eq-results-count"></div>
     <div id="eq-recents"></div>
     <div class="cards-grid ${viewMode === 'table' ? 'hidden' : ''}" id="eq-list"></div>
-    <div class="panel ${viewMode === 'table' ? '' : 'hidden'}" id="eq-table-wrap">
+    <div class="panel eq-table-panel ${viewMode === 'table' ? '' : 'hidden'}" id="eq-table-wrap">
       <table class="data-table" id="eq-table">
         <thead>
-          <tr>
-            <th>Código</th><th>Código interno</th><th>Equipo / Modelo</th><th>Tipo</th>
-            <th>Ubicación</th><th>Estado</th><th>Horómetro</th><th>Plan</th><th></th>
-          </tr>
+          <tr>${eqTableTheadHTML()}</tr>
         </thead>
         <tbody id="eq-table-body"></tbody>
       </table>
@@ -6758,12 +6829,53 @@ async function renderEquipos() {
     return plan.controlType === 'Día y turno de la semana' ? 'Día y turno' : `Cada ${fmt(plan.frequency)} h`;
   }
 
+  // Valor comparable para cada campo de orden — MISMOS datos que ya
+  // muestran la tarjeta/fila (tipo/ubicación por nombre resuelto, plan por
+  // el mismo planResumenCorto() de la columna "Plan"), nunca un cálculo
+  // paralelo. Usado tanto por el modal "Ordenar/Filtrar" como por el clic
+  // en encabezados de Tabla — una sola función para las dos rutas.
+  function sortValueFor(field, e, s) {
+    switch (field) {
+      case 'code': return (e.code || '').toLowerCase();
+      case 'shortCode': return (e.shortCode || '').toLowerCase();
+      case 'model': return `${e.brand || ''} ${e.model || ''}`.toLowerCase();
+      case 'type': return ((types.find(t => t.id === e.typeId) || {}).name || '').toLowerCase();
+      case 'location': return ((locations.find(l => l.id === e.locationId) || {}).name || '').toLowerCase();
+      case 'status': return (s.label || '').toLowerCase();
+      case 'hourmeter': return Number(e.hourmeter) || 0;
+      case 'plan': return planResumenCorto(s.plan).toLowerCase();
+      default: return '';
+    }
+  }
+
+  // Pipeline único (pedido explícito): búsqueda → filtros → orden → render.
+  // Cards y Tabla se pintan SIEMPRE a partir de la MISMA `withStatus` ya
+  // filtrada/ordenada aquí — nunca una segunda consulta ni criterio propio
+  // por vista.
+  function applyFiltersAndSort(withStatusIn) {
+    let out = withStatusIn;
+    if (filterState.typeId) out = out.filter(({ e }) => e.typeId === filterState.typeId);
+    if (filterState.locationId) out = out.filter(({ e }) => e.locationId === filterState.locationId);
+    if (filterState.statusCode) out = out.filter(({ s }) => s.code === filterState.statusCode);
+    if (filterState.planFilter === 'con') out = out.filter(({ s }) => !!s.plan);
+    if (filterState.planFilter === 'sin') out = out.filter(({ s }) => !s.plan);
+    const dir = sortState.dir === 'desc' ? -1 : 1;
+    return [...out].sort((a, b) => {
+      const va = sortValueFor(sortState.field, a.e, a.s), vb = sortValueFor(sortState.field, b.e, b.s);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+  }
+
   async function draw(filter = '') {
     const list = $('#eq-list');
     const tbody = $('#eq-table-body');
     const f = filter.toLowerCase();
     const filtered = equipos.filter(e => !f || (searchIndex.get(e.id) || '').includes(f));
-    const withStatus = await computeAllStatuses(filtered); // MISMA colección filtrada para tarjetas y tabla
+    const withStatusSearched = await computeAllStatuses(filtered); // MISMA colección filtrada para tarjetas y tabla
+    const withStatus = applyFiltersAndSort(withStatusSearched);
+    $('#eq-results-count').textContent = `${withStatus.length} de ${equipos.length} equipo(s)`;
     list.innerHTML = withStatus.map(({ e, s }) => `
       <div class="eq-card clickable ${bulkMode ? 'bulk-selectable' : ''} ${selected.has(e.id) ? 'bulk-selected' : ''}" data-id="${e.id}">
         <div class="eq-card-head">
@@ -6825,16 +6937,132 @@ async function renderEquipos() {
       if (eq) openEquipmentForm(eq, types, locations);
     }));
   }
+  // Texto del botón: "Filtrar (N)" en vez de "Ordenar / Filtrar" en cuanto
+  // hay al menos un filtro activo (pedido explícito) — el ícono se
+  // mantiene, nunca un badge/estilo nuevo.
+  function updateSortFilterButtonLabel() {
+    const n = activeFilterCount();
+    $('#eq-sort-filter-btn').innerHTML = n ? `${ic("list")}Filtrar (${n})` : `${ic("list")}Ordenar / Filtrar`;
+  }
+  // Flechas ▲/▼ de los encabezados de Tabla — se actualizan in-place
+  // (nunca se reconstruye el <thead>, así los listeners de clic de abajo
+  // no se pierden). Misma fuente de verdad (`sortState`) que el modal.
+  function updateSortIndicators() {
+    $$('.eq-th-sort', $('#eq-table')).forEach(th => {
+      const active = th.dataset.sort === sortState.field;
+      th.setAttribute('aria-sort', active ? (sortState.dir === 'desc' ? 'descending' : 'ascending') : 'none');
+      th.querySelector('.sort-arrow').textContent = active ? (sortState.dir === 'desc' ? '▼' : '▲') : '';
+    });
+  }
+  updateSortFilterButtonLabel();
+
   draw();
   $('#eq-search').addEventListener('input', (e) => draw(e.target.value));
   if (canEdit) $('#eq-new')?.addEventListener('click', () => openEquipmentForm(null, types, locations));
 
+  // Clic en encabezado de Tabla (opcional del pedido, "si es simple"):
+  // reusa exactamente `sortState` + persistSortFilterState() + draw() —
+  // la MISMA ruta que "Aplicar" del modal, nunca una segunda
+  // implementación de orden.
+  $$('.eq-th-sort', $('#eq-table')).forEach(th => {
+    const activateSort = () => {
+      const field = th.dataset.sort;
+      if (sortState.field === field) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      else sortState = { field, dir: 'asc' };
+      persistSortFilterState();
+      updateSortIndicators();
+      draw($('#eq-search').value);
+    };
+    th.addEventListener('click', activateSort);
+    th.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activateSort(); } });
+  });
+
+  // Modal "Ordenar / Filtrar" — Tipo/Ubicación generados dinámicamente de
+  // los maestros ya cargados (`types`/`locations`); Estado, de
+  // `statusFilterOptions` (calculado arriba a partir de los equipos
+  // reales). Aplicar/Limpiar comparten la MISMA `applyFiltersAndSort()` +
+  // `persistSortFilterState()` que el resto de esta pantalla.
+  $('#eq-sort-filter-btn').addEventListener('click', () => {
+    openModal('Ordenar y filtrar equipos', `
+      <form id="eq-sort-filter-form" class="form-grid">
+        <label class="span-2">Ordenar por
+          <select name="sortField">
+            ${EQ_SORT_FIELDS.map(f => `<option value="${f.key}" ${sortState.field === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="span-2">Orden
+          <select name="sortDir">
+            <option value="asc" ${sortState.dir === 'asc' ? 'selected' : ''}>Ascendente</option>
+            <option value="desc" ${sortState.dir === 'desc' ? 'selected' : ''}>Descendente</option>
+          </select>
+        </label>
+        <label>Tipo
+          <select name="typeId">
+            <option value="">Todos</option>
+            ${types.map(t => `<option value="${t.id}" ${filterState.typeId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Ubicación
+          <select name="locationId">
+            <option value="">Todas</option>
+            ${locations.map(l => `<option value="${l.id}" ${filterState.locationId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Estado
+          <select name="statusCode">
+            <option value="">Todos</option>
+            ${statusFilterOptions.map(s => `<option value="${s.code}" ${filterState.statusCode === s.code ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Plan
+          <select name="planFilter">
+            <option value="">Todos</option>
+            <option value="con" ${filterState.planFilter === 'con' ? 'selected' : ''}>Con plan</option>
+            <option value="sin" ${filterState.planFilter === 'sin' ? 'selected' : ''}>Sin plan</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="eq-sort-filter-clear">Limpiar</button>
+          <button type="submit" class="btn btn-accent" id="eq-sort-filter-apply">${ic("check")}Aplicar</button>
+        </div>
+      </form>
+    `);
+    $('#eq-sort-filter-form').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      sortState = { field: fd.get('sortField'), dir: fd.get('sortDir') === 'desc' ? 'desc' : 'asc' };
+      filterState = {
+        typeId: fd.get('typeId') || '', locationId: fd.get('locationId') || '',
+        statusCode: fd.get('statusCode') || '', planFilter: fd.get('planFilter') || '',
+      };
+      persistSortFilterState();
+      updateSortIndicators();
+      updateSortFilterButtonLabel();
+      draw($('#eq-search').value);
+      closeModal();
+    });
+    $('#eq-sort-filter-clear').addEventListener('click', () => {
+      sortState = { field: 'code', dir: 'asc' };
+      filterState = { typeId: '', locationId: '', statusCode: '', planFilter: '' };
+      persistSortFilterState();
+      updateSortIndicators();
+      updateSortFilterButtonLabel();
+      draw($('#eq-search').value);
+      closeModal();
+    });
+  });
+
   // Selector de vista Tarjetas/Tabla: alterna visibilidad entre #eq-list y
-  // #eq-table-wrap (ambos ya pintados por draw() con la misma colección) y
-  // persiste la preferencia localmente — nunca refetch ni segunda consulta.
-  function setViewMode(mode) {
+  // #eq-table-wrap (ambos ya pintados por draw() con la misma colección) —
+  // nunca refetch ni segunda consulta. `persist=false` (usado solo por el
+  // cambio FORZADO de "Editar en lote" más abajo) cambia la vista en
+  // pantalla sin pisar la elección manual de la sesión — al cancelar/salir
+  // del lote, esa elección sigue intacta para el próximo setViewMode real.
+  function setViewMode(mode, persist = true) {
     viewMode = mode;
-    try { localStorage.setItem(EQ_VIEW_KEY, mode); } catch (e) { /* preferencia local opcional */ }
+    if (persist) {
+      try { sessionStorage.setItem(EQ_VIEW_SESSION_KEY, mode); } catch (e) { /* preferencia de sesión opcional */ }
+    }
     $('#eq-list').classList.toggle('hidden', mode !== 'cards');
     $('#eq-table-wrap').classList.toggle('hidden', mode !== 'table');
     $$('.view-switch-btn', $('#eq-view-switch')).forEach(b => b.setAttribute('aria-pressed', b.dataset.view === mode ? 'true' : 'false'));
@@ -6859,14 +7087,24 @@ async function renderEquipos() {
   }
 
   if (canEdit) {
+    let viewModeBeforeBulk = null;
     $('#eq-bulk-toggle').addEventListener('click', () => {
       bulkMode = !bulkMode;
       selected.clear();
-      // Edición en lote solo existe en Tarjetas (checkboxes) — la Tabla no
-      // tiene esa UI, así que al activarla se vuelve a Tarjetas para que la
-      // selección sea visible. Nunca queda bulkMode=true con la tabla
-      // visible y sin forma de seleccionar nada.
-      if (bulkMode && viewMode !== 'cards') setViewMode('cards');
+      // Edición en lote solo existe en Tarjetas (checkboxes) — la Tabla
+      // todavía no tiene esa UI. En vez de cambiar de vista EN SILENCIO, se
+      // avisa con un toast y se cambia (nunca sin aviso, pedido explícito).
+      // `persist=false`: el cambio es solo visual para el lote — la
+      // elección manual de la sesión (Tabla) se conserva intacta y se
+      // restaura al cancelar/terminar el lote.
+      if (bulkMode && viewMode !== 'cards') {
+        viewModeBeforeBulk = viewMode;
+        setViewMode('cards', false);
+        showInAppToast('Editar en lote solo está disponible en Tarjetas — se cambió la vista automáticamente.');
+      } else if (!bulkMode && viewModeBeforeBulk) {
+        setViewMode(viewModeBeforeBulk, false);
+        viewModeBeforeBulk = null;
+      }
       $$('.view-switch-btn[data-view="table"]', $('#eq-view-switch')).forEach(b => b.disabled = bulkMode);
       $('#eq-bulk-bar').classList.toggle('hidden', !bulkMode);
       $('#eq-bulk-count').textContent = '0 seleccionados';
@@ -6874,6 +7112,7 @@ async function renderEquipos() {
     });
     $('#eq-bulk-cancel').addEventListener('click', () => {
       bulkMode = false; selected.clear();
+      if (viewModeBeforeBulk) { setViewMode(viewModeBeforeBulk, false); viewModeBeforeBulk = null; }
       $$('.view-switch-btn[data-view="table"]', $('#eq-view-switch')).forEach(b => b.disabled = false);
       $('#eq-bulk-bar').classList.add('hidden');
       draw($('#eq-search').value);
@@ -8763,17 +9002,46 @@ async function openPlanForm(equipmentId, planId, lubricants) {
         </label>
       </div>
 
-      <div class="modal-actions"><button type="submit" class="btn btn-accent">${ic("save")}Guardar plan</button></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-accent${plan ? '' : ' btn-save-emphasis'}" id="plan-save-btn">${ic("save")}Guardar plan</button>
+        ${plan ? '' : '<span class="field-hint" style="align-self:center">👈 Primero esto: sin guardar el plan, los puntos de engrase quedan bloqueados.</span>'}
+      </div>
     </form>
     <div class="panel-head" style="margin-top:16px"><h3>Puntos de engrase</h3></div>
     <div id="points-list">
       ${points.map((p, i) => pointRow(p, lubricants, pointPhotoSrcs[i])).join('') || '<div class="empty-state">Sin puntos configurados.</div>'}
     </div>
+    <!-- Causa real reportada en campo (2026-10-29): sin este aviso, "Agregar
+         punto"/"Copiar puntos" se ven normales pero quedan disabled (abajo)
+         hasta guardar el plan — el único aviso era un title="" en hover,
+         invisible en touch/móvil, así que el usuario los percibía como
+         "no responden al click" en vez de "deshabilitados a propósito".
+         Reusa .qr-info-alert (ámbar, ya establecido para "necesita
+         atención" — QR/reprogramar/etc.), nunca una paleta nueva. Tiene
+         id propio para poder quitarlo en el momento exacto de guardar
+         (unlockPointsButtons más abajo), sin reabrir el modal. -->
+    ${plan ? '' : '<div class="qr-info-alert" id="plan-points-hint">⚠ Guarda primero el plan de engrase para agregar o copiar puntos.</div>'}
     <div class="row-actions" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-sm" id="btn-add-point" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>${ic("plus")}Agregar punto</button>
       <button class="btn btn-sm" id="btn-copy-points" ${plan ? '' : 'disabled title="Guarda el plan primero"'}>${ic("list")}Copiar puntos de otro equipo</button>
     </div>
   `);
+
+  // Desbloquea "Agregar punto"/"Copiar puntos" EN EL MISMO DOM, sin cerrar
+  // ni volver a abrir el modal — se llama justo después de crear el plan
+  // por primera vez (ver submit de #plan-form más abajo). Los clicks de
+  // esos botones ya leen `plan`/`plan.id` por closure (variable `let plan`
+  // de esta función) — reasignar `plan` ahí es suficiente para que abran
+  // con los datos correctos; esto solo corrige lo visual (disabled/aviso/
+  // énfasis), nunca la lógica de guardar/copiar.
+  function unlockPointsButtons() {
+    const addBtn = $('#btn-add-point'), copyBtn = $('#btn-copy-points');
+    if (addBtn) { addBtn.disabled = false; addBtn.removeAttribute('title'); }
+    if (copyBtn) { copyBtn.disabled = false; copyBtn.removeAttribute('title'); }
+    $('#plan-points-hint')?.remove();
+    $('#plan-save-btn')?.classList.remove('btn-save-emphasis');
+    $('#plan-save-btn')?.parentElement.querySelector('.field-hint')?.remove();
+  }
 
   $('#plan-control-type').addEventListener('change', (e) => {
     const weekday = e.target.value === 'Día y turno de la semana';
@@ -8870,13 +9138,24 @@ async function openPlanForm(equipmentId, planId, lubricants) {
         }
       }
     }
+    const eraPlanNuevo = !plan; // capturado ANTES de crear: decide si nos quedamos en el modal o navegamos
     if (!plan) plan = stamp({ id: uid('plan'), equipmentId, ...obj }, App.currentUser.name);
     else Object.assign(plan, obj);
     await DB.put('lubrication_plans', stamp(plan, App.currentUser.name));
     await logAudit('PLAN_GUARDADO', `Plan de ${esc(equipment.code)}`, App.currentUser.name);
     showInAppToast(`✓ Plan de ${esc(equipment.code)} guardado`);
-    closeModal();
-    navigate('plan');
+    if (eraPlanNuevo) {
+      // Causa real de campo (2026-10-29): crear el plan por primera vez
+      // cerraba el modal y navegaba a la lista — para agregar puntos el
+      // usuario tenía que volver a entrar a "Configurar" (y ahí sí los
+      // veía habilitados). Nunca estuvieron rotos: solo se habilitaban un
+      // paso después de lo que el usuario esperaba. Se queda en el mismo
+      // modal, ya con `plan.id` real, y solo despega el bloqueo visual.
+      unlockPointsButtons();
+    } else {
+      closeModal();
+      navigate('plan');
+    }
   });
 
   $('#btn-add-point')?.addEventListener('click', () => {
