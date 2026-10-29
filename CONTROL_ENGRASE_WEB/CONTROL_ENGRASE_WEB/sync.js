@@ -1164,6 +1164,65 @@ const Sync = {
     return { ok: true, pulled: rows.length, newAnomalies, conflicts: conflicts.length, perf:pullPerf };
   },
 
+  // RESOLUCIÓN EXPLÍCITA DE CONFLICTOS DE "equipment" ("CERRAR FIX
+  // PREVENTIVO DE CATEGORÍA EN EQUIPOS", 2026-10-29) — Configuración →
+  // Sincronización → Diagnóstico de sincronización, botón "Aceptar
+  // servidor". Nunca automático: siempre lo dispara un clic humano después
+  // de un confirm() explícito (ver wireSyncDiagnosticsPanel() en app.js).
+  // Acepta la versión del SERVIDOR para un único equipo en conflicto — el
+  // mismo criterio que pullAll() ya aplica fila por fila al recibir una
+  // fila ACCEPT (ver rec._pushedVersion/__authorizationAppUserId/
+  // __authorizationState arriba, líneas ~1128-1130): esta función es
+  // exactamente ese mismo camino para UN id puntual, fuera del ciclo
+  // incremental normal, cuando `decidePullAction()` ya marcó CONFLICT y el
+  // operador decide a mano qué lado gana — nunca last-write-wins silencioso.
+  async resolveEquipmentConflictUseServer(id) {
+    const cfg = await syncConfig();
+    if (!cfg || !cfg.url || !cfg.anonKey) throw new Error('NOT_CONFIGURED');
+    if (typeof Auth === 'undefined' || !Auth.isSupabaseMode() || !Auth.isAuthenticated()) throw new Error('AUTH_REQUIRED');
+
+    const conflicts = await DB.getSyncConflicts();
+    const conflict = conflicts.find(c => c.store === 'equipment' && c.id === id);
+    if (!conflict) throw new Error('CONFLICT_NOT_FOUND');
+
+    // Una operación RPC (registro de engrase/evidencia) todavía en vuelo
+    // para este equipo describe un estado a medio confirmar que
+    // resolveEquipmentConflictUseServer() no puede juzgar — pisarlo aquí
+    // podría descartar silenciosamente esa operación. Igual que
+    // isRowDirty()/checkPushAllowed() en el resto de este archivo: nunca se
+    // resuelve un conflicto sobre una fila con una operación pendiente,
+    // queda para revisión manual (ver docs del lote de Ejecución/Evidencia).
+    const local = await DB.getRaw('equipment', id);
+    if (local && (local._executionOperationId || local._evidenceOperationId)) {
+      throw new Error('PENDING_OPERATION_REVIEW_REQUIRED');
+    }
+
+    const resp = await authenticatedSyncFetch(
+      `${cfg.url}/rest/v1/engrase_sync?select=id,payload,updated_at,deleted&store=eq.equipment&id=eq.${encodeURIComponent(id)}`,
+      { headers: { apikey: cfg.anonKey } }, cfg
+    );
+    const authIssue = classifyAuthStatus(resp.status);
+    if (authIssue) throw new Error(authIssue);
+    if (!resp.ok) throw new Error('REMOTE_FETCH_FAILED');
+    const rows = await resp.json();
+    if (rows.length !== 1) throw new Error('REMOTE_ROW_NOT_FOUND');
+    const remote = rows[0];
+
+    // Misma fila canónica que pullAll() construiría para esta fila si
+    // llegara en el próximo pull normal — nunca un merge/heurística propia.
+    const canonical = {
+      ...remote.payload,
+      active: !remote.deleted,
+      updatedAt: remote.updated_at,
+      _pushedVersion: remote.updated_at,
+      __authorizationAppUserId: Auth.getProfile?.()?.appUserId || null,
+      __authorizationState: 'AUTHORIZED',
+    };
+    await DB.put('equipment', canonical, { source: 'server' });
+    await DB.clearSyncConflict('equipment', id);
+    return canonical;
+  },
+
   // `_pushedVersion` es puramente bookkeeping LOCAL (nunca lo vio el
   // servidor en el INSERT, que lo serializa `undefined` -> ausente del
   // JSON) — pero sin excluirlo aquí, cualquier UPDATE posterior lo filtraba

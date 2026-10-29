@@ -16564,6 +16564,95 @@ function wireBlockedOperationsPanel(container) {
   });
 }
 
+/* ============================================================
+   Configuración → Diagnóstico de sincronización: CONFLICTOS sin resolver
+   ============================================================
+   "CERRAR FIX PREVENTIVO DE CATEGORÍA EN EQUIPOS" (2026-10-29) — DB.
+   getSyncConflicts() (db.js) ya guarda cada conflicto real detectado por
+   decidePullAction()/pushAll() (sync.js, P0-1): mismo registro cambiado
+   LOCALMENTE y en el SERVIDOR desde la última vez que este dispositivo
+   coincidió con él. Hasta este lote esos conflictos quedaban invisibles —
+   el cambio local pendiente nunca se subía (pushAll() ya no lo reintenta
+   ciego) y nadie podía resolverlo. SOLO lectura al calcular/pintar: nunca
+   decide ni escribe nada aquí — la única resolución real vive en
+   Sync.resolveEquipmentConflictUseServer() (sync.js), disparada por un
+   clic humano con confirm() explícito, nunca automática ni last-write-wins.
+   Solo "equipment" tiene botón de resolución en este lote (pedido
+   explícito); cualquier otro store muestra "Revisión manual requerida". */
+async function syncConflictsDiagnostics() {
+  const conflicts = await DB.getSyncConflicts();
+  if (!conflicts.length) return [];
+  const equipos = await DB.allActive('equipment');
+  return conflicts.map(c => ({
+    ...c,
+    equipmentCode: c.store === 'equipment' ? (equipos.find(e => e.id === c.id)?.code || null) : null,
+  })).sort((a, b) => (a.detectedAt || '').localeCompare(b.detectedAt || ''));
+}
+
+function syncConflictRowHTML(item, canResolveEquipment) {
+  const resolvable = item.store === 'equipment' && canResolveEquipment;
+  return `
+    <tr data-conflict-store="${esc(item.store)}" data-conflict-id="${esc(item.id)}">
+      <td>${esc(item.store)}</td>
+      <td>${item.equipmentCode ? esc(item.equipmentCode) : '<span class="dim">—</span>'}</td>
+      <td class="mono" style="font-size:11px">${esc(item.id)}</td>
+      <td class="mono" style="font-size:11px" title="${esc(item.localVersion || '')}">${item.localVersion ? fmtDate(item.localVersion) : '—'}</td>
+      <td class="mono" style="font-size:11px" title="${esc(item.remoteVersion || '')}">${item.remoteVersion ? fmtDate(item.remoteVersion) : '—'}</td>
+      <td class="row-actions">
+        ${resolvable
+          ? `<button type="button" class="btn btn-sm btn-accept-server-conflict">Aceptar servidor</button>`
+          : `<span class="dim" style="font-size:12px">Revisión manual requerida</span>`}
+      </td>
+    </tr>`;
+}
+
+function syncConflictsPanelHTML(items, canResolveEquipment) {
+  if (!items.length) {
+    return `<div id="sync-conflicts-area"><p class="dim" style="margin-top:10px">No hay conflictos sin resolver.</p></div>`;
+  }
+  return `
+    <div id="sync-conflicts-area">
+      <p class="dim" style="margin-top:10px"><b>${items.length}</b> conflicto(s) sin resolver — el cambio local de estos registros no se subió porque el servidor cambió desde la última vez que este dispositivo coincidió con él.</p>
+      <div style="overflow:auto; max-width:100%">
+        <table class="data-table">
+          <thead><tr><th>Store</th><th>Equipo</th><th>ID</th><th>Versión local</th><th>Versión servidor</th><th>Acciones</th></tr></thead>
+          <tbody>${items.map(item => syncConflictRowHTML(item, canResolveEquipment)).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+const SYNC_CONFLICT_ERROR_MESSAGES = {
+  NOT_CONFIGURED: 'No hay servidor remoto configurado.',
+  AUTH_REQUIRED: 'Tu sesión expiró — vuelve a iniciar sesión e intenta de nuevo.',
+  AUTH_FORBIDDEN: 'El servidor rechazó esta acción por permisos.',
+  CONFLICT_NOT_FOUND: 'Este conflicto ya no existe — puede que ya se haya resuelto en otro dispositivo.',
+  PENDING_OPERATION_REVIEW_REQUIRED: 'Este equipo tiene una operación pendiente de revisión (registro de engrase o evidencia) — no se puede resolver automáticamente aquí.',
+  REMOTE_FETCH_FAILED: 'No se pudo leer la versión del servidor — intenta de nuevo.',
+  REMOTE_ROW_NOT_FOUND: 'El equipo ya no existe en el servidor.',
+};
+function wireSyncConflictsPanel(container) {
+  $$('.btn-accept-server-conflict', container).forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-conflict-id]');
+      const id = row.dataset.conflictId;
+      const equipo = await DB.getRaw('equipment', id);
+      const codigo = equipo ? equipo.code : id;
+      if (!confirm(`¿Aceptar la versión del servidor para ${codigo}?\n\nEl cambio local pendiente de este equipo será reemplazado por la versión canónica del servidor.\nNo se tocarán otros equipos ni otros conflictos.`)) return;
+      btn.disabled = true;
+      try {
+        await Sync.resolveEquipmentConflictUseServer(id);
+        showInAppToast(`✓ Conflicto de ${codigo} resuelto con la versión del servidor`);
+        await Sync.fullSync('manual');
+        renderConfig();
+      } catch (error) {
+        btn.disabled = false;
+        alert(SYNC_CONFLICT_ERROR_MESSAGES[error.message] || `No se pudo resolver el conflicto (${error.message}).`);
+      }
+    });
+  });
+}
+
 async function renderConfig() {
   const c = $('#app-content');
   if (!c) return; // la pantalla ya no está en el documento (cambio de vista o de usuario)
@@ -16583,6 +16672,10 @@ async function renderConfig() {
   // calcularlo si hay servidor configurado — sin eso nunca hay operaciones
   // en cola que puedan estar bloqueadas.
   const blockedOps = cfg.url ? await blockedOperationsDiagnostics() : [];
+  // Conflictos de sincronización (lote "CERRAR FIX PREVENTIVO DE CATEGORÍA
+  // EN EQUIPOS") — mismo criterio que blockedOps arriba: sin servidor
+  // configurado nunca puede haber un conflicto real contra él.
+  const syncConflicts = cfg.url ? await syncConflictsDiagnostics() : [];
   const notif = mergeNotifSettings(await DB.get('settings', 'notifications'));
   const gen = App.generalSettings;
   const pad = n => String(n).padStart(2, '0');
@@ -16747,6 +16840,7 @@ async function renderConfig() {
             <div><span class="dim">Cambios pendientes por subir</span><div>${pending}</div></div>
             <div><span class="dim">Conflictos sin resolver</span><div>${lastSyncState.conflicts || 0}</div></div>
           </div>
+          ${syncConflictsPanelHTML(syncConflicts, App.currentUser.role === 'ADMINISTRADOR')}
           ${blockedOperationsPanelHTML(blockedOps)}
         </details>` : ''}
       </div>
@@ -17033,6 +17127,7 @@ async function renderConfig() {
     renderConfig();
   });
   wireBlockedOperationsPanel(c);
+  wireSyncConflictsPanel(c);
 }
 
 /* ============================================================
