@@ -35,9 +35,14 @@ describe('SCHEDULE_WEEKDAYS — fuente única para picker de días y filtro', ()
 describe('renderMatrizSemanal() — genera 7 días, no 6', () => {
   const src = extractDeclaration(appSource, 'renderMatrizSemanal');
 
-  it('el bucle de días llega hasta 7 (antes 6)', () => {
-    expect(src).toContain('for (let i = 0; i < 7; i++)');
+  it('arma los 7 días con getOperationalWeekDays() (src/core/operational-week.js) — nunca un bucle "lunes+6" propio', () => {
+    // Desde "CONFIGURACIÓN ADMINISTRADOR SEMANA OPERATIVA" (2026-10-30): la
+    // garantía de "7 días, no 6" vive en getOperationalWeekDays() (probado
+    // en tests/unit/operational-week.test.js), renderMatrizSemanal() ya no
+    // tiene su propio bucle de construcción de fechas.
+    expect(src).toContain('getOperationalWeekDays(hoy, App.generalSettings, App.matrizOffset)');
     expect(src).not.toContain('for (let i = 0; i < 6; i++)');
+    expect(src).not.toMatch(/\(getDay\(\) \+ 6\) % 7/);
   });
 
   it('ya no queda ninguna referencia a dias[5] como último día (debe ser dias[6])', () => {

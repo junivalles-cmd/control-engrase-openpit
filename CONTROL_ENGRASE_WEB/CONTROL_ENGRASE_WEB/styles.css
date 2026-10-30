@@ -1173,6 +1173,12 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .big-input { font-size: 20px !important; font-family: var(--font-mono); font-weight: 700; padding: 12px !important; }
 
+/* Vista previa de "Semana operativa" (Configuración → Operación) — mismo
+   patrón visual que .field-hint, dentro de una caja sutil para que se lea
+   como vista previa, no como texto de ayuda más. */
+.opweek-preview { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-top: 2px; }
+.opweek-preview .dim { font-size: var(--fs-sm); }
+
 /* Jerarquía de botones (lote UI/UX, auditoría pre-release) — ya existía en la
    práctica, se documenta explícitamente para que no se inventen variantes
    nuevas para la misma acción:

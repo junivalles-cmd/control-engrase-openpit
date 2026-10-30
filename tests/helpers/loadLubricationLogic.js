@@ -30,6 +30,7 @@ export const HOURMETER_JS_PATH = path.join(SRC_ROOT, 'src/core/hourmeter.js');
 export const LUBRICATION_STATUS_JS_PATH = path.join(SRC_ROOT, 'src/core/lubrication-status.js');
 export const ANOMALIES_JS_PATH = path.join(SRC_ROOT, 'src/core/anomalies.js');
 export const WEEKLY_MATRIX_JS_PATH = path.join(SRC_ROOT, 'src/core/weekly-matrix.js');
+export const OPERATIONAL_WEEK_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-week.js');
 export const ANOMALY_ACTIONS_JS_PATH = path.join(SRC_ROOT, 'src/core/anomaly-actions.js');
 export const PLAN_COMPLIANCE_JS_PATH = path.join(SRC_ROOT, 'src/core/plan-compliance.js');
 export const OPERATIONAL_SCOPE_JS_PATH = path.join(SRC_ROOT, 'src/core/operational-scope.js');
@@ -64,6 +65,7 @@ const APP_LOGIC_SOURCES = [
     'SYNC_INTERVAL_DEFAULT',
     'normalizeSyncInterval',
     'syncIntervalLabel',
+    'proximoDiaSemana',
     'currentUserFromAuthProfile',
     'shouldBlockCompleteChecklistWithoutGrease',
     'GREASE_UNIT',
@@ -174,6 +176,24 @@ const WEEKLY_MATRIX_SOURCES = [
 /** Devuelve la función real estadoCelda() de src/core/weekly-matrix.js. */
 export function loadWeeklyMatrixLogic() {
   const body = buildBodyFromSources(WEEKLY_MATRIX_SOURCES);
+  const factory = new Function(body);
+  return factory();
+}
+
+// "Semana operativa" (Configuración → Operación) — 100% puro, sin DOM/DB,
+// mismo patrón que weekly-matrix.js.
+const OPERATIONAL_WEEK_SOURCES = [
+  [OPERATIONAL_WEEK_JS_PATH, [
+    'OPERATIONAL_WEEK_START_DAY_DEFAULT', 'OPERATIONAL_WEEK_START_TIME_DEFAULT', 'OPERATIONAL_WEEK_START_DAY_OPTIONS',
+    'normalizeOperationalWeekStartDay', 'normalizeOperationalWeekStartTime', 'operationalWeekBoundaryInstant',
+    'getOperationalWeekStart', 'getOperationalWeekEnd', 'getOperationalWeekDays', 'getOperationalWeekRange', 'previousOperationalWeekRange',
+    'OPERATIONAL_WEEK_MONTH_ABBR', 'getOperationalWeekLabel',
+  ]],
+];
+
+/** Devuelve las funciones/constantes reales de src/core/operational-week.js. */
+export function loadOperationalWeekLogic() {
+  const body = buildBodyFromSources(OPERATIONAL_WEEK_SOURCES);
   const factory = new Function(body);
   return factory();
 }

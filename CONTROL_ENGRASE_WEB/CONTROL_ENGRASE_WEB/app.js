@@ -663,7 +663,7 @@ const NOTIF_ID_VENCIDOS = 1004;      // equipos con el engrase VENCIDO
 const NOTIF_ID_POR_ENGRASAR = 1005;  // equipos que toca engrasar hoy
 const NOTIF_ID_VENCIDOS_REC = 1006;    // recordatorio de vencidos a media jornada
 const NOTIF_ID_POR_ENGRASAR_REC = 1007; // recordatorio de lo que falta por engrasar
-const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (lunes)
+const NOTIF_ID_SEMANAL = 1008;         // resumen semanal (día = inicio de semana operativa)
 const NOTIF_ID_ESCALADO = 1009;        // escalamiento por atraso grave
 const NOTIF_ID_ASSIGNED = 1010;        // engrase asignado manualmente a mi cuadrilla
 const NOTIF_ID_ASSIGNED_REC = 1011;    // recordatorio de asignación todavía pendiente
@@ -717,8 +717,12 @@ const NOTIF_DEFAULTS = {
   cumplimiento: { enabled: true, hour: 7, minute: 30, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
   // 5) Anomalías nuevas (inmediata, se agrupan si llegan varias seguidas)
   anomalias: { enabled: true, roles: ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'], agruparMinutos: 30 },
-  // 6) Resumen SEMANAL (lunes)
-  resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
+  // 6) Resumen SEMANAL — el día lo decide EXCLUSIVAMENTE
+  // App.generalSettings.operationalWeekStartDay (Configuración →
+  // Operación, ver refreshLocalNotifications()); esta notificación solo
+  // guarda su propia HORA, nunca un día propio (evita una segunda
+  // configuración contradictoria de "qué día").
+  resumenSemanal: { enabled: true, hour: 7, minute: 0, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
   // 7) Validaciones PENDIENTES de mi cuadrilla (persistente — nunca expira
   // por antigüedad, ver isRecordPendingValidation() en grease-validation.js)
   validaciones: { enabled: true, roles: ['LUBRICADOR'] }
@@ -1609,11 +1613,26 @@ async function refreshLocalNotifications() {
       });
     }
 
-    // ── 4) Resumen SEMANAL (lunes) ────────────────────────────────
+    // ── 4) Resumen SEMANAL ────────────────────────────────
+    // El DÍA ya NO es un campo propio de esta notificación (ese campo se
+    // retiró de NOTIF_DEFAULTS.resumenSemanal) — la única fuente de verdad es
+    // App.generalSettings.operationalWeekStartDay (Configuración →
+    // Operación), para no tener dos configuraciones contradictorias de
+    // "qué día" (lote "CIERRE FINAL SEMANA OPERATIVA"). La HORA del aviso
+    // sigue siendo propia de esta notificación (cfgS.hour/minute) — nunca
+    // se confunde con operationalWeekStartTime (esa es la hora de CORTE
+    // del reporte, no la hora en que suena el push).
     const cfgS = settings.resumenSemanal;
     if (cfgS && cfgS.enabled && elegiblePara(cfgS)) {
-      const hace7 = Date.now() - 7 * 86400000;
-      const recs = (await DB.allActive('lubrication_records')).filter(r => new Date(r.date).getTime() >= hace7);
+      // Resume la semana operativa que ACABA DE CERRAR, nunca la nueva
+      // (todavía vacía) — previousOperationalWeekRange() (src/core/
+      // operational-week.js), mismo helper central que Plan/Matriz/
+      // Dashboard/Reportes/Historial, nunca un rango recalculado a mano.
+      const { start: semanaCerradaInicio, end: semanaCerradaFin } = previousOperationalWeekRange(new Date(), App.generalSettings);
+      const recs = (await DB.allActive('lubrication_records')).filter(r => {
+        const t = new Date(r.date).getTime();
+        return t >= semanaCerradaInicio.getTime() && t < semanaCerradaFin.getTime();
+      });
       const puntosFallidos = {};
       recs.forEach(r => (r.details || []).filter(d => !d.done).forEach(d => {
         const k = d.reason || 'Sin motivo';
@@ -1627,7 +1646,7 @@ async function refreshLocalNotifications() {
         title: '📊 Resumen de la semana',
         body: `${recs.length} engrase(s) realizados · Cumplimiento ${compliance}%${topMotivo ? ` · Lo que más falló: ${topMotivo[0]} (${topMotivo[1]})` : ''}`,
         extra: { tipo: 'semanal', ruta: 'reportes' },
-        schedule: { at: proximoDiaSemana(cfgS.diaSemana ?? 1, cfgS.hour, cfgS.minute), every: 'week', repeats: true }
+        schedule: { at: proximoDiaSemana(normalizeOperationalWeekStartDay(App.generalSettings.operationalWeekStartDay), cfgS.hour, cfgS.minute), every: 'week', repeats: true }
       });
     }
 
@@ -1874,7 +1893,12 @@ function syncIntervalLabel(seconds) {
 
 // Configuración general editable por el Administrador (horarios de turno, umbrales, etc.)
 // Se carga en memoria al arrancar y se puede recargar cuando el admin la cambia.
-App.generalSettings = { shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95, syncIntervalSeconds: SYNC_INTERVAL_DEFAULT };
+App.generalSettings = {
+  shiftDayStart: 6, shiftNightStart: 18, defaultAlertYellowHours: 10, complianceTarget: 95, syncIntervalSeconds: SYNC_INTERVAL_DEFAULT,
+  // Semana operativa (Configuración → Operación, solo ADMINISTRADOR) —
+  // ver src/core/operational-week.js para los helpers que la consumen.
+  operationalWeekStartDay: OPERATIONAL_WEEK_START_DAY_DEFAULT, operationalWeekStartTime: OPERATIONAL_WEEK_START_TIME_DEFAULT,
+};
 
 async function loadGeneralSettings() {
   const s = await DB.get('settings', 'general');
@@ -1882,6 +1906,8 @@ async function loadGeneralSettings() {
   // Normaliza SIEMPRE, incluso si `s` no traía el campo (documento viejo,
   // nunca configurado) o traía un valor fuera de las opciones válidas.
   App.generalSettings.syncIntervalSeconds = normalizeSyncInterval(App.generalSettings.syncIntervalSeconds);
+  App.generalSettings.operationalWeekStartDay = normalizeOperationalWeekStartDay(App.generalSettings.operationalWeekStartDay);
+  App.generalSettings.operationalWeekStartTime = normalizeOperationalWeekStartTime(App.generalSettings.operationalWeekStartTime);
 }
 
 /* currentShiftId() se movió a src/core/shifts.js (sigue disponible como
@@ -5148,9 +5174,10 @@ async function renderLubricadorHome(options = {}) {
 // angosto/comprimido): mismo cálculo y mismos datos, SOLO cambia la
 // presentación — modal casi pantalla completa en móvil (ver `.modal-lub-matriz`
 // en styles.css), navegación de semana (‹/Hoy/›) que REUSA exactamente el
-// mismo patrón offset+lunes ya usado en renderMatrizSemanal (nunca una
-// lógica de planificación nueva: `hoy` para comparar estados siempre es la
-// fecha real, solo `lunes` se desplaza para decidir qué semana se muestra).
+// mismo patrón offset+getOperationalWeekDays() ya usado en
+// renderMatrizSemanal (nunca una lógica de planificación nueva: `hoy` para
+// comparar estados siempre es la fecha real, solo `offset` desplaza qué
+// semana operativa se muestra).
 function openLubricadorMatrizModal({ equipos, plans, records, locationName, coverage }, offset = 0, selectedLocationId) {
   let locationTabs = '';
   let preferenceKey = '';
@@ -5182,10 +5209,10 @@ function openLubricadorMatrizModal({ equipos, plans, records, locationName, cove
   }
 
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const lunes = new Date(hoy);
-  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + offset * 7);
-  const dias = [];
-  for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  // getOperationalWeekDays() (src/core/operational-week.js) ya devuelve
+  // los 7 días EN EL ORDEN configurado en Configuración → Operación —
+  // nunca lunes-fijo (mismo helper que renderMatrizSemanal()).
+  const dias = getOperationalWeekDays(hoy, App.generalSettings, offset);
 
   // Mismo formato compacto ("5–11 Oct" / "29 Sep – 5 Oct") que ya usa
   // renderMatrizSemanal — duplicado a propósito (es texto puro, 3 líneas,
@@ -5910,19 +5937,14 @@ async function renderDashboard() {
   const progTurno = [...new Map(ocurrenciasTurno.map(o => [o.e.id, o.e])).values()];
   const hechoTurno = [...new Map(realizadasTurno.map(o => [o.e.id, o.e])).values()];
 
-  // Semana: días de Lunes a HOY (nunca días futuros de la semana — eso sería
-  // proyectar); por cada equipo con plan Día/Turno se cuentan los días ya
-  // transcurridos que coinciden con su `assignedDays`.
-  function startOfWeek(d) {
-    const day = d.getDay(); // 0=Domingo..6=Sábado
-    const diff = (day === 0 ? -6 : 1) - day; // retrocede hasta el Lunes
-    const monday = new Date(d);
-    monday.setDate(d.getDate() + diff);
-    monday.setHours(0, 0, 0, 0);
-    return monday;
-  }
+  // Semana: días de inicio de semana operativa a HOY (nunca días futuros
+  // de la semana — eso sería proyectar); por cada equipo con plan
+  // Día/Turno se cuentan los días ya transcurridos que coinciden con su
+  // `assignedDays`. getOperationalWeekStart() (src/core/operational-week.js)
+  // decide el día de inicio real según Configuración → Operación — nunca
+  // lunes-fijo.
   const diasTranscurridosSemana = [];
-  for (let d = startOfWeek(nowTs); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));
+  for (let d = getOperationalWeekStart(nowTs, App.generalSettings); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));
   let progSemana = 0, hechoSemana = 0;
   equiposDT.forEach(e => {
     diasTranscurridosSemana.forEach(d => {
@@ -7405,15 +7427,14 @@ async function openEquipmentDetail(id) {
   // PROGRAMACIÓN EN FICHA", 2026-10-10): SOLO para planes "Día y turno de
   // la semana" — reusa estadoCelda() (weekly-matrix.js), la MISMA función
   // pura que ya usa renderMatrizSemanal() para cada celda, con el MISMO
-  // rango lunes-domingo (sin offset: semana operativa actual, §A6 — nunca
-  // histórico). Cero cálculo de estado nuevo aquí — si Matrix cambia de
+  // rango de semana operativa (sin offset: semana operativa actual, §A6 —
+  // nunca histórico). Cero cálculo de estado nuevo aquí — si Matrix cambia de
   // criterio, la Ficha cambia automáticamente con ella, nunca puede
   // divergir (una sola fuente funcional, §A5).
   const hoyFicha = new Date(); hoyFicha.setHours(0, 0, 0, 0);
-  const lunesFicha = new Date(hoyFicha);
-  lunesFicha.setDate(lunesFicha.getDate() - ((lunesFicha.getDay() + 6) % 7));
-  const diasSemanaFicha = [];
-  for (let i = 0; i < 7; i++) { const d = new Date(lunesFicha); d.setDate(lunesFicha.getDate() + i); diasSemanaFicha.push(d); }
+  // getOperationalWeekDays() (src/core/operational-week.js) — mismo
+  // helper que Matriz Semanal, ya en el orden de Configuración → Operación.
+  const diasSemanaFicha = getOperationalWeekDays(hoyFicha, App.generalSettings);
   // Mismos colores EXACTOS que ya usa la Matriz para cada `tipo` de
   // estadoCelda() (.celda-hecho/.celda-hecho-atrasado/.celda-hecho-
   // adelantado/.celda-no-realizado/.celda-pendiente, styles.css) — nunca
@@ -8687,35 +8708,30 @@ async function printGreasePlan(rango, equipos, plans, types) {
   const records = await DB.allActive('lubrication_records');
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
 
-  // Rango de días (lunes a domingo — el usuario confirmó 2026-10-02 que sí
-  // se engrasa domingo, igual que el resto de la semana; antes el domingo
-  // quedaba fuera de este rango y se mostraba aparte como columna fija).
+  // Rango de días — semana operativa COMPLETA según Configuración →
+  // Operación (el usuario confirmó 2026-10-02 que sí se engrasa el
+  // último día de la semana, igual que el resto; nunca queda fuera del
+  // rango ni se muestra aparte como columna fija).
   let inicio, fin;
   if (rango === 'semana') {
-    inicio = new Date(hoy);
-    const dow = inicio.getDay();
-    inicio.setDate(inicio.getDate() - (dow === 0 ? 6 : dow - 1)); // lunes de esta semana
-    fin = new Date(inicio); fin.setDate(inicio.getDate() + 6);    // domingo
+    const dias0 = getOperationalWeekDays(hoy, App.generalSettings);
+    inicio = dias0[0]; fin = dias0[6];
   } else {
     inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
     fin = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
   }
 
-  const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-
-  // Fechas de cada día del rango (para el mes, se agrupan por semana)
-  function fechasDeSemana(lunes) {
-    return DIAS_SEMANA.map((_, i) => { const d = new Date(lunes); d.setDate(lunes.getDate() + i); return d; });
-  }
+  // Fechas de cada día del rango (para el mes, se agrupan por semana
+  // operativa) — getOperationalWeekDays()/getOperationalWeekStart()
+  // (src/core/operational-week.js) deciden día de inicio + ORDEN de
+  // columnas según Configuración → Operación, nunca lunes-fijo.
   const semanas = [];
   if (rango === 'semana') {
-    semanas.push({ lunes: new Date(inicio), fechas: fechasDeSemana(inicio) });
+    semanas.push({ inicioSemana: new Date(inicio), fechas: getOperationalWeekDays(inicio, App.generalSettings) });
   } else {
-    let cursor = new Date(inicio);
-    const dowIni = cursor.getDay();
-    cursor.setDate(cursor.getDate() - (dowIni === 0 ? 6 : dowIni - 1)); // retrocede al lunes
+    let cursor = getOperationalWeekStart(inicio, App.generalSettings);
     while (cursor <= fin) {
-      semanas.push({ lunes: new Date(cursor), fechas: fechasDeSemana(cursor) });
+      semanas.push({ inicioSemana: new Date(cursor), fechas: getOperationalWeekDays(cursor, App.generalSettings) });
       cursor.setDate(cursor.getDate() + 7);
     }
   }
@@ -8766,7 +8782,7 @@ async function printGreasePlan(rango, equipos, plans, types) {
           <tr><th class="tit" colspan="${fechas.length + 1}">${esc(titulo)}</th></tr>
           <tr>
             <th class="eqcol">Equipo/No.</th>
-            ${fechas.map((d, i) => `<th>${DIAS_SEMANA[i]}<div class="fechita">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
+            ${fechas.map(d => `<th>${WEEKDAY_NAMES[d.getDay()]}<div class="fechita">${d.getDate()}/${d.getMonth() + 1}</div></th>`).join('')}
           </tr>
         </thead>
         <tbody>
@@ -8796,9 +8812,9 @@ async function printGreasePlan(rango, equipos, plans, types) {
     return;
   }
 
-  const bloques = semanas.map(({ lunes, fechas }) => {
+  const bloques = semanas.map(({ inicioSemana, fechas }) => {
     const rotulo = rango === 'mes'
-      ? `<h2 class="semana-tit">Semana del ${lunes.getDate()}/${lunes.getMonth() + 1}</h2>` : '';
+      ? `<h2 class="semana-tit">Semana del ${inicioSemana.getDate()}/${inicioSemana.getMonth() + 1}</h2>` : '';
     return `${rotulo}
       ${tablaTurno('PLAN DE ENGRASE FLOTA DE ACARREO (TURNO DÍA)', dia, fechas)}
       ${tablaTurno('PLAN DE ENGRASE FLOTA DE ACARREO (TURNO NOCHE)', noche, fechas)}`;
@@ -9625,13 +9641,12 @@ async function renderMatrizSemanal() {
   const typesAll = await DB.all('equipment_types');
   const locationsAll = await DB.all('locations');
 
-  // Semana visible (se puede navegar hacia atrás/adelante)
+  // Semana visible (se puede navegar hacia atrás/adelante). getOperationalWeekDays()
+  // (src/core/operational-week.js) decide día de inicio + orden de columnas
+  // según Configuración → Operación — nunca lunes-fijo.
   if (!App.matrizOffset) App.matrizOffset = 0;
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const lunes = new Date(hoy);
-  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + (App.matrizOffset * 7));
-  const dias = [];
-  for (let i = 0; i < 7; i++) { const d = new Date(lunes); d.setDate(lunes.getDate() + i); dias.push(d); }
+  const dias = getOperationalWeekDays(hoy, App.generalSettings, App.matrizOffset);
   const finSemana = new Date(dias[6]); finSemana.setHours(23, 59, 59, 999);
 
   // Presentación compacta del rango — SOLO formato de texto, misma semana
@@ -11532,6 +11547,13 @@ async function renderHistorial() {
         <div class="hist-global-body">
           <input type="search" id="gh-search" class="input hist-global-search" placeholder="Buscar: código, familia, marca, modelo, ubicación…" autocomplete="off"/>
           <div class="hist-global-filters-row">
+            <label class="filter-label hist-global-filter">Semana operativa
+              <select id="gh-periodo" class="input input-sm">
+                <option value="">Personalizado</option>
+                <option value="0">Semana operativa actual</option>
+                <option value="-1">Semana operativa anterior</option>
+              </select>
+            </label>
             <label class="filter-label hist-global-filter">Desde <input type="date" id="gh-from" class="input input-sm"/></label>
             <label class="filter-label hist-global-filter">Hasta <input type="date" id="gh-to" class="input input-sm" value="${today}"/></label>
             <label class="filter-label hist-global-filter">Turno
@@ -11733,12 +11755,29 @@ async function renderHistorial() {
     });
   }
 
+  // Filtro "Semana operativa" (Configuración → Operación decide el día de
+  // inicio real, ver src/core/operational-week.js): al elegir "actual" o
+  // "anterior" rellena Desde/Hasta con el rango [start, end) de esa semana
+  // — nunca una lógica de fechas paralela, mismo helper que Plan/Matriz/
+  // Dashboard/Reportes. Elegir "Personalizado" deja Desde/Hasta tal cual
+  // estén; editar Desde/Hasta a mano vuelve a "Personalizado" (deja de
+  // reflejar una semana que el usuario ya cambió).
+  const ghDateInput = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  $('#gh-periodo').addEventListener('change', (ev) => {
+    const val = ev.target.value;
+    if (!val) return;
+    const dias = getOperationalWeekDays(new Date(), App.generalSettings, parseInt(val, 10));
+    $('#gh-from').value = ghDateInput(dias[0]);
+    $('#gh-to').value = ghDateInput(dias[6]);
+    runGeneralSearch();
+  });
+
   // Sin botón Buscar: el texto busca con debounce ~280ms (mismo patrón que el
   // buscador de equipo de arriba); los demás filtros actualizan al cambiar.
   let ghTemporizador;
   $('#gh-search').addEventListener('input', () => { clearTimeout(ghTemporizador); ghTemporizador = setTimeout(runGeneralSearch, 280); });
-  $('#gh-from').addEventListener('change', runGeneralSearch);
-  $('#gh-to').addEventListener('change', runGeneralSearch);
+  $('#gh-from').addEventListener('change', () => { $('#gh-periodo').value = ''; runGeneralSearch(); });
+  $('#gh-to').addEventListener('change', () => { $('#gh-periodo').value = ''; runGeneralSearch(); });
   $('#gh-turno').addEventListener('change', runGeneralSearch);
   $('#gh-estado').addEventListener('change', runGeneralSearch);
   runGeneralSearch();
@@ -16740,6 +16779,28 @@ async function renderConfig() {
         </form>
       </div>
     </div>
+    <div class="panel config-narrow">
+      <div class="panel-head"><h3>Semana operativa</h3></div>
+      <div style="padding:14px">
+        <p class="dim">Define cómo se agrupan los planes, reportes y métricas semanales. Cambiar esta configuración no modifica los registros históricos ni los días programados de los planes.</p>
+        <form id="operational-week-form" class="form-grid">
+          <label>Inicio de semana
+            <select name="operationalWeekStartDay" id="opweek-start-day" ${App.currentUser.role !== 'ADMINISTRADOR' ? 'disabled' : ''}>
+              ${OPERATIONAL_WEEK_START_DAY_OPTIONS.map(o => `<option value="${o.value}" ${gen.operationalWeekStartDay === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+            </select>
+          </label>
+          <label>Hora de corte
+            <input type="time" name="operationalWeekStartTime" id="opweek-start-time" value="${normalizeOperationalWeekStartTime(gen.operationalWeekStartTime)}" ${App.currentUser.role !== 'ADMINISTRADOR' ? 'disabled' : ''}/>
+          </label>
+          ${App.currentUser.role !== 'ADMINISTRADOR' ? '<span class="field-hint">Solo el Administrador puede cambiar la semana operativa.</span>' : ''}
+          <div class="opweek-preview" id="opweek-preview" style="grid-column:1/-1"></div>
+          ${App.currentUser.role === 'ADMINISTRADOR' ? `
+          <div class="modal-actions" style="grid-column:1/-1; justify-content:flex-start">
+            <button type="submit" class="btn btn-accent">${ic("save")}Guardar semana operativa</button>
+          </div>` : ''}
+        </form>
+      </div>
+    </div>
       </div>
       <div class="config-category hidden" id="config-cat-organizacion" data-category="organizacion" role="tabpanel" aria-labelledby="config-tab-organizacion">
     ${await cuadrillasPanelHTML()}
@@ -16772,7 +16833,7 @@ async function renderConfig() {
           ${notifCardHTML('engraseRealizado', '✓ Cuando se REGISTRA un engrase', 'Aviso inmediato cada vez que un lubricador termina un engrase.', notif.engraseRealizado, false, false, true)}
           ${notifCardHTML('cumplimiento', '📊 Resumen de cumplimiento', 'Resumen diario con el porcentaje de cumplimiento de la flota.', notif.cumplimiento, true, false)}
           ${notifCardHTML('anomalias', '⚠ Anomalías nuevas', 'Aviso inmediato cuando alguien reporta una anomalía. Si llegan varias seguidas se agrupan en una sola.', notif.anomalias, false, false)}
-          ${notifCardHTML('resumenSemanal', '📅 Resumen semanal (lunes)', 'Cada lunes: engrases de la semana, cumplimiento y qué fue lo que más falló.', notif.resumenSemanal, true, false)}
+          ${notifCardHTML('resumenSemanal', '📅 Resumen semanal', `Se envía el día configurado como inicio de la semana operativa y resume la semana que acaba de cerrar. Actualmente: ${(OPERATIONAL_WEEK_START_DAY_OPTIONS.find(o => o.value === gen.operationalWeekStartDay) || {}).label || 'Lunes'}.`, notif.resumenSemanal, true, false)}
           ${notifCardHTML('validaciones', '🖊 Validaciones PENDIENTES', 'Avisa al lubricador si su cuadrilla tiene engrases ya realizados a la espera de firma. Se conserva el mismo registro hasta validarse, nunca desaparece por antigüedad.', notif.validaciones, false, false)}
 
           <div class="modal-actions" style="justify-content:flex-start; margin-top:16px">
@@ -16951,6 +17012,60 @@ async function renderConfig() {
     renderConfig();
   });
 
+  // Vista previa en vivo (§UI del pedido "CONFIGURACIÓN ADMINISTRADOR
+  // SEMANA OPERATIVA"): lee el <select>/<input> TAL CUAL están en el
+  // formulario (aunque todavía no se hayan guardado) y recalcula semana
+  // actual + orden de columnas con los MISMOS helpers reales de
+  // src/core/operational-week.js que usan Plan/Matriz/Dashboard/Reportes
+  // — nunca un cálculo de muestra aparte que pueda divergir.
+  const OPWEEK_DAY_ABBR = { 0: 'Dom', 1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie', 6: 'Sáb' };
+  function renderOperationalWeekPreview() {
+    const el = $('#opweek-preview');
+    if (!el) return;
+    const previewConfig = {
+      operationalWeekStartDay: normalizeOperationalWeekStartDay($('#opweek-start-day')?.value),
+      operationalWeekStartTime: normalizeOperationalWeekStartTime($('#opweek-start-time')?.value),
+    };
+    const dias = getOperationalWeekDays(new Date(), previewConfig);
+    el.innerHTML = `
+      <div class="dim" style="margin-top:4px"><b>Semana actual:</b> ${esc(getOperationalWeekLabel(new Date(), previewConfig))}</div>
+      <div class="dim"><b>Orden:</b> ${dias.map(d => OPWEEK_DAY_ABBR[d.getDay()]).join(' · ')}</div>`;
+  }
+  renderOperationalWeekPreview();
+  $('#opweek-start-day')?.addEventListener('change', renderOperationalWeekPreview);
+  $('#opweek-start-time')?.addEventListener('input', renderOperationalWeekPreview);
+
+  $('#operational-week-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    // Defensa además de deshabilitar los controles arriba (mismo patrón
+    // que #sync-interval-form): aunque se forzara el <select>/<input> por
+    // DevTools, esto sigue sin permitir el cambio si no es ADMINISTRADOR.
+    // sync.js (CATALOG_LEGACY_BLOCKED) y las políticas RLS de
+    // `settings`/engrase_sync (0017) ya bloquean la escritura del lado
+    // servidor también — esta comprobación es solo la primera capa.
+    if (App.currentUser.role !== 'ADMINISTRADOR') return;
+    const fd = Object.fromEntries(new FormData(ev.target).entries());
+    const startDay = normalizeOperationalWeekStartDay(fd.operationalWeekStartDay);
+    const startTime = normalizeOperationalWeekStartTime(fd.operationalWeekStartTime);
+    // Guardar solo cuando cambie el valor (§VALIDACIONES del pedido).
+    if (startDay === App.generalSettings.operationalWeekStartDay && startTime === App.generalSettings.operationalWeekStartTime) {
+      showInAppToast('Sin cambios que guardar.');
+      return;
+    }
+    const current = (await DB.get('settings', 'general')) || {};
+    const updated = { ...current, id: 'general', operationalWeekStartDay: startDay, operationalWeekStartTime: startTime };
+    await DB.put('settings', stamp(updated, App.currentUser.name));
+    await logAudit('CONFIG_SEMANA_OPERATIVA_ACTUALIZADA', `Inicio ${OPERATIONAL_WEEK_START_DAY_OPTIONS.find(o => o.value === startDay)?.label} · Corte ${startTime}`, App.currentUser.name);
+    showInAppToast('✓ Semana operativa guardada');
+    // Recarga App.generalSettings en memoria — Plan de Engrase, Matriz
+    // Semanal, Dashboard, Reportes e Historial ya leen SIEMPRE
+    // App.generalSettings en el momento de renderizar (nunca guardan su
+    // propia copia), así que la próxima vez que se entre a cualquiera de
+    // esas pantallas ya reflejan el cambio, sin cerrar sesión.
+    await loadGeneralSettings();
+    renderConfig();
+  });
+
   $('#sync-interval-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     // Defensa además de deshabilitar/ocultar el control (ver markup
@@ -17079,7 +17194,6 @@ async function renderConfig() {
         out.escalarDias = parseInt(val(`${clave}_escalarDias`), 10) || 3;
         out.escalarA = NOTIF_ROLES_DISPONIBLES.filter(r => marcado(`${clave}_esc_${r}`));
       }
-      if (clave === 'resumenSemanal') out.diaSemana = 1; // lunes
       return out;
     };
 

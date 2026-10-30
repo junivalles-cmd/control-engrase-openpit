@@ -395,9 +395,12 @@ describe('KPIs "Cumplimiento operativo" (Hoy/Semana/Turno actual) — conteo por
     expect(src).toContain('const cumplTurno = { x: realizadasTurno.length, y: ocurrenciasTurno.length');
   });
 
-  it('"Semana": solo días YA TRANSCURRIDOS desde el Lunes hasta hoy (nunca días futuros) — sin proyección', () => {
-    expect(src).toContain('function startOfWeek(d) {');
-    expect(src).toContain('for (let d = startOfWeek(nowTs); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));');
+  it('"Semana": solo días YA TRANSCURRIDOS desde el inicio de la semana operativa hasta hoy (nunca días futuros) — sin proyección', () => {
+    // Desde "CONFIGURACIÓN ADMINISTRADOR SEMANA OPERATIVA": el inicio de
+    // semana ya NO es lunes-fijo — lo decide getOperationalWeekStart()
+    // (src/core/operational-week.js) según Configuración → Operación.
+    expect(src).toContain('for (let d = getOperationalWeekStart(nowTs, App.generalSettings); d <= nowTs; d.setDate(d.getDate() + 1)) diasTranscurridosSemana.push(new Date(d));');
+    expect(src).not.toContain('function startOfWeek(d) {');
   });
 
   it('% = realizados/programados, redondeado; y=0 → null (nunca NaN/Infinity, nunca 0% inventado)', () => {

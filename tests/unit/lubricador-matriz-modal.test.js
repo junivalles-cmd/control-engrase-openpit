@@ -26,6 +26,11 @@ const lubStatusSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/cor
 // demás funciones del archivo no se ejecutan nunca (openLubricadorMatrizModal
 // nunca las llama), así que no hace falta mockear DB/IndexedDB para ellas.
 const operationalScopeSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/operational-scope.js');
+// "Semana operativa" (2026-10-30): openLubricadorMatrizModal() ahora arma
+// `dias` con getOperationalWeekDays(hoy, App.generalSettings, offset) en
+// vez de un "lunes" calculado a mano — se incluye la fuente REAL del
+// helper, mismo criterio que el resto de las dependencias de arriba.
+const operationalWeekSrc = readSource('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/src/core/operational-week.js');
 const modalSrc = extractDeclaration(appSource, 'openLubricadorMatrizModal');
 
 let capturedTitle = '';
@@ -55,10 +60,14 @@ const fakeGlobals = {
 // estadoCelda()/WEEKDAY_NAMES/computeOccurrenceKey (sus dependencias reales,
 // sin DOM/IndexedDB) se cargan junto con la función bajo prueba, como un solo
 // script — igual que loadLubricationLogic.js hace para el resto del proyecto.
+// `App.generalSettings` por defecto (Lunes/00:00) — Configuración → Operación
+// normaliza/guarda ahí el día de inicio real; este test de ejecución no
+// cambia esa configuración (eso se prueba aparte en operational-week.test.js).
 const fn = new Function(
-  'openModal', 'esc', '$$', 'wireMatrizScrollHint', '$',
-  `${lubStatusSrc}\n${operationalScopeSrc}\n${weeklyMatrixSrc}\n${modalSrc}\nreturn openLubricadorMatrizModal;`
-)(fakeGlobals.openModal, fakeGlobals.esc, fakeGlobals.$$, fakeGlobals.wireMatrizScrollHint, fakeGlobals.$);
+  'openModal', 'esc', '$$', 'wireMatrizScrollHint', '$', 'App',
+  `${lubStatusSrc}\n${operationalWeekSrc}\n${operationalScopeSrc}\n${weeklyMatrixSrc}\n${modalSrc}\nreturn openLubricadorMatrizModal;`
+)(fakeGlobals.openModal, fakeGlobals.esc, fakeGlobals.$$, fakeGlobals.wireMatrizScrollHint, fakeGlobals.$,
+  { generalSettings: { operationalWeekStartDay: 1, operationalWeekStartTime: '00:00' } });
 
 function isoDaysAgo(n) {
   const d = new Date();

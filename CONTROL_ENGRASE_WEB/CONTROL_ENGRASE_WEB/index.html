@@ -65,6 +65,12 @@
 <script src="src/core/shifts.js"></script>
 <script src="src/core/hourmeter.js"></script>
 <script src="src/core/lubrication-status.js"></script>
+<!-- Semana operativa (día de inicio + hora de corte, Configuración →
+     Operación) — puro, sin DOM/DB, mismo patrón que weekly-matrix.js.
+     Antes de weekly-matrix.js/app.js: Plan de Engrase, Matriz Semanal,
+     Dashboard, Reportes, Historial e impresión ya lo consumen como
+     global. -->
+<script src="src/core/operational-week.js"></script>
 <script src="src/core/anomalies.js"></script>
 <script src="src/core/anomaly-actions.js"></script>
 <script src="src/core/weekly-matrix.js"></script>

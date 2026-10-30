@@ -157,7 +157,7 @@ async function boot(page, { role = 'ADMINISTRADOR', supabaseMode = true, users =
         engraseRealizado: { enabled: false, roles: ['SUPERVISOR'], soloCriticos: false },
         cumplimiento: { enabled: true, hour: 7, minute: 30, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
         anomalias: { enabled: true, roles: ['ADMINISTRADOR', 'SUPERVISOR', 'PLANIFICADOR'], agruparMinutos: 30 },
-        resumenSemanal: { enabled: true, hour: 7, minute: 0, diaSemana: 1, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
+        resumenSemanal: { enabled: true, hour: 7, minute: 0, roles: ['ADMINISTRADOR', 'PLANIFICADOR'] },
         validaciones: { enabled: true, roles: ['LUBRICADOR'] },
       };
       ${dbSrc}

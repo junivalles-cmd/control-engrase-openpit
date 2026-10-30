@@ -18,13 +18,23 @@ const appSource = readSource(APP_JS_PATH);
 const src = extractDeclaration(appSource, 'printGreasePlan');
 
 describe('printGreasePlan() — domingo es un día más, igual que Lunes-Sábado', () => {
-  it('DIAS_SEMANA tiene los 7 días, Domingo al final', () => {
-    expect(src).toContain("const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];");
+  // Desde "CONFIGURACIÓN ADMINISTRADOR SEMANA OPERATIVA" (2026-10-30):
+  // DIAS_SEMANA/el cálculo manual de `fin` se reemplazaron por
+  // getOperationalWeekDays()/getOperationalWeekStart() (src/core/operational-week.js)
+  // — igual que renderMatrizSemanal(), siguen siendo 7 días completos
+  // (nunca 6), solo que el ORDEN ahora lo decide Configuración → Operación
+  // en vez de ser lunes-fijo.
+  it('ya no existe DIAS_SEMANA (lunes-fijo) — usa getOperationalWeekDays() real', () => {
+    expect(src).not.toContain('DIAS_SEMANA');
+    expect(src).toContain('getOperationalWeekDays(hoy, App.generalSettings)');
+    expect(src).toContain('getOperationalWeekDays(inicio, App.generalSettings)');
+    expect(src).toContain('getOperationalWeekDays(cursor, App.generalSettings)');
   });
 
-  it('el rango semanal llega hasta domingo (+6 días), no hasta sábado (+5)', () => {
-    expect(src).toContain('fin.setDate(inicio.getDate() + 6);');
-    expect(src).not.toContain('fin.setDate(inicio.getDate() + 5);');
+  it('la semana sigue siendo de 7 días completos (dias0[6], no dias0[5]) — nunca se recorta a 6', () => {
+    expect(src).toContain('const dias0 = getOperationalWeekDays(hoy, App.generalSettings);');
+    expect(src).toContain('inicio = dias0[0]; fin = dias0[6];');
+    expect(src).not.toContain('dias0[5]');
   });
 
   it('ya NO existe la columna combinada "ENGRASE A FLOTA DE VOLQUETES" ni el caso especial domingo-h/rowspan', () => {

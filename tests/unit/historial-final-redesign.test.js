@@ -50,8 +50,11 @@ describe('Historial global — textbox full-width + 4 filtros, todo AND, sin Fam
 
   it('gh-search se cablea a "input" con debounce, los demás a "change" (auto-actualiza, sin botón)', () => {
     expect(src).toMatch(/gh-search'\)\.addEventListener\('input'/);
-    expect(src).toMatch(/gh-from'\)\.addEventListener\('change', runGeneralSearch\)/);
-    expect(src).toMatch(/gh-to'\)\.addEventListener\('change', runGeneralSearch\)/);
+    // gh-from/gh-to (filtro "Semana operativa", 2026-10-30) también
+    // resetean gh-periodo a "Personalizado" al editarse a mano, pero
+    // siguen disparando runGeneralSearch() en el mismo evento 'change'.
+    expect(src).toMatch(/gh-from'\)\.addEventListener\('change', \(\) => \{ \$\('#gh-periodo'\)\.value = ''; runGeneralSearch\(\); \}\)/);
+    expect(src).toMatch(/gh-to'\)\.addEventListener\('change', \(\) => \{ \$\('#gh-periodo'\)\.value = ''; runGeneralSearch\(\); \}\)/);
     expect(src).toMatch(/gh-turno'\)\.addEventListener\('change', runGeneralSearch\)/);
     expect(src).toMatch(/gh-estado'\)\.addEventListener\('change', runGeneralSearch\)/);
   });
