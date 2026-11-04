@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
-import { APP_JS_PATH, DB_JS_PATH, OPERATIONAL_SCOPE_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { APP_JS_PATH, DB_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, OPERATIONAL_WEEK_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 const appSource = readSource(APP_JS_PATH);
@@ -53,10 +53,16 @@ const appNames = [
   // de verdad aquí (DB.getConfig() no trae `url`, así que el bloque entero
   // de diagnóstico ni se pinta), pero debe existir como función real o
   // renderConfig() revienta con un ReferenceError al definirse/llamarse.
-  'wireBlockedOperationsPanel',
+  'wireBlockedOperationsPanel', 'wireSyncConflictsPanel',
 ];
 const app = appNames.map(n => extractDeclaration(appSource, n)).join('\n\n');
 const scope = readSource(OPERATIONAL_SCOPE_JS_PATH); // canManageCrewMembership/resolveCrewLocationCoverage/validateCrewLocationCoverage
+const operationalWeek = ['OPERATIONAL_WEEK_START_DAY_DEFAULT', 'OPERATIONAL_WEEK_START_TIME_DEFAULT',
+  'OPERATIONAL_WEEK_START_DAY_OPTIONS', 'OPERATIONAL_WEEK_MONTH_ABBR',
+  'normalizeOperationalWeekStartDay', 'normalizeOperationalWeekStartTime',
+  'operationalWeekBoundaryInstant', 'getOperationalWeekStart', 'getOperationalWeekEnd', 'getOperationalWeekDays',
+  'getOperationalWeekRange', 'previousOperationalWeekRange', 'getOperationalWeekLabel']
+  .map(name => extractDeclaration(readSource(OPERATIONAL_WEEK_JS_PATH), name)).join('\n\n');
 
 async function boot(page, { role = 'ADMINISTRADOR', supabaseMode = true, users = [], manageUsersList = [] } = {}) {
   page.on('dialog', d => d.accept());
@@ -105,8 +111,9 @@ async function boot(page, { role = 'ADMINISTRADOR', supabaseMode = true, users =
       window.Auth = {
         isSupabaseMode: () => ${supabaseMode}, isAuthenticated: () => true,
         getProfile: () => ({ appUserId: 'u1' }),
-        manageUsers: async (action) => {
+        manageUsers: async (action, payload) => {
           window.__manageUsersCalls = (window.__manageUsersCalls || []).concat([action]);
+          window.__manageUsersPayloads = (window.__manageUsersPayloads || []).concat([{ action, payload }]);
           if (action === 'LIST_USERS') return { users: ${JSON.stringify(manageUsersList)} };
           return {};
         },
@@ -162,6 +169,7 @@ async function boot(page, { role = 'ADMINISTRADOR', supabaseMode = true, users =
       };
       ${dbSrc}
       ${scope}
+      ${operationalWeek}
       ${app}
       window.renderConfig = renderConfig;
       window.navigate = navigate;
@@ -223,6 +231,41 @@ test('4. Usuarios y accesos > Editar usuario > Guardar => sigue en Usuarios y ac
   await expect(configCat(page, 'usuarios')).toBeVisible();
   await expect(configCat(page, 'general')).toBeHidden();
   expect(await page.evaluate(() => window.__manageUsersCalls)).toContain('UPDATE_ROLE');
+});
+
+test('4b. PLANIFICADOR exige ubicación maestra al crear y conserva la real al editar', async ({ page }) => {
+  await boot(page, { manageUsersList: [{ app_user_id: 'planner-1', display_name: 'Planificador Volcán', role: 'PLANIFICADOR', location_id: 'loc1', active: true }] });
+  const mobileUsersEntry = page.locator('.config-mobile-item[data-category="usuarios"]');
+  if (await mobileUsersEntry.isVisible()) await mobileUsersEntry.click();
+  else await configTab(page, 'usuarios').click();
+
+  await page.locator('#config-usuarios-embed button[data-role="planner-1"]').click();
+  const editLocation = page.locator('#role-form-sb [name="location_id"]');
+  await expect(editLocation).toBeVisible();
+  await expect(editLocation).toHaveAttribute('required', '');
+  await expect(editLocation).toHaveValue('loc1');
+  await page.evaluate(() => closeModal());
+
+  await page.locator('#btn-new-user-sb').click();
+  await page.locator('#user-form-sb [name="role"]').selectOption('PLANIFICADOR');
+  const createLocation = page.locator('#user-form-sb [name="location_id"]');
+  await expect(createLocation).toBeVisible();
+  await expect(createLocation).toHaveAttribute('required', '');
+  await expect(createLocation).toHaveValue('');
+  await expect(createLocation.locator('option').first()).toHaveText('— Seleccionar ubicación —');
+  await page.locator('#user-form-sb [name="display_name"]').fill('Nueva Planificadora');
+  await page.locator('#user-form-sb [name="username"]').fill('nueva.planificadora');
+  await page.locator('#user-form-sb [name="temp_password"]').fill('Segura123');
+  await page.locator('#user-form-sb [name="temp_password_confirm"]').fill('Segura123');
+  await page.locator('#user-form-sb button[type="submit"]').click();
+  expect(await page.evaluate(() => (window.__manageUsersCalls || []).filter(action => action === 'CREATE_USER'))).toHaveLength(0);
+
+  await createLocation.selectOption('loc1');
+  await page.locator('#user-form-sb button[type="submit"]').click();
+  await expect(page.locator('#user-form-sb')).toHaveCount(0);
+  const createCall = await page.evaluate(() => window.__manageUsersPayloads.find(call => call.action === 'CREATE_USER'));
+  expect(createCall.payload.location_id).toBe('loc1');
+  expect(createCall.payload.role).toBe('PLANIFICADOR');
 });
 
 test('5. Notificaciones > Guardar => sigue en Notificaciones', async ({ page }) => {

@@ -98,7 +98,8 @@ function localAuthorizationState(store, row, context, currentAppUserId) {
   const pending = row._pushedVersion !== row.updatedAt || row._executionOperationId || row._evidenceOperationId;
   const state = pending ? 'PENDING_LOCAL' : 'AUTHORIZED';
   if (context.scopeType === 'GLOBAL') return state;
-  if (context.scopeType !== 'CREW_SCOPED') return 'OUT_OF_SCOPE';
+  if (!['CREW_SCOPED','LOCATION_SCOPED'].includes(context.scopeType)) return 'OUT_OF_SCOPE';
+  const crewScoped = context.scopeType === 'CREW_SCOPED';
   const crews = new Set(context.authorizedCrewIds || []);
   const locations = new Set(context.authorizedLocationIds || []);
   if (store === 'users' || store === 'audit_log') return 'OUT_OF_SCOPE';
@@ -113,10 +114,17 @@ function localAuthorizationState(store, row, context, currentAppUserId) {
   // sin agregarla a authorizedLocationIds ni conceder otros equipos de alli.
   if (store === 'locations') return locations.has(row.id) ? state : 'OUT_OF_SCOPE';
   if (store === 'equipment') return locations.has(row.locationId) ? state : 'OUT_OF_SCOPE';
+  // Para PLANIFICADOR, toda fila operativa relacionada se decide contra la
+  // ubicación MAESTRA actual del equipo en authorizationStateForRow(). Un
+  // snapshot histórico/locationId embebido nunca puede ampliar el alcance.
+  if (context.scopeType === 'LOCATION_SCOPED' && [
+    'lubrication_plans','lubrication_points','lubrication_records','lubrication_skips',
+    'lubrication_assignments','anomalies','grease_validations','manual_tasks',
+  ].includes(store)) return 'OUT_OF_SCOPE';
   if (store==='lubrication_assignments' && row.assignedCrewId) {
-    if (!crews.has(row.assignedCrewId)) return 'OUT_OF_SCOPE';
+    if (crewScoped && !crews.has(row.assignedCrewId)) return 'OUT_OF_SCOPE';
     if (row.locationId && !locations.has(row.locationId)) return 'OUT_OF_SCOPE';
-    return state;
+    return crewScoped || row.locationId ? state : 'OUT_OF_SCOPE';
   }
   // broadcast_messages/broadcast_message_reads (0017, ACTIVE en producción)
   // — mismo criterio de targeting que broadcast_row_in_scope: ALL_LUBRICATORS
@@ -139,13 +147,14 @@ function localAuthorizationState(store, row, context, currentAppUserId) {
     if (row.targetType === 'ALL_LUBRICATORS') return state;
     if (row.targetType === 'USER') return row.targetId === currentAppUserId ? state : 'OUT_OF_SCOPE';
     if (row.targetType === 'CREW') return crews.has(row.targetId) ? state : 'OUT_OF_SCOPE';
+    if (row.targetType === 'LOCATION' && context.scopeType === 'LOCATION_SCOPED') return locations.has(row.targetId) ? state : 'OUT_OF_SCOPE';
     return 'OUT_OF_SCOPE'; // LOCATION y cualquier targetType desconocido: ver authorizationStateForRow().
   }
   if (store === 'broadcast_message_reads') return row.userId === currentAppUserId ? state : 'OUT_OF_SCOPE';
   const snapshot = row.operationalSnapshot || {};
   const crewId = row.crewId || row.cuadrillaId || snapshot.crewId;
   const locationId = row.locationId || snapshot.equipmentLocationIdAtExecution || snapshot.executionLocationId;
-  if (crewId && !crews.has(crewId)) return 'OUT_OF_SCOPE';
+  if (crewScoped && crewId && !crews.has(crewId)) return 'OUT_OF_SCOPE';
   if (locationId && !locations.has(locationId)) return 'OUT_OF_SCOPE';
   if (crewId || locationId) return state;
   if (['equipment_types','lubricants','shifts','settings'].includes(store)) return state;
@@ -593,7 +602,7 @@ const DB = {
       const supported=localAuthorizationState(store,row,context,appUserId);
       if (supported!=='OUT_OF_SCOPE') return supported;
     }
-    if (store==='grease_validations' && context?.scopeType==='CREW_SCOPED') {
+    if (store==='grease_validations' && ['CREW_SCOPED','LOCATION_SCOPED'].includes(context?.scopeType)) {
       const record=await this.getRaw('lubrication_records',row?.lubricationRecordId || row?.recordId);
       if (!record) return 'OUT_OF_SCOPE';
       const snapshot=record.operationalSnapshot || {};
@@ -601,6 +610,11 @@ const DB = {
       const scopedValidation={...row,
         crewId:row.crewId || record.crewId || record.cuadrillaId || snapshot.crewId,
         locationId:row.locationId || record.locationId || snapshot.equipmentLocationIdAtExecution || snapshot.executionLocationId || equipment?.locationId};
+      if (context.scopeType==='LOCATION_SCOPED') {
+        if (!equipment || !(context.authorizedLocationIds||[]).includes(equipment.locationId)) return 'OUT_OF_SCOPE';
+        const pending=row._pushedVersion!==row.updatedAt || row._executionOperationId || row._evidenceOperationId;
+        return pending?'PENDING_LOCAL':'AUTHORIZED';
+      }
       return localAuthorizationState(store,scopedValidation,context,appUserId);
     }
     // broadcast_messages targetType=LOCATION (0017): cobertura OPERATIVA
@@ -635,7 +649,7 @@ const DB = {
       return pending?'PENDING_LOCAL':'AUTHORIZED';
     }
     const direct=localAuthorizationState(store,row,context,appUserId);
-    if (context?.scopeType!=='CREW_SCOPED') return direct;
+    if (!['CREW_SCOPED','LOCATION_SCOPED'].includes(context?.scopeType)) return direct;
     const locations=new Set(context.authorizedLocationIds||[]);
     let equipmentId=row?.equipmentId;
     if (store==='lubrication_points' && row?.planId) {
@@ -646,8 +660,9 @@ const DB = {
       const equipment=await this.getRaw('equipment',equipmentId);
       if (equipment && locations.has(equipment.locationId) &&
           (!row.locationId || row.locationId===equipment.locationId) &&
-          (!row.crewId || (context.authorizedCrewIds||[]).includes(row.crewId)) &&
-          (direct!=='OUT_OF_SCOPE' || ['lubrication_plans','lubrication_points'].includes(store))) {
+          (context.scopeType==='LOCATION_SCOPED' || !row.crewId || (context.authorizedCrewIds||[]).includes(row.crewId)) &&
+          (direct!=='OUT_OF_SCOPE' || ['lubrication_plans','lubrication_points','lubrication_records','lubrication_skips',
+            'lubrication_assignments','anomalies','manual_tasks'].includes(store))) {
         const pending=row._pushedVersion!==row.updatedAt || row._executionOperationId || row._evidenceOperationId;
         return pending?'PENDING_LOCAL':'AUTHORIZED';
       }

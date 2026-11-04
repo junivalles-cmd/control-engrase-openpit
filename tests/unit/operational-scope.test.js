@@ -41,14 +41,13 @@ describe('Permisos por rol (§AB)', () => {
     expect(canManageAssignments('LUBRICADOR')).toBe(false);
     expect(canManageAssignments('VISOR')).toBe(false);
   });
-  it('canMoveEquipment/canMoveCrew: solo ADMIN/PLANIFICADOR (§W/§Z)', () => {
-    for (const fn of [canMoveEquipment, canMoveCrew]) {
-      expect(fn('ADMINISTRADOR')).toBe(true);
-      expect(fn('PLANIFICADOR')).toBe(true);
-      expect(fn('SUPERVISOR')).toBe(false);
-      expect(fn('LUBRICADOR')).toBe(false);
-      expect(fn('VISOR')).toBe(false);
-    }
+  it('mover ubicación maestra queda en ADMIN; mover cuadrilla conserva ADMIN/PLANIFICADOR', () => {
+    expect(canMoveEquipment('ADMINISTRADOR')).toBe(true);
+    expect(canMoveEquipment('PLANIFICADOR')).toBe(false);
+    expect(canMoveEquipment('SUPERVISOR')).toBe(false);
+    expect(canMoveCrew('ADMINISTRADOR')).toBe(true);
+    expect(canMoveCrew('PLANIFICADOR')).toBe(true);
+    expect(canMoveCrew('SUPERVISOR')).toBe(false);
   });
   it('canManageCrewMembership: ADMIN/PLANIFICADOR autorizan miembros de una cuadrilla, el resto no (reemplaza al viejo canConfigureDevice)', () => {
     expect(canManageCrewMembership('ADMINISTRADOR')).toBe(true);
@@ -267,12 +266,24 @@ describe('getAuthorizedCrews() — única fuente de autorización (corrección a
 describe('resolveOperationalScope() (§I) — reescrito 2026-10-02: autorización por USUARIO (cuadrillas[].memberUserIds), nunca por dispositivo', () => {
   const cuadrillas = [{ id: 'crew_mojon', locationId: 'loc_mojon', active: true, isDefault: true, createdAt: '2026-01-01', memberUserIds: ['u_lub1', 'u_lub3', 'u_lub4'] }];
 
-  it('jefaturas (ADMIN/PLANIFICADOR/VISOR) -> GLOBAL, sin scope de cuadrilla', () => {
-    for (const role of ['ADMINISTRADOR', 'PLANIFICADOR', 'VISOR']) {
+  it('ADMINISTRADOR/VISOR -> GLOBAL, sin scope de cuadrilla', () => {
+    for (const role of ['ADMINISTRADOR', 'VISOR']) {
       const scope = resolveOperationalScope({ currentUser: { id: 'u1', role }, cuadrillas, shiftId: 'shift_dia' });
       expect(scope.kind).toBe('GLOBAL');
       expect(scope.crewId).toBeNull();
     }
+  });
+
+  it('PLANIFICADOR -> LOCATION_SCOPED con su única ubicación explícita', () => {
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'PLANIFICADOR', locationId: 'loc_volcan' }, cuadrillas, shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('LOCATION_SCOPED');
+    expect(scope.locationId).toBe('loc_volcan');
+    expect(scope.authorizedLocationIds).toEqual(['loc_volcan']);
+  });
+
+  it('PLANIFICADOR sin ubicación falla cerrado', () => {
+    const scope = resolveOperationalScope({ currentUser: { id: 'u1', role: 'PLANIFICADOR' }, cuadrillas, shiftId: 'shift_dia' });
+    expect(scope.kind).toBe('NO_LOCATION_ASSIGNED');
   });
 
   it('CORRECCIÓN: SUPERVISOR ya NO es GLOBAL — ahora es crew-scoped igual que LUBRICADOR (pedido explícito: "SUPERVISOR y LUBRICADOR: cargar las cuadrillas autorizadas")', () => {

@@ -1809,7 +1809,7 @@ async function notificarEngraseRealizado(record, equipment) {
 // agrega ahí por separado.
 const PERMISSIONS = {
   ADMINISTRADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','registrar','horometros','anomalias','lubricantes','historial','reportes','usuarios','config','ayuda'],
-  PLANIFICADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','historial','reportes','horometros','ayuda'],
+  PLANIFICADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','historial','anomalias','reportes','horometros','ayuda'],
   SUPERVISOR: ['dashboard','tareas-mensajes','equipos','matriz','turno','anomalias','historial','usuarios','ayuda'],
   LUBRICADOR: ['turno','anomalias','historial','ayuda'],
   VISOR: ['dashboard','matriz','historial','reportes','ayuda']
@@ -2974,12 +2974,12 @@ function logout() {
    mínimo que ya usa el resto de app.js.
    ============================================================ */
 
-// Mismo patrón que doLogin() (legacy) al armar App.currentUser — sin
-// inventar campos que Auth/app_profiles no tiene (shiftId/cuadrillaId/
-// locationId: fuera de alcance de P0-2, las personas Auth reales no están
-// ligadas al store "users" legacy, ver docs/AUTH_RLS_IMPLEMENTATION_PLAN.md §17).
+// Mismo patrón que doLogin() (legacy) al armar App.currentUser. locationId
+// viene de app_profiles exclusivamente para PLANIFICADOR; nunca se infiere
+// de cuadrilla, dispositivo, turno ni del primer equipo disponible.
 function currentUserFromAuthProfile(profile) {
-  return { id: profile.appUserId, name: profile.displayName, role: profile.role, username: profile.appUserId };
+  return { id: profile.appUserId, name: profile.displayName, role: profile.role,
+    username: profile.appUserId, locationId: profile.locationId || null };
 }
 
 // Reproduce el deep-link que abrirDesdeNotificacion() dejó en espera por
@@ -3149,6 +3149,13 @@ function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations, includeContex
   if (!scope || scope.kind === 'NONE') return '<div><b>Cuadrilla</b><div>—</div></div>';
   if (scope.kind === 'GLOBAL') {
     return '<div><b>Alcance</b><div>Global (según permisos del rol)</div></div>';
+  }
+  if (scope.kind === 'LOCATION_SCOPED') {
+    const location = locations.find(item => item.id === scope.locationId);
+    return `<div><b>Ubicación asignada</b><div>${esc(location?.name || scope.locationId)}</div></div>`;
+  }
+  if (scope.kind === 'NO_LOCATION_ASSIGNED') {
+    return '<div><b>Ubicación asignada</b><div>Sin ubicación — solicita a Administración que complete tu perfil.</div></div>';
   }
   if (scope.kind === 'NO_CREW_ASSIGNED') {
     return '<div><b>Cuadrilla</b><div>Sin cuadrilla autorizada todavía — pide a Administración/Planificación que te agregue a una.</div></div>';
@@ -3647,7 +3654,18 @@ function navigate(route) {
     miperfil: renderMiPerfil, lubconfig: renderLubricadorConfig,
     'tareas-mensajes': renderTareasYMensajes
   };
-  Promise.resolve((renderers[route] || renderDashboard)()).then(() => makeTablesResponsive($('#app-content')));
+  const renderRoute = async () => {
+    if (App.currentUser.role === 'PLANIFICADOR' && !['miperfil','ayuda'].includes(route)) {
+      const scope = await getCurrentOperationalScope();
+      if (scope.kind === 'NO_LOCATION_ASSIGNED') {
+        const content = $('#app-content');
+        if (content) content.innerHTML = '<div class="empty-state">No tienes una ubicación asignada. Contacta al administrador.</div>';
+        return;
+      }
+    }
+    return (renderers[route] || renderDashboard)();
+  };
+  Promise.resolve(renderRoute()).then(() => makeTablesResponsive($('#app-content')));
 }
 
 // Convierte cualquier <table class="data-table"> en tarjetas apiladas en pantallas angostas,
@@ -5660,11 +5678,9 @@ async function renderDashboard() {
 
   // Hardening pre-release 2026-10-08: SUPERVISOR (scope CREW_SCOPED, ver
   // operational-scope.js) nunca debe ver KPIs/listas de equipos fuera de
-  // su(s) cuadrilla(s)/ubicación(es) autorizadas — ADMINISTRADOR/
-  // PLANIFICADOR/VISOR (scope GLOBAL) no cambian, mismo alcance de siempre
-  // (ADMIN/PLANIFICADOR ya hoy ven "Realizados hoy"/"Anomalías abiertas"
-  // como conteo GLOBAL aunque filtren Ubicación/Familia — ver comentario de
-  // `equipoIdsFiltrados` más abajo — eso sigue intacto, esto NO lo toca).
+  // su(s) cuadrilla(s)/ubicación(es) autorizadas. PLANIFICADOR ya recibe
+  // desde DB únicamente su LOCATION_SCOPED; ADMINISTRADOR/VISOR conservan
+  // el alcance global que corresponda a sus permisos.
   // Reutiliza classifyEquipmentWork() (operational-scope.js), la MISMA
   // función ya usada en renderLubricadorHome() — nunca una reimplementación
   // del criterio de scope. Solo acota el UNIVERSO de datos
@@ -6712,7 +6728,8 @@ async function renderEquipos() {
   const locations = await DB.allActive('locations');
   const plans = await DB.allActive('lubrication_plans');
   const points = await DB.allActive('lubrication_points');
-  const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+  const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  const canAdminister = App.currentUser.role === 'ADMINISTRADOR';
   let bulkMode = false;
   const selected = new Set();
 
@@ -6816,9 +6833,9 @@ async function renderEquipos() {
         <button type="button" class="btn btn-sm view-switch-btn" data-view="table" aria-pressed="${viewMode === 'table' ? 'true' : 'false'}">${ic("matrix")}Tabla</button>
       </div>
       ${canEdit ? `<button class="btn btn-accent" id="eq-new">${ic("plus")}Nuevo equipo</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-import">${ic("upload")}Importar desde Excel</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-bulk-toggle">${ic("edit")}Editar en lote</button>` : ''}
-      ${canEdit ? `<button class="btn" id="eq-print-all-qr">${ic("print")}Imprimir QR de todos</button>` : ''}
+      ${canAdminister ? `<button class="btn" id="eq-import">${ic("upload")}Importar desde Excel</button>` : ''}
+      ${canAdminister ? `<button class="btn" id="eq-bulk-toggle">${ic("edit")}Editar en lote</button>` : ''}
+      ${canAdminister ? `<button class="btn" id="eq-print-all-qr">${ic("print")}Imprimir QR de todos</button>` : ''}
       <input type="file" id="eq-import-file" accept=".xlsx,.xls,.csv" class="hidden"/>
     </div>
     <div id="eq-bulk-bar" class="bulk-bar hidden">
@@ -7091,7 +7108,7 @@ async function renderEquipos() {
   }
   $$('.view-switch-btn', $('#eq-view-switch')).forEach(b => b.addEventListener('click', () => setViewMode(b.dataset.view)));
 
-  if (canEdit) {
+  if (canAdminister) {
     // S15 (auditoría pre-release 2026-10-21): imprimir el QR de TODOS los
     // equipos puede disparar cientos de páginas por un clic accidental —
     // confirmar con el conteo real antes de generar.
@@ -7108,7 +7125,7 @@ async function renderEquipos() {
     });
   }
 
-  if (canEdit) {
+  if (canAdminister) {
     let viewModeBeforeBulk = null;
     $('#eq-bulk-toggle').addEventListener('click', () => {
       bulkMode = !bulkMode;
@@ -7211,7 +7228,7 @@ async function renderEquipos() {
     });
   }
 
-  if (canEdit) {
+  if (canAdminister) {
     $('#eq-import').addEventListener('click', () => $('#eq-import-file').click());
     $('#eq-import-file').addEventListener('change', async (ev) => {
       const file = ev.target.files[0];
@@ -7345,7 +7362,8 @@ async function openEquipmentDetail(id) {
   const e = await DB.get('equipment', id);
   const s = await statusFor(e);
   const types = await DB.allActive('equipment_types');
-  const canEdit = App.currentUser.role === 'ADMINISTRADOR';
+  const canEdit = ['ADMINISTRADOR', 'PLANIFICADOR'].includes(App.currentUser.role);
+  const canDelete = App.currentUser.role === 'ADMINISTRADOR';
 
   // Últimos engrases y anomalías abiertas, para no tener que ir a Historial y filtrar
   const lubricantes = await DB.allActive('lubricants');
@@ -7628,7 +7646,7 @@ async function openEquipmentDetail(id) {
       ${canMoveEquipment(App.currentUser.role) ? `
         <button class="btn" id="btn-mover-ubicacion">${ic("edit")}Mover ubicación</button>` : ''}
       ${canEdit ? `<button class="btn" id="btn-edit-eq">${ic("edit")}Editar</button>` : ''}
-      ${canEdit ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
+      ${canDelete ? `<button class="btn btn-danger" id="btn-delete-eq">${ic("trash")}Eliminar equipo</button>` : ''}
     </div>
   `, 'modal-ficha-equipo');
   $('#btn-view-hist-link')?.addEventListener('click', () => $('#btn-view-hist').click());
@@ -8037,9 +8055,8 @@ async function openManualTaskDetailModal(task, equipo, cuadrillas) {
   const scope = await getCurrentOperationalScope();
   const canComplete = actor.role === 'LUBRICADOR' && task.status === 'PENDING' && task.active !== false && scope.crewId === task.crewId;
   const statusLabel = task.active === false ? 'Eliminada' : { PENDING: 'Pendiente', COMPLETED: 'Completada', CANCELLED: 'Cancelada' }[task.status] || task.status;
-  // 'users' solo existe localmente para roles GLOBAL (ADMIN/PLANIFICADOR/
-  // VISOR, ver localAuthorizationState() en db.js) — un LUBRICADOR/
-  // SUPERVISOR CREW_SCOPED nunca lo tiene, así que el fallback es el
+  // 'users' legacy solo existe localmente para roles que lo tengan permitido
+  // (PLANIFICADOR LOCATION_SCOPED no lo recibe, ver db.js); el fallback es el
   // appUserId crudo (nunca un nombre inventado).
   const users = await DB.allActive('users');
   const nameFor = (appUserId) => appUserId === actor.id ? actor.name : (users.find(u => u.id === appUserId)?.name || appUserId || '—');
@@ -8226,6 +8243,22 @@ async function deleteEquipmentCascade(equipment, opts = {}) {
 
 async function openEquipmentForm(equipment, types, locations) {
   const isNew = !equipment;
+  const plannerScope = App.currentUser.role === 'PLANIFICADOR' ? await getCurrentOperationalScope() : null;
+  if (plannerScope && plannerScope.kind !== 'LOCATION_SCOPED') {
+    showInAppToast('No tienes una ubicación asignada. Contacta al administrador.');
+    return;
+  }
+  const plannerLocation = plannerScope
+    ? locations.find(location => location.id === plannerScope.locationId) || await DB.get('locations', plannerScope.locationId)
+    : null;
+  if (plannerScope && !plannerLocation) {
+    showInAppToast('No tienes una ubicación asignada. Contacta al administrador.');
+    return;
+  }
+  if (plannerScope && equipment && equipment.locationId !== plannerScope.locationId) {
+    showInAppToast('No puedes editar un equipo fuera de tu ubicación asignada.');
+    return;
+  }
   // Bug real de datos maestros (auditoría 2026-10-29, "CATEGORÍAS MEZCLADAS"):
   // un equipo NUEVO pre-seleccionaba `typeId: types[0]?.id` — el PRIMER tipo
   // de la lista, SIN que el operador tuviera que elegirlo a propósito. Si
@@ -8260,12 +8293,16 @@ async function openEquipmentForm(equipment, types, locations) {
         </select>
         <span class="field-hint">Debe corresponder al tipo real del equipo — lo usa "Copiar puntos de otro equipo" para no mezclar categorías.</span>
       </label>
-      <label>Ubicación
+      ${plannerScope ? `<label>Ubicación
+        <input value="${esc(plannerLocation.name)}" readonly aria-readonly="true"/>
+        <input type="hidden" name="locationId" value="${esc(plannerScope.locationId)}"/>
+        <span class="field-hint">Asignada a tu perfil de Planificador.</span>
+      </label>` : `<label>Ubicación
         <select required name="locationId">
           ${isNew ? '<option value="" disabled selected>— Selecciona una ubicación —</option>' : ''}
           ${locations.map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
         </select>
-      </label>
+      </label>`}
       <label>Estado
         <select name="status">
           ${['Operativo', 'Detenido', 'En mantenimiento', 'Fuera de servicio'].map(st => `<option ${st === e.status ? 'selected' : ''}>${st}</option>`).join('')}
@@ -8294,6 +8331,7 @@ async function openEquipmentForm(equipment, types, locations) {
     ev.preventDefault();
     const fd = new FormData(ev.target);
     const obj = Object.fromEntries(fd.entries());
+    if (plannerScope) obj.locationId = plannerScope.locationId;
     obj.hourmeter = parseFloat(obj.hourmeter);
     obj.code = (obj.code || '').trim();
     if (!obj.code) { alert('El código no puede quedar vacío.'); return; }
@@ -14123,6 +14161,8 @@ const MANAGE_USERS_ERROR_LABELS = {
   TIMEOUT: 'El servidor no respondió a tiempo. Intenta de nuevo.',
   username_taken: 'Ese nombre de usuario ya existe. Elige otro.',
   invalid_role: 'El rol seleccionado no es válido.',
+  planner_location_required: 'Selecciona la ubicación asignada al planificador.',
+  invalid_location: 'La ubicación seleccionada no existe o está inactiva.',
   temp_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
   new_password_required_min_8: 'La contraseña debe tener al menos 8 caracteres.',
   display_name_required: 'Escribe el nombre completo.',
@@ -14149,6 +14189,7 @@ function manageUsersErrorMessage(err) {
 }
 async function renderUsuariosSupabase(c) {
   const offline = !navigator.onLine;
+  const locations = await DB.allActive('locations');
   c.innerHTML = `
     <div class="toolbar">
       <button class="btn btn-accent" id="btn-new-user-sb" ${offline ? 'disabled title="Requiere conexión"' : ''}>${ic('plus')}Nuevo usuario</button>
@@ -14156,9 +14197,9 @@ async function renderUsuariosSupabase(c) {
     </div>
     <div class="panel">
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Rol</th><th>Activo</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Rol</th><th>Ubicación asignada</th><th>Activo</th><th></th></tr></thead>
         <tbody id="usuarios-sb-tbody">
-          <tr><td colspan="4" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
+          <tr><td colspan="5" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
         </tbody>
       </table>
     </div>`;
@@ -14177,7 +14218,7 @@ async function renderUsuariosSupabase(c) {
     users = res.users || [];
   } catch (e) {
     const tbody = $('#usuarios-sb-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
     // BUG-AUTH-001: sin sesión válida (ni siquiera tras el intento de
     // refresh dentro de Auth.manageUsers()), el botón queda deshabilitado
     // en vez de clickeable-pero-sin-efecto — mismo criterio visual que el
@@ -14195,6 +14236,7 @@ async function renderUsuariosSupabase(c) {
     <tr>
       <td>${esc(u.display_name)}</td>
       <td>${esc(u.role)}</td>
+      <td>${u.role === 'PLANIFICADOR' ? esc(locations.find(location => location.id === u.location_id)?.name || u.location_id || 'Sin asignar') : 'Global / no aplica'}</td>
       <td>${u.active ? 'Sí' : 'No'}</td>
       <td class="row-actions">
         <button class="btn btn-sm" data-role="${esc(u.app_user_id)}">${ic('edit')}Rol</button>
@@ -14203,12 +14245,12 @@ async function renderUsuariosSupabase(c) {
         </button>
         <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">${ic("rotate-ccw")}Reset password</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="4" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
 
-  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase(c));
+  $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase(c, locations));
   $$('button[data-role]', c).forEach(b => b.addEventListener('click', () => {
     const u = users.find(x => x.app_user_id === b.dataset.role);
-    if (u) roleFormSupabase(u, c);
+    if (u) roleFormSupabase(u, c, locations);
   }));
   $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', () => {
     const activeNow = b.dataset.active === 'true';
@@ -14263,7 +14305,7 @@ async function withSubmitGuard(form, busyLabel, fn) {
 // solos sin tocar este handler, siempre que manage-users los valide como
 // campos PROPIOS y separados de `role` (nunca mezclados, nunca
 // SUPERVISOR_DIA/NOCHE como rol).
-function userFormSupabase(c) {
+function userFormSupabase(c, locations = []) {
   openModal('Nuevo usuario', `
     <form id="user-form-sb" class="form-grid">
       <label>Nombre completo<input required name="display_name"/></label>
@@ -14271,16 +14313,37 @@ function userFormSupabase(c) {
         <span class="field-hint">Sin espacios ni "@" — se usa para generar el acceso interno, nunca se muestra completo.</span>
       </label>
       <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option>${r}</option>`).join('')}</select></label>
+      <label id="planner-location-field" hidden>Ubicación
+        <select name="location_id" disabled>
+          <option value="">— Seleccionar ubicación —</option>
+          ${locations.map(location => `<option value="${esc(location.id)}">${esc(location.name)}</option>`).join('')}
+        </select>
+      </label>
       <label>Contraseña temporal (mínimo 8 caracteres)<input required minlength="8" type="password" name="temp_password" autocomplete="new-password"/>
         <span class="field-hint">La persona debería cambiarla apenas entre. Nunca queda guardada en este dispositivo.</span>
       </label>
       <label>Confirmar contraseña<input required minlength="8" type="password" name="temp_password_confirm" autocomplete="new-password"/></label>
       <div class="modal-actions"><button type="submit" class="btn btn-accent">Crear usuario</button></div>
     </form>`);
-  $('#user-form-sb').addEventListener('submit', async (ev) => {
+  const formElement = $('#user-form-sb');
+  const roleSelect = formElement.querySelector('[name="role"]');
+  const locationField = formElement.querySelector('#planner-location-field');
+  const locationSelect = formElement.querySelector('[name="location_id"]');
+  const syncPlannerLocationField = () => {
+    const planner = roleSelect.value === 'PLANIFICADOR';
+    locationField.hidden = !planner; locationSelect.disabled = !planner; locationSelect.required = planner;
+    if (!planner) locationSelect.value = '';
+  };
+  roleSelect.addEventListener('change', syncPlannerLocationField);
+  syncPlannerLocationField();
+  formElement.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const form = ev.target;
     const fd = Object.fromEntries(new FormData(form).entries());
+    if (fd.role === 'PLANIFICADOR' && !fd.location_id) {
+      showInAppToast('✗ Selecciona la ubicación asignada al planificador.');
+      return;
+    }
     // Validación de formulario (nunca sustituye al servidor, solo evita
     // un viaje de red inútil por un error obvio): campos requeridos ya
     // los cubre `required`/`minlength` del HTML; lo único que el HTML no
@@ -14305,19 +14368,41 @@ function userFormSupabase(c) {
   });
 }
 
-function roleFormSupabase(u, c) {
+function roleFormSupabase(u, c, locations = []) {
   openModal(`Cambiar rol · ${esc(u.display_name)}`, `
     <form id="role-form-sb" class="form-grid">
       <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <label id="planner-role-location-field" ${u.role === 'PLANIFICADOR' ? '' : 'hidden'}>Ubicación
+        <select name="location_id" ${u.role === 'PLANIFICADOR' ? 'required' : 'disabled'}>
+          <option value="">— Seleccionar ubicación —</option>
+          ${locations.map(location => `<option value="${esc(location.id)}" ${location.id === u.location_id ? 'selected' : ''}>${esc(location.name)}</option>`).join('')}
+        </select>
+      </label>
       <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar</button></div>
     </form>`);
-  $('#role-form-sb').addEventListener('submit', async (ev) => {
+  const formElement = $('#role-form-sb');
+  const roleSelect = formElement.querySelector('[name="role"]');
+  const locationField = formElement.querySelector('#planner-role-location-field');
+  const locationSelect = formElement.querySelector('[name="location_id"]');
+  const syncPlannerLocationField = () => {
+    const planner = roleSelect.value === 'PLANIFICADOR';
+    locationField.hidden = !planner; locationSelect.disabled = !planner; locationSelect.required = planner;
+    if (!planner) locationSelect.value = '';
+  };
+  roleSelect.addEventListener('change', syncPlannerLocationField);
+  syncPlannerLocationField();
+  formElement.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const form = ev.target;
     const fd = Object.fromEntries(new FormData(form).entries());
+    if (fd.role === 'PLANIFICADOR' && !fd.location_id) {
+      showInAppToast('✗ Selecciona la ubicación asignada al planificador.');
+      return;
+    }
     await withSubmitGuard(form, 'Guardando…', async () => {
       try {
-        await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role });
+        await Auth.manageUsers('UPDATE_ROLE', { app_user_id: u.app_user_id, role: fd.role,
+          location_id: fd.role === 'PLANIFICADOR' ? fd.location_id : null });
         showInAppToast('✓ Rol actualizado correctamente.');
         closeModal();
         if (c) renderUsuariosSupabase(c);

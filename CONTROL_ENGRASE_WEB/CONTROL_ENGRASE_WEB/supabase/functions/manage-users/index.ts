@@ -99,6 +99,11 @@ function isValidTempPassword(pw) {
   return typeof pw === "string" && pw.length >= 8;
 }
 
+function plannerLocationId(role, locationId) {
+  if (role !== "PLANIFICADOR") return null;
+  return typeof locationId === "string" && locationId.trim() ? locationId.trim() : "";
+}
+
 // Decide qué código HTTP corresponde para un caller — SIEMPRE la MISMA
 // regla para las 5 acciones (nunca varía por acción, nunca lee el body):
 // sin auth.uid() real -> 401; con perfil pero sin ser ADMINISTRADOR
@@ -145,7 +150,7 @@ async function getCallerProfile(env, jwt) {
   if (!authUserId) return { authUserId: null, profile: null };
 
   const profResp = await fetch(
-    `${env.supabaseUrl}/rest/v1/app_profiles?select=auth_user_id,app_user_id,role,active&auth_user_id=eq.${authUserId}`,
+    `${env.supabaseUrl}/rest/v1/app_profiles?select=auth_user_id,app_user_id,role,active,location_id&auth_user_id=eq.${authUserId}`,
     { headers: svHeaders(env) },
   );
   if (!profResp.ok) return { authUserId, profile: null };
@@ -165,7 +170,7 @@ async function countOtherActiveAdmins(env, excludeAuthUserId) {
 
 async function getProfileByAppUserId(env, appUserId) {
   const resp = await fetch(
-    `${env.supabaseUrl}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active&app_user_id=eq.${encodeURIComponent(appUserId)}`,
+    `${env.supabaseUrl}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active,location_id&app_user_id=eq.${encodeURIComponent(appUserId)}`,
     { headers: svHeaders(env) },
   );
   if (!resp.ok) throw new Error(`lookup_failed_${resp.status}`);
@@ -173,10 +178,20 @@ async function getProfileByAppUserId(env, appUserId) {
   return rows[0] ?? null;
 }
 
+async function isActiveMasterLocation(env, locationId) {
+  const resp = await fetch(
+    `${env.supabaseUrl}/rest/v1/engrase_sync?select=id,payload,deleted&store=eq.locations&id=eq.${encodeURIComponent(locationId)}&deleted=eq.false`,
+    { headers: svHeaders(env) },
+  );
+  if (!resp.ok) throw new Error(`location_lookup_failed_${resp.status}`);
+  const rows = await resp.json();
+  return rows.some(row => row.id === locationId && row.deleted !== true && row.payload?.active !== false);
+}
+
 // Devuelve solo campos no sensibles — NUNCA password/hash/tokens/provider internals.
 async function handleListUsers(env) {
   const resp = await fetch(
-    `${env.supabaseUrl}/rest/v1/app_profiles?select=app_user_id,display_name,role,active,created_at&order=display_name.asc`,
+    `${env.supabaseUrl}/rest/v1/app_profiles?select=app_user_id,display_name,role,active,location_id,created_at&order=display_name.asc`,
     { headers: svHeaders(env) },
   );
   if (!resp.ok) return { status: 502, body: { error: `list_failed_${resp.status}` } };
@@ -192,12 +207,14 @@ async function handleCreateUser(env, body) {
   const displayName = body.display_name;
   const username = body.username;
   const role = body.role;
+  const locationId = plannerLocationId(role, body.location_id);
   const tempPassword = body.temp_password;
 
   if (typeof displayName !== "string" || !displayName.trim()) {
     return { status: 400, body: { error: "display_name_required" } };
   }
   if (!isValidRoleValue(role)) return { status: 400, body: { error: "invalid_role" } };
+  if (role === "PLANIFICADOR" && !locationId) return { status: 400, body: { error: "planner_location_required" } };
   if (!isValidTempPassword(tempPassword)) return { status: 400, body: { error: "temp_password_required_min_8" } };
 
   let identifier;
@@ -210,6 +227,9 @@ async function handleCreateUser(env, body) {
 
   const existing = await getProfileByAppUserId(env, appUserId);
   if (existing) return { status: 409, body: { error: "username_taken" } };
+  if (locationId && !(await isActiveMasterLocation(env, locationId))) {
+    return { status: 400, body: { error: "invalid_location" } };
+  }
 
   const createResp = await fetch(`${env.supabaseUrl}/auth/v1/admin/users`, {
     method: "POST",
@@ -224,7 +244,8 @@ async function handleCreateUser(env, body) {
   const profResp = await fetch(`${env.supabaseUrl}/rest/v1/app_profiles`, {
     method: "POST",
     headers: { ...svHeaders(env), "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify([{ auth_user_id: newAuthUserId, app_user_id: appUserId, display_name: displayName, role, active: true }]),
+    body: JSON.stringify([{ auth_user_id: newAuthUserId, app_user_id: appUserId, display_name: displayName,
+      role, location_id: locationId, active: true }]),
   });
   if (!profResp.ok) {
     // ROLLBACK: el Auth user recién creado nunca debe quedar huérfano.
@@ -240,11 +261,16 @@ async function handleCreateUser(env, body) {
 async function handleUpdateRole(env, body) {
   const appUserId = body.app_user_id;
   const newRole = body.role;
+  const locationId = plannerLocationId(newRole, body.location_id);
   if (typeof appUserId !== "string" || !appUserId) return { status: 400, body: { error: "app_user_id_required" } };
   if (!isValidRoleValue(newRole)) return { status: 400, body: { error: "invalid_role" } };
+  if (newRole === "PLANIFICADOR" && !locationId) return { status: 400, body: { error: "planner_location_required" } };
 
   const target = await getProfileByAppUserId(env, appUserId);
   if (!target) return { status: 404, body: { error: "not_found" } };
+  if (locationId && !(await isActiveMasterLocation(env, locationId))) {
+    return { status: 400, body: { error: "invalid_location" } };
+  }
 
   const wasActiveAdmin = target.role === "ADMINISTRADOR" && target.active === true;
   const willStayActiveAdmin = newRole === "ADMINISTRADOR" && target.active === true;
@@ -258,7 +284,7 @@ async function handleUpdateRole(env, body) {
   const upd = await fetch(`${env.supabaseUrl}/rest/v1/app_profiles?app_user_id=eq.${encodeURIComponent(appUserId)}`, {
     method: "PATCH",
     headers: { ...svHeaders(env), "Content-Type": "application/json" },
-    body: JSON.stringify({ role: newRole, updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ role: newRole, location_id: locationId, updated_at: new Date().toISOString() }),
   });
   if (!upd.ok) return { status: 502, body: { error: "update_failed" } };
   return { status: 200, body: { ok: true } };

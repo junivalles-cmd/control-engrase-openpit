@@ -434,7 +434,7 @@ const Auth = {
     const context = result.context;
     if (context.authUserId !== this._session.authUserId ||
         typeof context.appUserId !== 'string' || !context.appUserId ||
-        !isValidProfile({ role: context.role, active: context.active }) ||
+        !isValidProfile({ role: context.role, active: context.active, locationId: context.locationId }) ||
         typeof context.authorizationFingerprint !== 'string') {
       await this.signOut();
       return { ok: false, reason: 'AUTHORIZATION_CONTEXT_MISMATCH' };
@@ -687,7 +687,7 @@ const Auth = {
       // criterio que ya usa manage-users/index.ts del lado servidor) hace
       // que esto sea estructuralmente imposible, nunca solo "menos probable".
       const resp = await fetchWithTimeout(
-        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active&auth_user_id=eq.${this._session.authUserId}`,
+        `${cfg.url}/rest/v1/app_profiles?select=auth_user_id,app_user_id,display_name,role,active,location_id&auth_user_id=eq.${this._session.authUserId}`,
         { headers: { apikey: cfg.anonKey, Authorization: `Bearer ${this._session.accessToken}` } }
       );
       if (classifyAuthStatus(resp.status) || !resp.ok) return null;
@@ -696,7 +696,8 @@ const Auth = {
       const p = rows[0];
       return {
         authUserId: p.auth_user_id, appUserId: p.app_user_id,
-        displayName: p.display_name, role: p.role, active: p.active === true
+        displayName: p.display_name, role: p.role, active: p.active === true,
+        locationId: p.location_id || null
       };
     } catch (e) {
       // Backend no disponible ahora mismo (red/timeout, ver Bloque B

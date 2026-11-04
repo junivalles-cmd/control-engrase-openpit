@@ -13,8 +13,11 @@
      UBICACIÓN OPERATIVA -> TURNO ACTUAL
 
    AUTORIDAD ÚNICA — nadie más repite esta lógica:
-     - ADMINISTRADOR/PLANIFICADOR: vista GLOBAL (alcance según permisos
-       existentes, sin scope de cuadrilla).
+     - ADMINISTRADOR: vista GLOBAL.
+     - PLANIFICADOR: una única ubicación maestra obligatoria guardada en
+       app_profiles.location_id. Su alcance nunca depende de cuadrilla,
+       turno ni dispositivo y solo incluye equipos cuya locationId maestra
+       coincide con esa ubicación.
      - SUPERVISOR/LUBRICADOR: la cuadrilla (o cuadrillas) para las que el
        USUARIO está autorizado (`cuadrillas[].memberUserIds`, ver
        getAuthorizedCrews()) decide qué trabajo es visible/ejecutable —
@@ -50,7 +53,7 @@ const ASSIGNMENT_STATUS = { PENDING: 'PENDING', COMPLETED: 'COMPLETED', CANCELLE
 // Roles que pueden asignar/reasignar/cancelar un engrase manualmente (§L).
 const ROLES_CAN_MANAGE_ASSIGNMENTS = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR'];
 // Roles que pueden mover un EQUIPO de ubicación permanentemente (§W) — acción DISTINTA de asignar.
-const ROLES_CAN_MOVE_EQUIPMENT = ['ADMINISTRADOR', 'PLANIFICADOR'];
+const ROLES_CAN_MOVE_EQUIPMENT = ['ADMINISTRADOR'];
 // Roles que pueden mover una CUADRILLA de ubicación (§Z).
 const ROLES_CAN_MOVE_CREW = ['ADMINISTRADOR', 'PLANIFICADOR'];
 // Roles que pueden editar qué usuarios están autorizados en una cuadrilla
@@ -61,7 +64,8 @@ const ROLES_CAN_MANAGE_CREW_MEMBERSHIP = ['ADMINISTRADOR', 'PLANIFICADOR'];
 // de plan" §2/§28) — VISOR nunca registra nada, igual que en el resto de la app.
 const ROLES_CAN_REGISTER_OUT_OF_PLAN = ['ADMINISTRADOR', 'PLANIFICADOR', 'SUPERVISOR', 'LUBRICADOR'];
 // Roles cuyo scope operativo depende de la(s) cuadrilla(s) autorizada(s)
-// del usuario — el resto (ADMINISTRADOR/PLANIFICADOR/VISOR) es GLOBAL.
+// del usuario — PLANIFICADOR usa LOCATION_SCOPED; ADMINISTRADOR/VISOR son
+// globales por sus reglas propias.
 const ROLES_CREW_SCOPED = ['LUBRICADOR', 'SUPERVISOR'];
 
 // manual_tasks (0017, ACTIVE en producción) — crean/reasignan/cancelan los
@@ -531,6 +535,17 @@ function getAuthorizedCrews(cuadrillas, userId) {
    ignora en silencio (nunca eleva permisos que el usuario no tiene). */
 function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId, crewLocations = [] }) {
   if (!currentUser) return { kind: 'NONE' };
+  if (currentUser.role === 'PLANIFICADOR') {
+    const locationId = typeof currentUser.locationId === 'string' ? currentUser.locationId.trim() : '';
+    if (!locationId) {
+      return { kind: 'NO_LOCATION_ASSIGNED', userId: currentUser.id, role: currentUser.role,
+        shiftId: shiftId || null, locationId: null, crewId: null, crewLocationId: null,
+        authorizedLocationIds: [], authorizedCrews: [] };
+    }
+    return { kind: 'LOCATION_SCOPED', userId: currentUser.id, role: currentUser.role,
+      shiftId: shiftId || null, locationId, crewId: null, crewLocationId: null,
+      authorizedLocationIds: [locationId], allAuthorizedLocationIds: [locationId], authorizedCrews: [] };
+  }
   if (!ROLES_CREW_SCOPED.includes(currentUser.role)) {
     return {
       kind: 'GLOBAL', userId: currentUser.id, role: currentUser.role,
@@ -554,6 +569,31 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
   }
   return { kind: 'CREW_SCOPED', userId: currentUser.id, role: currentUser.role, shiftId, crewId: selected.id, crewLocationId: selected.locationId || null, authorizedCrews,
     ...resolveCrewLocationCoverage(selected.id, cuadrillas, crewLocations), crewLocations };
+}
+
+// Helpers centrales de alcance. Las pantallas no deben reinventar esta
+// comparación ni inferir ubicación desde cuadrilla/turno/asignaciones.
+function canAccessLocation(scope, locationId) {
+  if (!scope || !locationId) return false;
+  if (scope.kind === 'GLOBAL') return true;
+  if (scope.kind === 'LOCATION_SCOPED') return scope.locationId === locationId;
+  if (scope.kind === 'CREW_SCOPED') {
+    return (scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean)).includes(locationId);
+  }
+  return false;
+}
+
+function canAccessEquipment(scope, equipment) {
+  return !!equipment && canAccessLocation(scope, equipment.locationId);
+}
+
+function filterEquipmentByScope(equipmentList, scope) {
+  return (equipmentList || []).filter(equipment => canAccessEquipment(scope, equipment));
+}
+
+function filterRowsByEquipmentScope(rows, equipmentList, scope, equipmentIdOf = row => row?.equipmentId) {
+  const equipmentById = new Map((equipmentList || []).map(equipment => [equipment.id, equipment]));
+  return (rows || []).filter(row => canAccessEquipment(scope, equipmentById.get(equipmentIdOf(row))));
 }
 
 /* ============================================================
@@ -598,6 +638,11 @@ function classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipo
   const porOccurrence = new Map(pendientes.map(a => [a.occurrenceKey, a]));
 
   if (!scope || scope.kind === 'NONE') return { normal: [], assigned: [] };
+  if (scope.kind === 'LOCATION_SCOPED') {
+    const visibleEquipment = filterEquipmentByScope(equipos, scope);
+    const visibleIds = new Set(visibleEquipment.map(equipment => equipment.id));
+    return { normal: visibleEquipment, assigned: pendientes.filter(assignment => visibleIds.has(assignment.equipmentId)) };
+  }
   if (scope.kind !== 'CREW_SCOPED') {
     // Jefaturas: vista global — devuelve todo, sin filtrar (la pantalla
     // decide qué mostrar; este módulo solo evita doble conteo para
@@ -965,7 +1010,8 @@ function findMatchingGreaseRecordForOccurrence({ plan, occurrenceKey, occurrence
    ============================================================ */
 function canLubricadorExecuteEquipment({ scope, equipo, assignments = [] }) {
   if (!scope || !equipo) return false;
-  if (scope.kind === 'GLOBAL') return ['ADMINISTRADOR', 'PLANIFICADOR'].includes(scope.role);
+  if (scope.kind === 'GLOBAL') return scope.role === 'ADMINISTRADOR';
+  if (scope.kind === 'LOCATION_SCOPED') return scope.role === 'PLANIFICADOR' && canAccessEquipment(scope, equipo);
   if (scope.kind !== 'CREW_SCOPED' || !scope.crewId) return false;
   if (assignments.some(a=>a._supportOperational===true && a.active!==false && a.status==='PENDING'
       && a.equipmentId===equipo.id && a.assignedCrewId===scope.crewId)) return true;

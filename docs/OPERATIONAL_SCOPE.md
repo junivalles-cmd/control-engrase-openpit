@@ -1,5 +1,15 @@
 # Rediseño operativo — cuadrillas, ubicaciones y asignación manual de engrases
 
+## Actualización 2026-11-04 — PLANIFICADOR por ubicación
+
+Cada perfil Auth con rol `PLANIFICADOR` tiene exactamente una
+`app_profiles.location_id` y usa `LOCATION_SCOPED`. Solo puede leer o
+modificar filas vinculadas a equipos cuya ubicación maestra actual
+(`equipment.locationId`) coincide con esa asignación. `ADMINISTRADOR`
+conserva `GLOBAL`. Este límite se aplica en el contexto central, el cache
+IndexedDB, la sincronización, RLS y una defensa de escritura para REST/RPC;
+no es un filtro visual. Cambiar la ubicación del perfil no mueve equipos.
+
 Fecha: 2026-09-28. Implementa el "LOTE OPERATIVO GLOBAL" pedido para modelar
 la operación real de campo: cuadrillas que pertenecen a una ubicación, y la
 posibilidad de asignar manualmente UN engrase pendiente a otra cuadrilla sin
@@ -49,6 +59,7 @@ de scope ya NO aplica: reemplazado por `getAuthorizedCrews()` en
     `app_user_id` (Auth) están autorizados a trabajar como esta cuadrilla,
     desde cualquier dispositivo.
 - **Usuario** (Auth): aporta identidad + rol SIEMPRE; para
+  PLANIFICADOR aporta además una única `app_profiles.location_id`; para
   SUPERVISOR/LUBRICADOR, también su cuadrilla autorizada (resuelta en vivo
   contra `cuadrillas[].memberUserIds`, nunca guardada en el perfil — ver
   `currentUserFromAuthProfile()`/`getAuthorizedCrews()`).
@@ -60,14 +71,13 @@ de scope ya NO aplica: reemplazado por `getAuthorizedCrews()` en
 Módulo puro (sin DOM/DB/red), mismo patrón que `weekly-matrix.js` /
 `plan-compliance.js`. Nadie más reimplementa esta lógica:
 
-- `resolveOperationalScope({ currentUser, deviceAssignment, cuadrillas, shiftId })`
-  → `{ kind, crewId, crewLocationId, ... }`. `kind` es uno de:
-  - `GLOBAL` — jefaturas (ADMIN/PLANIFICADOR/SUPERVISOR/VISOR): ven todo.
-  - `DEVICE_UNASSIGNED` — Lubricador en un dispositivo sin cuadrilla (o con
-    una cuadrilla borrada/inactiva). Mi Turno muestra un mensaje explícito,
-    **nunca** cae a la lista global de equipos.
-  - `DEVICE_SCOPED` — Lubricador con cuadrilla activa asignada al
-    dispositivo.
+- `resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId, crewLocations })`
+  → `{ kind, crewId, crewLocationId, locationId, ... }`. Los kinds vigentes son:
+  - `GLOBAL` — ADMINISTRADOR y VISOR según sus permisos.
+  - `LOCATION_SCOPED` — PLANIFICADOR con una ubicación asignada.
+  - `NO_LOCATION_ASSIGNED` — PLANIFICADOR incompleto; falla cerrado.
+  - `NO_CREW_ASSIGNED` / `NEEDS_CREW_SELECTION` / `CREW_SCOPED` —
+    SUPERVISOR/LUBRICADOR según su membresía real de cuadrilla.
 - `classifyEquipmentWork({ scope, equipos, cuadrillas, assignments, equipoOccurrenceKeyFn })`
   → `{ normal, assigned }`. Con 2+ cuadrillas en la misma ubicación, solo la
   `isDefault` recibe trabajo "normal" (evita que dos cuadrillas engrasen el
@@ -99,8 +109,9 @@ modelo/Android ID/"dispositivo ya vinculado a una cuadrilla"**:
   `productFlavors`/`flavorDimensions` — Gradle solo distingue
   debug/release, nunca una variante por ubicación/cuadrilla/turno.
 - **Usuario**: identidad + rol vienen 100% de Auth (`app_profiles`,
-  `currentUserFromAuthProfile()`) — nunca una ubicación/cuadrilla fija por
-  persona, nunca hardcodeada en el build.
+  `currentUserFromAuthProfile()`). Solo PLANIFICADOR guarda una ubicación
+  autorizada por persona; nunca se hardcodea en el build ni se deriva del
+  dispositivo. SUPERVISOR/LUBRICADOR siguen resolviendo cuadrilla en vivo.
 - **Cuadrilla/ubicación**: YA NO depende de ningún dispositivo (ver
   corrección arquitectónica arriba) — `cuadrillas[].memberUserIds`
   autoriza al USUARIO, resuelto en vivo por

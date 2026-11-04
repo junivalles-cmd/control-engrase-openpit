@@ -234,8 +234,8 @@ describe('J) La lista se actualiza sin recarga completa de pantalla', () => {
   });
   it('renderUsuariosSupabase() pasa `c` (el contenedor real) al abrir los formularios, para que puedan refrescarse a sí mismos después', () => {
     const listSrc = extractDeclaration(appSource, 'renderUsuariosSupabase');
-    expect(listSrc).toContain('userFormSupabase(c)');
-    expect(listSrc).toContain('roleFormSupabase(u, c)');
+    expect(listSrc).toContain('userFormSupabase(c, locations)');
+    expect(listSrc).toContain('roleFormSupabase(u, c, locations)');
   });
 });
 
