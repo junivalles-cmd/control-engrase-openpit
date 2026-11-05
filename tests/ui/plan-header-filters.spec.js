@@ -7,7 +7,7 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const source = readSource(APP_JS_PATH);
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
-const helpers = ['$', '$$', 'esc', 'TABLE_EMPTY_FILTER_VALUE', 'tableFilterOptionValue', 'tableFilterSelection', 'tableFilterIsActive', 'tableFilterMatches', 'tableFilterMatchesAny', 'tableFilterOptions', 'renderTableColumnHeader', 'createTableColumnController', 'tableColumnKey', 'tableComparableValue', 'standardizeDataTable']
+const helpers = ['$', '$$', 'esc', 'TABLE_EMPTY_FILTER_VALUE', 'tableFilterOptionValue', 'tableFilterSelection', 'tableFilterIsActive', 'tableFilterMatches', 'tableFilterMatchesAny', 'tableFilterOptions', 'tableSortIndicatorMark', 'tableSortButtonInnerHTML', 'renderTableColumnHeader', 'createTableColumnController', 'tableColumnKey', 'tableComparableValue', 'standardizeDataTable']
   .map(name => extractDeclaration(source, name)).join('\n\n');
 
 async function boot(page) {

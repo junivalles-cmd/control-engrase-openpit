@@ -1878,18 +1878,29 @@ function tableFilterOptions(values) {
     return a.label.localeCompare(b.label, 'es', { numeric: true });
   });
 }
+// Flecha de orden: SOLO se dibuja cuando la columna tiene orden activo (ni
+// ↕ neutro permanente ni espacio reservado) — aria-sort sigue expuesto
+// siempre (ver refreshHeaders()), así la semántica para lectores de
+// pantalla no depende de que el signo esté visible.
+function tableSortIndicatorMark(direction) {
+  return direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '';
+}
+function tableSortButtonInnerHTML(column, direction) {
+  const sortMark = tableSortIndicatorMark(direction);
+  const label = esc(column.label);
+  return `<span class="table-column-label" title="${label}">${label}</span>${sortMark ? `<span class="table-column-sort-indicator" aria-hidden="true">${sortMark}</span>` : ''}`;
+}
 function renderTableColumnHeader(column, state) {
   const sorted = state.sort.field === column.key;
   const direction = sorted ? state.sort.dir : '';
   const ariaSort = !sorted ? 'none' : direction === 'desc' ? 'descending' : 'ascending';
   const selectedCount = tableFilterSelection(state.filters[column.key]).length;
   const filterActive = selectedCount > 0;
-  const sortMark = direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕';
   const widthStyle = column.width ? ` style="--table-column-width:${esc(column.width)}"` : '';
   const nowrapClass = column.nowrap ? ' table-column-nowrap' : '';
   return `<th class="${nowrapClass.trim()}" data-column-key="${esc(column.key)}" data-column-label="${esc(column.label)}" aria-sort="${ariaSort}"${widthStyle}>
     <span class="table-column-header">
-      ${column.sortable === false ? `<span class="table-column-label">${esc(column.label)}</span>` : `<button type="button" class="table-column-sort" data-table-sort="${esc(column.key)}" aria-label="Ordenar por ${esc(column.label)}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}">${esc(column.label)} <span aria-hidden="true">${sortMark}</span></button>`}
+      ${column.sortable === false ? `<span class="table-column-label" title="${esc(column.label)}">${esc(column.label)}</span>` : `<button type="button" class="table-column-sort${tableSortIndicatorMark(direction) ? ' is-sorted' : ''}" data-table-sort="${esc(column.key)}" aria-label="Ordenar por ${esc(column.label)}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}">${tableSortButtonInnerHTML(column, direction)}</button>`}
       ${column.filterType ? `<button type="button" class="table-column-filter ${filterActive ? 'is-active' : ''}" data-table-filter="${esc(column.key)}" aria-haspopup="dialog" aria-expanded="false" aria-label="${filterActive ? `Filtro activo: ${column.label}, ${selectedCount} seleccionados` : `Filtrar por ${column.label}`}" title="${filterActive ? `${selectedCount} seleccionados` : `Filtrar por ${esc(column.label)}`}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg>${filterActive ? `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>` : ''}</button>` : ''}
     </span>
   </th>`;
@@ -2008,7 +2019,8 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       th.setAttribute('aria-sort', activeSort ? (direction === 'desc' ? 'descending' : 'ascending') : 'none');
       const sortButton = th.querySelector('.table-column-sort');
       if (sortButton) {
-        sortButton.innerHTML = `${esc(column.label)} <span aria-hidden="true">${direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}</span>`;
+        sortButton.classList.toggle('is-sorted', !!tableSortIndicatorMark(direction));
+        sortButton.innerHTML = tableSortButtonInnerHTML(column, direction);
         sortButton.setAttribute('aria-label', `Ordenar por ${column.label}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}`);
       }
       const filterButton = th.querySelector('.table-column-filter');
@@ -7099,14 +7111,14 @@ async function renderEquipos() {
   const equipmentTextOptions = getter => () => tableFilterOptions(equipos.map(getter));
 
   const EQ_SORT_FIELDS = [
-    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', options: equipmentTextOptions(e => e.shortCode) },
-    { key: 'code', label: 'Código interno', filterType: 'text', options: equipmentTextOptions(e => e.code) },
-    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', options: equipmentTextOptions(e => `${e.brand || ''} ${e.model || ''}`.trim()) },
-    { key: 'type', label: 'Tipo', filterType: 'select', options: () => [...types.filter(type => authorizedTypeIds.has(type.id)).map(type => ({ value: type.id, label: type.name })), ...(equipos.some(e => !e.typeId) ? [{ value: null, label: 'Sin dato' }] : [])] },
-    { key: 'location', label: 'Ubicación', filterType: 'select', options: () => [...locations.filter(location => authorizedLocationIds.has(location.id)).map(location => ({ value: location.id, label: location.name })), ...(equipos.some(e => !e.locationId) ? [{ value: null, label: 'Sin dato' }] : [])] },
-    { key: 'status', label: 'Estado', filterType: 'select', options: () => statusFilterOptions.map(option => ({ value: option.code, label: option.label })) },
-    { key: 'hourmeter', label: 'Horómetro', filterType: 'text', options: equipmentTextOptions(e => e.hourmeter) },
-    { key: 'plan', label: 'Plan', filterType: 'select', options: () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }] },
+    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', width: '165px', options: equipmentTextOptions(e => e.shortCode) },
+    { key: 'code', label: 'Código interno', filterType: 'text', width: '140px', options: equipmentTextOptions(e => e.code) },
+    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', width: '195px', options: equipmentTextOptions(e => `${e.brand || ''} ${e.model || ''}`.trim()) },
+    { key: 'type', label: 'Tipo', filterType: 'select', width: '135px', options: () => [...types.filter(type => authorizedTypeIds.has(type.id)).map(type => ({ value: type.id, label: type.name })), ...(equipos.some(e => !e.typeId) ? [{ value: null, label: 'Sin dato' }] : [])] },
+    { key: 'location', label: 'Ubicación', filterType: 'select', width: '160px', options: () => [...locations.filter(location => authorizedLocationIds.has(location.id)).map(location => ({ value: location.id, label: location.name })), ...(equipos.some(e => !e.locationId) ? [{ value: null, label: 'Sin dato' }] : [])] },
+    { key: 'status', label: 'Estado', filterType: 'select', width: '135px', nowrap: true, options: () => statusFilterOptions.map(option => ({ value: option.code, label: option.label })) },
+    { key: 'hourmeter', label: 'Horómetro', filterType: 'text', width: '165px', nowrap: true, options: equipmentTextOptions(e => e.hourmeter) },
+    { key: 'plan', label: 'Plan', filterType: 'select', width: '115px', nowrap: true, options: () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }] },
   ];
   const EQ_TABLE_COLUMNS = [...EQ_SORT_FIELDS, { key: 'actions', label: 'Acciones', sortable: false, width: '150px', nowrap: true }];
   const EQ_SORT_FIELD_KEYS = new Set(EQ_SORT_FIELDS.map(f => f.key));
@@ -8661,16 +8673,16 @@ async function renderPlan() {
   planRows.forEach(r => searchIndex.set(r.e.id, [r.e.shortCode, r.e.code, r.modelLabel].filter(Boolean).join(' ').toLowerCase()));
 
   const PLAN_SORT_FIELDS = [
-    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', width: '118px', nowrap: true },
-    { key: 'code', label: 'Código interno', filterType: 'text', width: '118px', nowrap: true },
-    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', width: '170px' },
-    { key: 'control', label: 'Control', filterType: 'select', width: '138px' },
-    { key: 'frequency', label: 'Frecuencia / Días', filterType: 'text', width: '205px' },
+    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', width: '165px' },
+    { key: 'code', label: 'Código interno', filterType: 'text', width: '140px' },
+    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', width: '185px' },
+    { key: 'control', label: 'Control', filterType: 'select', width: '142px' },
+    { key: 'frequency', label: 'Frecuencia / Días', filterType: 'text', width: '212px' },
     { key: 'shift', label: 'Turnos', filterType: 'select', width: '185px' },
-    { key: 'reference', label: 'Referencia', filterType: 'select', sortable: false, width: '95px' },
-    { key: 'points', label: 'Puntos', filterType: 'text', width: '70px', nowrap: true },
+    { key: 'reference', label: 'Referencia', filterType: 'select', sortable: false, width: '140px' },
+    { key: 'points', label: 'Puntos', filterType: 'text', width: '140px', nowrap: true },
   ];
-  const PLAN_TABLE_COLUMNS = [...PLAN_SORT_FIELDS, { key: 'actions', label: 'Configurar', sortable: false, width: '110px', nowrap: true }];
+  const PLAN_TABLE_COLUMNS = [...PLAN_SORT_FIELDS, { key: 'actions', label: 'Configurar', sortable: false, width: '122px', nowrap: true }];
   const PLAN_SORT_FIELD_KEYS = new Set(PLAN_SORT_FIELDS.map(f => f.key));
   const DIAS_SEMANA_FILTRO = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 

@@ -522,19 +522,28 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 
 /* Encabezados compactos con orden/filtro. El menú se porta a body desde JS,
    así no queda detrás ni recortado por el panel con scroll. */
-.table-column-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+.table-column-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; min-width: 0; min-height: 48px; }
 .data-table th[style*="--table-column-width"] { width: var(--table-column-width); max-width: var(--table-column-width); }
 .data-table th.table-column-nowrap { white-space: nowrap; }
 .table-column-sort, .table-column-label {
   color: inherit; font: inherit; font-weight: inherit; letter-spacing: inherit;
-  text-transform: inherit; white-space: nowrap;
+  text-transform: inherit;
 }
-.table-column-sort { display: inline-flex; align-items: center; justify-content: flex-start; gap: 5px; min-width: 0; border: 0; background: transparent; padding: 5px 2px; cursor: pointer; text-align: inherit; }
-.table-column-sort:hover, .table-column-sort:focus-visible { color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 3px; }
-.table-column-filter { position: relative; flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-dim); cursor: pointer; line-height: 1; }
-.table-column-filter svg { width: 15px; height: 15px; fill: currentColor; vertical-align: middle; }
-.table-column-filter:hover, .table-column-filter:focus-visible, .table-column-filter.is-active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 13%, transparent); outline: 2px solid var(--focus); outline-offset: 1px; }
-.table-column-filter-count { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; border: 2px solid var(--surface-2); border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 800; line-height: 13px; text-align: center; }
+.table-column-sort { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; border: 0; background: transparent; padding: 4px 2px; margin: 0; cursor: pointer; text-align: left; border-radius: 4px; }
+.table-column-sort:hover, .table-column-sort:focus-visible { color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+.table-column-label {
+  flex: 1 1 auto; min-width: 0; white-space: normal; line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.data-table th.table-column-nowrap .table-column-label {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; display: block;
+}
+.table-column-sort-indicator { flex: none; font-size: 12px; font-weight: 700; color: var(--accent); line-height: 1; }
+.table-column-filter { position: relative; flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-dim); cursor: pointer; line-height: 1; transition: background-color .12s ease, color .12s ease, border-color .12s ease; }
+.table-column-filter svg { width: 14px; height: 14px; fill: currentColor; vertical-align: middle; }
+.table-column-filter:hover, .table-column-filter:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); outline: 2px solid var(--focus); outline-offset: 1px; }
+.table-column-filter.is-active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.table-column-filter-count { position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 3px; border: 2px solid var(--surface-2); border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 800; line-height: 11px; text-align: center; }
 .table-column-popover { position: fixed; z-index: 1000; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.28); }
 .table-column-popover-title { margin-bottom: 9px; font-size: 13px; font-weight: 700; color: var(--text); }
 .table-column-popover .table-column-filter-input { width: 100%; min-height: 42px; font-size: 14px; }
@@ -946,9 +955,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; overflow-x: auto; }
 .pill { background: var(--surface-2); color: var(--text-dim); font-size: 11px; padding: 4px 10px; border-radius: 20px; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th { height: 48px; text-align: left; padding: 9px 14px; color: var(--text); background: color-mix(in srgb, var(--surface-2) 88%, #35516a); font-weight: 650; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-right: 1px solid color-mix(in srgb, var(--border) 65%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--accent) 65%, var(--border)); white-space: nowrap; }
+.data-table th { text-align: left; padding: 0 12px; color: var(--text); background: color-mix(in srgb, var(--surface-2) 90%, var(--accent) 10%); font-weight: 600; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; border-right: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-bottom: 2px solid var(--accent); vertical-align: middle; }
 .data-table th:last-child { border-right: 0; }
-.data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: var(--fs-base); }
+.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: var(--fs-base); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 .data-table tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 .mono { font-family: var(--font-mono); }
@@ -1099,6 +1108,17 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    preexistente documentado más abajo en este archivo) — acá se fija altura
    y overflow-y propios en el id, sin tocar la regla genérica .panel. */
 .eq-table-panel { max-height: 70vh; margin-top: 10px; overflow: auto; scrollbar-gutter: stable; }
+/* Rediseño de headers (encabezados: ancho/padding/jerarquía, lote "style:
+   improve data table header layout") — con table-layout:auto y width:100%
+   (la regla genérica .data-table), el algoritmo de ancho de columnas
+   encoge columnas de contenido "quebrable" (ESTE caso: "Equipo / Modelo")
+   muy por debajo del ancho explícito (--table-column-width) en vez de
+   respetarlo, cuando la suma de columnas no cabe en el viewport — section
+   14 del pedido pide SCROLL horizontal en vez de columnas aplastadas a
+   1024/768. max-content + min-width:100% hace que la tabla crezca hasta
+   su ancho preferido real (respetando los anchos explícitos) y aparezca
+   scroll en el panel en vez de comprimir columnas. */
+#eq-table-wrap .data-table { width: max-content; min-width: 100%; }
 #eq-table-wrap .data-table thead th {
   background: var(--surface-2); position: sticky; top: 0; z-index: 1;
   box-shadow: 0 1px 0 var(--border);
@@ -1115,6 +1135,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
    (líneas de arriba de este archivo) — acá solo se agrega lo nuevo. */
 .plan-results-summary { font-size: 12px; margin: -4px 0 10px; padding: 0 2px; }
 .plan-table-panel { max-height: 70vh; overflow: auto; scrollbar-gutter: stable; }
+/* Mismo motivo que #eq-table-wrap arriba: evita que "Equipo / Modelo"/
+   "Frecuencia / Días" se compriman por debajo de --table-column-width. */
+#plan-table-wrap .data-table { width: max-content; min-width: 100%; }
 #plan-table-wrap .data-table thead th {
   background: var(--surface-2); position: sticky; top: 0; z-index: 1;
   box-shadow: 0 1px 0 var(--border);
