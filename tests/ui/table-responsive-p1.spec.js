@@ -24,6 +24,14 @@ const appSource = readSource(APP_JS_PATH);
 const MAKE_TABLES_RESPONSIVE_SRC = `
   const $ = (sel, el = document) => el.querySelector(sel);
   const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
+  const App = { route: 'horometros' };
+  let activeTableColumnPopover = null;
+  ${extractDeclaration(appSource, 'esc')}
+  ${extractDeclaration(appSource, 'renderTableColumnHeader')}
+  ${extractDeclaration(appSource, 'createTableColumnController')}
+  ${extractDeclaration(appSource, 'tableColumnKey')}
+  ${extractDeclaration(appSource, 'tableComparableValue')}
+  ${extractDeclaration(appSource, 'standardizeDataTable')}
   ${extractDeclaration(appSource, 'makeTablesResponsive')}
 `;
 

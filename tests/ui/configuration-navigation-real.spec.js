@@ -40,7 +40,8 @@ const appNames = [
   'wireConfigCategoryNav', 'CONFIG_DEFAULT_CATEGORY', 'renderConfig',
   'renderUsuarios', 'renderUsuariosSupabase', 'manageUsersErrorMessage', 'withSubmitGuard',
   'userFormSupabase', 'roleFormSupabase', 'resetPasswordFormSupabase', 'MANAGE_USERS_ERROR_LABELS',
-  'makeTablesResponsive',
+  'renderTableColumnHeader', 'createTableColumnController',
+  'tableColumnKey', 'tableComparableValue', 'standardizeDataTable', 'makeTablesResponsive',
   // broadcastPanelHTML/wireBroadcastPanel (panel "Mensajes operativos" dentro
   // de Configuración > Notificaciones, ya solo un enlace a Tareas y Mensajes)
   // — renderConfig() los llama desde el lote "Tareas y Mensajes" 2026-10-18;

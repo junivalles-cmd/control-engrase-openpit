@@ -1837,6 +1837,198 @@ function getAllowedRoutes(role) {
 const $ = (sel, el = document) => el.querySelector(sel);
 const ic = (name) => `<span class="btn-icon icon-${name}"></span>`;
 
+/* ---------- Controles reutilizables de encabezados de tabla ----------
+   Los popovers viven en document.body (posición fixed) para que no sean
+   recortados por el scroll/sticky header de una tabla. El controlador solo
+   maneja estado de presentación: la pantalla conserva su propio pipeline de
+   datos y decide cómo aplicar cada filtro. */
+let activeTableColumnPopover = null;
+function renderTableColumnHeader(column, state) {
+  const sorted = state.sort.field === column.key;
+  const direction = sorted ? state.sort.dir : '';
+  const ariaSort = !sorted ? 'none' : direction === 'desc' ? 'descending' : 'ascending';
+  const filterActive = !!state.filters[column.key];
+  const sortMark = direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕';
+  const widthStyle = column.width ? ` style="--table-column-width:${esc(column.width)}"` : '';
+  const nowrapClass = column.nowrap ? ' table-column-nowrap' : '';
+  return `<th class="${nowrapClass.trim()}" data-column-key="${esc(column.key)}" data-column-label="${esc(column.label)}" aria-sort="${ariaSort}"${widthStyle}>
+    <span class="table-column-header">
+      ${column.sortable === false ? `<span class="table-column-label">${esc(column.label)}</span>` : `<button type="button" class="table-column-sort" data-table-sort="${esc(column.key)}" aria-label="Ordenar por ${esc(column.label)}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}">${esc(column.label)} <span aria-hidden="true">${sortMark}</span></button>`}
+      ${column.filterType ? `<button type="button" class="table-column-filter ${filterActive ? 'is-active' : ''}" data-table-filter="${esc(column.key)}" aria-label="${filterActive ? `Filtro activo: ${column.label}` : `Filtrar por ${column.label}`}" title="${filterActive ? 'Filtro activo' : `Filtrar por ${esc(column.label)}`}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg></button>` : ''}
+    </span>
+  </th>`;
+}
+function createTableColumnController({ tableId, columns, state, onChange, defaultSort = { field: 'code', dir: 'asc' } }) {
+  const sessionKey = `engrase_table_state:${tableId}`;
+  const byKey = new Map(columns.map(column => [column.key, column]));
+  let boundRoot = null;
+  let mobileControlsRoot = null;
+  function persist() {
+    try { sessionStorage.setItem(sessionKey, JSON.stringify({ sortKey: state.sort.field, sortDirection: state.sort.dir, columnFilters: state.filters })); }
+    catch (e) { /* preferencia de sesión opcional */ }
+  }
+  function closePopover() {
+    if (!activeTableColumnPopover) return;
+    activeTableColumnPopover._cleanup?.();
+    activeTableColumnPopover.remove();
+    activeTableColumnPopover = null;
+  }
+  function openPopover(button, column) {
+    closePopover();
+    const popover = document.createElement('div');
+    popover.className = 'table-column-popover';
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', `Filtrar por ${column.label}`);
+    const current = state.filters[column.key] || '';
+    const options = (typeof column.options === 'function' ? column.options() : (column.options || []))
+      .map(option => typeof option === 'object' ? option : ({ value: option, label: option }))
+      .filter(option => option.value !== null && option.value !== undefined && String(option.value).trim());
+    const optionList = options.length ? `<div class="table-column-filter-options" role="listbox" aria-label="Valores disponibles para ${esc(column.label)}">
+      ${options.map(option => `<button type="button" class="table-column-filter-option ${current === String(option.value) ? 'is-selected' : ''}" role="option" aria-selected="${current === String(option.value)}" data-table-filter-value="${esc(option.value)}">${esc(option.label)}</button>`).join('')}
+    </div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>';
+    const control = column.filterType === 'select'
+      ? `<select class="table-column-filter-input" size="${Math.max(2, Math.min(6, options.length + 1))}" aria-label="Valor para ${esc(column.label)}"><option value="">Todos</option>${options.map(o => `<option value="${esc(o.value)}" ${current === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`
+      : `<input class="table-column-filter-input" type="search" value="${esc(current)}" placeholder="Buscar contiene…" aria-label="Buscar ${esc(column.label)}" />${optionList}`;
+    popover.innerHTML = `<div class="table-column-popover-title">Filtrar: ${esc(column.label)}</div>${control}<div class="table-column-popover-actions"><button type="button" class="btn btn-sm" data-table-filter-clear>Limpiar</button><button type="button" class="btn btn-sm btn-accent" data-table-filter-apply>Aplicar</button></div>`;
+    document.body.appendChild(popover);
+    activeTableColumnPopover = popover;
+    const dismissOnOutside = event => {
+      if (!popover.contains(event.target) && event.target !== button) closePopover();
+    };
+    const dismissOnEscape = event => { if (event.key === 'Escape') { closePopover(); button.focus(); } };
+    popover._cleanup = () => {
+      document.removeEventListener('pointerdown', dismissOnOutside, true);
+      document.removeEventListener('keydown', dismissOnEscape, true);
+    };
+    document.addEventListener('keydown', dismissOnEscape, true);
+    setTimeout(() => {
+      document.addEventListener('pointerdown', dismissOnOutside, true);
+    }, 0);
+    const rect = button.getBoundingClientRect();
+    const width = Math.min(280, window.innerWidth - 16);
+    popover.style.width = `${width}px`;
+    popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    popover.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - popover.offsetHeight - 8)}px`;
+    const input = $('.table-column-filter-input', popover);
+    $$('.table-column-filter-option', popover).forEach(option => option.addEventListener('click', () => {
+      input.value = option.dataset.tableFilterValue || '';
+      $$('.table-column-filter-option', popover).forEach(item => {
+        const selected = item === option;
+        item.classList.toggle('is-selected', selected);
+        item.setAttribute('aria-selected', String(selected));
+      });
+      input.focus();
+    }));
+    if (column.filterType !== 'select') input.addEventListener('input', () => {
+      const needle = input.value.trim().toLocaleLowerCase('es');
+      $$('.table-column-filter-option', popover).forEach(option => {
+        option.hidden = !!needle && !option.textContent.toLocaleLowerCase('es').includes(needle);
+      });
+    });
+    const apply = () => {
+      state.filters[column.key] = input.value.trim();
+      persist(); closePopover(); notify();
+    };
+    $('[data-table-filter-apply]', popover).addEventListener('click', apply);
+    $('[data-table-filter-clear]', popover).addEventListener('click', () => { state.filters[column.key] = ''; persist(); closePopover(); notify(); });
+    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } if (ev.key === 'Escape') { closePopover(); button.focus(); } });
+    input.addEventListener('change', () => { if (column.filterType === 'select') apply(); });
+    setTimeout(() => input.focus(), 0);
+  }
+  function refreshHeaders() {
+    if (!boundRoot) return;
+    columns.forEach(column => {
+      const th = boundRoot.querySelector(`th[data-column-key="${column.key}"]`);
+      if (!th) return;
+      const activeSort = state.sort.field === column.key;
+      const direction = activeSort ? state.sort.dir : '';
+      th.setAttribute('aria-sort', activeSort ? (direction === 'desc' ? 'descending' : 'ascending') : 'none');
+      const sortButton = th.querySelector('.table-column-sort');
+      if (sortButton) {
+        sortButton.innerHTML = `${esc(column.label)} <span aria-hidden="true">${direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}</span>`;
+        sortButton.setAttribute('aria-label', `Ordenar por ${column.label}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}`);
+      }
+      const filterButton = th.querySelector('.table-column-filter');
+      if (filterButton) {
+        const activeFilter = !!state.filters[column.key];
+        filterButton.classList.toggle('is-active', activeFilter);
+        filterButton.setAttribute('aria-label', activeFilter ? `Filtro activo: ${column.label}` : `Filtrar por ${column.label}`);
+        filterButton.title = activeFilter ? 'Filtro activo' : `Filtrar por ${column.label}`;
+      }
+      mobileControlsRoot?.querySelectorAll(`[data-table-filter-proxy="${column.key}"]`).forEach(proxy => {
+        proxy.classList.toggle('is-active', !!state.filters[column.key]);
+      });
+    });
+  }
+  function notify() { refreshHeaders(); onChange(); }
+  function bind(root) {
+    boundRoot = root;
+    $$('.table-column-sort', root).forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation();
+      const key = button.dataset.tableSort;
+      if (!byKey.has(key)) return;
+      state.sort = state.sort.field === key ? { field: key, dir: state.sort.dir === 'asc' ? 'desc' : 'asc' } : { field: key, dir: 'asc' };
+      persist(); notify();
+    }));
+    $$('.table-column-filter', root).forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation();
+      openPopover(button, byKey.get(button.dataset.tableFilter));
+    }));
+    const mobileHost = root.id === 'eq-table' ? root.parentElement?.parentElement : root.parentElement;
+    if (!mobileHost?.querySelector('.table-mobile-column-controls')) {
+      const mobileControls = document.createElement('div');
+      mobileControls.className = 'table-mobile-column-controls';
+      mobileControls.setAttribute('aria-label', 'Ordenar y filtrar tabla');
+      columns.filter(column => column.sortable || column.filterType).forEach(column => {
+        const group = document.createElement('span');
+        group.className = 'table-mobile-column-group';
+        if (column.sortable !== false) {
+          const sortProxy = document.createElement('button');
+          sortProxy.type = 'button'; sortProxy.className = 'btn btn-sm';
+          sortProxy.textContent = column.label;
+          sortProxy.setAttribute('aria-label', `Ordenar por ${column.label}`);
+          sortProxy.addEventListener('click', () => root.querySelector(`[data-table-sort="${column.key}"]`)?.click());
+          group.appendChild(sortProxy);
+        }
+        if (column.filterType) {
+          const filterProxy = document.createElement('button');
+          filterProxy.type = 'button'; filterProxy.className = 'table-column-filter';
+          filterProxy.dataset.tableFilterProxy = column.key;
+          filterProxy.setAttribute('aria-label', `Filtrar por ${column.label}`);
+          filterProxy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg>';
+          filterProxy.addEventListener('click', () => root.querySelector(`[data-table-filter="${column.key}"]`)?.click());
+          group.appendChild(filterProxy);
+        }
+        mobileControls.appendChild(group);
+      });
+      if (root.id === 'eq-table') mobileHost?.insertBefore(mobileControls, root.parentElement);
+      else mobileHost?.insertBefore(mobileControls, root);
+      mobileControlsRoot = mobileControls;
+    } else {
+      mobileControlsRoot = mobileHost.querySelector('.table-mobile-column-controls');
+    }
+  }
+  function restore() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(sessionKey) || 'null');
+      if (!saved || typeof saved !== 'object') return;
+      if (byKey.has(saved.sortKey)) state.sort = { field: saved.sortKey, dir: saved.sortDirection === 'desc' ? 'desc' : 'asc' };
+      if (saved.columnFilters && typeof saved.columnFilters === 'object') columns.forEach(column => {
+        const savedValue = saved.columnFilters[column.key] || '';
+        if (column.filterType === 'select' && savedValue) {
+          const available = (typeof column.options === 'function' ? column.options() : (column.options || []))
+            .map(option => String(typeof option === 'object' ? option.value : option));
+          state.filters[column.key] = available.includes(String(savedValue)) ? savedValue : '';
+        } else {
+          state.filters[column.key] = savedValue;
+        }
+      });
+    } catch (e) { /* preferencia de sesión opcional */ }
+  }
+  function reset() { state.sort = { ...defaultSort }; columns.forEach(column => { if (column.filterType) state.filters[column.key] = ''; }); persist(); notify(); }
+  return { bind, closePopover, persist, reset, restore, headerHTML: column => renderTableColumnHeader(column, state) };
+}
+
 /* ---------- Escape de HTML (protección contra XSS) ----------
    Todo texto que haya escrito una persona (códigos, descripciones, notas, nombres…)
    DEBE pasar por aquí antes de insertarse en la página. Sin esto, alguien podría
@@ -3668,13 +3860,106 @@ function navigate(route) {
   Promise.resolve(renderRoute()).then(() => makeTablesResponsive($('#app-content')));
 }
 
+function tableColumnKey(label, index) {
+  const normalized = String(label || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  return normalized || `column_${index}`;
+}
+function tableComparableValue(value) {
+  const text = String(value || '').trim();
+  const dateMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+  if (dateMatch) return new Date(Number(dateMatch[3].length === 2 ? `20${dateMatch[3]}` : dateMatch[3]), Number(dateMatch[2]) - 1, Number(dateMatch[1])).getTime();
+  const numeric = Number(text.replace(/[^0-9,.-]/g, '').replace(',', '.'));
+  if (text && Number.isFinite(numeric) && /\d/.test(text)) return numeric;
+  return text.toLocaleLowerCase('es');
+}
+function standardizeDataTable(table, tableIndex = 0) {
+  if (!table || table.id === 'plan-table' || table.id === 'eq-table' || table.dataset.columnStandardized === 'true') {
+    table?._applyColumnState?.();
+    return;
+  }
+  const originalHeaders = $$('thead th', table);
+  const rows = $$('tbody tr', table).filter(row => !row.querySelector('.empty-state'));
+  const principalRoute = ['historial', 'anomalias', 'lubricantes', 'usuarios', 'reportes'].includes(App.route);
+  if (originalHeaders.length < 2 || table.tHead?.rows.length !== 1 || originalHeaders.some(th => th.colSpan > 1 || th.rowSpan > 1) || (rows.length < 6 && !principalRoute)) return;
+  const actionPattern = /^(acciones?|acción|editar|ver|configurar|foto|qr)?$/i;
+  const selectPattern = /^(estado|turno|rol|criticidad|tipo|ubicación|cuadrilla|responsable|unidad|plan)$/i;
+  const usedKeys = new Set();
+  const columns = originalHeaders.map((th, index) => {
+    const label = th.textContent.trim();
+    let key = tableColumnKey(label, index);
+    while (usedKeys.has(key)) key = `${key}_${index}`;
+    usedKeys.add(key);
+    const actionable = actionPattern.test(label);
+    return {
+      key, label, index, sortable: !actionable,
+      filterType: actionable ? null : (selectPattern.test(label) ? 'select' : 'text'),
+      options: () => [...new Set($$('tbody tr', table).map(row => row.cells[index]?.textContent.trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+        .map(value => ({ value, label: value })),
+    };
+  });
+  const state = { sort: { field: columns.find(column => column.sortable)?.key || '', dir: 'asc' }, filters: Object.fromEntries(columns.map(column => [column.key, ''])) };
+  const routeKey = App.route === 'equipos' ? 'equipment' : App.route === 'historial' ? 'history' : App.route === 'anomalias' ? 'anomalies' : App.route === 'usuarios' ? 'users' : App.route || 'table';
+  const stableName = table.id || [...table.classList].find(name => name !== 'data-table') || `table_${tableIndex}`;
+  const tableId = tableIndex ? `${routeKey}:${stableName}:${tableIndex}` : routeKey;
+  const sourceOrder = new WeakMap();
+  function applyColumnState() {
+    const body = table.tBodies[0];
+    if (!body) return;
+    const bodyRows = $$('tr', body);
+    bodyRows.forEach((row, index) => { if (!sourceOrder.has(row)) sourceOrder.set(row, index); });
+    bodyRows.forEach(row => {
+      const visible = columns.every(column => {
+        const filter = state.filters[column.key];
+        if (!filter) return true;
+        const value = row.cells[column.index]?.textContent.trim() || '';
+        return column.filterType === 'select' ? value === filter : value.toLocaleLowerCase('es').includes(filter.toLocaleLowerCase('es'));
+      });
+      row.hidden = !visible;
+    });
+    const sortColumn = columns.find(column => column.key === state.sort.field);
+    if (sortColumn) {
+      const direction = state.sort.dir === 'desc' ? -1 : 1;
+      bodyRows.sort((a, b) => {
+        const av = tableComparableValue(a.cells[sortColumn.index]?.textContent);
+        const bv = tableComparableValue(b.cells[sortColumn.index]?.textContent);
+        if (av < bv) return -1 * direction;
+        if (av > bv) return direction;
+        return (sourceOrder.get(a) || 0) - (sourceOrder.get(b) || 0);
+      }).forEach(row => body.appendChild(row));
+    }
+  }
+  const controller = createTableColumnController({
+    tableId, columns, state, onChange: applyColumnState,
+    defaultSort: { ...state.sort },
+  });
+  controller.restore();
+  const headerRow = table.tHead?.rows[0];
+  if (!headerRow) return;
+  headerRow.innerHTML = columns.map(column => controller.headerHTML(column)).join('');
+  controller.bind(table);
+  table.dataset.columnStandardized = 'true';
+  table._applyColumnState = applyColumnState;
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'btn btn-sm table-reset-button';
+  reset.textContent = 'Restablecer tabla';
+  reset.addEventListener('click', () => controller.reset());
+  const actions = document.createElement('div');
+  actions.className = 'table-state-actions';
+  actions.appendChild(reset);
+  table.parentElement?.insertBefore(actions, table);
+  applyColumnState();
+}
+
 // Convierte cualquier <table class="data-table"> en tarjetas apiladas en pantallas angostas,
 // copiando el texto de cada encabezado <th> a un atributo data-label en su columna. Así no
 // hay que tocar cada pantalla una por una — se aplica solo con volver a llamar esta función.
 function makeTablesResponsive(container) {
   if (!container) return;
-  $$('table.data-table', container).forEach(table => {
-    const headers = $$('thead th', table).map(th => th.textContent.trim());
+  $$('table.data-table', container).forEach((table, tableIndex) => {
+    standardizeDataTable(table, tableIndex);
+    const headers = $$('thead th', table).map(th => th.dataset.columnLabel || th.textContent.trim());
     $$('tbody tr', table).forEach(tr => {
       $$('td', tr).forEach((td, i) => {
         if (headers[i] !== undefined) td.setAttribute('data-label', headers[i]);
@@ -6745,24 +7030,33 @@ async function renderEquipos() {
   const statusFilterOptions = [...new Map(allWithStatus.map(({ s }) => [s.code, s.label])).entries()]
     .sort((a, b) => (EQ_STATUS_SEVERITY[a[0]] ?? 9) - (EQ_STATUS_SEVERITY[b[0]] ?? 9))
     .map(([code, label]) => ({ code, label }));
+  // Los catálogos pueden ser globales, pero las opciones del filtro nunca:
+  // se limitan a los IDs presentes en la colección de equipos ya autorizada.
+  // Esto evita revelar ubicaciones/tipos fuera del alcance de un planificador.
+  const authorizedTypeIds = new Set(equipos.map(e => e.typeId).filter(Boolean));
+  const authorizedLocationIds = new Set(equipos.map(e => e.locationId).filter(Boolean));
+  const equipmentTextOptions = getter => () => [...new Set(equipos.map(getter).map(value => String(value || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+    .map(value => ({ value, label: value }));
 
   const EQ_SORT_FIELDS = [
-    { key: 'code', label: 'Código' },
-    { key: 'shortCode', label: 'Código interno' },
-    { key: 'model', label: 'Equipo / Modelo' },
-    { key: 'type', label: 'Tipo' },
-    { key: 'location', label: 'Ubicación' },
-    { key: 'status', label: 'Estado' },
-    { key: 'hourmeter', label: 'Horómetro' },
-    { key: 'plan', label: 'Plan' },
+    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', options: equipmentTextOptions(e => e.shortCode) },
+    { key: 'code', label: 'Código interno', filterType: 'text', options: equipmentTextOptions(e => e.code) },
+    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', options: equipmentTextOptions(e => `${e.brand || ''} ${e.model || ''}`.trim()) },
+    { key: 'type', label: 'Tipo', filterType: 'select', options: () => types.filter(type => authorizedTypeIds.has(type.id)).map(type => ({ value: type.id, label: type.name })) },
+    { key: 'location', label: 'Ubicación', filterType: 'select', options: () => locations.filter(location => authorizedLocationIds.has(location.id)).map(location => ({ value: location.id, label: location.name })) },
+    { key: 'status', label: 'Estado', filterType: 'select', options: () => statusFilterOptions.map(option => ({ value: option.code, label: option.label })) },
+    { key: 'hourmeter', label: 'Horómetro', filterType: 'text', options: equipmentTextOptions(e => e.hourmeter) },
+    { key: 'plan', label: 'Plan', filterType: 'select', options: () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }] },
   ];
+  const EQ_TABLE_COLUMNS = [...EQ_SORT_FIELDS, { key: 'actions', label: 'Acciones', sortable: false, width: '150px', nowrap: true }];
   const EQ_SORT_FIELD_KEYS = new Set(EQ_SORT_FIELDS.map(f => f.key));
   // Mismo criterio que EQ_VIEW_SESSION_KEY (arriba): sessionStorage, NUNCA
   // localStorage — orden/filtros son una preferencia de ESTA pestaña/
   // sesión, no algo que deba sobrevivir a otro dispositivo u otro login.
   const EQ_FILTERS_SESSION_KEY = 'engrase_equipos_sort_filter';
   let sortState = { field: 'code', dir: 'asc' };
-  let filterState = { typeId: '', locationId: '', statusCode: '', planFilter: '' };
+  let filterState = { shortCode: '', code: '', model: '', type: '', location: '', status: '', hourmeter: '', plan: '' };
   try {
     const saved = JSON.parse(sessionStorage.getItem(EQ_FILTERS_SESSION_KEY) || 'null');
     if (saved && typeof saved === 'object') {
@@ -6771,20 +7065,14 @@ async function renderEquipos() {
       }
       if (saved.filters && typeof saved.filters === 'object') {
         filterState = {
-          typeId: saved.filters.typeId || '', locationId: saved.filters.locationId || '',
-          statusCode: saved.filters.statusCode || '', planFilter: saved.filters.planFilter || '',
+          shortCode: saved.filters.shortCode || '', code: saved.filters.code || '', model: saved.filters.model || '',
+          type: saved.filters.type || saved.filters.typeId || '', location: saved.filters.location || saved.filters.locationId || '',
+          status: saved.filters.status || saved.filters.statusCode || '', hourmeter: saved.filters.hourmeter || '',
+          plan: saved.filters.plan || saved.filters.planFilter || '',
         };
       }
     }
   } catch (e) { /* preferencia de sesión opcional */ }
-  function persistSortFilterState() {
-    try { sessionStorage.setItem(EQ_FILTERS_SESSION_KEY, JSON.stringify({ sort: sortState, filters: filterState })); }
-    catch (e) { /* preferencia de sesión opcional */ }
-  }
-  function activeFilterCount() {
-    return ['typeId', 'locationId', 'statusCode', 'planFilter'].filter(k => filterState[k]).length;
-  }
-
   // Vista Tarjetas/Tabla: el DEFAULT depende del viewport (nunca un
   // dispositivo "recuerda" la vista del otro — por eso NUNCA localStorage
   // aquí): >=1024px (desktop/PC) → Tabla, <1024px (tablet/móvil) → Tarjetas.
@@ -6819,15 +7107,18 @@ async function renderEquipos() {
   // lleva data-sort + un span.sort-arrow propio — clic en el header reusa
   // EXACTAMENTE la misma ruta (aplicarOrdenFiltro) que el modal "Ordenar/
   // Filtrar" (ver más abajo), nunca una segunda implementación de orden.
-  const eqTableTheadHTML = () => EQ_SORT_FIELDS.map(f =>
-    `<th class="eq-th-sort" data-sort="${f.key}" role="columnheader" aria-sort="${sortState.field === f.key ? (sortState.dir === 'desc' ? 'descending' : 'ascending') : 'none'}" tabindex="0">${esc(f.label)}<span class="sort-arrow">${sortState.field === f.key ? (sortState.dir === 'desc' ? '▼' : '▲') : ''}</span></th>`
-  ).join('') + '<th></th>';
+  const equipmentColumnController = createTableColumnController({
+    tableId: 'equipment', columns: EQ_TABLE_COLUMNS,
+    state: { get sort() { return sortState; }, set sort(value) { sortState = value; }, filters: filterState },
+    onChange: () => draw($('#eq-search')?.value || ''),
+  });
+  equipmentColumnController.restore();
+  const eqTableTheadHTML = () => EQ_TABLE_COLUMNS.map(column => equipmentColumnController.headerHTML(column)).join('');
 
   c.innerHTML = `
     <div class="layout-wide">
     <div class="toolbar">
       <input id="eq-search" class="input input-search" placeholder="Buscar por código, ubicación, punto de engrase…" />
-      <button type="button" class="btn btn-sm" id="eq-sort-filter-btn">${ic("list")}Ordenar / Filtrar</button>
       <div class="view-switch" id="eq-view-switch" role="group" aria-label="Vista de equipos">
         <button type="button" class="btn btn-sm view-switch-btn" data-view="cards" aria-pressed="${viewMode === 'cards' ? 'true' : 'false'}">${ic("grid")}Tarjetas</button>
         <button type="button" class="btn btn-sm view-switch-btn" data-view="table" aria-pressed="${viewMode === 'table' ? 'true' : 'false'}">${ic("matrix")}Tabla</button>
@@ -6893,11 +7184,15 @@ async function renderEquipos() {
   // por vista.
   function applyFiltersAndSort(withStatusIn) {
     let out = withStatusIn;
-    if (filterState.typeId) out = out.filter(({ e }) => e.typeId === filterState.typeId);
-    if (filterState.locationId) out = out.filter(({ e }) => e.locationId === filterState.locationId);
-    if (filterState.statusCode) out = out.filter(({ s }) => s.code === filterState.statusCode);
-    if (filterState.planFilter === 'con') out = out.filter(({ s }) => !!s.plan);
-    if (filterState.planFilter === 'sin') out = out.filter(({ s }) => !s.plan);
+    if (filterState.shortCode) out = out.filter(({ e }) => (e.shortCode || '').toLowerCase().includes(filterState.shortCode.toLowerCase()));
+    if (filterState.code) out = out.filter(({ e }) => (e.code || '').toLowerCase().includes(filterState.code.toLowerCase()));
+    if (filterState.model) out = out.filter(({ e }) => `${e.brand || ''} ${e.model || ''}`.toLowerCase().includes(filterState.model.toLowerCase()));
+    if (filterState.type) out = out.filter(({ e }) => e.typeId === filterState.type);
+    if (filterState.location) out = out.filter(({ e }) => e.locationId === filterState.location);
+    if (filterState.status) out = out.filter(({ s }) => s.code === filterState.status);
+    if (filterState.hourmeter) out = out.filter(({ e }) => String(e.hourmeter ?? '').includes(filterState.hourmeter));
+    if (filterState.plan === 'con') out = out.filter(({ s }) => !!s.plan);
+    if (filterState.plan === 'sin') out = out.filter(({ s }) => !s.plan);
     const dir = sortState.dir === 'desc' ? -1 : 1;
     return [...out].sort((a, b) => {
       const va = sortValueFor(sortState.field, a.e, a.s), vb = sortValueFor(sortState.field, b.e, b.s);
@@ -6976,120 +7271,10 @@ async function renderEquipos() {
       if (eq) openEquipmentForm(eq, types, locations);
     }));
   }
-  // Texto del botón: "Filtrar (N)" en vez de "Ordenar / Filtrar" en cuanto
-  // hay al menos un filtro activo (pedido explícito) — el ícono se
-  // mantiene, nunca un badge/estilo nuevo.
-  function updateSortFilterButtonLabel() {
-    const n = activeFilterCount();
-    $('#eq-sort-filter-btn').innerHTML = n ? `${ic("list")}Filtrar (${n})` : `${ic("list")}Ordenar / Filtrar`;
-  }
-  // Flechas ▲/▼ de los encabezados de Tabla — se actualizan in-place
-  // (nunca se reconstruye el <thead>, así los listeners de clic de abajo
-  // no se pierden). Misma fuente de verdad (`sortState`) que el modal.
-  function updateSortIndicators() {
-    $$('.eq-th-sort', $('#eq-table')).forEach(th => {
-      const active = th.dataset.sort === sortState.field;
-      th.setAttribute('aria-sort', active ? (sortState.dir === 'desc' ? 'descending' : 'ascending') : 'none');
-      th.querySelector('.sort-arrow').textContent = active ? (sortState.dir === 'desc' ? '▼' : '▲') : '';
-    });
-  }
-  updateSortFilterButtonLabel();
-
   draw();
+  equipmentColumnController.bind($('#eq-table'));
   $('#eq-search').addEventListener('input', (e) => draw(e.target.value));
   if (canEdit) $('#eq-new')?.addEventListener('click', () => openEquipmentForm(null, types, locations));
-
-  // Clic en encabezado de Tabla (opcional del pedido, "si es simple"):
-  // reusa exactamente `sortState` + persistSortFilterState() + draw() —
-  // la MISMA ruta que "Aplicar" del modal, nunca una segunda
-  // implementación de orden.
-  $$('.eq-th-sort', $('#eq-table')).forEach(th => {
-    const activateSort = () => {
-      const field = th.dataset.sort;
-      if (sortState.field === field) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-      else sortState = { field, dir: 'asc' };
-      persistSortFilterState();
-      updateSortIndicators();
-      draw($('#eq-search').value);
-    };
-    th.addEventListener('click', activateSort);
-    th.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activateSort(); } });
-  });
-
-  // Modal "Ordenar / Filtrar" — Tipo/Ubicación generados dinámicamente de
-  // los maestros ya cargados (`types`/`locations`); Estado, de
-  // `statusFilterOptions` (calculado arriba a partir de los equipos
-  // reales). Aplicar/Limpiar comparten la MISMA `applyFiltersAndSort()` +
-  // `persistSortFilterState()` que el resto de esta pantalla.
-  $('#eq-sort-filter-btn').addEventListener('click', () => {
-    openModal('Ordenar y filtrar equipos', `
-      <form id="eq-sort-filter-form" class="form-grid">
-        <label class="span-2">Ordenar por
-          <select name="sortField">
-            ${EQ_SORT_FIELDS.map(f => `<option value="${f.key}" ${sortState.field === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="span-2">Orden
-          <select name="sortDir">
-            <option value="asc" ${sortState.dir === 'asc' ? 'selected' : ''}>Ascendente</option>
-            <option value="desc" ${sortState.dir === 'desc' ? 'selected' : ''}>Descendente</option>
-          </select>
-        </label>
-        <label>Tipo
-          <select name="typeId">
-            <option value="">Todos</option>
-            ${types.map(t => `<option value="${t.id}" ${filterState.typeId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Ubicación
-          <select name="locationId">
-            <option value="">Todas</option>
-            ${locations.map(l => `<option value="${l.id}" ${filterState.locationId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Estado
-          <select name="statusCode">
-            <option value="">Todos</option>
-            ${statusFilterOptions.map(s => `<option value="${s.code}" ${filterState.statusCode === s.code ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Plan
-          <select name="planFilter">
-            <option value="">Todos</option>
-            <option value="con" ${filterState.planFilter === 'con' ? 'selected' : ''}>Con plan</option>
-            <option value="sin" ${filterState.planFilter === 'sin' ? 'selected' : ''}>Sin plan</option>
-          </select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn" id="eq-sort-filter-clear">Limpiar</button>
-          <button type="submit" class="btn btn-accent" id="eq-sort-filter-apply">${ic("check")}Aplicar</button>
-        </div>
-      </form>
-    `);
-    $('#eq-sort-filter-form').addEventListener('submit', (ev) => {
-      ev.preventDefault();
-      const fd = new FormData(ev.target);
-      sortState = { field: fd.get('sortField'), dir: fd.get('sortDir') === 'desc' ? 'desc' : 'asc' };
-      filterState = {
-        typeId: fd.get('typeId') || '', locationId: fd.get('locationId') || '',
-        statusCode: fd.get('statusCode') || '', planFilter: fd.get('planFilter') || '',
-      };
-      persistSortFilterState();
-      updateSortIndicators();
-      updateSortFilterButtonLabel();
-      draw($('#eq-search').value);
-      closeModal();
-    });
-    $('#eq-sort-filter-clear').addEventListener('click', () => {
-      sortState = { field: 'code', dir: 'asc' };
-      filterState = { typeId: '', locationId: '', statusCode: '', planFilter: '' };
-      persistSortFilterState();
-      updateSortIndicators();
-      updateSortFilterButtonLabel();
-      draw($('#eq-search').value);
-      closeModal();
-    });
-  });
 
   // Selector de vista Tarjetas/Tabla: alterna visibilidad entre #eq-list y
   // #eq-table-wrap (ambos ya pintados por draw() con la misma colección) —
@@ -8417,36 +8602,47 @@ async function renderPlan() {
   planRows.forEach(r => searchIndex.set(r.e.id, [r.e.shortCode, r.e.code, r.modelLabel].filter(Boolean).join(' ').toLowerCase()));
 
   const PLAN_SORT_FIELDS = [
-    { key: 'shortCode', label: 'Código ahorrativo' },
-    { key: 'code', label: 'Código interno' },
-    { key: 'model', label: 'Equipo / Modelo' },
-    { key: 'control', label: 'Control' },
-    { key: 'frequency', label: 'Frecuencia / Días' },
-    { key: 'shift', label: 'Turno' },
-    { key: 'points', label: 'Puntos' },
+    { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', width: '118px', nowrap: true },
+    { key: 'code', label: 'Código interno', filterType: 'text', width: '118px', nowrap: true },
+    { key: 'model', label: 'Equipo / Modelo', filterType: 'text', width: '170px' },
+    { key: 'control', label: 'Control', filterType: 'select', width: '138px' },
+    { key: 'frequency', label: 'Frecuencia / Días', filterType: 'text', width: '205px' },
+    { key: 'shift', label: 'Turnos', filterType: 'select', width: '185px' },
+    { key: 'reference', label: 'Referencia', filterType: 'select', sortable: false, width: '95px' },
+    { key: 'points', label: 'Puntos', filterType: 'text', width: '70px', nowrap: true },
   ];
+  const PLAN_TABLE_COLUMNS = [...PLAN_SORT_FIELDS, { key: 'actions', label: 'Configurar', sortable: false, width: '110px', nowrap: true }];
   const PLAN_SORT_FIELD_KEYS = new Set(PLAN_SORT_FIELDS.map(f => f.key));
   const DIAS_SEMANA_FILTRO = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
   // Opciones de filtro generadas de los datos reales (pedido explícito) —
   // nunca una lista hardcodeada. Mismo criterio que Equipos (statusFilterOptions).
-  const shortCodeOptions = [...new Set(planRows.map(r => r.e.shortCode).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const codeOptions = [...new Set(planRows.map(r => r.e.code).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const modelOptions = [...new Set(planRows.map(r => r.modelLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const controlOptions = [...new Set(planRows.map(r => r.controlLabel).filter(x => x && x !== '—'))];
   const availableShifts = new Set(planRows.flatMap(r => r.configuredShifts || []));
   const shiftFilterOptions = [
     ...(availableShifts.has('shift_dia') ? [{ value: 'shift_dia', label: 'Turno Día' }] : []),
     ...(availableShifts.has('shift_noche') ? [{ value: 'shift_noche', label: 'Turno Noche' }] : []),
   ];
-  const usedWeekdays = new Set(planRows.filter(r => r.isWeekday).flatMap(r => r.plan.assignedDays || []));
-  const weekdayFilterOptions = DIAS_SEMANA_FILTRO.filter(d => usedWeekdays.has(d));
+  PLAN_SORT_FIELDS.find(f => f.key === 'control').options = () => controlOptions.map(value => ({ value, label: value }));
+  PLAN_SORT_FIELDS.find(f => f.key === 'shift').options = () => [
+    ...shiftFilterOptions,
+    ...(availableShifts.has('shift_dia') && availableShifts.has('shift_noche') ? [{ value: 'both', label: 'Día + Noche' }] : []),
+  ];
+  PLAN_SORT_FIELDS.find(f => f.key === 'reference').options = () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }];
+  const planTextOptions = getter => () => [...new Set(planRows.map(getter).map(value => String(value || '').trim()).filter(value => value && value !== '—'))]
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+    .map(value => ({ value, label: value }));
+  PLAN_SORT_FIELDS.find(f => f.key === 'shortCode').options = planTextOptions(r => r.e.shortCode);
+  PLAN_SORT_FIELDS.find(f => f.key === 'code').options = planTextOptions(r => r.e.code);
+  PLAN_SORT_FIELDS.find(f => f.key === 'model').options = planTextOptions(r => r.modelLabel);
+  PLAN_SORT_FIELDS.find(f => f.key === 'frequency').options = planTextOptions(r => r.frequencyLabel);
+  PLAN_SORT_FIELDS.find(f => f.key === 'points').options = planTextOptions(r => r.points.length);
 
   // Ordenar/Filtrar — SOLO sessionStorage (preferencia de esta pestaña/sesión,
   // nunca localStorage): ver misma regla ya establecida en Equipos.
   const PLAN_FILTERS_SESSION_KEY = 'engrase_plan_sort_filter';
   let sortState = { field: 'code', dir: 'asc' };
-  let filterState = { shortCode: '', code: '', model: '', control: '', shift: '', planFilter: '', weekday: '' };
+  let filterState = { shortCode: '', code: '', model: '', control: '', frequency: '', shift: '', reference: '', points: '' };
   try {
     const saved = JSON.parse(sessionStorage.getItem(PLAN_FILTERS_SESSION_KEY) || 'null');
     if (saved && typeof saved === 'object') {
@@ -8456,8 +8652,8 @@ async function renderPlan() {
       if (saved.filters && typeof saved.filters === 'object') {
         filterState = {
           shortCode: saved.filters.shortCode || '', code: saved.filters.code || '', model: saved.filters.model || '',
-          control: saved.filters.control || '', shift: saved.filters.shift || '',
-          planFilter: saved.filters.planFilter || '', weekday: saved.filters.weekday || '',
+          control: saved.filters.control || '', frequency: saved.filters.frequency || '', shift: saved.filters.shift || '',
+          reference: saved.filters.reference || saved.filters.planFilter || '', points: saved.filters.points || '',
         };
       }
     }
@@ -8467,11 +8663,7 @@ async function renderPlan() {
     catch (e) { /* preferencia de sesión opcional */ }
   }
   function activeFilterCount() {
-    return ['shortCode', 'code', 'model', 'control', 'shift', 'planFilter', 'weekday'].filter(k => filterState[k]).length;
-  }
-  function updateSortFilterButtonLabel() {
-    const n = activeFilterCount();
-    $('#plan-sort-filter-btn').innerHTML = n ? `${ic("list")}Filtrar (${n})` : `${ic("list")}Ordenar / Filtrar`;
+    return PLAN_SORT_FIELDS.filter(column => filterState[column.key]).length;
   }
 
   function sortValueFor(field, row) {
@@ -8480,7 +8672,9 @@ async function renderPlan() {
       case 'code': return (row.e.code || '').toLowerCase();
       case 'model': return row.modelLabel.toLowerCase();
       case 'control': return row.controlLabel.toLowerCase();
-      case 'frequency': return row.frequencyLabel.toLowerCase();
+      case 'frequency': return row.isWeekday
+        ? `1:${DIAS_SEMANA_FILTRO.map(day => (row.plan?.assignedDays || []).some(value => value.toLocaleLowerCase('es').startsWith(day.slice(0, 3).toLocaleLowerCase('es'))) ? '1' : '0').join('')}`
+        : `0:${String(Number(row.plan?.frequency) || 0).padStart(10, '0')}`;
       case 'shift': return row.shiftsLabel.toLowerCase();
       case 'points': return row.points.length;
       default: return '';
@@ -8490,14 +8684,16 @@ async function renderPlan() {
   // Pipeline único (pedido explícito): búsqueda → filtros → orden → render.
   function applyFiltersAndSort(rowsIn) {
     let out = rowsIn;
-    if (filterState.shortCode) out = out.filter(r => r.e.shortCode === filterState.shortCode);
-    if (filterState.code) out = out.filter(r => r.e.code === filterState.code);
-    if (filterState.model) out = out.filter(r => r.modelLabel === filterState.model);
+    if (filterState.shortCode) out = out.filter(r => (r.e.shortCode || '').toLowerCase().includes(filterState.shortCode.toLowerCase()));
+    if (filterState.code) out = out.filter(r => (r.e.code || '').toLowerCase().includes(filterState.code.toLowerCase()));
+    if (filterState.model) out = out.filter(r => r.modelLabel.toLowerCase().includes(filterState.model.toLowerCase()));
     if (filterState.control) out = out.filter(r => r.controlLabel === filterState.control);
-    if (filterState.shift) out = out.filter(r => (r.configuredShifts || []).includes(filterState.shift));
-    if (filterState.planFilter === 'con') out = out.filter(r => !!r.plan);
-    if (filterState.planFilter === 'sin') out = out.filter(r => !r.plan);
-    if (filterState.weekday) out = out.filter(r => r.isWeekday && (r.plan.assignedDays || []).includes(filterState.weekday));
+    if (filterState.frequency) out = out.filter(r => r.frequencyLabel.toLowerCase().includes(filterState.frequency.toLowerCase()));
+    if (filterState.shift === 'both') out = out.filter(r => (r.configuredShifts || []).includes('shift_dia') && (r.configuredShifts || []).includes('shift_noche'));
+    else if (filterState.shift) out = out.filter(r => (r.configuredShifts || []).includes(filterState.shift));
+    if (filterState.reference === 'con') out = out.filter(r => !!r.plan);
+    if (filterState.reference === 'sin') out = out.filter(r => !r.plan);
+    if (filterState.points) out = out.filter(r => String(r.points.length).includes(filterState.points));
     const dir = sortState.dir === 'desc' ? -1 : 1;
     return [...out].sort((a, b) => {
       const va = sortValueFor(sortState.field, a), vb = sortValueFor(sortState.field, b);
@@ -8507,10 +8703,16 @@ async function renderPlan() {
     });
   }
 
+  const planColumnController = createTableColumnController({
+    tableId: 'plan', columns: PLAN_TABLE_COLUMNS,
+    state: { get sort() { return sortState; }, set sort(value) { sortState = value; }, filters: filterState },
+    onChange: () => draw($('#plan-search')?.value || ''),
+  });
+  planColumnController.restore();
+
   c.innerHTML = `
     <div class="toolbar">
       <input id="plan-search" class="input input-search" placeholder="Buscar por código ahorrativo, código interno o equipo…" />
-      <button type="button" class="btn btn-sm" id="plan-sort-filter-btn">${ic("list")}Ordenar / Filtrar</button>
       <button class="btn btn-accent" id="plan-matrix">${ic("grid")}Ver matriz semanal</button>
       <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
       <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
@@ -8521,11 +8723,11 @@ async function renderPlan() {
       <button class="btn btn-sm btn-accent" id="plan-bulk-apply">${ic("check")}Aplicar plan a seleccionados</button>
       <button class="btn btn-sm" id="plan-bulk-cancel">Cancelar</button>
     </div>
-    <div class="dim plan-results-summary" id="plan-results-count"></div>
+    <div class="plan-results-row"><div class="dim plan-results-summary" id="plan-results-count"></div><button type="button" class="btn btn-sm" id="plan-table-reset">Restablecer tabla</button></div>
     <div class="panel plan-table-panel" id="plan-table-wrap">
-      <div class="panel-head"><h3>Planes de engrase por equipo</h3></div>
+      <div class="panel-head table-section-title"><h3>Planes de engrase por equipo</h3></div>
       <table class="data-table" id="plan-table">
-        <thead><tr>${canEdit ? '<th></th>' : ''}<th>Código ahorrativo</th><th>Código interno</th><th>Equipo / Modelo</th><th>Control</th><th>Frecuencia / Días</th><th>Turnos</th><th>Referencia</th><th>Puntos</th><th></th></tr></thead>
+        <thead><tr>${canEdit ? '<th class="plan-select-column" aria-label="Selección"></th>' : ''}${PLAN_TABLE_COLUMNS.map(column => planColumnController.headerHTML(column)).join('')}</tr></thead>
         <tbody id="plan-table-body"></tbody>
       </table>
     </div>`;
@@ -8551,7 +8753,7 @@ async function renderPlan() {
     const finalRows = applyFiltersAndSort(searched);
     $('#plan-results-count').textContent = `${finalRows.length} de ${planRows.length} equipo(s)`;
     const tbody = $('#plan-table-body');
-    tbody.innerHTML = finalRows.map(rowHTML).join('') || `<tr><td colspan="${canEdit ? 9 : 8}" class="empty-state">Sin resultados.</td></tr>`;
+    tbody.innerHTML = finalRows.map(rowHTML).join('') || `<tr><td colspan="${canEdit ? 10 : 9}" class="empty-state">Sin resultados.</td></tr>`;
     makeTablesResponsive($('#plan-table-wrap'));
 
     $$('button[data-eq]', tbody).forEach(btn => {
@@ -8568,101 +8770,13 @@ async function renderPlan() {
   }
 
   draw();
-  updateSortFilterButtonLabel();
+  planColumnController.bind($('#plan-table'));
   $('#plan-search').addEventListener('input', (e) => draw(e.target.value));
+  $('#plan-table-reset').addEventListener('click', () => planColumnController.reset());
 
   $('#plan-matrix').addEventListener('click', () => navigate('matriz'));
   $('#plan-print-week').addEventListener('click', () => printGreasePlan('semana', equipos, plans, types));
   $('#plan-print-month').addEventListener('click', () => printGreasePlan('mes', equipos, plans, types));
-
-  // Modal "Ordenar / Filtrar" — mismo patrón que Equipos: Aplicar/Limpiar
-  // comparten la MISMA applyFiltersAndSort() + persistSortFilterState().
-  $('#plan-sort-filter-btn').addEventListener('click', () => {
-    openModal('Ordenar y filtrar plan de engrase', `
-      <form id="plan-sort-filter-form" class="form-grid">
-        <label class="span-2">Ordenar por
-          <select name="sortField">
-            ${PLAN_SORT_FIELDS.map(f => `<option value="${f.key}" ${sortState.field === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="span-2">Orden
-          <select name="sortDir">
-            <option value="asc" ${sortState.dir === 'asc' ? 'selected' : ''}>Ascendente</option>
-            <option value="desc" ${sortState.dir === 'desc' ? 'selected' : ''}>Descendente</option>
-          </select>
-        </label>
-        <label>Código ahorrativo
-          <select name="shortCode">
-            <option value="">Todos</option>
-            ${shortCodeOptions.map(v => `<option value="${esc(v)}" ${filterState.shortCode === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Código interno
-          <select name="code">
-            <option value="">Todos</option>
-            ${codeOptions.map(v => `<option value="${esc(v)}" ${filterState.code === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Equipo / Modelo
-          <select name="model">
-            <option value="">Todos</option>
-            ${modelOptions.map(v => `<option value="${esc(v)}" ${filterState.model === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Control
-          <select name="control">
-            <option value="">Todos</option>
-            ${controlOptions.map(v => `<option value="${esc(v)}" ${filterState.control === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Turno
-          <select name="shift">
-            <option value="">Todos</option>
-            ${shiftFilterOptions.map(s => `<option value="${s.value}" ${filterState.shift === s.value ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Plan
-          <select name="planFilter">
-            <option value="">Todos</option>
-            <option value="con" ${filterState.planFilter === 'con' ? 'selected' : ''}>Con plan</option>
-            <option value="sin" ${filterState.planFilter === 'sin' ? 'selected' : ''}>Sin plan</option>
-          </select>
-        </label>
-        <label>Día de la semana
-          <select name="weekday">
-            <option value="">Todos</option>
-            ${weekdayFilterOptions.map(d => `<option value="${esc(d)}" ${filterState.weekday === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
-          </select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn" id="plan-sort-filter-clear">Limpiar</button>
-          <button type="submit" class="btn btn-accent" id="plan-sort-filter-apply">${ic("check")}Aplicar</button>
-        </div>
-      </form>
-    `);
-    $('#plan-sort-filter-form').addEventListener('submit', (ev) => {
-      ev.preventDefault();
-      const fd = new FormData(ev.target);
-      sortState = { field: fd.get('sortField'), dir: fd.get('sortDir') === 'desc' ? 'desc' : 'asc' };
-      filterState = {
-        shortCode: fd.get('shortCode') || '', code: fd.get('code') || '', model: fd.get('model') || '',
-        control: fd.get('control') || '', shift: fd.get('shift') || '',
-        planFilter: fd.get('planFilter') || '', weekday: fd.get('weekday') || '',
-      };
-      persistSortFilterState();
-      updateSortFilterButtonLabel();
-      draw($('#plan-search').value);
-      closeModal();
-    });
-    $('#plan-sort-filter-clear').addEventListener('click', () => {
-      sortState = { field: 'code', dir: 'asc' };
-      filterState = { shortCode: '', code: '', model: '', control: '', shift: '', planFilter: '', weekday: '' };
-      persistSortFilterState();
-      updateSortFilterButtonLabel();
-      draw($('#plan-search').value);
-      closeModal();
-    });
-  });
 
   if (!canEdit) return;
 
