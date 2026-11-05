@@ -40,7 +40,8 @@ const appNames = [
   'wireConfigCategoryNav', 'CONFIG_DEFAULT_CATEGORY', 'renderConfig',
   'renderUsuarios', 'renderUsuariosSupabase', 'manageUsersErrorMessage', 'withSubmitGuard',
   'userFormSupabase', 'roleFormSupabase', 'resetPasswordFormSupabase', 'MANAGE_USERS_ERROR_LABELS',
-  'renderTableColumnHeader', 'createTableColumnController',
+  'TABLE_EMPTY_FILTER_VALUE', 'tableFilterOptionValue', 'tableFilterSelection', 'tableFilterIsActive',
+  'tableFilterMatches', 'tableFilterMatchesAny', 'tableFilterOptions', 'renderTableColumnHeader', 'createTableColumnController',
   'tableColumnKey', 'tableComparableValue', 'standardizeDataTable', 'makeTablesResponsive',
   // broadcastPanelHTML/wireBroadcastPanel (panel "Mensajes operativos" dentro
   // de Configuración > Notificaciones, ya solo un enlace a Tareas y Mensajes)

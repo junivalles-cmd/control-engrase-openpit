@@ -1843,18 +1843,54 @@ const ic = (name) => `<span class="btn-icon icon-${name}"></span>`;
    maneja estado de presentación: la pantalla conserva su propio pipeline de
    datos y decide cómo aplicar cada filtro. */
 let activeTableColumnPopover = null;
+const TABLE_EMPTY_FILTER_VALUE = '__table_empty__';
+function tableFilterOptionValue(value) {
+  const text = String(value ?? '').trim();
+  return !text || text === '—' ? TABLE_EMPTY_FILTER_VALUE : text;
+}
+function tableFilterSelection(value) {
+  const values = Array.isArray(value) ? value : (value === null || value === undefined || value === '' ? [] : [value]);
+  return [...new Set(values.map(tableFilterOptionValue))];
+}
+function tableFilterIsActive(value) {
+  return tableFilterSelection(value).length > 0;
+}
+function tableFilterMatches(selection, value) {
+  const selected = tableFilterSelection(selection);
+  return !selected.length || selected.includes(tableFilterOptionValue(value));
+}
+function tableFilterMatchesAny(selection, values) {
+  const selected = tableFilterSelection(selection);
+  if (!selected.length) return true;
+  const candidates = new Set(values.map(tableFilterOptionValue));
+  return selected.some(value => candidates.has(value));
+}
+function tableFilterOptions(values) {
+  const unique = new Map();
+  values.forEach(raw => {
+    const option = typeof raw === 'object' && raw !== null ? raw : { value: raw, label: raw };
+    const value = tableFilterOptionValue(option.value);
+    if (!unique.has(value)) unique.set(value, { value, label: value === TABLE_EMPTY_FILTER_VALUE ? 'Sin dato' : String(option.label ?? option.value).trim() || 'Sin dato' });
+  });
+  return [...unique.values()].sort((a, b) => {
+    if (a.value === TABLE_EMPTY_FILTER_VALUE) return 1;
+    if (b.value === TABLE_EMPTY_FILTER_VALUE) return -1;
+    return a.label.localeCompare(b.label, 'es', { numeric: true });
+  });
+}
 function renderTableColumnHeader(column, state) {
   const sorted = state.sort.field === column.key;
   const direction = sorted ? state.sort.dir : '';
   const ariaSort = !sorted ? 'none' : direction === 'desc' ? 'descending' : 'ascending';
-  const filterActive = !!state.filters[column.key];
+  const selectedCount = tableFilterSelection(state.filters[column.key]).length;
+  const filterActive = selectedCount > 0;
   const sortMark = direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕';
   const widthStyle = column.width ? ` style="--table-column-width:${esc(column.width)}"` : '';
   const nowrapClass = column.nowrap ? ' table-column-nowrap' : '';
   return `<th class="${nowrapClass.trim()}" data-column-key="${esc(column.key)}" data-column-label="${esc(column.label)}" aria-sort="${ariaSort}"${widthStyle}>
     <span class="table-column-header">
       ${column.sortable === false ? `<span class="table-column-label">${esc(column.label)}</span>` : `<button type="button" class="table-column-sort" data-table-sort="${esc(column.key)}" aria-label="Ordenar por ${esc(column.label)}: ${direction === 'asc' ? 'ascendente' : direction === 'desc' ? 'descendente' : 'sin orden'}">${esc(column.label)} <span aria-hidden="true">${sortMark}</span></button>`}
-      ${column.filterType ? `<button type="button" class="table-column-filter ${filterActive ? 'is-active' : ''}" data-table-filter="${esc(column.key)}" aria-label="${filterActive ? `Filtro activo: ${column.label}` : `Filtrar por ${column.label}`}" title="${filterActive ? 'Filtro activo' : `Filtrar por ${esc(column.label)}`}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg></button>` : ''}
+      ${column.filterType ? `<button type="button" class="table-column-filter ${filterActive ? 'is-active' : ''}" data-table-filter="${esc(column.key)}" aria-haspopup="dialog" aria-expanded="false" aria-label="${filterActive ? `Filtro activo: ${column.label}, ${selectedCount} seleccionados` : `Filtrar por ${column.label}`}" title="${filterActive ? `${selectedCount} seleccionados` : `Filtrar por ${esc(column.label)}`}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg>${filterActive ? `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>` : ''}</button>` : ''}
     </span>
   </th>`;
 }
@@ -1869,6 +1905,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
   }
   function closePopover() {
     if (!activeTableColumnPopover) return;
+    activeTableColumnPopover._trigger?.setAttribute('aria-expanded', 'false');
     activeTableColumnPopover._cleanup?.();
     activeTableColumnPopover.remove();
     activeTableColumnPopover = null;
@@ -1879,19 +1916,27 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
     popover.className = 'table-column-popover';
     popover.setAttribute('role', 'dialog');
     popover.setAttribute('aria-label', `Filtrar por ${column.label}`);
-    const current = state.filters[column.key] || '';
-    const options = (typeof column.options === 'function' ? column.options() : (column.options || []))
-      .map(option => typeof option === 'object' ? option : ({ value: option, label: option }))
-      .filter(option => option.value !== null && option.value !== undefined && String(option.value).trim());
-    const optionList = options.length ? `<div class="table-column-filter-options" role="listbox" aria-label="Valores disponibles para ${esc(column.label)}">
-      ${options.map(option => `<button type="button" class="table-column-filter-option ${current === String(option.value) ? 'is-selected' : ''}" role="option" aria-selected="${current === String(option.value)}" data-table-filter-value="${esc(option.value)}">${esc(option.label)}</button>`).join('')}
+    const options = tableFilterOptions(typeof column.options === 'function' ? column.options() : (column.options || []));
+    const currentSelection = tableFilterSelection(state.filters[column.key]).filter(value => options.some(option => option.value === value));
+    const draft = new Set(currentSelection.length ? currentSelection : options.map(option => option.value));
+    const optionList = options.length ? `<div class="table-column-filter-options" role="group" aria-label="Valores disponibles para ${esc(column.label)}">
+      ${options.map(option => `<label class="table-column-filter-option"><input type="checkbox" value="${esc(option.value)}" ${draft.has(option.value) ? 'checked' : ''}/><span>${esc(option.label)}</span></label>`).join('')}
     </div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>';
-    const control = column.filterType === 'select'
-      ? `<select class="table-column-filter-input" size="${Math.max(2, Math.min(6, options.length + 1))}" aria-label="Valor para ${esc(column.label)}"><option value="">Todos</option>${options.map(o => `<option value="${esc(o.value)}" ${current === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`
-      : `<input class="table-column-filter-input" type="search" value="${esc(current)}" placeholder="Buscar contiene…" aria-label="Buscar ${esc(column.label)}" />${optionList}`;
-    popover.innerHTML = `<div class="table-column-popover-title">Filtrar: ${esc(column.label)}</div>${control}<div class="table-column-popover-actions"><button type="button" class="btn btn-sm" data-table-filter-clear>Limpiar</button><button type="button" class="btn btn-sm btn-accent" data-table-filter-apply>Aplicar</button></div>`;
+    popover.innerHTML = `
+      <div class="table-column-popover-title">Filtrar: ${esc(column.label)}</div>
+      <input class="table-column-filter-input" type="search" placeholder="Buscar en valores…" aria-label="Buscar valores de ${esc(column.label)}" />
+      <div class="table-column-filter-bulk">
+        <label class="table-column-filter-all"><input type="checkbox" data-table-filter-all ${draft.size === options.length ? 'checked' : ''}/> <span>Todos</span></label>
+        <button type="button" class="table-column-filter-link" data-table-filter-select-all>Seleccionar todo</button>
+        <button type="button" class="table-column-filter-link" data-table-filter-clear>Limpiar</button>
+      </div>
+      ${optionList}
+      <div class="table-column-filter-summary" role="status" aria-live="polite"></div>
+      <div class="table-column-popover-actions"><button type="button" class="btn btn-sm" data-table-filter-cancel>Cancelar</button><button type="button" class="btn btn-sm btn-accent" data-table-filter-apply>Aplicar</button></div>`;
     document.body.appendChild(popover);
     activeTableColumnPopover = popover;
+    popover._trigger = button;
+    button.setAttribute('aria-expanded', 'true');
     const dismissOnOutside = event => {
       if (!popover.contains(event.target) && event.target !== button) closePopover();
     };
@@ -1905,34 +1950,52 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       document.addEventListener('pointerdown', dismissOnOutside, true);
     }, 0);
     const rect = button.getBoundingClientRect();
-    const width = Math.min(280, window.innerWidth - 16);
+    const width = Math.min(320, window.innerWidth - 16);
     popover.style.width = `${width}px`;
     popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     popover.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - popover.offsetHeight - 8)}px`;
     const input = $('.table-column-filter-input', popover);
-    $$('.table-column-filter-option', popover).forEach(option => option.addEventListener('click', () => {
-      input.value = option.dataset.tableFilterValue || '';
-      $$('.table-column-filter-option', popover).forEach(item => {
-        const selected = item === option;
-        item.classList.toggle('is-selected', selected);
-        item.setAttribute('aria-selected', String(selected));
+    const allToggle = $('[data-table-filter-all]', popover);
+    const applyButton = $('[data-table-filter-apply]', popover);
+    const optionRows = $$('.table-column-filter-option', popover);
+    const summary = $('.table-column-filter-summary', popover);
+    const syncDraftUI = () => {
+      optionRows.forEach(row => {
+        const checkbox = $('input[type="checkbox"]', row);
+        checkbox.checked = draft.has(checkbox.value);
+        row.classList.toggle('is-selected', checkbox.checked);
       });
-      input.focus();
+      allToggle.checked = options.length > 0 && draft.size === options.length;
+      allToggle.indeterminate = draft.size > 0 && draft.size < options.length;
+      summary.textContent = draft.size === options.length ? 'Todos los valores' : draft.size ? `${draft.size} de ${options.length} seleccionados` : 'Selecciona al menos un valor';
+      applyButton.disabled = draft.size === 0;
+    };
+    optionRows.forEach(row => $('input[type="checkbox"]', row).addEventListener('change', event => {
+      event.target.checked ? draft.add(event.target.value) : draft.delete(event.target.value);
+      syncDraftUI();
     }));
-    if (column.filterType !== 'select') input.addEventListener('input', () => {
+    input.addEventListener('input', () => {
       const needle = input.value.trim().toLocaleLowerCase('es');
-      $$('.table-column-filter-option', popover).forEach(option => {
-        option.hidden = !!needle && !option.textContent.toLocaleLowerCase('es').includes(needle);
-      });
+      optionRows.forEach(row => { row.hidden = !!needle && !row.textContent.toLocaleLowerCase('es').includes(needle); });
+    });
+    allToggle.addEventListener('change', () => {
+      draft.clear();
+      if (allToggle.checked) options.forEach(option => draft.add(option.value));
+      syncDraftUI();
+    });
+    $('[data-table-filter-select-all]', popover).addEventListener('click', () => {
+      optionRows.filter(row => !row.hidden).forEach(row => draft.add($('input[type="checkbox"]', row).value));
+      syncDraftUI();
     });
     const apply = () => {
-      state.filters[column.key] = input.value.trim();
+      state.filters[column.key] = draft.size === options.length ? [] : [...draft];
       persist(); closePopover(); notify();
     };
     $('[data-table-filter-apply]', popover).addEventListener('click', apply);
-    $('[data-table-filter-clear]', popover).addEventListener('click', () => { state.filters[column.key] = ''; persist(); closePopover(); notify(); });
-    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } if (ev.key === 'Escape') { closePopover(); button.focus(); } });
-    input.addEventListener('change', () => { if (column.filterType === 'select') apply(); });
+    $('[data-table-filter-clear]', popover).addEventListener('click', () => { state.filters[column.key] = []; persist(); closePopover(); notify(); });
+    $('[data-table-filter-cancel]', popover).addEventListener('click', () => { closePopover(); button.focus(); });
+    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
+    syncDraftUI();
     setTimeout(() => input.focus(), 0);
   }
   function refreshHeaders() {
@@ -1950,13 +2013,20 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       }
       const filterButton = th.querySelector('.table-column-filter');
       if (filterButton) {
-        const activeFilter = !!state.filters[column.key];
+        const selectedCount = tableFilterSelection(state.filters[column.key]).length;
+        const activeFilter = selectedCount > 0;
         filterButton.classList.toggle('is-active', activeFilter);
-        filterButton.setAttribute('aria-label', activeFilter ? `Filtro activo: ${column.label}` : `Filtrar por ${column.label}`);
-        filterButton.title = activeFilter ? 'Filtro activo' : `Filtrar por ${column.label}`;
+        filterButton.setAttribute('aria-label', activeFilter ? `Filtro activo: ${column.label}, ${selectedCount} seleccionados` : `Filtrar por ${column.label}`);
+        filterButton.title = activeFilter ? `${selectedCount} seleccionados` : `Filtrar por ${column.label}`;
+        filterButton.querySelector('.table-column-filter-count')?.remove();
+        if (activeFilter) filterButton.insertAdjacentHTML('beforeend', `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>`);
       }
       mobileControlsRoot?.querySelectorAll(`[data-table-filter-proxy="${column.key}"]`).forEach(proxy => {
-        proxy.classList.toggle('is-active', !!state.filters[column.key]);
+        const selectedCount = tableFilterSelection(state.filters[column.key]).length;
+        proxy.classList.toggle('is-active', selectedCount > 0);
+        proxy.setAttribute('aria-label', selectedCount ? `Filtro activo: ${column.label}, ${selectedCount} seleccionados` : `Filtrar por ${column.label}`);
+        proxy.querySelector('.table-column-filter-count')?.remove();
+        if (selectedCount) proxy.insertAdjacentHTML('beforeend', `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>`);
       });
     });
   }
@@ -2007,6 +2077,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
     } else {
       mobileControlsRoot = mobileHost.querySelector('.table-mobile-column-controls');
     }
+    refreshHeaders();
   }
   function restore() {
     try {
@@ -2014,18 +2085,12 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       if (!saved || typeof saved !== 'object') return;
       if (byKey.has(saved.sortKey)) state.sort = { field: saved.sortKey, dir: saved.sortDirection === 'desc' ? 'desc' : 'asc' };
       if (saved.columnFilters && typeof saved.columnFilters === 'object') columns.forEach(column => {
-        const savedValue = saved.columnFilters[column.key] || '';
-        if (column.filterType === 'select' && savedValue) {
-          const available = (typeof column.options === 'function' ? column.options() : (column.options || []))
-            .map(option => String(typeof option === 'object' ? option.value : option));
-          state.filters[column.key] = available.includes(String(savedValue)) ? savedValue : '';
-        } else {
-          state.filters[column.key] = savedValue;
-        }
+        const available = new Set(tableFilterOptions(typeof column.options === 'function' ? column.options() : (column.options || [])).map(option => option.value));
+        state.filters[column.key] = tableFilterSelection(saved.columnFilters[column.key]).filter(value => available.has(value));
       });
     } catch (e) { /* preferencia de sesión opcional */ }
   }
-  function reset() { state.sort = { ...defaultSort }; columns.forEach(column => { if (column.filterType) state.filters[column.key] = ''; }); persist(); notify(); }
+  function reset() { state.sort = { ...defaultSort }; columns.forEach(column => { if (column.filterType) state.filters[column.key] = []; }); persist(); notify(); }
   return { bind, closePopover, persist, reset, restore, headerHTML: column => renderTableColumnHeader(column, state) };
 }
 
@@ -3893,12 +3958,10 @@ function standardizeDataTable(table, tableIndex = 0) {
     return {
       key, label, index, sortable: !actionable,
       filterType: actionable ? null : (selectPattern.test(label) ? 'select' : 'text'),
-      options: () => [...new Set($$('tbody tr', table).map(row => row.cells[index]?.textContent.trim()).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
-        .map(value => ({ value, label: value })),
+      options: () => tableFilterOptions($$('tbody tr', table).map(row => row.cells[index]?.textContent.trim())),
     };
   });
-  const state = { sort: { field: columns.find(column => column.sortable)?.key || '', dir: 'asc' }, filters: Object.fromEntries(columns.map(column => [column.key, ''])) };
+  const state = { sort: { field: columns.find(column => column.sortable)?.key || '', dir: 'asc' }, filters: Object.fromEntries(columns.map(column => [column.key, []])) };
   const routeKey = App.route === 'equipos' ? 'equipment' : App.route === 'historial' ? 'history' : App.route === 'anomalias' ? 'anomalies' : App.route === 'usuarios' ? 'users' : App.route || 'table';
   const stableName = table.id || [...table.classList].find(name => name !== 'data-table') || `table_${tableIndex}`;
   const tableId = tableIndex ? `${routeKey}:${stableName}:${tableIndex}` : routeKey;
@@ -3910,10 +3973,8 @@ function standardizeDataTable(table, tableIndex = 0) {
     bodyRows.forEach((row, index) => { if (!sourceOrder.has(row)) sourceOrder.set(row, index); });
     bodyRows.forEach(row => {
       const visible = columns.every(column => {
-        const filter = state.filters[column.key];
-        if (!filter) return true;
         const value = row.cells[column.index]?.textContent.trim() || '';
-        return column.filterType === 'select' ? value === filter : value.toLocaleLowerCase('es').includes(filter.toLocaleLowerCase('es'));
+        return tableFilterMatches(state.filters[column.key], value);
       });
       row.hidden = !visible;
     });
@@ -7035,16 +7096,14 @@ async function renderEquipos() {
   // Esto evita revelar ubicaciones/tipos fuera del alcance de un planificador.
   const authorizedTypeIds = new Set(equipos.map(e => e.typeId).filter(Boolean));
   const authorizedLocationIds = new Set(equipos.map(e => e.locationId).filter(Boolean));
-  const equipmentTextOptions = getter => () => [...new Set(equipos.map(getter).map(value => String(value || '').trim()).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
-    .map(value => ({ value, label: value }));
+  const equipmentTextOptions = getter => () => tableFilterOptions(equipos.map(getter));
 
   const EQ_SORT_FIELDS = [
     { key: 'shortCode', label: 'Código ahorrativo', filterType: 'text', options: equipmentTextOptions(e => e.shortCode) },
     { key: 'code', label: 'Código interno', filterType: 'text', options: equipmentTextOptions(e => e.code) },
     { key: 'model', label: 'Equipo / Modelo', filterType: 'text', options: equipmentTextOptions(e => `${e.brand || ''} ${e.model || ''}`.trim()) },
-    { key: 'type', label: 'Tipo', filterType: 'select', options: () => types.filter(type => authorizedTypeIds.has(type.id)).map(type => ({ value: type.id, label: type.name })) },
-    { key: 'location', label: 'Ubicación', filterType: 'select', options: () => locations.filter(location => authorizedLocationIds.has(location.id)).map(location => ({ value: location.id, label: location.name })) },
+    { key: 'type', label: 'Tipo', filterType: 'select', options: () => [...types.filter(type => authorizedTypeIds.has(type.id)).map(type => ({ value: type.id, label: type.name })), ...(equipos.some(e => !e.typeId) ? [{ value: null, label: 'Sin dato' }] : [])] },
+    { key: 'location', label: 'Ubicación', filterType: 'select', options: () => [...locations.filter(location => authorizedLocationIds.has(location.id)).map(location => ({ value: location.id, label: location.name })), ...(equipos.some(e => !e.locationId) ? [{ value: null, label: 'Sin dato' }] : [])] },
     { key: 'status', label: 'Estado', filterType: 'select', options: () => statusFilterOptions.map(option => ({ value: option.code, label: option.label })) },
     { key: 'hourmeter', label: 'Horómetro', filterType: 'text', options: equipmentTextOptions(e => e.hourmeter) },
     { key: 'plan', label: 'Plan', filterType: 'select', options: () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }] },
@@ -7056,7 +7115,7 @@ async function renderEquipos() {
   // sesión, no algo que deba sobrevivir a otro dispositivo u otro login.
   const EQ_FILTERS_SESSION_KEY = 'engrase_equipos_sort_filter';
   let sortState = { field: 'code', dir: 'asc' };
-  let filterState = { shortCode: '', code: '', model: '', type: '', location: '', status: '', hourmeter: '', plan: '' };
+  let filterState = { shortCode: [], code: [], model: [], type: [], location: [], status: [], hourmeter: [], plan: [] };
   try {
     const saved = JSON.parse(sessionStorage.getItem(EQ_FILTERS_SESSION_KEY) || 'null');
     if (saved && typeof saved === 'object') {
@@ -7065,10 +7124,10 @@ async function renderEquipos() {
       }
       if (saved.filters && typeof saved.filters === 'object') {
         filterState = {
-          shortCode: saved.filters.shortCode || '', code: saved.filters.code || '', model: saved.filters.model || '',
-          type: saved.filters.type || saved.filters.typeId || '', location: saved.filters.location || saved.filters.locationId || '',
-          status: saved.filters.status || saved.filters.statusCode || '', hourmeter: saved.filters.hourmeter || '',
-          plan: saved.filters.plan || saved.filters.planFilter || '',
+          shortCode: tableFilterSelection(saved.filters.shortCode), code: tableFilterSelection(saved.filters.code), model: tableFilterSelection(saved.filters.model),
+          type: tableFilterSelection(saved.filters.type || saved.filters.typeId), location: tableFilterSelection(saved.filters.location || saved.filters.locationId),
+          status: tableFilterSelection(saved.filters.status || saved.filters.statusCode), hourmeter: tableFilterSelection(saved.filters.hourmeter),
+          plan: tableFilterSelection(saved.filters.plan || saved.filters.planFilter),
         };
       }
     }
@@ -7184,15 +7243,15 @@ async function renderEquipos() {
   // por vista.
   function applyFiltersAndSort(withStatusIn) {
     let out = withStatusIn;
-    if (filterState.shortCode) out = out.filter(({ e }) => (e.shortCode || '').toLowerCase().includes(filterState.shortCode.toLowerCase()));
-    if (filterState.code) out = out.filter(({ e }) => (e.code || '').toLowerCase().includes(filterState.code.toLowerCase()));
-    if (filterState.model) out = out.filter(({ e }) => `${e.brand || ''} ${e.model || ''}`.toLowerCase().includes(filterState.model.toLowerCase()));
-    if (filterState.type) out = out.filter(({ e }) => e.typeId === filterState.type);
-    if (filterState.location) out = out.filter(({ e }) => e.locationId === filterState.location);
-    if (filterState.status) out = out.filter(({ s }) => s.code === filterState.status);
-    if (filterState.hourmeter) out = out.filter(({ e }) => String(e.hourmeter ?? '').includes(filterState.hourmeter));
-    if (filterState.plan === 'con') out = out.filter(({ s }) => !!s.plan);
-    if (filterState.plan === 'sin') out = out.filter(({ s }) => !s.plan);
+    out = out.filter(({ e, s }) =>
+      tableFilterMatches(filterState.shortCode, e.shortCode) &&
+      tableFilterMatches(filterState.code, e.code) &&
+      tableFilterMatches(filterState.model, `${e.brand || ''} ${e.model || ''}`.trim()) &&
+      tableFilterMatches(filterState.type, e.typeId) &&
+      tableFilterMatches(filterState.location, e.locationId) &&
+      tableFilterMatches(filterState.status, s.code) &&
+      tableFilterMatches(filterState.hourmeter, e.hourmeter) &&
+      tableFilterMatches(filterState.plan, s.plan ? 'con' : 'sin'));
     const dir = sortState.dir === 'desc' ? -1 : 1;
     return [...out].sort((a, b) => {
       const va = sortValueFor(sortState.field, a.e, a.s), vb = sortValueFor(sortState.field, b.e, b.s);
@@ -8617,21 +8676,20 @@ async function renderPlan() {
 
   // Opciones de filtro generadas de los datos reales (pedido explícito) —
   // nunca una lista hardcodeada. Mismo criterio que Equipos (statusFilterOptions).
-  const controlOptions = [...new Set(planRows.map(r => r.controlLabel).filter(x => x && x !== '—'))];
+  const controlOptions = tableFilterOptions(planRows.map(r => r.controlLabel));
   const availableShifts = new Set(planRows.flatMap(r => r.configuredShifts || []));
   const shiftFilterOptions = [
     ...(availableShifts.has('shift_dia') ? [{ value: 'shift_dia', label: 'Turno Día' }] : []),
     ...(availableShifts.has('shift_noche') ? [{ value: 'shift_noche', label: 'Turno Noche' }] : []),
   ];
-  PLAN_SORT_FIELDS.find(f => f.key === 'control').options = () => controlOptions.map(value => ({ value, label: value }));
+  PLAN_SORT_FIELDS.find(f => f.key === 'control').options = () => controlOptions;
   PLAN_SORT_FIELDS.find(f => f.key === 'shift').options = () => [
     ...shiftFilterOptions,
-    ...(availableShifts.has('shift_dia') && availableShifts.has('shift_noche') ? [{ value: 'both', label: 'Día + Noche' }] : []),
+    ...(planRows.some(r => (r.configuredShifts || []).includes('shift_dia') && (r.configuredShifts || []).includes('shift_noche')) ? [{ value: 'both', label: 'Día + Noche' }] : []),
+    ...(planRows.some(r => !(r.configuredShifts || []).length) ? [{ value: null, label: 'Sin dato' }] : []),
   ];
   PLAN_SORT_FIELDS.find(f => f.key === 'reference').options = () => [{ value: 'con', label: 'Con plan' }, { value: 'sin', label: 'Sin plan' }];
-  const planTextOptions = getter => () => [...new Set(planRows.map(getter).map(value => String(value || '').trim()).filter(value => value && value !== '—'))]
-    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
-    .map(value => ({ value, label: value }));
+  const planTextOptions = getter => () => tableFilterOptions(planRows.map(getter));
   PLAN_SORT_FIELDS.find(f => f.key === 'shortCode').options = planTextOptions(r => r.e.shortCode);
   PLAN_SORT_FIELDS.find(f => f.key === 'code').options = planTextOptions(r => r.e.code);
   PLAN_SORT_FIELDS.find(f => f.key === 'model').options = planTextOptions(r => r.modelLabel);
@@ -8642,7 +8700,7 @@ async function renderPlan() {
   // nunca localStorage): ver misma regla ya establecida en Equipos.
   const PLAN_FILTERS_SESSION_KEY = 'engrase_plan_sort_filter';
   let sortState = { field: 'code', dir: 'asc' };
-  let filterState = { shortCode: '', code: '', model: '', control: '', frequency: '', shift: '', reference: '', points: '' };
+  let filterState = { shortCode: [], code: [], model: [], control: [], frequency: [], shift: [], reference: [], points: [] };
   try {
     const saved = JSON.parse(sessionStorage.getItem(PLAN_FILTERS_SESSION_KEY) || 'null');
     if (saved && typeof saved === 'object') {
@@ -8651,21 +8709,13 @@ async function renderPlan() {
       }
       if (saved.filters && typeof saved.filters === 'object') {
         filterState = {
-          shortCode: saved.filters.shortCode || '', code: saved.filters.code || '', model: saved.filters.model || '',
-          control: saved.filters.control || '', frequency: saved.filters.frequency || '', shift: saved.filters.shift || '',
-          reference: saved.filters.reference || saved.filters.planFilter || '', points: saved.filters.points || '',
+          shortCode: tableFilterSelection(saved.filters.shortCode), code: tableFilterSelection(saved.filters.code), model: tableFilterSelection(saved.filters.model),
+          control: tableFilterSelection(saved.filters.control), frequency: tableFilterSelection(saved.filters.frequency), shift: tableFilterSelection(saved.filters.shift),
+          reference: tableFilterSelection(saved.filters.reference || saved.filters.planFilter), points: tableFilterSelection(saved.filters.points),
         };
       }
     }
   } catch (e) { /* preferencia de sesión opcional */ }
-  function persistSortFilterState() {
-    try { sessionStorage.setItem(PLAN_FILTERS_SESSION_KEY, JSON.stringify({ sort: sortState, filters: filterState })); }
-    catch (e) { /* preferencia de sesión opcional */ }
-  }
-  function activeFilterCount() {
-    return PLAN_SORT_FIELDS.filter(column => filterState[column.key]).length;
-  }
-
   function sortValueFor(field, row) {
     switch (field) {
       case 'shortCode': return (row.e.shortCode || '').toLowerCase();
@@ -8683,17 +8733,19 @@ async function renderPlan() {
 
   // Pipeline único (pedido explícito): búsqueda → filtros → orden → render.
   function applyFiltersAndSort(rowsIn) {
-    let out = rowsIn;
-    if (filterState.shortCode) out = out.filter(r => (r.e.shortCode || '').toLowerCase().includes(filterState.shortCode.toLowerCase()));
-    if (filterState.code) out = out.filter(r => (r.e.code || '').toLowerCase().includes(filterState.code.toLowerCase()));
-    if (filterState.model) out = out.filter(r => r.modelLabel.toLowerCase().includes(filterState.model.toLowerCase()));
-    if (filterState.control) out = out.filter(r => r.controlLabel === filterState.control);
-    if (filterState.frequency) out = out.filter(r => r.frequencyLabel.toLowerCase().includes(filterState.frequency.toLowerCase()));
-    if (filterState.shift === 'both') out = out.filter(r => (r.configuredShifts || []).includes('shift_dia') && (r.configuredShifts || []).includes('shift_noche'));
-    else if (filterState.shift) out = out.filter(r => (r.configuredShifts || []).includes(filterState.shift));
-    if (filterState.reference === 'con') out = out.filter(r => !!r.plan);
-    if (filterState.reference === 'sin') out = out.filter(r => !r.plan);
-    if (filterState.points) out = out.filter(r => String(r.points.length).includes(filterState.points));
+    let out = rowsIn.filter(r => {
+      const shifts = [...(r.configuredShifts || [])];
+      if (shifts.includes('shift_dia') && shifts.includes('shift_noche')) shifts.push('both');
+      if (!shifts.length) shifts.push(TABLE_EMPTY_FILTER_VALUE);
+      return tableFilterMatches(filterState.shortCode, r.e.shortCode) &&
+        tableFilterMatches(filterState.code, r.e.code) &&
+        tableFilterMatches(filterState.model, r.modelLabel) &&
+        tableFilterMatches(filterState.control, r.controlLabel) &&
+        tableFilterMatches(filterState.frequency, r.frequencyLabel) &&
+        tableFilterMatchesAny(filterState.shift, shifts) &&
+        tableFilterMatches(filterState.reference, r.plan ? 'con' : 'sin') &&
+        tableFilterMatches(filterState.points, r.points.length);
+    });
     const dir = sortState.dir === 'desc' ? -1 : 1;
     return [...out].sort((a, b) => {
       const va = sortValueFor(sortState.field, a), vb = sortValueFor(sortState.field, b);

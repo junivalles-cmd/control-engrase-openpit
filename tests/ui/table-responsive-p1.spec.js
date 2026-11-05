@@ -27,6 +27,13 @@ const MAKE_TABLES_RESPONSIVE_SRC = `
   const App = { route: 'horometros' };
   let activeTableColumnPopover = null;
   ${extractDeclaration(appSource, 'esc')}
+  ${extractDeclaration(appSource, 'TABLE_EMPTY_FILTER_VALUE')}
+  ${extractDeclaration(appSource, 'tableFilterOptionValue')}
+  ${extractDeclaration(appSource, 'tableFilterSelection')}
+  ${extractDeclaration(appSource, 'tableFilterIsActive')}
+  ${extractDeclaration(appSource, 'tableFilterMatches')}
+  ${extractDeclaration(appSource, 'tableFilterMatchesAny')}
+  ${extractDeclaration(appSource, 'tableFilterOptions')}
   ${extractDeclaration(appSource, 'renderTableColumnHeader')}
   ${extractDeclaration(appSource, 'createTableColumnController')}
   ${extractDeclaration(appSource, 'tableColumnKey')}

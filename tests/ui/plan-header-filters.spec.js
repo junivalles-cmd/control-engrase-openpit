@@ -7,7 +7,7 @@ import { APP_JS_PATH } from '../helpers/loadLubricationLogic.js';
 
 const source = readSource(APP_JS_PATH);
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
-const helpers = ['$', '$$', 'esc', 'renderTableColumnHeader', 'createTableColumnController', 'tableColumnKey', 'tableComparableValue', 'standardizeDataTable']
+const helpers = ['$', '$$', 'esc', 'TABLE_EMPTY_FILTER_VALUE', 'tableFilterOptionValue', 'tableFilterSelection', 'tableFilterIsActive', 'tableFilterMatches', 'tableFilterMatchesAny', 'tableFilterOptions', 'renderTableColumnHeader', 'createTableColumnController', 'tableColumnKey', 'tableComparableValue', 'standardizeDataTable']
   .map(name => extractDeclaration(source, name)).join('\n\n');
 
 async function boot(page) {
@@ -22,10 +22,10 @@ async function boot(page) {
     }});
     let activeTableColumnPopover = null;
     ${helpers}
-    const state = { sort: { field: 'code', dir: 'asc' }, filters: { code: '', control: '' } };
+    const state = { sort: { field: 'code', dir: 'asc' }, filters: { code: [], control: [] } };
     const columns = [
-      { key: 'code', label: 'Código interno', filterType: 'text', options: () => [{ value: '20-10', label: '20-10' }, { value: '45-69', label: '45-69' }] },
-      { key: 'control', label: 'Control', filterType: 'select', options: () => [{ value: 'horas', label: 'Por horas' }] },
+      { key: 'code', label: 'Código interno', filterType: 'text', options: () => [{ value: '20-10', label: '20-10' }, { value: '45-69', label: '45-69' }, { value: '50-1', label: '50-1' }] },
+      { key: 'control', label: 'Control', filterType: 'select', options: () => [{ value: 'horas', label: 'Por horas' }, { value: 'dias', label: 'Por días' }] },
       { key: 'actions', label: 'Configurar', sortable: false }
     ];
     window.changes = 0;
@@ -47,28 +47,55 @@ test('orden alterna ASC/DESC, expone aria-sort y persiste por tabla', async ({ p
   expect(await page.evaluate(() => window.changes)).toBe(2);
 });
 
-test('filtro texto se aplica, se puede limpiar y queda visible como activo', async ({ page }) => {
+test('filtro multiselección se aplica, muestra contador y se puede limpiar', async ({ page }) => {
   await boot(page);
   await page.locator('[data-table-filter="code"]').click();
-  await page.locator('.table-column-filter-input').fill('20-10');
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-option input[value="20-10"]').check();
+  await page.locator('.table-column-filter-option input[value="45-69"]').check();
   await page.locator('[data-table-filter-apply]').click();
-  expect(await page.evaluate(() => window.state.filters.code)).toBe('20-10');
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual(['20-10', '45-69']);
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('engrase_table_state:plan-test')).columnFilters.code)).toEqual(['20-10', '45-69']);
   await expect(page.locator('[data-table-filter="code"]')).toHaveClass(/is-active/);
+  await expect(page.locator('[data-table-filter="code"] .table-column-filter-count')).toHaveText('2');
   await expect(page.locator('[data-table-filter="code"] svg')).toHaveCount(1);
   await page.locator('[data-table-filter="code"]').click();
   await page.locator('[data-table-filter-clear]').click();
-  expect(await page.evaluate(() => window.state.filters.code)).toBe('');
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
 });
 
-test('filtro texto ofrece valores reales, permite buscarlos y seleccionarlos', async ({ page }) => {
+test('filtro ofrece valores reales y la búsqueda limita la selección visible', async ({ page }) => {
   await boot(page);
   await page.locator('[data-table-filter="code"]').click();
-  await expect(page.locator('.table-column-filter-option')).toHaveText(['20-10', '45-69']);
+  await expect(page.locator('.table-column-filter-option span')).toHaveText(['20-10', '45-69', '50-1']);
+  await page.locator('[data-table-filter-all]').uncheck();
   await page.locator('.table-column-filter-input').fill('45');
-  await expect(page.locator('.table-column-filter-option:not([hidden])')).toHaveText(['45-69']);
-  await page.locator('.table-column-filter-option:not([hidden])').click();
+  await expect(page.locator('.table-column-filter-option:not([hidden]) span')).toHaveText(['45-69']);
+  await page.locator('[data-table-filter-select-all]').click();
   await page.locator('[data-table-filter-apply]').click();
-  expect(await page.evaluate(() => window.state.filters.code)).toBe('45-69');
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual(['45-69']);
+});
+
+test('Todos y Seleccionar todo restauran el conjunto completo sin filtro activo', async ({ page }) => {
+  await boot(page);
+  await page.locator('[data-table-filter="code"]').click();
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-input').fill('20');
+  await page.locator('[data-table-filter-select-all]').click();
+  await page.locator('.table-column-filter-input').fill('');
+  await page.locator('[data-table-filter-select-all]').click();
+  await page.locator('[data-table-filter-apply]').click();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+  await expect(page.locator('[data-table-filter="code"]')).not.toHaveClass(/is-active/);
+});
+
+test('valores vacíos y guion se normalizan como opción Sin dato', async ({ page }) => {
+  await boot(page);
+  expect(await page.evaluate(() => tableFilterOptions(['A', '', null, '—']))).toEqual([
+    { value: 'A', label: 'A' },
+    { value: '__table_empty__', label: 'Sin dato' },
+  ]);
+  expect(await page.evaluate(() => tableFilterMatches(['__table_empty__'], null))).toBe(true);
 });
 
 test('popover se cierra con Escape y clic fuera', async ({ page }) => {
@@ -84,8 +111,10 @@ test('popover se cierra con Escape y clic fuera', async ({ page }) => {
 test('filtro select y acción no ordenable tienen semántica correcta', async ({ page }) => {
   await boot(page);
   await page.locator('[data-table-filter="control"]').click();
-  await page.locator('.table-column-filter-input').selectOption('horas');
-  expect(await page.evaluate(() => window.state.filters.control)).toBe('horas');
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-option input[value="horas"]').check();
+  await page.locator('[data-table-filter-apply]').click();
+  expect(await page.evaluate(() => window.state.filters.control)).toEqual(['horas']);
   await expect(page.locator('th[data-column-key="actions"] [data-table-sort]')).toHaveCount(0);
   await expect(page.locator('th[data-column-key="actions"] [data-table-filter]')).toHaveCount(0);
 });
@@ -93,8 +122,8 @@ test('filtro select y acción no ordenable tienen semántica correcta', async ({
 test('restablecer limpia filtros sin mutar las filas fuente', async ({ page }) => {
   await boot(page);
   const sourceRows = [{ code: '20-1' }, { code: '20-2' }];
-  await page.evaluate(rows => { window.sourceRows = rows; window.state.filters.code = '20'; window.controller.reset(); }, sourceRows);
-  expect(await page.evaluate(() => window.state.filters.code)).toBe('');
+  await page.evaluate(rows => { window.sourceRows = rows; window.state.filters.code = ['20-1']; window.controller.reset(); }, sourceRows);
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
   expect(await page.evaluate(() => window.sourceRows)).toEqual(sourceRows);
 });
 
@@ -119,10 +148,14 @@ test('tabla genérica combina texto + select, orden numérico y limpiar todos', 
     standardizeDataTable(document.querySelector('table'));
   });
   await page.locator('[data-table-filter="codigo"]').click();
-  await page.locator('.table-column-filter-input').fill('EQ-1');
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-option input[value="EQ-10"]').check();
+  await page.locator('.table-column-filter-option input[value="EQ-12"]').check();
   await page.locator('[data-table-filter-apply]').click();
   await page.locator('[data-table-filter="estado"]').click();
-  await page.locator('.table-column-filter-input').selectOption('Abierto');
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-option input[value="Abierto"]').check();
+  await page.locator('[data-table-filter-apply]').click();
   await expect(page.locator('tbody tr:not([hidden])')).toHaveCount(2);
   await page.locator('[data-table-sort="consumo"]').click();
   await expect(page.locator('tbody tr:not([hidden]) td:first-child')).toHaveText(['EQ-10', 'EQ-12']);
