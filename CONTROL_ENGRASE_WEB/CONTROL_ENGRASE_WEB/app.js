@@ -1910,6 +1910,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
   const byKey = new Map(columns.map(column => [column.key, column]));
   let boundRoot = null;
   let mobileControlsRoot = null;
+  let mobileSheet = null;
   function persist() {
     try { sessionStorage.setItem(sessionKey, JSON.stringify({ sortKey: state.sort.field, sortDirection: state.sort.dir, columnFilters: state.filters })); }
     catch (e) { /* preferencia de sesión opcional */ }
@@ -2033,16 +2034,147 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
         filterButton.querySelector('.table-column-filter-count')?.remove();
         if (activeFilter) filterButton.insertAdjacentHTML('beforeend', `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>`);
       }
-      mobileControlsRoot?.querySelectorAll(`[data-table-filter-proxy="${column.key}"]`).forEach(proxy => {
-        const selectedCount = tableFilterSelection(state.filters[column.key]).length;
-        proxy.classList.toggle('is-active', selectedCount > 0);
-        proxy.setAttribute('aria-label', selectedCount ? `Filtro activo: ${column.label}, ${selectedCount} seleccionados` : `Filtrar por ${column.label}`);
-        proxy.querySelector('.table-column-filter-count')?.remove();
-        if (selectedCount) proxy.insertAdjacentHTML('beforeend', `<span class="table-column-filter-count" aria-hidden="true">${selectedCount}</span>`);
-      });
     });
+    const activeFilterCount = columns.filter(column => column.filterType && tableFilterSelection(state.filters[column.key]).length).length;
+    const mobileTrigger = mobileControlsRoot?.querySelector('[data-table-mobile-open]');
+    if (mobileTrigger) {
+      mobileTrigger.classList.toggle('is-active', activeFilterCount > 0);
+      mobileTrigger.setAttribute('aria-label', activeFilterCount ? `Filtrar y ordenar, ${activeFilterCount} filtros activos` : 'Filtrar y ordenar');
+      mobileTrigger.innerHTML = `<svg class="table-mobile-filter-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg><span>Filtrar y ordenar</span>${activeFilterCount ? `<span class="table-mobile-filter-count" aria-hidden="true">${activeFilterCount}</span>` : ''}`;
+    }
   }
   function notify() { refreshHeaders(); onChange(); }
+  function closeMobileSheet({ restoreFocus = true } = {}) {
+    if (!mobileSheet) return;
+    const trigger = mobileSheet._trigger;
+    mobileSheet._cleanup?.();
+    mobileSheet.remove();
+    mobileSheet = null;
+    document.body.classList.remove('table-mobile-sheet-open');
+    if (restoreFocus) trigger?.focus();
+  }
+  function openMobileSheet(trigger) {
+    closePopover();
+    closeMobileSheet({ restoreFocus: false });
+    const filterColumns = columns.filter(column => column.filterType);
+    const sortableColumns = columns.filter(column => column.sortable !== false);
+    const draftSort = { ...state.sort };
+    const optionMap = new Map();
+    const draftFilters = new Map();
+    filterColumns.forEach(column => {
+      const options = tableFilterOptions(typeof column.options === 'function' ? column.options() : (column.options || []));
+      const selected = tableFilterSelection(state.filters[column.key]).filter(value => options.some(option => option.value === value));
+      optionMap.set(column.key, options);
+      draftFilters.set(column.key, new Set(selected.length ? selected : options.map(option => option.value)));
+    });
+    const overlay = document.createElement('div');
+    overlay.className = 'table-mobile-sheet-backdrop';
+    overlay.innerHTML = `<section class="table-mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="${tableId}-mobile-filter-title">
+      <div class="table-mobile-sheet-head">
+        <div><div class="eyebrow">Tabla</div><h2 id="${tableId}-mobile-filter-title">Filtrar y ordenar</h2></div>
+        <button type="button" class="icon-btn table-mobile-sheet-close" data-table-mobile-close aria-label="Cerrar">×</button>
+      </div>
+      <div class="table-mobile-sheet-body">
+        <fieldset class="table-mobile-sort-section">
+          <legend>Ordenar por</legend>
+          <select class="input" data-table-mobile-sort>${sortableColumns.map(column => `<option value="${esc(column.key)}" ${column.key === draftSort.field ? 'selected' : ''}>${esc(column.label)}</option>`).join('')}</select>
+          <div class="table-mobile-sort-direction" role="radiogroup" aria-label="Dirección del orden">
+            <label><input type="radio" name="${tableId}-mobile-sort-direction" value="asc" ${draftSort.dir !== 'desc' ? 'checked' : ''}/> Ascendente</label>
+            <label><input type="radio" name="${tableId}-mobile-sort-direction" value="desc" ${draftSort.dir === 'desc' ? 'checked' : ''}/> Descendente</label>
+          </div>
+        </fieldset>
+        <div class="table-mobile-filters-title">Filtros</div>
+        <div class="table-mobile-filter-sections">
+          ${filterColumns.map(column => {
+            const options = optionMap.get(column.key);
+            const draft = draftFilters.get(column.key);
+            const summary = tableFilterSelection(state.filters[column.key]).length;
+            return `<details class="table-mobile-filter-section" data-mobile-filter-section="${esc(column.key)}">
+              <summary><span>${esc(column.label)}</span><span class="table-mobile-filter-summary">${summary ? `${summary} seleccionados` : 'Todos'}</span></summary>
+              <div class="table-mobile-filter-content">
+                <input type="search" class="input table-mobile-filter-search" placeholder="Buscar valores…" aria-label="Buscar valores de ${esc(column.label)}"/>
+                <div class="table-column-filter-bulk">
+                  <label class="table-column-filter-all"><input type="checkbox" data-mobile-filter-all ${options.length && draft.size === options.length ? 'checked' : ''}/> <span>Todos</span></label>
+                  <button type="button" class="table-column-filter-link" data-mobile-select-all>Seleccionar todo</button>
+                  <button type="button" class="table-column-filter-link" data-mobile-clear>Limpiar</button>
+                </div>
+                ${options.length ? `<div class="table-column-filter-options">${options.map(option => `<label class="table-column-filter-option"><input type="checkbox" value="${esc(option.value)}" ${draft.has(option.value) ? 'checked' : ''}/><span>${esc(option.label)}</span></label>`).join('')}</div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>'}
+                <div class="table-column-filter-summary" aria-live="polite"></div>
+              </div>
+            </details>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="table-mobile-sheet-actions">
+        <button type="button" class="btn" data-table-mobile-reset>Limpiar todo</button>
+        <button type="button" class="btn btn-accent" data-table-mobile-apply>Aplicar</button>
+      </div>
+    </section>`;
+    document.body.appendChild(overlay);
+    document.body.classList.add('table-mobile-sheet-open');
+    mobileSheet = overlay;
+    overlay._trigger = trigger;
+    const closeButton = $('[data-table-mobile-close]', overlay);
+    const onKeydown = event => { if (event.key === 'Escape') closeMobileSheet(); };
+    overlay._cleanup = () => document.removeEventListener('keydown', onKeydown, true);
+    document.addEventListener('keydown', onKeydown, true);
+    overlay.addEventListener('pointerdown', event => { if (event.target === overlay) closeMobileSheet(); });
+    closeButton.addEventListener('click', () => closeMobileSheet());
+    $('[data-table-mobile-sort]', overlay).addEventListener('change', event => { draftSort.field = event.target.value; });
+    $$(`input[name="${tableId}-mobile-sort-direction"]`, overlay).forEach(input => input.addEventListener('change', () => { if (input.checked) draftSort.dir = input.value; }));
+    filterColumns.forEach(column => {
+      const section = $(`[data-mobile-filter-section="${column.key}"]`, overlay);
+      const options = optionMap.get(column.key);
+      const draft = draftFilters.get(column.key);
+      const rows = $$('.table-column-filter-option', section);
+      const allToggle = $('[data-mobile-filter-all]', section);
+      const summary = $('.table-column-filter-summary', section);
+      const headingSummary = $('summary .table-mobile-filter-summary', section);
+      const syncDraftUI = () => {
+        rows.forEach(row => {
+          const checkbox = $('input[type="checkbox"]', row);
+          checkbox.checked = draft.has(checkbox.value);
+          row.classList.toggle('is-selected', checkbox.checked);
+        });
+        allToggle.checked = options.length > 0 && draft.size === options.length;
+        allToggle.indeterminate = draft.size > 0 && draft.size < options.length;
+        summary.textContent = draft.size === options.length ? 'Todos los valores' : `${draft.size} de ${options.length} seleccionados`;
+        headingSummary.textContent = draft.size === options.length ? 'Todos' : `${draft.size} seleccionados`;
+      };
+      rows.forEach(row => $('input[type="checkbox"]', row).addEventListener('change', event => {
+        event.target.checked ? draft.add(event.target.value) : draft.delete(event.target.value);
+        syncDraftUI();
+      }));
+      $('.table-mobile-filter-search', section).addEventListener('input', event => {
+        const needle = event.target.value.trim().toLocaleLowerCase('es');
+        rows.forEach(row => { row.hidden = !!needle && !row.textContent.toLocaleLowerCase('es').includes(needle); });
+      });
+      allToggle.addEventListener('change', () => {
+        draft.clear();
+        if (allToggle.checked) options.forEach(option => draft.add(option.value));
+        syncDraftUI();
+      });
+      $('[data-mobile-select-all]', section).addEventListener('click', () => {
+        rows.filter(row => !row.hidden).forEach(row => draft.add($('input[type="checkbox"]', row).value));
+        syncDraftUI();
+      });
+      $('[data-mobile-clear]', section).addEventListener('click', () => { draft.clear(); syncDraftUI(); });
+      syncDraftUI();
+    });
+    $('[data-table-mobile-reset]', overlay).addEventListener('click', () => { closeMobileSheet({ restoreFocus: false }); reset(); trigger.focus(); });
+    $('[data-table-mobile-apply]', overlay).addEventListener('click', () => {
+      const invalid = filterColumns.some(column => optionMap.get(column.key).length && draftFilters.get(column.key).size === 0);
+      if (invalid) { showInAppToast('Selecciona al menos un valor en cada filtro abierto.'); return; }
+      state.sort = { field: draftSort.field, dir: draftSort.dir === 'desc' ? 'desc' : 'asc' };
+      filterColumns.forEach(column => {
+        const options = optionMap.get(column.key);
+        const draft = draftFilters.get(column.key);
+        state.filters[column.key] = draft.size === options.length ? [] : [...draft];
+      });
+      persist(); closeMobileSheet({ restoreFocus: false }); notify(); trigger.focus();
+    });
+    setTimeout(() => closeButton.focus(), 0);
+  }
   function bind(root) {
     boundRoot = root;
     $$('.table-column-sort', root).forEach(button => button.addEventListener('click', event => {
@@ -2061,28 +2193,13 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       const mobileControls = document.createElement('div');
       mobileControls.className = 'table-mobile-column-controls';
       mobileControls.setAttribute('aria-label', 'Ordenar y filtrar tabla');
-      columns.filter(column => column.sortable || column.filterType).forEach(column => {
-        const group = document.createElement('span');
-        group.className = 'table-mobile-column-group';
-        if (column.sortable !== false) {
-          const sortProxy = document.createElement('button');
-          sortProxy.type = 'button'; sortProxy.className = 'btn btn-sm';
-          sortProxy.textContent = column.label;
-          sortProxy.setAttribute('aria-label', `Ordenar por ${column.label}`);
-          sortProxy.addEventListener('click', () => root.querySelector(`[data-table-sort="${column.key}"]`)?.click());
-          group.appendChild(sortProxy);
-        }
-        if (column.filterType) {
-          const filterProxy = document.createElement('button');
-          filterProxy.type = 'button'; filterProxy.className = 'table-column-filter';
-          filterProxy.dataset.tableFilterProxy = column.key;
-          filterProxy.setAttribute('aria-label', `Filtrar por ${column.label}`);
-          filterProxy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg>';
-          filterProxy.addEventListener('click', () => root.querySelector(`[data-table-filter="${column.key}"]`)?.click());
-          group.appendChild(filterProxy);
-        }
-        mobileControls.appendChild(group);
-      });
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'btn table-mobile-filter-trigger';
+      trigger.dataset.tableMobileOpen = '';
+      trigger.innerHTML = '<svg class="table-mobile-filter-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/></svg><span>Filtrar y ordenar</span>';
+      trigger.addEventListener('click', () => openMobileSheet(trigger));
+      mobileControls.appendChild(trigger);
       if (root.id === 'eq-table') mobileHost?.insertBefore(mobileControls, root.parentElement);
       else mobileHost?.insertBefore(mobileControls, root);
       mobileControlsRoot = mobileControls;
@@ -2103,7 +2220,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
     } catch (e) { /* preferencia de sesión opcional */ }
   }
   function reset() { state.sort = { ...defaultSort }; columns.forEach(column => { if (column.filterType) state.filters[column.key] = []; }); persist(); notify(); }
-  return { bind, closePopover, persist, reset, restore, headerHTML: column => renderTableColumnHeader(column, state) };
+  return { bind, closePopover, closeMobileSheet, persist, reset, restore, headerHTML: column => renderTableColumnHeader(column, state) };
 }
 
 /* ---------- Escape de HTML (protección contra XSS) ----------
@@ -7163,6 +7280,9 @@ async function renderEquipos() {
     const manual = sessionStorage.getItem(EQ_VIEW_SESSION_KEY);
     if (manual === 'table' || manual === 'cards') viewMode = manual;
   } catch (e) { /* preferencia de sesión opcional */ }
+  // En teléfono la tabla se presenta como cards operativas mediante CSS y
+  // aloja el único acceso al controlador compartido de filtros/orden.
+  if (window.innerWidth <= 600) viewMode = 'table';
 
   // Índice de búsqueda por equipo: código, ahorrativo, marca/modelo, ubicación y sus
   // puntos de engrase configurados — así "grasera dañada" o "articulación" también encuentra el equipo.
@@ -7210,7 +7330,7 @@ async function renderEquipos() {
     <div id="eq-recents"></div>
     <div class="cards-grid ${viewMode === 'table' ? 'hidden' : ''}" id="eq-list"></div>
     <div class="panel eq-table-panel ${viewMode === 'table' ? '' : 'hidden'}" id="eq-table-wrap">
-      <table class="data-table" id="eq-table">
+      <table class="data-table mobile-operational-cards" id="eq-table">
         <thead>
           <tr>${eqTableTheadHTML()}</tr>
         </thead>
@@ -7315,15 +7435,15 @@ async function renderEquipos() {
     // Tarjetas, ver #eq-bulk-toggle más abajo).
     tbody.innerHTML = withStatus.map(({ e, s }) => `
       <tr class="eq-table-row" data-id="${e.id}">
-        <td class="mono">${e.shortCode ? esc(e.shortCode) : '—'}</td>
-        <td class="mono">${esc(e.code)}</td>
-        <td>${esc(e.brand)} ${esc(e.model)}</td>
+        <td class="mono mobile-card-code mobile-card-code-primary">${e.shortCode ? esc(e.shortCode) : '—'}</td>
+        <td class="mono mobile-card-code mobile-card-code-secondary">${esc(e.code)}</td>
+        <td class="mobile-card-title">${esc(e.brand)} ${esc(e.model)}</td>
         <td>${esc((types.find(t => t.id === e.typeId) || {}).name || '—')}</td>
         <td>${esc((locations.find(l => l.id === e.locationId) || {}).name || '—')}</td>
         <td><span class="status-chip" style="--c:${STATUS_COLOR[s.code]}">${s.label}</span></td>
         <td class="mono">${fmt(e.hourmeter)} h</td>
         <td>${esc(planResumenCorto(s.plan))}</td>
-        <td class="row-actions">
+        <td class="row-actions mobile-card-actions">
           <button type="button" class="btn btn-sm eq-table-ver" data-id="${e.id}">Ver</button>
           ${canEdit ? `<button type="button" class="btn btn-sm eq-table-edit" data-id="${e.id}">${ic("edit")}Editar</button>` : ''}
         </td>
@@ -8775,12 +8895,17 @@ async function renderPlan() {
   planColumnController.restore();
 
   c.innerHTML = `
-    <div class="toolbar">
+    <div class="toolbar plan-toolbar">
       <input id="plan-search" class="input input-search" placeholder="Buscar por código ahorrativo, código interno o equipo…" />
       <button class="btn btn-accent" id="plan-matrix">${ic("grid")}Ver matriz semanal</button>
-      <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
-      <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
-      ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
+      <details class="plan-more-actions" open>
+        <summary class="btn">Más acciones <span aria-hidden="true">⋮</span></summary>
+        <div class="plan-more-actions-menu">
+          <button class="btn" id="plan-print-week">${ic("print")}Imprimir plan de la semana</button>
+          <button class="btn" id="plan-print-month">${ic("print")}Imprimir plan del mes</button>
+          ${canEdit ? `<button class="btn" id="plan-bulk-toggle">${ic("edit")}Configurar plan en lote</button>` : ''}
+        </div>
+      </details>
     </div>
     <div id="plan-bulk-bar" class="bulk-bar hidden">
       <span id="plan-bulk-count">0 seleccionados</span>
@@ -8790,24 +8915,25 @@ async function renderPlan() {
     <div class="plan-results-row"><div class="dim plan-results-summary" id="plan-results-count"></div><button type="button" class="btn btn-sm" id="plan-table-reset">Restablecer tabla</button></div>
     <div class="panel plan-table-panel" id="plan-table-wrap">
       <div class="panel-head table-section-title"><h3>Planes de engrase por equipo</h3></div>
-      <table class="data-table" id="plan-table">
+      <table class="data-table mobile-operational-cards" id="plan-table">
         <thead><tr>${canEdit ? '<th class="plan-select-column" aria-label="Selección"></th>' : ''}${PLAN_TABLE_COLUMNS.map(column => planColumnController.headerHTML(column)).join('')}</tr></thead>
         <tbody id="plan-table-body"></tbody>
       </table>
     </div>`;
+  if (window.innerWidth <= 600) $('.plan-more-actions', c)?.removeAttribute('open');
 
   function rowHTML(r) {
     return `<tr data-row-id="${r.e.id}">
-      ${canEdit ? `<td><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${r.e.id}" ${selected.has(r.e.id) ? 'checked' : ''}/></td>` : ''}
-      <td class="mono">${r.e.shortCode ? esc(r.e.shortCode) : '—'}</td>
-      <td class="mono">${esc(r.e.code)}</td>
-      <td>${esc(r.e.brand)} ${esc(r.e.model)}</td>
+      ${canEdit ? `<td class="mobile-card-selection"><input type="checkbox" class="plan-bulk-check ${bulkMode ? '' : 'hidden'}" data-id="${r.e.id}" ${selected.has(r.e.id) ? 'checked' : ''}/></td>` : ''}
+      <td class="mono mobile-card-code mobile-card-code-primary">${r.e.shortCode ? esc(r.e.shortCode) : '—'}</td>
+      <td class="mono mobile-card-code mobile-card-code-secondary">${esc(r.e.code)}</td>
+      <td class="mobile-card-title">${esc(r.e.brand)} ${esc(r.e.model)}</td>
       <td>${esc(r.controlLabel)}</td>
       <td class="mono">${esc(r.frequencyLabel)}</td>
       <td>${esc(r.shiftsLabel)}</td>
       <td class="mono">${esc(r.referenceLabel)}</td>
       <td class="plan-points-cell">${r.points.length}</td>
-      <td><button class="btn btn-sm" data-eq="${r.e.id}" data-plan="${r.plan ? r.plan.id : ''}">${ic("edit")}Configurar</button></td>
+      <td class="mobile-card-actions"><button class="btn btn-sm" data-eq="${r.e.id}" data-plan="${r.plan ? r.plan.id : ''}">${ic("edit")}Configurar</button></td>
     </tr>`;
   }
 

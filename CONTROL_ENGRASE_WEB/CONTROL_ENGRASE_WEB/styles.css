@@ -561,6 +561,10 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 .table-column-popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); }
 .table-state-actions { display: flex; justify-content: flex-end; padding: 8px 12px; background: var(--surface); }
 .table-mobile-column-controls { display: none; }
+.table-mobile-sheet-backdrop { display: none; }
+.plan-more-actions { display: contents; }
+.plan-more-actions > summary { display: none; }
+.plan-more-actions-menu { display: flex; gap: 10px; flex-wrap: wrap; }
 .plan-results-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 10px; }
 @media (max-width: 600px) {
   .table-column-filter { width: 44px; height: 44px; font-size: 14px; }
@@ -568,12 +572,43 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .table-column-filter-bulk { flex-wrap: wrap; gap: 4px 10px; }
   .table-column-filter-all, .table-column-filter-link, .table-column-filter-option { min-height: 44px; }
   .plan-results-row { align-items: flex-start; }
-}
-@media (max-width: 680px) {
-  .table-mobile-column-controls { display: flex; gap: 6px; padding: 7px 8px; overflow-x: auto; background: var(--surface); border-bottom: 1px solid var(--border); scrollbar-width: thin; }
-  .table-mobile-column-group { display: inline-flex; align-items: center; flex: none; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
-  .table-mobile-column-group > .btn { border: 0; min-height: 44px; white-space: nowrap; }
-  .table-mobile-column-group > .table-column-filter { width: 44px; height: 44px; border-left: 1px solid var(--border); border-radius: 0 5px 5px 0; }
+  .table-mobile-column-controls { display: flex; width: 100%; padding: 0 0 8px; background: transparent; }
+  .table-mobile-filter-trigger { width: 100%; min-height: 44px; justify-content: center; gap: 7px; }
+  .table-mobile-filter-icon { width: 16px; height: 16px; fill: currentColor; }
+  .table-mobile-filter-trigger.is-active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .table-mobile-filter-count { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 11px; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 800; }
+  .table-state-actions, #plan-table-reset { display: none; }
+  body.table-mobile-sheet-open { overflow: hidden; }
+  .table-mobile-sheet-backdrop { display: flex; position: fixed; inset: 0; z-index: 1200; align-items: flex-end; justify-content: center; background: rgba(9, 17, 29, .58); }
+  .table-mobile-sheet { display: flex; flex-direction: column; width: 100%; max-width: 600px; max-height: min(85dvh, calc(100dvh - 64px)); padding-bottom: env(safe-area-inset-bottom); border: 1px solid var(--border); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--surface); box-shadow: 0 -12px 36px rgba(0,0,0,.28); overflow: hidden; }
+  .table-mobile-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .table-mobile-sheet-head h2 { margin: 1px 0 0; font-size: 18px; }
+  .table-mobile-sheet-head .eyebrow { color: var(--text-dim); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .table-mobile-sheet-close { min-height: 44px; font-size: 25px; }
+  .table-mobile-sheet-body { flex: 1; min-height: 0; padding: 12px 14px 18px; overflow-y: auto; overscroll-behavior: contain; }
+  .table-mobile-sort-section { margin: 0 0 16px; padding: 0; border: 0; }
+  .table-mobile-sort-section legend, .table-mobile-filters-title { margin-bottom: 8px; color: var(--text-dim); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+  .table-mobile-sort-section select { width: 100%; min-height: 44px; }
+  .table-mobile-sort-direction { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .table-mobile-sort-direction label { display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+  .table-mobile-sort-direction input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .table-mobile-filter-sections { display: grid; gap: 8px; }
+  .table-mobile-filter-section { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); overflow: hidden; }
+  .table-mobile-filter-section > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 10px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .table-mobile-filter-summary { color: var(--text-dim); font-size: 11px; font-weight: 600; }
+  .table-mobile-filter-content { padding: 0 10px 10px; border-top: 1px solid var(--border); background: var(--surface); }
+  .table-mobile-filter-search { width: 100%; min-height: 44px; margin-top: 10px; }
+  .table-mobile-sheet-actions { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); }
+  .table-mobile-sheet-actions .btn { min-height: 44px; }
+  .plan-toolbar .input-search { flex: 1 0 100%; width: 100%; }
+  .plan-toolbar #plan-matrix, .plan-toolbar .plan-more-actions { flex: 1 1 calc(50% - 5px); min-width: 0; }
+  .plan-more-actions { display: block; position: relative; }
+  .plan-more-actions > summary { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 5px; list-style: none; cursor: pointer; }
+  .plan-more-actions > summary::-webkit-details-marker { display: none; }
+  .plan-more-actions-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: min(310px, calc(100vw - 28px)); padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+  .plan-more-actions[open] .plan-more-actions-menu { display: grid; gap: 6px; }
+  .plan-more-actions-menu .btn { width: 100%; min-height: 44px; justify-content: flex-start; text-align: left; }
+  #eq-view-switch { display: none; }
 }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -2390,10 +2425,11 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
 /* ---------------- Tablas como tarjetas apiladas en pantallas angostas ----------------
    Va al final del archivo a propósito, para ganarle en orden de cascada a las reglas
    anteriores de .data-table que aplican en el mismo rango de ancho (misma especificidad). */
-@media (max-width: 680px) {
-  .data-table thead { display: none; }
+@media (max-width: 600px) {
+  .data-table thead { display: none !important; }
   .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; width: 100%; }
-  .data-table { border: none; }
+  .data-table, #eq-table-wrap .data-table, #plan-table-wrap .data-table { width: 100%; min-width: 0; border: none; table-layout: auto; }
+  #eq-table-wrap, #plan-table-wrap { max-height: none; overflow: hidden; scrollbar-gutter: auto; }
   .data-table tr {
     margin-bottom: 10px; border: 1px solid var(--border); border-radius: 10px;
     padding: 4px 12px; background: var(--surface-2);
@@ -2401,7 +2437,8 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
   .data-table td {
     border: none; border-bottom: 1px solid var(--border);
     padding: 8px 0; display: flex; justify-content: space-between; align-items: center;
-    gap: 10px; text-align: right; font-size: 13px;
+    min-width: 0; gap: 10px; text-align: right; font-size: 13px;
+    white-space: normal; overflow-wrap: anywhere;
   }
   .data-table tr td:last-child { border-bottom: none; }
   .data-table td::before {
@@ -2416,6 +2453,21 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color:
      hueco a la izquierda que descompensaba el margen visual de los 3
      botones (auditoría UI mobile 2026-10-08, Usuarios). */
   .data-table td.row-actions::before { content: none; }
+
+  .data-table.mobile-operational-cards tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }
+  .data-table.mobile-operational-cards td { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(88px, .45fr) minmax(0, 1fr); width: auto; min-width: 0; text-align: right; }
+  .data-table.mobile-operational-cards td::before { margin-right: 0; }
+  .data-table.mobile-operational-cards .mobile-card-code { display: block; padding: 2px 0 5px; border: 0; color: var(--text); font-size: 14px; font-weight: 800; text-align: left; }
+  .data-table.mobile-operational-cards .mobile-card-code::before, .data-table.mobile-operational-cards .mobile-card-title::before, .data-table.mobile-operational-cards .mobile-card-actions::before, .data-table.mobile-operational-cards .mobile-card-selection::before { content: none; }
+  .data-table.mobile-operational-cards .mobile-card-code-primary { grid-column: 1; }
+  .data-table.mobile-operational-cards .mobile-card-code-secondary { grid-column: 2; text-align: right; }
+  .data-table.mobile-operational-cards .mobile-card-title { display: block; grid-column: 1 / -1; padding: 3px 0 10px; color: var(--text); font-size: 14px; font-weight: 700; line-height: 1.35; text-align: left; }
+  .data-table.mobile-operational-cards .mobile-card-selection { display: block; grid-column: 1 / -1; padding: 0 0 7px; border: 0; text-align: left; }
+  .data-table.mobile-operational-cards .mobile-card-selection:has(.hidden) { display: none; }
+  .data-table.mobile-operational-cards .mobile-card-actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 8px; padding-top: 10px; }
+  .data-table.mobile-operational-cards .mobile-card-actions .btn { min-height: 44px; }
+  #plan-table-wrap .table-section-title { padding: 12px 14px; }
+  #plan-table-wrap .table-section-title h3 { font-size: 16px; line-height: 1.25; }
 
   /* Columnas marcadas como secundarias (ver UI-ANDROID-005 / docs/UI_RESPONSIVE.md):
      se ocultan solo en esta tarjeta apilada móvil, nunca en escritorio, para reducir

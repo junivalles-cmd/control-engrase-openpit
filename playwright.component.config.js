@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const viewports = {
+  'phone-360': { width: 360, height: 800 },
   'phone-390': { width: 390, height: 844 },
   'phone-412': { width: 412, height: 915 },
   'tablet-768': { width: 768, height: 1024 },
