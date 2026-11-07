@@ -1911,6 +1911,29 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
   let boundRoot = null;
   let mobileControlsRoot = null;
   let mobileSheet = null;
+  function filterDraftRows(input, rows, noMatches) {
+    const needle = input.value.trim().toLocaleLowerCase('es');
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const visible = !needle || row.textContent.toLocaleLowerCase('es').includes(needle);
+      row.hidden = !visible;
+      if (visible) visibleCount++;
+    });
+    if (noMatches) noMatches.hidden = visibleCount > 0 || !needle;
+    return visibleCount;
+  }
+  function syncFilterDraft({ options, draft, rows, allToggle, summary, headingSummary = null }) {
+    rows.forEach(row => {
+      const checkbox = $('input[type="checkbox"]', row);
+      checkbox.checked = draft.has(checkbox.value);
+      row.classList.toggle('is-selected', checkbox.checked);
+    });
+    allToggle.checked = options.length > 0 && draft.size === options.length;
+    allToggle.indeterminate = draft.size > 0 && draft.size < options.length;
+    const summaryText = draft.size === options.length ? 'Todos los valores' : draft.size ? `${draft.size} de ${options.length} seleccionados` : '0 seleccionados · se aplicará sin filtro';
+    summary.textContent = summaryText;
+    if (headingSummary) headingSummary.textContent = draft.size === options.length ? 'Todos' : draft.size ? `${draft.size} seleccionados` : 'Sin filtro';
+  }
   function persist() {
     try { sessionStorage.setItem(sessionKey, JSON.stringify({ sortKey: state.sort.field, sortDirection: state.sort.dir, columnFilters: state.filters })); }
     catch (e) { /* preferencia de sesión opcional */ }
@@ -1933,7 +1956,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
     const draft = new Set(currentSelection.length ? currentSelection : options.map(option => option.value));
     const optionList = options.length ? `<div class="table-column-filter-options" role="group" aria-label="Valores disponibles para ${esc(column.label)}">
       ${options.map(option => `<label class="table-column-filter-option"><input type="checkbox" value="${esc(option.value)}" ${draft.has(option.value) ? 'checked' : ''}/><span>${esc(option.label)}</span></label>`).join('')}
-    </div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>';
+    </div><div class="table-column-filter-no-matches" hidden>No hay valores coincidentes</div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>';
     popover.innerHTML = `
       <div class="table-column-popover-title">Filtrar: ${esc(column.label)}</div>
       <input class="table-column-filter-input" type="search" placeholder="Buscar en valores…" aria-label="Buscar valores de ${esc(column.label)}" />
@@ -1971,25 +1994,16 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
     const applyButton = $('[data-table-filter-apply]', popover);
     const optionRows = $$('.table-column-filter-option', popover);
     const summary = $('.table-column-filter-summary', popover);
+    const noMatches = $('.table-column-filter-no-matches', popover);
     const syncDraftUI = () => {
-      optionRows.forEach(row => {
-        const checkbox = $('input[type="checkbox"]', row);
-        checkbox.checked = draft.has(checkbox.value);
-        row.classList.toggle('is-selected', checkbox.checked);
-      });
-      allToggle.checked = options.length > 0 && draft.size === options.length;
-      allToggle.indeterminate = draft.size > 0 && draft.size < options.length;
-      summary.textContent = draft.size === options.length ? 'Todos los valores' : draft.size ? `${draft.size} de ${options.length} seleccionados` : 'Selecciona al menos un valor';
-      applyButton.disabled = draft.size === 0;
+      syncFilterDraft({ options, draft, rows: optionRows, allToggle, summary });
+      applyButton.disabled = false;
     };
     optionRows.forEach(row => $('input[type="checkbox"]', row).addEventListener('change', event => {
       event.target.checked ? draft.add(event.target.value) : draft.delete(event.target.value);
       syncDraftUI();
     }));
-    input.addEventListener('input', () => {
-      const needle = input.value.trim().toLocaleLowerCase('es');
-      optionRows.forEach(row => { row.hidden = !!needle && !row.textContent.toLocaleLowerCase('es').includes(needle); });
-    });
+    input.addEventListener('input', () => filterDraftRows(input, optionRows, noMatches));
     allToggle.addEventListener('change', () => {
       draft.clear();
       if (allToggle.checked) options.forEach(option => draft.add(option.value));
@@ -2000,11 +2014,13 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       syncDraftUI();
     });
     const apply = () => {
-      state.filters[column.key] = draft.size === options.length ? [] : [...draft];
+      state.filters[column.key] = draft.size === 0 || draft.size === options.length ? [] : [...draft];
       persist(); closePopover(); notify();
     };
     $('[data-table-filter-apply]', popover).addEventListener('click', apply);
-    $('[data-table-filter-clear]', popover).addEventListener('click', () => { state.filters[column.key] = []; persist(); closePopover(); notify(); });
+    $('[data-table-filter-clear]', popover).addEventListener('click', () => {
+      draft.clear(); input.value = ''; filterDraftRows(input, optionRows, noMatches); syncDraftUI(); input.focus();
+    });
     $('[data-table-filter-cancel]', popover).addEventListener('click', () => { closePopover(); button.focus(); });
     input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
     syncDraftUI();
@@ -2098,7 +2114,7 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
                   <button type="button" class="table-column-filter-link" data-mobile-select-all>Seleccionar todo</button>
                   <button type="button" class="table-column-filter-link" data-mobile-clear>Limpiar</button>
                 </div>
-                ${options.length ? `<div class="table-column-filter-options">${options.map(option => `<label class="table-column-filter-option"><input type="checkbox" value="${esc(option.value)}" ${draft.has(option.value) ? 'checked' : ''}/><span>${esc(option.label)}</span></label>`).join('')}</div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>'}
+                ${options.length ? `<div class="table-column-filter-options">${options.map(option => `<label class="table-column-filter-option"><input type="checkbox" value="${esc(option.value)}" ${draft.has(option.value) ? 'checked' : ''}/><span>${esc(option.label)}</span></label>`).join('')}</div><div class="table-column-filter-no-matches" hidden>No hay valores coincidentes</div>` : '<div class="table-column-filter-empty">Sin valores disponibles</div>'}
                 <div class="table-column-filter-summary" aria-live="polite"></div>
               </div>
             </details>`;
@@ -2130,25 +2146,16 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
       const allToggle = $('[data-mobile-filter-all]', section);
       const summary = $('.table-column-filter-summary', section);
       const headingSummary = $('summary .table-mobile-filter-summary', section);
+      const searchInput = $('.table-mobile-filter-search', section);
+      const noMatches = $('.table-column-filter-no-matches', section);
       const syncDraftUI = () => {
-        rows.forEach(row => {
-          const checkbox = $('input[type="checkbox"]', row);
-          checkbox.checked = draft.has(checkbox.value);
-          row.classList.toggle('is-selected', checkbox.checked);
-        });
-        allToggle.checked = options.length > 0 && draft.size === options.length;
-        allToggle.indeterminate = draft.size > 0 && draft.size < options.length;
-        summary.textContent = draft.size === options.length ? 'Todos los valores' : `${draft.size} de ${options.length} seleccionados`;
-        headingSummary.textContent = draft.size === options.length ? 'Todos' : `${draft.size} seleccionados`;
+        syncFilterDraft({ options, draft, rows, allToggle, summary, headingSummary });
       };
       rows.forEach(row => $('input[type="checkbox"]', row).addEventListener('change', event => {
         event.target.checked ? draft.add(event.target.value) : draft.delete(event.target.value);
         syncDraftUI();
       }));
-      $('.table-mobile-filter-search', section).addEventListener('input', event => {
-        const needle = event.target.value.trim().toLocaleLowerCase('es');
-        rows.forEach(row => { row.hidden = !!needle && !row.textContent.toLocaleLowerCase('es').includes(needle); });
-      });
+      searchInput.addEventListener('input', () => filterDraftRows(searchInput, rows, noMatches));
       allToggle.addEventListener('change', () => {
         draft.clear();
         if (allToggle.checked) options.forEach(option => draft.add(option.value));
@@ -2158,18 +2165,18 @@ function createTableColumnController({ tableId, columns, state, onChange, defaul
         rows.filter(row => !row.hidden).forEach(row => draft.add($('input[type="checkbox"]', row).value));
         syncDraftUI();
       });
-      $('[data-mobile-clear]', section).addEventListener('click', () => { draft.clear(); syncDraftUI(); });
+      $('[data-mobile-clear]', section).addEventListener('click', () => {
+        draft.clear(); searchInput.value = ''; filterDraftRows(searchInput, rows, noMatches); syncDraftUI(); searchInput.focus();
+      });
       syncDraftUI();
     });
     $('[data-table-mobile-reset]', overlay).addEventListener('click', () => { closeMobileSheet({ restoreFocus: false }); reset(); trigger.focus(); });
     $('[data-table-mobile-apply]', overlay).addEventListener('click', () => {
-      const invalid = filterColumns.some(column => optionMap.get(column.key).length && draftFilters.get(column.key).size === 0);
-      if (invalid) { showInAppToast('Selecciona al menos un valor en cada filtro abierto.'); return; }
       state.sort = { field: draftSort.field, dir: draftSort.dir === 'desc' ? 'desc' : 'asc' };
       filterColumns.forEach(column => {
         const options = optionMap.get(column.key);
         const draft = draftFilters.get(column.key);
-        state.filters[column.key] = draft.size === options.length ? [] : [...draft];
+        state.filters[column.key] = draft.size === 0 || draft.size === options.length ? [] : [...draft];
       });
       persist(); closeMobileSheet({ restoreFocus: false }); notify(); trigger.focus();
     });

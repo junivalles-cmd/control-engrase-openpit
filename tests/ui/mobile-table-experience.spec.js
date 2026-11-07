@@ -126,6 +126,32 @@ test('toolbar móvil compacta acciones y el sheet respeta el viewport', async ({
   await page.locator('#eq-mobile-shot').screenshot({ path: testInfo.outputPath('equipment-mobile.png') });
 });
 
+test('buscador del bottom sheet filtra visibles sin cambiar selección y permite limpiar sin aplicar', async ({ page }, testInfo) => {
+  test.skip((testInfo.project.use.viewport?.width || 9999) > 600, 'Contrato móvil');
+  await boot(page);
+  await page.locator('#plan-table-wrap [data-table-mobile-open]').click();
+  await page.locator('[data-mobile-filter-section="code"] summary').click();
+  const section = page.locator('[data-mobile-filter-section="code"]');
+  const search = section.locator('.table-mobile-filter-search');
+  await expect(section.locator('.table-column-filter-option input:checked')).toHaveCount(2);
+  await search.fill('99');
+  await expect(section.locator('.table-column-filter-option:not([hidden])')).toHaveCount(0);
+  await expect(section.locator('.table-column-filter-no-matches')).toBeVisible();
+  await expect(section.locator('.table-column-filter-option input:checked')).toHaveCount(2);
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+  await search.fill('05');
+  await expect(section.locator('.table-column-filter-option:not([hidden]) span')).toHaveText(['05-18']);
+  await section.locator('[data-mobile-filter-all]').uncheck();
+  await section.locator('[data-mobile-select-all]').click();
+  await expect(section.locator('input[value="05-18"]')).toBeChecked();
+  await expect(section.locator('input[value="45-69"]')).not.toBeChecked();
+  await section.locator('[data-mobile-clear]').click();
+  await expect(search).toHaveValue('');
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+  await page.locator('[data-table-mobile-apply]').click();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+});
+
 test('tablet y desktop conservan tabla, headers y funnels', async ({ page }, testInfo) => {
   test.skip((testInfo.project.use.viewport?.width || 0) <= 600, 'Contrato tablet/desktop');
   await boot(page);

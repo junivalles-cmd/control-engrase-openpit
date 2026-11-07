@@ -61,6 +61,9 @@ test('filtro multiselección se aplica, muestra contador y se puede limpiar', as
   await expect(page.locator('[data-table-filter="code"] svg')).toHaveCount(1);
   await page.locator('[data-table-filter="code"]').click();
   await page.locator('[data-table-filter-clear]').click();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual(['20-10', '45-69']);
+  await expect(page.locator('.table-column-filter-input')).toHaveValue('');
+  await page.locator('[data-table-filter-apply]').click();
   expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
 });
 
@@ -71,9 +74,66 @@ test('filtro ofrece valores reales y la búsqueda limita la selección visible',
   await page.locator('[data-table-filter-all]').uncheck();
   await page.locator('.table-column-filter-input').fill('45');
   await expect(page.locator('.table-column-filter-option:not([hidden]) span')).toHaveText(['45-69']);
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
   await page.locator('[data-table-filter-select-all]').click();
   await page.locator('[data-table-filter-apply]').click();
   expect(await page.evaluate(() => window.state.filters.code)).toEqual(['45-69']);
+});
+
+test('buscador exacto/parcial/sin coincidencias no modifica la selección', async ({ page }) => {
+  await boot(page);
+  await page.locator('[data-table-filter="code"]').click();
+  const search = page.locator('.table-column-filter-input');
+  await search.fill('45-69');
+  await expect(page.locator('.table-column-filter-option:not([hidden]) span')).toHaveText(['45-69']);
+  await search.fill('20');
+  await expect(page.locator('.table-column-filter-option:not([hidden]) span')).toHaveText(['20-10']);
+  await search.fill('99');
+  await expect(page.locator('.table-column-filter-option:not([hidden])')).toHaveCount(0);
+  await expect(page.locator('.table-column-filter-no-matches')).toHaveText('No hay valores coincidentes');
+  await expect(page.locator('.table-column-filter-no-matches')).toBeVisible();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+  await expect(page.locator('.table-column-filter-option input:checked')).toHaveCount(3);
+});
+
+test('Todos refleja checked/indeterminate/unchecked y Seleccionar todo solo agrega visibles', async ({ page }) => {
+  await boot(page);
+  await page.locator('[data-table-filter="code"]').click();
+  const all = page.locator('[data-table-filter-all]');
+  await expect(all).toBeChecked();
+  await page.locator('.table-column-filter-option input[value="20-10"]').uncheck();
+  expect(await all.evaluate(input => ({ checked: input.checked, indeterminate: input.indeterminate }))).toEqual({ checked: false, indeterminate: true });
+  await page.locator('.table-column-filter-option input[value="45-69"]').uncheck();
+  await page.locator('.table-column-filter-option input[value="50-1"]').uncheck();
+  expect(await all.evaluate(input => ({ checked: input.checked, indeterminate: input.indeterminate }))).toEqual({ checked: false, indeterminate: false });
+  await page.locator('.table-column-filter-input').fill('45');
+  await page.locator('[data-table-filter-select-all]').click();
+  await expect(page.locator('.table-column-filter-option input[value="45-69"]')).toBeChecked();
+  await expect(page.locator('.table-column-filter-option input[value="20-10"]')).not.toBeChecked();
+  await expect(page.locator('.table-column-filter-option input[value="50-1"]')).not.toBeChecked();
+});
+
+test('Limpiar es borrador; aplicar cero equivale a sin filtro y reabrir reinicia búsqueda', async ({ page }) => {
+  await boot(page);
+  await page.locator('[data-table-filter="code"]').click();
+  await page.locator('[data-table-filter-all]').uncheck();
+  await page.locator('.table-column-filter-option input[value="45-69"]').check();
+  await page.locator('[data-table-filter-apply]').click();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual(['45-69']);
+
+  await page.locator('[data-table-filter="code"]').click();
+  await expect(page.locator('.table-column-filter-option input[value="45-69"]')).toBeChecked();
+  await expect(page.locator('[data-table-filter-all]')).not.toBeChecked();
+  await page.locator('.table-column-filter-input').fill('45');
+  await page.locator('[data-table-filter-clear]').click();
+  await expect(page.locator('.table-column-filter-input')).toHaveValue('');
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual(['45-69']);
+  await page.locator('[data-table-filter-apply]').click();
+  expect(await page.evaluate(() => window.state.filters.code)).toEqual([]);
+  await expect(page.locator('[data-table-filter="code"]')).not.toHaveClass(/is-active/);
+  await page.locator('[data-table-filter="code"]').click();
+  await expect(page.locator('.table-column-filter-input')).toHaveValue('');
+  await expect(page.locator('.table-column-filter-option input:checked')).toHaveCount(3);
 });
 
 test('Todos y Seleccionar todo restauran el conjunto completo sin filtro activo', async ({ page }) => {
@@ -171,7 +231,7 @@ test('tabla genérica combina texto + select, orden numérico y limpiar todos', 
   await expect(page.locator('th:last-child [data-table-sort], th:last-child [data-table-filter]')).toHaveCount(0);
 });
 
-test('captura visual común de las seis tablas principales', async ({ page }, testInfo) => {
+test('headers globales mantienen 48px y captura visual de siete tablas', async ({ page }, testInfo) => {
   await boot(page);
   await page.addStyleTag({ path: STYLES_PATH });
   await page.evaluate(() => {
@@ -182,6 +242,7 @@ test('captura visual común de las seis tablas principales', async ({ page }, te
       ['ANOMALÍAS', ['Fecha', 'Equipo', 'Componente', 'Criticidad', 'Estado', 'Acciones']],
       ['LUBRICANTES', ['Código', 'Nombre', 'Marca', 'Tipo', 'Unidad', 'Acciones']],
       ['USUARIOS', ['Nombre', 'Usuario', 'Rol', 'Cuadrilla', 'Estado', 'Acciones']],
+      ['REPORTES', ['Equipo', 'Programados', 'Realizados', 'Cumplimiento', 'Consumo', 'Acciones']],
     ];
     window.App = { route: 'history' };
     document.body.innerHTML = '<main id="visual-host"></main>';
@@ -195,6 +256,29 @@ test('captura visual común de las seis tablas principales', async ({ page }, te
     });
   });
   await page.screenshot({ path: testInfo.outputPath('system-tables.png'), fullPage: true });
+  const width = testInfo.project.use.viewport?.width || 0;
+  if (width >= 601) {
+    const metrics = await page.locator('.data-table').evaluateAll(tables => tables.map(table => {
+      const headers = [...table.querySelectorAll('thead th')];
+      return {
+        heights: headers.map(th => th.getBoundingClientRect().height),
+        clipped: headers.some(th => th.scrollHeight > th.clientHeight + 1),
+        actionControls: headers.at(-1)?.querySelectorAll('[data-table-sort], [data-table-filter]').length || 0,
+      };
+    }));
+    metrics.forEach(metric => {
+      expect(Math.min(...metric.heights)).toBeGreaterThanOrEqual(46);
+      expect(Math.max(...metric.heights) - Math.min(...metric.heights)).toBeLessThanOrEqual(1);
+      expect(metric.clipped).toBe(false);
+      expect(metric.actionControls).toBe(0);
+    });
+    if (width === 1366) {
+      const panels = page.locator('#visual-host > .panel');
+      for (let index = 0; index < await panels.count(); index++) {
+        await panels.nth(index).screenshot({ path: testInfo.outputPath(`table-${index + 1}-header.png`) });
+      }
+    }
+  }
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(testInfo.project.name.startsWith('phone') ? 1 : 16);
 });
