@@ -1,14 +1,17 @@
 # Rediseño operativo — cuadrillas, ubicaciones y asignación manual de engrases
 
-## Actualización 2026-11-04 — PLANIFICADOR por ubicación
+## Actualización 2026-11-14 — PLANIFICADOR por una o varias ubicaciones
 
-Cada perfil Auth con rol `PLANIFICADOR` tiene exactamente una
-`app_profiles.location_id` y usa `LOCATION_SCOPED`. Solo puede leer o
+Cada perfil Auth con rol `PLANIFICADOR` tiene una o varias ubicaciones
+maestras en `app_profiles.location_ids` y usa `LOCATION_SCOPED`. El campo
+legacy `location_id` conserva la primera asignación únicamente por
+compatibilidad durante la transición; no limita el alcance a una sola.
+El planificador solo puede leer o
 modificar filas vinculadas a equipos cuya ubicación maestra actual
-(`equipment.locationId`) coincide con esa asignación. `ADMINISTRADOR`
+(`equipment.locationId`) pertenece a esa lista. `ADMINISTRADOR`
 conserva `GLOBAL`. Este límite se aplica en el contexto central, el cache
 IndexedDB, la sincronización, RLS y una defensa de escritura para REST/RPC;
-no es un filtro visual. Cambiar la ubicación del perfil no mueve equipos.
+no es un filtro visual. Cambiar las ubicaciones del perfil no mueve equipos.
 
 Fecha: 2026-09-28. Implementa el "LOTE OPERATIVO GLOBAL" pedido para modelar
 la operación real de campo: cuadrillas que pertenecen a una ubicación, y la
@@ -59,7 +62,8 @@ de scope ya NO aplica: reemplazado por `getAuthorizedCrews()` en
     `app_user_id` (Auth) están autorizados a trabajar como esta cuadrilla,
     desde cualquier dispositivo.
 - **Usuario** (Auth): aporta identidad + rol SIEMPRE; para
-  PLANIFICADOR aporta además una única `app_profiles.location_id`; para
+  PLANIFICADOR aporta además `app_profiles.location_ids` con una o varias
+  ubicaciones maestras autorizadas; para
   SUPERVISOR/LUBRICADOR, también su cuadrilla autorizada (resuelta en vivo
   contra `cuadrillas[].memberUserIds`, nunca guardada en el perfil — ver
   `currentUserFromAuthProfile()`/`getAuthorizedCrews()`).
@@ -74,7 +78,7 @@ Módulo puro (sin DOM/DB/red), mismo patrón que `weekly-matrix.js` /
 - `resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId, crewLocations })`
   → `{ kind, crewId, crewLocationId, locationId, ... }`. Los kinds vigentes son:
   - `GLOBAL` — ADMINISTRADOR y VISOR según sus permisos.
-  - `LOCATION_SCOPED` — PLANIFICADOR con una ubicación asignada.
+  - `LOCATION_SCOPED` — PLANIFICADOR con una o varias ubicaciones asignadas.
   - `NO_LOCATION_ASSIGNED` — PLANIFICADOR incompleto; falla cerrado.
   - `NO_CREW_ASSIGNED` / `NEEDS_CREW_SELECTION` / `CREW_SCOPED` —
     SUPERVISOR/LUBRICADOR según su membresía real de cuadrilla.
@@ -109,8 +113,8 @@ modelo/Android ID/"dispositivo ya vinculado a una cuadrilla"**:
   `productFlavors`/`flavorDimensions` — Gradle solo distingue
   debug/release, nunca una variante por ubicación/cuadrilla/turno.
 - **Usuario**: identidad + rol vienen 100% de Auth (`app_profiles`,
-  `currentUserFromAuthProfile()`). Solo PLANIFICADOR guarda una ubicación
-  autorizada por persona; nunca se hardcodea en el build ni se deriva del
+  `currentUserFromAuthProfile()`). Solo PLANIFICADOR guarda una lista de
+  ubicaciones autorizadas por persona; nunca se hardcodea en el build ni se deriva del
   dispositivo. SUPERVISOR/LUBRICADOR siguen resolviendo cuadrilla en vivo.
 - **Cuadrilla/ubicación**: YA NO depende de ningún dispositivo (ver
   corrección arquitectónica arriba) — `cuadrillas[].memberUserIds`

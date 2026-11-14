@@ -26,6 +26,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { readSource, extractDeclaration } from '../helpers/extractFromSource.js';
 import { APP_JS_PATH, DB_JS_PATH, OPERATIONAL_SCOPE_JS_PATH, OPERATIONAL_WEEK_JS_PATH } from '../helpers/loadLubricationLogic.js';
+import { THEME_PREFERENCE_DECLARATIONS } from '../helpers/themeFixture.js';
 
 const STYLES_PATH = path.resolve('CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/styles.css');
 const appSource = readSource(APP_JS_PATH);
@@ -39,7 +40,9 @@ const appNames = [
   'cuadrillasPanelHTML', 'wireCuadrillasPanel', 'simpleListPanelHTML', 'wireSimpleListPanel',
   'wireConfigCategoryNav', 'CONFIG_DEFAULT_CATEGORY', 'renderConfig',
   'renderUsuarios', 'renderUsuariosSupabase', 'manageUsersErrorMessage', 'withSubmitGuard',
-  'userFormSupabase', 'roleFormSupabase', 'resetPasswordFormSupabase', 'MANAGE_USERS_ERROR_LABELS',
+  'plannerLocationsFieldHTML', 'selectedPlannerLocationIds', 'wirePlannerLocationsField',
+  'userFormSupabase', 'editUserFormSupabase', 'roleFormSupabase', 'resetPasswordFormSupabase', 'MANAGE_USERS_ERROR_LABELS',
+  ...THEME_PREFERENCE_DECLARATIONS, 'themePickerHTML', 'wireThemePicker',
   'TABLE_EMPTY_FILTER_VALUE', 'tableFilterOptionValue', 'tableFilterSelection', 'tableFilterIsActive',
   'tableFilterMatches', 'tableFilterMatchesAny', 'tableFilterOptions', 'renderTableColumnHeader', 'createTableColumnController',
   'tableColumnKey', 'tableComparableValue', 'standardizeDataTable', 'makeTablesResponsive',
@@ -226,35 +229,32 @@ test('4. Usuarios y accesos > Editar usuario > Guardar => sigue en Usuarios y ac
   await configTab(page, 'usuarios').click();
   await expect(configCat(page, 'usuarios')).toBeVisible();
   await expect(page.locator('#config-usuarios-embed')).toContainText('Lucía');
-  await page.locator('#config-usuarios-embed button[data-role="au1"]').click();
-  await page.locator('#role-form-sb [name="role"]').selectOption('SUPERVISOR');
-  await page.locator('#role-form-sb button[type="submit"]').click();
-  await expect(page.locator('#role-form-sb')).toHaveCount(0);
+  await page.locator('#config-usuarios-embed button[data-edit-user="au1"]').click();
+  await page.locator('#edit-user-form-sb [name="role"]').selectOption('SUPERVISOR');
+  await page.locator('#edit-user-form-sb button[type="submit"]').click();
+  await expect(page.locator('#edit-user-form-sb')).toHaveCount(0);
   await expect(configCat(page, 'usuarios')).toBeVisible();
   await expect(configCat(page, 'general')).toBeHidden();
-  expect(await page.evaluate(() => window.__manageUsersCalls)).toContain('UPDATE_ROLE');
+  expect(await page.evaluate(() => window.__manageUsersCalls)).toContain('UPDATE_USER');
 });
 
-test('4b. PLANIFICADOR exige ubicación maestra al crear y conserva la real al editar', async ({ page }) => {
-  await boot(page, { manageUsersList: [{ app_user_id: 'planner-1', display_name: 'Planificador Volcán', role: 'PLANIFICADOR', location_id: 'loc1', active: true }] });
+test('4b. PLANIFICADOR exige al menos una ubicación y permite conservar varias al editar', async ({ page }) => {
+  await boot(page, { manageUsersList: [{ app_user_id: 'planner-1', username: 'planner', display_name: 'Planificador Volcán', role: 'PLANIFICADOR', location_id: 'loc1', location_ids: ['loc1'], active: true }] });
   const mobileUsersEntry = page.locator('.config-mobile-item[data-category="usuarios"]');
   if (await mobileUsersEntry.isVisible()) await mobileUsersEntry.click();
   else await configTab(page, 'usuarios').click();
 
-  await page.locator('#config-usuarios-embed button[data-role="planner-1"]').click();
-  const editLocation = page.locator('#role-form-sb [name="location_id"]');
+  await page.locator('#config-usuarios-embed button[data-edit-user="planner-1"]').click();
+  const editLocation = page.locator('#edit-user-form-sb input[name="location_ids"][value="loc1"]');
   await expect(editLocation).toBeVisible();
-  await expect(editLocation).toHaveAttribute('required', '');
-  await expect(editLocation).toHaveValue('loc1');
+  await expect(editLocation).toBeChecked();
   await page.evaluate(() => closeModal());
 
   await page.locator('#btn-new-user-sb').click();
   await page.locator('#user-form-sb [name="role"]').selectOption('PLANIFICADOR');
-  const createLocation = page.locator('#user-form-sb [name="location_id"]');
+  const createLocation = page.locator('#user-form-sb input[name="location_ids"][value="loc1"]');
   await expect(createLocation).toBeVisible();
-  await expect(createLocation).toHaveAttribute('required', '');
-  await expect(createLocation).toHaveValue('');
-  await expect(createLocation.locator('option').first()).toHaveText('— Seleccionar ubicación —');
+  await expect(createLocation).not.toBeChecked();
   await page.locator('#user-form-sb [name="display_name"]').fill('Nueva Planificadora');
   await page.locator('#user-form-sb [name="username"]').fill('nueva.planificadora');
   await page.locator('#user-form-sb [name="temp_password"]').fill('Segura123');
@@ -262,12 +262,25 @@ test('4b. PLANIFICADOR exige ubicación maestra al crear y conserva la real al e
   await page.locator('#user-form-sb button[type="submit"]').click();
   expect(await page.evaluate(() => (window.__manageUsersCalls || []).filter(action => action === 'CREATE_USER'))).toHaveLength(0);
 
-  await createLocation.selectOption('loc1');
+  await createLocation.check();
   await page.locator('#user-form-sb button[type="submit"]').click();
   await expect(page.locator('#user-form-sb')).toHaveCount(0);
   const createCall = await page.evaluate(() => window.__manageUsersPayloads.find(call => call.action === 'CREATE_USER'));
-  expect(createCall.payload.location_id).toBe('loc1');
+  expect(createCall.payload.location_ids).toEqual(['loc1']);
   expect(createCall.payload.role).toBe('PLANIFICADOR');
+});
+
+test('4c. Apariencia se edita directamente en Configuración, sin abrir otra ventana', async ({ page }) => {
+  await boot(page);
+  const mobileGeneralEntry = page.locator('.config-mobile-item[data-category="general"]');
+  if (await mobileGeneralEntry.isVisible()) await mobileGeneralEntry.click();
+  else await configTab(page, 'general').click();
+  const appearance = configCat(page, 'general').locator('.theme-inline-editor');
+  await expect(appearance).toBeVisible();
+  await expect(appearance.locator('.theme-preview-grid').first()).toBeVisible();
+  await expect(configCat(page, 'general').getByRole('button', { name: /cambiar colores/i })).toHaveCount(0);
+  await appearance.locator('.theme-preview-card[data-accent="verde-bosque"]').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'verde-bosque');
 });
 
 test('5. Notificaciones > Guardar => sigue en Notificaciones', async ({ page }) => {

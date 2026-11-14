@@ -9,6 +9,7 @@ const ROOT = path.resolve(import.meta.dirname, '../..');
 const APP_PATH = path.join(ROOT, 'CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/app.js');
 const MIGRATION_PATH = path.join(ROOT, 'CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/20261104151939_planner_location_scope.sql');
 const FOLLOWUP_MIGRATION_PATH = path.join(ROOT, 'CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/20261104154143_planner_equipment_scope_controls.sql');
+const MULTI_MIGRATION_PATH = path.join(ROOT, 'CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/migrations/20261114154753_planner_multi_location_user_editor.sql');
 const EDGE_PATH = path.join(ROOT, 'CONTROL_ENGRASE_WEB/CONTROL_ENGRASE_WEB/supabase/functions/manage-users/index.ts');
 
 afterEach(() => vi.unstubAllGlobals());
@@ -33,6 +34,18 @@ describe('PLANIFICADOR — alcance operativo único por ubicación maestra', () 
     expect(canAccessLocation(scope, 'mojon')).toBe(false);
     expect(canAccessEquipment(scope, equipment[0])).toBe(true);
     expect(canAccessEquipment(scope, equipment[1])).toBe(false);
+  });
+
+  it('autoriza varias ubicaciones explícitas sin volverse global', () => {
+    const multi = resolveOperationalScope({
+      currentUser: { id: 'planner', role: 'PLANIFICADOR', locationIds: ['volcan', 'mojon'] },
+      cuadrillas: [], shiftId: 'shift_dia',
+    });
+    expect(multi.kind).toBe('LOCATION_SCOPED');
+    expect(multi.authorizedLocationIds).toEqual(['volcan', 'mojon']);
+    expect(canAccessLocation(multi, 'volcan')).toBe(true);
+    expect(canAccessLocation(multi, 'mojon')).toBe(true);
+    expect(canAccessLocation(multi, 'taller')).toBe(false);
   });
 
   it('filtra equipos y filas relacionadas por equipmentId sin inferir cuadrilla/turno', () => {
@@ -131,22 +144,33 @@ describe('Defensa en profundidad — UI, Edge Function y SQL', () => {
   const sql = fs.readFileSync(MIGRATION_PATH, 'utf8');
   const followupSql = fs.readFileSync(FOLLOWUP_MIGRATION_PATH, 'utf8');
 
-  it('UI usa ubicaciones maestras, muestra placeholder y valida mensaje exacto', () => {
+  const multiSql = fs.readFileSync(MULTI_MIGRATION_PATH, 'utf8');
+
+  it('UI usa ubicaciones maestras múltiples y restringe creación/edición de equipos', () => {
     expect(app).toContain("const locations = await DB.allActive('locations')");
-    expect(app).toContain('— Seleccionar ubicación —');
-    expect(app).toContain('Selecciona la ubicación asignada al planificador.');
-    expect(app).toContain("location_id: fd.role === 'PLANIFICADOR' ? fd.location_id : null");
+    expect(app).toContain('plannerLocationsFieldHTML');
+    expect(app).toContain('Selecciona al menos una ubicación asignada al planificador.');
+    expect(app).toContain('plannerLocationIds.includes(obj.locationId)');
     expect(app).toContain("PLANIFICADOR: ['dashboard','tareas-mensajes','equipos','plan','matriz','turno','historial','anomalias','reportes'");
-    expect(app).toContain('No tienes una ubicación asignada. Contacta al administrador.');
+    expect(app).toContain('No tienes ubicaciones asignadas. Contacta al administrador.');
     expect(app).toContain('aria-readonly="true"');
-    expect(app).toContain("if (plannerScope) obj.locationId = plannerScope.locationId");
+    expect(app).toContain('if (plannerScope && !isNew) obj.locationId = e.locationId');
   });
 
-  it('Edge Function lista/lee/escribe location_id y valida la ubicación maestra', () => {
-    expect(edge).toContain('location_id,created_at');
-    expect(edge).toContain('isActiveMasterLocation');
+  it('Edge Function lista/lee/escribe location_ids y valida cada ubicación maestra', () => {
+    expect(edge).toContain('location_id,location_ids,created_at');
+    expect(edge).toContain('areActiveMasterLocations');
     expect(edge).toContain('planner_location_required');
+    expect(edge).toContain('location_ids: locationIds');
     expect(edge).toContain('location_id: locationId');
+  });
+
+  it('migración multiubicación conserva location_id compatible y aplica scope/RLS a la lista', () => {
+    expect(multiSql).toContain('add column if not exists location_ids text[]');
+    expect(multiSql).toContain("location_id = location_ids[1]");
+    expect(multiSql).toContain("(s.payload->>'locationId')=any(location_ids)");
+    expect(multiSql).toContain('return location_id=any(assigned_locations)');
+    expect(multiSql).not.toMatch(/delete\s+from\s+public\.engrase_sync/i);
   });
 
   it('migración crea LOCATION_SCOPED, falla cerrado y protege RPC/REST por trigger', () => {

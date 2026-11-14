@@ -153,7 +153,7 @@ describe('Traducción de errores — nunca el código crudo, nunca stack/service
     ['AUTH_REQUIRED', 'AUTH_FORBIDDEN', 'NETWORK', 'TIMEOUT', 'username_taken', 'invalid_role',
       'temp_password_required_min_8', 'new_password_required_min_8', 'not_found',
       'cannot_remove_last_admin', 'cannot_deactivate_last_admin', 'auth_create_failed',
-      'profile_create_failed_rolled_back'].forEach(code => {
+      'profile_create_failed_rolled_back', 'auth_update_failed_rolled_back'].forEach(code => {
       const msg = manageUsersErrorMessage(new Error(code));
       expect(msg).not.toBe(code); // siempre traducido, nunca el código crudo
       expect(msg.length).toBeGreaterThan(5);
@@ -212,6 +212,14 @@ describe('F) Confirmación de contraseña — coincide antes de llamar al servid
     const src = extractDeclaration(appSource, 'resetPasswordFormSupabase');
     expect(src).toContain('if (fd.new_password !== fd.new_password_confirm)');
   });
+  it('editUserFormSupabase permite cambiar nombre, usuario y opcionalmente contraseña sin cambiar app_user_id', () => {
+    const src = extractDeclaration(appSource, 'editUserFormSupabase');
+    expect(src).toContain('name="display_name"');
+    expect(src).toContain('name="username"');
+    expect(src).toContain('name="new_password"');
+    expect(src).toContain('if (fd.new_password !== fd.new_password_confirm)');
+    expect(src).toContain("Auth.manageUsers('UPDATE_USER', { app_user_id: u.app_user_id, ...fd })");
+  });
   it('el campo "Activo" NO existe en el formulario de creación (handleCreateUser siempre fuerza active=true server-side, un checkbox aquí no tendría efecto real)', () => {
     const src = extractDeclaration(appSource, 'userFormSupabase');
     expect(src).not.toMatch(/name="active"/);
@@ -223,19 +231,29 @@ describe('F) Confirmación de contraseña — coincide antes de llamar al servid
   });
 });
 
+describe('Login sin botón de color', () => {
+  it('ninguno de los dos flujos de login renderiza el selector de tema', () => {
+    [extractDeclaration(appSource, 'renderLogin'), extractDeclaration(appSource, 'renderSupabaseLoginForm')].forEach(src => {
+      expect(src).not.toContain('login-theme-btn');
+      expect(src).not.toContain('btn-theme');
+      expect(src).not.toContain('openThemePicker');
+    });
+  });
+});
+
 describe('J) La lista se actualiza sin recarga completa de pantalla', () => {
-  it('CREATE_USER/UPDATE_ROLE exitosos llaman renderUsuariosSupabase(c) directamente — nunca navigate(\'usuarios\') (eso reconstruye toda la pantalla desde cero)', () => {
+  it('CREATE_USER/UPDATE_USER exitosos llaman renderUsuariosSupabase(c) directamente — nunca navigate(\'usuarios\')', () => {
     const userSrc = extractDeclaration(appSource, 'userFormSupabase');
-    const roleSrc = extractDeclaration(appSource, 'roleFormSupabase');
+    const editSrc = extractDeclaration(appSource, 'editUserFormSupabase');
     expect(userSrc).toContain('renderUsuariosSupabase(c)');
-    expect(roleSrc).toContain('renderUsuariosSupabase(c)');
+    expect(editSrc).toContain('renderUsuariosSupabase(c)');
     expect(userSrc).not.toContain("navigate('usuarios')");
-    expect(roleSrc).not.toContain("navigate('usuarios')");
+    expect(editSrc).not.toContain("navigate('usuarios')");
   });
   it('renderUsuariosSupabase() pasa `c` (el contenedor real) al abrir los formularios, para que puedan refrescarse a sí mismos después', () => {
     const listSrc = extractDeclaration(appSource, 'renderUsuariosSupabase');
     expect(listSrc).toContain('userFormSupabase(c, locations)');
-    expect(listSrc).toContain('roleFormSupabase(u, c, locations)');
+    expect(listSrc).toContain('editUserFormSupabase(u, c, locations)');
   });
 });
 

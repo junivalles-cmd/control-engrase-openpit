@@ -27,7 +27,7 @@ const APP_NAMES = [
   '$', '$$', 'esc', 'ic', 'openModal', 'closeModal',
   'confirmChangeUser', // real: solo abre un modal de confirmación
   'crewCoveragePresentation', 'miPerfilRoleCrewSummaryHTML', 'renderLubricadorConfig',
-  ...THEME_PREFERENCE_DECLARATIONS, 'openThemePicker',
+  ...THEME_PREFERENCE_DECLARATIONS, 'themePickerHTML', 'wireThemePicker', 'openThemePicker',
   // Fix 2026-10-09 ("CAMBIAR CUADRILLA EN CONFIGURACIÓN"): reales — se
   // prueba que renderLubricadorConfig() los invoca de verdad, nunca una
   // reimplementación. renderLubricadorHome() en sí NO se extrae (es la
@@ -160,29 +160,18 @@ test.describe('B) nunca ve opciones administrativas', () => {
   });
 });
 
-test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmediato, persistencia local', () => {
-  // Fix 2026-10-09 ("CONFIGURACIÓN FINAL", §4 del pedido): tema/modo
-  // actuales + preview compacto, antes del botón — reusa getTheme()/
-  // THEMES/MODES tal cual, nunca una biblioteca nueva.
-  test('muestra el tema y modo ACTUALES (getTheme() real) con un preview de color, antes del botón', async ({ page }) => {
+test.describe('C) Apariencia inline — 8 acentos corporativos + 3 modos, cambio inmediato, persistencia local', () => {
+  test('muestra el editor completo directamente en la pantalla, sin botón ni modal intermedio', async ({ page }) => {
     await bootConfig(page);
     const panel = page.locator('.panel-head:has-text("Apariencia")').locator('..');
-    await expect(panel).toContainText('Azul'); // default real de getTheme()
-    await expect(panel).toContainText('Claro');
-    await expect(panel.locator('.lub-theme-swatch')).toHaveCount(1);
-    await expect(panel.locator('#lub-config-theme')).toContainText('Personalizar apariencia');
-  });
-
-  test('el botón "Personalizar apariencia" abre el picker REAL con los 8 acentos y 3 modos', async ({ page }) => {
-    await bootConfig(page);
-    await page.locator('#lub-config-theme').click();
-    await expect(page.locator('.theme-preview-card[data-accent]')).toHaveCount(8);
-    await expect(page.locator('.theme-preview-card[data-mode]')).toHaveCount(3);
+    await expect(panel.locator('.theme-preview-card[data-accent]')).toHaveCount(8);
+    await expect(panel.locator('.theme-preview-card[data-mode]')).toHaveCount(3);
+    await expect(panel.locator('#lub-config-theme')).toHaveCount(0);
+    await expect(page.locator('.modal')).toHaveCount(0);
   });
 
   test('cambiar acento aplica data-theme de inmediato (sin reload) y persiste en localStorage', async ({ page }) => {
     await bootConfig(page);
-    await page.locator('#lub-config-theme').click();
     await page.locator('.theme-preview-card[data-accent="violeta-ejec"]').click(); // "Violeta Ejecutivo"
     await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('violeta-ejec');
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('engrase_theme')));
@@ -191,7 +180,6 @@ test.describe('C) Apariencia — 8 acentos corporativos + 4 modos, cambio inmedi
 
   test('cambiar modo a "Modo Sol" aplica data-mode de inmediato y persiste', async ({ page }) => {
     await bootConfig(page);
-    await page.locator('#lub-config-theme').click();
     await page.locator('.theme-preview-card[data-mode="sun"]').click();
     await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-mode'))).toBe('sun');
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('engrase_theme')));

@@ -12,12 +12,12 @@ import { loadManageUsersLogic } from '../helpers/loadLubricationLogic.js';
 const ENV = { supabaseUrl: 'https://fake.test', serviceRoleKey: 'service-role-fake', anonKey: 'anon-fake' };
 
 let decideCallerAuthorization, wouldLeaveZeroActiveAdmins, isValidRoleValue, usernameToAuthIdentifier,
-  handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS;
+  handleCreateUser, handleUpdateRole, handleUpdateUser, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS;
 
 beforeEach(() => {
   ({
     decideCallerAuthorization, wouldLeaveZeroActiveAdmins, isValidRoleValue, usernameToAuthIdentifier,
-    handleCreateUser, handleUpdateRole, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS,
+    handleCreateUser, handleUpdateRole, handleUpdateUser, handleSetActive, handleResetPassword, handleListUsers, CORS_HEADERS,
   } = loadManageUsersLogic());
 });
 
@@ -291,6 +291,50 @@ describe('N) RESET_PASSWORD nunca persiste ni devuelve la contraseña', () => {
     const res = await handleResetPassword(ENV, { app_user_id: 'u_x', new_password: 'corta' });
     expect(res.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('UPDATE_USER — nombre, usuario y contraseña con identidad interna estable', () => {
+  it('actualiza perfil y Auth sin cambiar app_user_id', async () => {
+    let profilePatch;
+    let authPatch;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts = {}) => {
+      const method = opts.method || 'GET';
+      if (method === 'GET' && String(url).includes('app_user_id=eq.')) {
+        return { ok: true, json: async () => [{ auth_user_id: 'auth-1', app_user_id: 'u_original', display_name: 'Original', username: 'original', role: 'LUBRICADOR', active: true, location_ids: [] }] };
+      }
+      if (method === 'GET' && String(url).includes('username=eq.')) return { ok: true, json: async () => [] };
+      if (method === 'PATCH') { profilePatch = JSON.parse(opts.body); return { ok: true, json: async () => [] }; }
+      if (method === 'PUT' && String(url).includes('/auth/v1/admin/users/auth-1')) {
+        authPatch = JSON.parse(opts.body); return { ok: true, json: async () => ({}) };
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    }));
+    const result = await handleUpdateUser(ENV, { app_user_id: 'u_original', display_name: 'Nombre Nuevo', username: 'nuevo.usuario', role: 'LUBRICADOR', new_password: 'nueva1234' });
+    expect(result).toEqual({ status: 200, body: { ok: true } });
+    expect(profilePatch).toMatchObject({ display_name: 'Nombre Nuevo', username: 'nuevo.usuario', role: 'LUBRICADOR' });
+    expect(profilePatch).not.toHaveProperty('app_user_id');
+    expect(authPatch).toMatchObject({ email: 'nuevo.usuario@engrase.internal', password: 'nueva1234', email_confirm: true });
+  });
+
+  it('persiste varias ubicaciones y mantiene la primera como compatibilidad', async () => {
+    let profilePatch;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts = {}) => {
+      const method = opts.method || 'GET';
+      if (method === 'GET' && String(url).includes('app_user_id=eq.')) return { ok: true, json: async () => [{ auth_user_id: 'auth-p', app_user_id: 'u_p', display_name: 'P', username: 'p', role: 'PLANIFICADOR', active: true, location_id: 'volcan', location_ids: ['volcan'] }] };
+      if (method === 'GET' && String(url).includes('store=eq.locations')) {
+        const id = String(url).includes('mojon') ? 'mojon' : 'volcan';
+        return { ok: true, json: async () => [{ id, payload: { active: true }, deleted: false }] };
+      }
+      if (method === 'GET' && String(url).includes('username=eq.')) return { ok: true, json: async () => [{ app_user_id: 'u_p' }] };
+      if (method === 'PATCH') { profilePatch = JSON.parse(opts.body); return { ok: true, json: async () => [] }; }
+      if (method === 'PUT') return { ok: true, json: async () => ({}) };
+      throw new Error(`unexpected ${method} ${url}`);
+    }));
+    const result = await handleUpdateUser(ENV, { app_user_id: 'u_p', display_name: 'P', username: 'p', role: 'PLANIFICADOR', location_ids: ['volcan', 'mojon'], new_password: '' });
+    expect(result.status).toBe(200);
+    expect(profilePatch.location_id).toBe('volcan');
+    expect(profilePatch.location_ids).toEqual(['volcan', 'mojon']);
   });
 });
 

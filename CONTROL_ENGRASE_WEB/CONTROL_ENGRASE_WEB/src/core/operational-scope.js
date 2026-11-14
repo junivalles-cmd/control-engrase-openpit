@@ -14,10 +14,11 @@
 
    AUTORIDAD ÚNICA — nadie más repite esta lógica:
      - ADMINISTRADOR: vista GLOBAL.
-     - PLANIFICADOR: una única ubicación maestra obligatoria guardada en
-       app_profiles.location_id. Su alcance nunca depende de cuadrilla,
-       turno ni dispositivo y solo incluye equipos cuya locationId maestra
-       coincide con esa ubicación.
+     - PLANIFICADOR: una o varias ubicaciones maestras obligatorias guardadas
+       en app_profiles.location_ids (location_id se conserva como compatibilidad
+       con clientes anteriores). Su alcance nunca depende de cuadrilla, turno
+       ni dispositivo y solo incluye equipos cuya locationId maestra pertenece
+       a esa lista explícita.
      - SUPERVISOR/LUBRICADOR: la cuadrilla (o cuadrillas) para las que el
        USUARIO está autorizado (`cuadrillas[].memberUserIds`, ver
        getAuthorizedCrews()) decide qué trabajo es visible/ejecutable —
@@ -536,15 +537,18 @@ function getAuthorizedCrews(cuadrillas, userId) {
 function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shiftId, crewLocations = [] }) {
   if (!currentUser) return { kind: 'NONE' };
   if (currentUser.role === 'PLANIFICADOR') {
-    const locationId = typeof currentUser.locationId === 'string' ? currentUser.locationId.trim() : '';
-    if (!locationId) {
+    const locationIds = [...new Set([
+      ...(Array.isArray(currentUser.locationIds) ? currentUser.locationIds : []),
+      currentUser.locationId,
+    ].filter(id => typeof id === 'string' && id.trim()).map(id => id.trim()))];
+    if (!locationIds.length) {
       return { kind: 'NO_LOCATION_ASSIGNED', userId: currentUser.id, role: currentUser.role,
         shiftId: shiftId || null, locationId: null, crewId: null, crewLocationId: null,
         authorizedLocationIds: [], authorizedCrews: [] };
     }
     return { kind: 'LOCATION_SCOPED', userId: currentUser.id, role: currentUser.role,
-      shiftId: shiftId || null, locationId, crewId: null, crewLocationId: null,
-      authorizedLocationIds: [locationId], allAuthorizedLocationIds: [locationId], authorizedCrews: [] };
+      shiftId: shiftId || null, locationId: locationIds[0], locationIds, crewId: null, crewLocationId: null,
+      authorizedLocationIds: locationIds, allAuthorizedLocationIds: locationIds, authorizedCrews: [] };
   }
   if (!ROLES_CREW_SCOPED.includes(currentUser.role)) {
     return {
@@ -576,7 +580,7 @@ function resolveOperationalScope({ currentUser, cuadrillas, selectedCrewId, shif
 function canAccessLocation(scope, locationId) {
   if (!scope || !locationId) return false;
   if (scope.kind === 'GLOBAL') return true;
-  if (scope.kind === 'LOCATION_SCOPED') return scope.locationId === locationId;
+  if (scope.kind === 'LOCATION_SCOPED') return (scope.authorizedLocationIds || [scope.locationId].filter(Boolean)).includes(locationId);
   if (scope.kind === 'CREW_SCOPED') {
     return (scope.allAuthorizedLocationIds || [scope.crewLocationId].filter(Boolean)).includes(locationId);
   }

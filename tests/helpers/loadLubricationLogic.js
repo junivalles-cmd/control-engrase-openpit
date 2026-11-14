@@ -432,9 +432,9 @@ const MANAGE_USERS_SOURCES = [
     'CORS_HEADERS',
     'VALID_ROLES', 'AUTH_IDENTIFIER_DOMAIN',
     'isValidRoleValue', 'usernameToAuthIdentifier', 'appUserIdFromUsername',
-    'isValidTempPassword', 'plannerLocationId', 'decideCallerAuthorization', 'wouldLeaveZeroActiveAdmins',
-    'svHeaders', 'getCallerProfile', 'countOtherActiveAdmins', 'getProfileByAppUserId', 'isActiveMasterLocation',
-    'handleListUsers', 'handleCreateUser', 'handleUpdateRole', 'handleSetActive',
+    'isValidTempPassword', 'plannerLocationId', 'plannerLocationIds', 'decideCallerAuthorization', 'wouldLeaveZeroActiveAdmins',
+    'svHeaders', 'getCallerProfile', 'countOtherActiveAdmins', 'getProfileByAppUserId', 'isActiveMasterLocation', 'areActiveMasterLocations',
+    'handleListUsers', 'handleCreateUser', 'handleUpdateRole', 'handleUpdateUser', 'handleSetActive',
     'handleResetPassword', 'dispatchAction',
   ]],
 ];

@@ -23,7 +23,7 @@ const LOCATIONS = [
   { id: 'loc2', name: 'Mojón', active: true },
 ];
 
-async function bootPage(page, { equipos = [], role = 'ADMINISTRADOR', locationId = null } = {}) {
+async function bootPage(page, { equipos = [], role = 'ADMINISTRADOR', locationId = null, locationIds = null } = {}) {
   await page.route('**/*', route => route.request().resourceType() === 'document'
     ? route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body></body></html>' })
     : route.continue());
@@ -31,7 +31,7 @@ async function bootPage(page, { equipos = [], role = 'ADMINISTRADOR', locationId
   await page.setContent('<div class="app-shell"><main id="app-content"></main></div>');
   await page.addStyleTag({ path: STYLES_PATH });
   await page.addScriptTag({ content: `
-    window.App = { currentUser: { id: 'user1', name: 'Usuario de prueba', role: ${JSON.stringify(role)}, locationId: ${JSON.stringify(locationId)} } };
+    window.App = { currentUser: { id: 'user1', name: 'Usuario de prueba', role: ${JSON.stringify(role)}, locationId: ${JSON.stringify(locationId)}, locationIds: ${JSON.stringify(locationIds)} } };
     window.__mockData = { equipment: ${JSON.stringify(equipos)}, cuadrillas: [], locations: ${JSON.stringify(LOCATIONS)} };
     window.DB = {
       allActive: async store => window.__mockData[store] || [],
@@ -48,9 +48,10 @@ async function bootPage(page, { equipos = [], role = 'ADMINISTRADOR', locationId
     window.confirmHourmeterChange = () => true;
     window.logAudit = async () => {};
     window.showInAppToast = message => { window.__lastToast = message; };
-    window.getCurrentOperationalScope = async () => App.currentUser.locationId
-      ? { kind: 'LOCATION_SCOPED', role: 'PLANIFICADOR', locationId: App.currentUser.locationId, authorizedLocationIds: [App.currentUser.locationId] }
+    window.getCurrentOperationalScope = async () => (App.currentUser.locationIds?.length || App.currentUser.locationId)
+      ? { kind: 'LOCATION_SCOPED', role: 'PLANIFICADOR', locationId: App.currentUser.locationIds?.[0] || App.currentUser.locationId, authorizedLocationIds: App.currentUser.locationIds?.length ? App.currentUser.locationIds : [App.currentUser.locationId] }
       : { kind: 'NO_LOCATION_ASSIGNED', role: 'PLANIFICADOR', authorizedLocationIds: [] };
+    window.canAccessEquipment = (scope, equipment) => scope.kind === 'GLOBAL' || scope.authorizedLocationIds.includes(equipment.locationId);
     window.navigate = () => {};
     window.openPlanForm = () => {};
     window.confirm = () => false;
@@ -125,17 +126,20 @@ test('Editar equipo: cambiar turno o tipo no cambia ubicación sola', async ({ p
   await expect(page.locator('#eq-form [name="locationId"]')).toHaveValue('loc2');
 });
 
-test('PLANIFICADOR: nuevo equipo fija locationId del scope y muestra ubicación readonly', async ({ page }) => {
-  await bootPage(page, { role: 'PLANIFICADOR', locationId: 'loc1' });
+test('PLANIFICADOR: nuevo equipo inicia vacío y permite elegir solo entre sus ubicaciones autorizadas', async ({ page }) => {
+  await bootPage(page, { role: 'PLANIFICADOR', locationIds: ['loc1', 'loc2'] });
   await page.evaluate(args => openEquipmentForm(null, ...args), [TYPES, LOCATIONS]);
-  await expect(page.locator('#eq-form input[readonly]')).toHaveValue('Volcán');
-  const location = page.locator('#eq-form input[type="hidden"][name="locationId"]');
-  await expect(location).toHaveValue('loc1');
-  await location.evaluate(el => { el.value = 'loc2'; });
+  const location = page.locator('#eq-form select[name="locationId"]');
+  await expect(location).toHaveAttribute('required', '');
+  await expect(location).toHaveValue('');
+  await expect(location.locator('option')).toHaveCount(3);
+  await expect(location.locator('option[value="loc1"]')).toHaveText('Volcán');
+  await expect(location.locator('option[value="loc2"]')).toHaveText('Mojón');
+  await location.selectOption('loc2');
   await fillRequiredEquipmentFields(page);
   await page.locator('#eq-form [name="typeId"]').selectOption('type_excavadora');
   await page.locator('#eq-form button[type="submit"]').click();
-  expect(await page.evaluate(() => window.__mockData.equipment[0].locationId)).toBe('loc1');
+  expect(await page.evaluate(() => window.__mockData.equipment[0].locationId)).toBe('loc2');
 });
 
 test('PLANIFICADOR: editar conserva locationId y no ofrece selector ni movimiento', async ({ page }) => {
@@ -151,5 +155,5 @@ test('PLANIFICADOR sin ubicación: no abre formulario ni reutiliza datos anterio
   await bootPage(page, { role: 'PLANIFICADOR' });
   await page.evaluate(args => openEquipmentForm(null, ...args), [TYPES, LOCATIONS]);
   await expect(page.locator('#eq-form')).toHaveCount(0);
-  expect(await page.evaluate(() => window.__lastToast)).toBe('No tienes una ubicación asignada. Contacta al administrador.');
+  expect(await page.evaluate(() => window.__lastToast)).toBe('No tienes ubicaciones asignadas. Contacta al administrador.');
 });

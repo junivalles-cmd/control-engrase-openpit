@@ -2516,13 +2516,9 @@ function saveTheme(theme) { theme = normalizeThemePreference(theme); localStorag
 // Aplicar de inmediato (antes de pintar la interfaz) para evitar parpadeo de color
 applyTheme(getTheme());
 
-function themeButtonHTML(extraClass = '') {
-  return `<button type="button" class="icon-btn theme-btn ${extraClass}" id="btn-theme" title="Cambiar colores">🎨</button>`;
-}
-
-function openThemePicker() {
+function themePickerHTML() {
   const t = getTheme();
-  openModal('Personalizar colores', `
+  return `
     <p class="dim">Elige el color de acento y el modo de visualización de la app. Los cambios se aplican al instante y se guardan en este dispositivo.</p>
     <div class="theme-preview-group-label">Color de acento</div>
     <div class="theme-preview-grid">
@@ -2550,19 +2546,27 @@ function openThemePicker() {
         </button>`).join('')}
     </div>
     <p class="dim" style="margin-top:10px">Modo Sol mejora la lectura bajo luz intensa con bordes definidos y sombras reducidas.</p>
-  `);
-  $$('.theme-preview-card[data-accent]').forEach(b => b.addEventListener('click', () => {
+  `;
+}
+
+function wireThemePicker(root = document) {
+  root.querySelectorAll('.theme-preview-card[data-accent]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.accent = b.dataset.accent; saveTheme(cur);
-    $$('.theme-preview-card[data-accent]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
+    root.querySelectorAll('.theme-preview-card[data-accent]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
     b.classList.add('selected');
     b.setAttribute('aria-pressed', 'true');
   }));
-  $$('.theme-preview-card[data-mode]').forEach(b => b.addEventListener('click', () => {
+  root.querySelectorAll('.theme-preview-card[data-mode]').forEach(b => b.addEventListener('click', () => {
     const cur = getTheme(); cur.mode = b.dataset.mode; saveTheme(cur);
-    $$('.theme-preview-card[data-mode]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
+    root.querySelectorAll('.theme-preview-card[data-mode]').forEach(x => { x.classList.remove('selected'); x.setAttribute('aria-pressed', 'false'); });
     b.classList.add('selected');
     b.setAttribute('aria-pressed', 'true');
   }));
+}
+
+function openThemePicker() {
+  openModal('Personalizar colores', themePickerHTML());
+  wireThemePicker(document.querySelector('.modal') || document);
 }
 
 /* ---------------- Mostrar/ocultar contraseña (pulido UX global, §8 del
@@ -3145,7 +3149,6 @@ async function renderLogin() {
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        ${themeButtonHTML('login-theme-btn')}
         <div class="brand brand-login">
           <div class="brand-mark"></div>
           <div>
@@ -3173,8 +3176,6 @@ async function renderLogin() {
         <div class="login-footer">Funciona sin conexión · los datos se sincronizan al recuperar internet</div>
       </div>
     </div>`;
-
-  $('#btn-theme').addEventListener('click', openThemePicker);
 
   let selected = null;
   $$('.login-user').forEach(btn => {
@@ -3372,7 +3373,8 @@ function logout() {
 // de cuadrilla, dispositivo, turno ni del primer equipo disponible.
 function currentUserFromAuthProfile(profile) {
   return { id: profile.appUserId, name: profile.displayName, role: profile.role,
-    username: profile.appUserId, locationId: profile.locationId || null };
+    username: profile.username || profile.appUserId, locationId: profile.locationId || null,
+    locationIds: Array.isArray(profile.locationIds) ? profile.locationIds : [profile.locationId].filter(Boolean) };
 }
 
 // Reproduce el deep-link que abrirDesdeNotificacion() dejó en espera por
@@ -3450,7 +3452,6 @@ function renderSupabaseLoginForm() {
   document.body.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        ${themeButtonHTML('login-theme-btn')}
         <div class="brand brand-login">
           <div class="brand-mark"></div>
           <div>
@@ -3467,7 +3468,6 @@ function renderSupabaseLoginForm() {
         </form>
       </div>
     </div>`;
-  $('#btn-theme').addEventListener('click', openThemePicker);
   // BUG-AUTH-001 (session-epoch race): este formulario era el único del
   // módulo Supabase sin guard contra doble-submit (el resto ya usa
   // withSubmitGuard()). Un doble clic o Enter+clic disparaba dos
@@ -3544,8 +3544,9 @@ function miPerfilRoleCrewSummaryHTML(scope, cuadrillas, locations, includeContex
     return '<div><b>Alcance</b><div>Global (según permisos del rol)</div></div>';
   }
   if (scope.kind === 'LOCATION_SCOPED') {
-    const location = locations.find(item => item.id === scope.locationId);
-    return `<div><b>Ubicación asignada</b><div>${esc(location?.name || scope.locationId)}</div></div>`;
+    const ids = scope.authorizedLocationIds || [scope.locationId].filter(Boolean);
+    const names = ids.map(id => locations.find(item => item.id === id)?.name || id);
+    return `<div><b>Ubicaciones asignadas</b><div>${esc(names.join(', '))}</div></div>`;
   }
   if (scope.kind === 'NO_LOCATION_ASSIGNED') {
     return '<div><b>Ubicación asignada</b><div>Sin ubicación — solicita a Administración que complete tu perfil.</div></div>';
@@ -3755,9 +3756,6 @@ async function renderLubricadorConfig() {
   const turnoLabel = currentShiftId() === 'shift_dia' ? 'Turno Día' : 'Turno Noche';
   // §4 del pedido ("Apariencia" compacta: tema/modo actuales + preview) —
   // getTheme()/THEMES/MODES YA existentes, nunca una biblioteca nueva.
-  const temaActual = getTheme();
-  const themeObj = THEMES.find(t => t.id === temaActual.accent) || THEMES[0];
-  const modeObj = MODES.find(m => m.id === temaActual.mode) || MODES[0];
 
   // Identity and resolved operational context are presented separately.
   const autorizadasHTML = (scope.authorizedCrews || []).map(cq => '<span class="authorized-crew-chip">' + esc(cq.name) + '</span>').join('') || '—';
@@ -3804,25 +3802,17 @@ async function renderLubricadorConfig() {
       </div>
     </div>
 
-    <!-- Fix 2026-10-09 (§4 del pedido): tema/modo actuales + preview
-         compacto antes del botón — reusa openThemePicker()/THEMES/MODES tal
-         cual, nunca una biblioteca nueva. -->
+    <!-- Apariencia se edita aquí mismo: no abre una segunda ventana. -->
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Apariencia</h3></div>
-      <div style="padding:14px">
-        <div class="detail-grid">
-          <div><b>Tema actual</b><div><span class="lub-theme-swatch" style="background:${themeObj.color}"></span>${esc(themeObj.label)}</div></div>
-          <div><b>Modo</b><div>${modeObj.icon} ${esc(modeObj.label)}</div></div>
-        </div>
-        <button type="button" class="btn btn-accent" id="lub-config-theme" style="margin-top:10px">🎨 Personalizar apariencia</button>
-      </div>
+      <div class="theme-inline-editor">${themePickerHTML()}</div>
     </div>
     <div class="config-narrow lub-config-actions">
       <button type="button" class="btn" id="lub-config-help">${ic('help')}Ayuda</button>
     </div></div>`;
 
   $('#lub-config-password').addEventListener('click', () => navigate('miperfil'));
-  $('#lub-config-theme').addEventListener('click', () => openThemePicker());
+  wireThemePicker(c);
   $('#lub-config-help').addEventListener('click', () => navigate('ayuda'));
   // §3 del pedido: solo limpia la selección de SESIÓN (localStorage) para
   // que resolveOperationalScope() vuelva a pedir elegir entre las YA
@@ -8628,18 +8618,17 @@ async function openEquipmentForm(equipment, types, locations) {
   const isNew = !equipment;
   const plannerScope = App.currentUser.role === 'PLANIFICADOR' ? await getCurrentOperationalScope() : null;
   if (plannerScope && plannerScope.kind !== 'LOCATION_SCOPED') {
-    showInAppToast('No tienes una ubicación asignada. Contacta al administrador.');
+    showInAppToast('No tienes ubicaciones asignadas. Contacta al administrador.');
     return;
   }
-  const plannerLocation = plannerScope
-    ? locations.find(location => location.id === plannerScope.locationId) || await DB.get('locations', plannerScope.locationId)
-    : null;
-  if (plannerScope && !plannerLocation) {
-    showInAppToast('No tienes una ubicación asignada. Contacta al administrador.');
+  const plannerLocationIds = plannerScope ? plannerScope.authorizedLocationIds || [] : [];
+  const plannerLocations = plannerScope ? locations.filter(location => plannerLocationIds.includes(location.id)) : [];
+  if (plannerScope && !plannerLocations.length) {
+    showInAppToast('No tienes ubicaciones válidas asignadas. Contacta al administrador.');
     return;
   }
-  if (plannerScope && equipment && equipment.locationId !== plannerScope.locationId) {
-    showInAppToast('No puedes editar un equipo fuera de tu ubicación asignada.');
+  if (plannerScope && equipment && !canAccessEquipment(plannerScope, equipment)) {
+    showInAppToast('No puedes editar un equipo fuera de tus ubicaciones asignadas.');
     return;
   }
   // Bug real de datos maestros (auditoría 2026-10-29, "CATEGORÍAS MEZCLADAS"):
@@ -8676,15 +8665,16 @@ async function openEquipmentForm(equipment, types, locations) {
         </select>
         <span class="field-hint">Debe corresponder al tipo real del equipo — lo usa "Copiar puntos de otro equipo" para no mezclar categorías.</span>
       </label>
-      ${plannerScope ? `<label>Ubicación
-        <input value="${esc(plannerLocation.name)}" readonly aria-readonly="true"/>
-        <input type="hidden" name="locationId" value="${esc(plannerScope.locationId)}"/>
-        <span class="field-hint">Asignada a tu perfil de Planificador.</span>
+      ${plannerScope && !isNew ? `<label>Ubicación
+        <input value="${esc(plannerLocations.find(location => location.id === e.locationId)?.name || e.locationId)}" readonly aria-readonly="true"/>
+        <input type="hidden" name="locationId" value="${esc(e.locationId)}"/>
+        <span class="field-hint">La ubicación maestra de un equipo existente no se cambia desde este formulario.</span>
       </label>` : `<label>Ubicación
         <select required name="locationId">
           ${isNew ? '<option value="" disabled selected>— Selecciona una ubicación —</option>' : ''}
-          ${locations.map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+          ${(plannerScope ? plannerLocations : locations).map(l => `<option value="${l.id}" ${l.id === e.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
         </select>
+        ${plannerScope ? '<span class="field-hint">Solo se muestran tus ubicaciones autorizadas.</span>' : ''}
       </label>`}
       <label>Estado
         <select name="status">
@@ -8714,7 +8704,11 @@ async function openEquipmentForm(equipment, types, locations) {
     ev.preventDefault();
     const fd = new FormData(ev.target);
     const obj = Object.fromEntries(fd.entries());
-    if (plannerScope) obj.locationId = plannerScope.locationId;
+    if (plannerScope && !plannerLocationIds.includes(obj.locationId)) {
+      showInAppToast('No puedes guardar equipos fuera de tus ubicaciones asignadas.');
+      return;
+    }
+    if (plannerScope && !isNew) obj.locationId = e.locationId;
     obj.hourmeter = parseFloat(obj.hourmeter);
     obj.code = (obj.code || '').trim();
     if (!obj.code) { alert('El código no puede quedar vacío.'); return; }
@@ -14486,6 +14480,7 @@ const MANAGE_USERS_ERROR_LABELS = {
   auth_create_no_id: 'El servidor no confirmó la creación de la cuenta. Intenta de nuevo.',
   profile_create_failed_rolled_back: 'No se pudo completar la creación del usuario — no quedó ninguna cuenta a medio crear. Intenta de nuevo.',
   update_failed: 'No se pudo guardar el cambio. Intenta de nuevo.',
+  auth_update_failed_rolled_back: 'No se pudo actualizar el acceso; los datos del perfil se restauraron. Intenta de nuevo.',
   reset_failed: 'No se pudo restablecer la contraseña. Intenta de nuevo.',
   internal_error: 'Ocurrió un error inesperado en el servidor. Intenta de nuevo.',
   unknown_action: 'Acción no reconocida.',
@@ -14508,9 +14503,9 @@ async function renderUsuariosSupabase(c) {
     </div>
     <div class="panel">
       <table class="data-table">
-        <thead><tr><th>Nombre</th><th>Rol</th><th>Ubicación asignada</th><th>Activo</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Ubicaciones asignadas</th><th>Activo</th><th></th></tr></thead>
         <tbody id="usuarios-sb-tbody">
-          <tr><td colspan="5" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
+          <tr><td colspan="6" class="empty-state">${offline ? 'Sin conexión — no se puede listar.' : 'Cargando…'}</td></tr>
         </tbody>
       </table>
     </div>`;
@@ -14529,7 +14524,7 @@ async function renderUsuariosSupabase(c) {
     users = res.users || [];
   } catch (e) {
     const tbody = $('#usuarios-sb-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No se pudo cargar: ${esc(manageUsersErrorMessage(e))}</td></tr>`;
     // BUG-AUTH-001: sin sesión válida (ni siquiera tras el intento de
     // refresh dentro de Auth.manageUsers()), el botón queda deshabilitado
     // en vez de clickeable-pero-sin-efecto — mismo criterio visual que el
@@ -14543,25 +14538,27 @@ async function renderUsuariosSupabase(c) {
 
   const tbody = $('#usuarios-sb-tbody');
   if (!tbody) return; // la pantalla cambió mientras esperábamos la respuesta
+  const userLocationIds = u => Array.isArray(u.location_ids) && u.location_ids.length ? u.location_ids : [u.location_id].filter(Boolean);
+  const userLocationNames = u => userLocationIds(u).map(id => locations.find(location => location.id === id)?.name || id);
   tbody.innerHTML = users.map(u => `
     <tr>
       <td>${esc(u.display_name)}</td>
+      <td>${esc(u.username || u.app_user_id.replace(/^u_/, ''))}</td>
       <td>${esc(u.role)}</td>
-      <td>${u.role === 'PLANIFICADOR' ? esc(locations.find(location => location.id === u.location_id)?.name || u.location_id || 'Sin asignar') : 'Global / no aplica'}</td>
+      <td>${u.role === 'PLANIFICADOR' ? esc(userLocationNames(u).join(', ') || 'Sin asignar') : 'Global / no aplica'}</td>
       <td>${u.active ? 'Sí' : 'No'}</td>
       <td class="row-actions">
-        <button class="btn btn-sm" data-role="${esc(u.app_user_id)}">${ic('edit')}Rol</button>
+        <button class="btn btn-sm" data-edit-user="${esc(u.app_user_id)}">${ic('edit')}Editar</button>
         <button class="btn btn-sm ${u.active ? 'btn-danger' : ''}" data-toggle="${esc(u.app_user_id)}" data-active="${u.active ? 'true' : 'false'}">
           ${u.active ? ic('trash') + 'Desactivar' : ic('check') + 'Activar'}
         </button>
-        <button class="btn btn-sm" data-reset="${esc(u.app_user_id)}">${ic("rotate-ccw")}Reset password</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="5" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Sin usuarios reales todavía — ver "Usuarios históricos" (legacy, solo lectura) si aplica.</td></tr>';
 
   $('#btn-new-user-sb')?.addEventListener('click', () => userFormSupabase(c, locations));
-  $$('button[data-role]', c).forEach(b => b.addEventListener('click', () => {
-    const u = users.find(x => x.app_user_id === b.dataset.role);
-    if (u) roleFormSupabase(u, c, locations);
+  $$('button[data-edit-user]', c).forEach(b => b.addEventListener('click', () => {
+    const u = users.find(x => x.app_user_id === b.dataset.editUser);
+    if (u) editUserFormSupabase(u, c, locations);
   }));
   $$('button[data-toggle]', c).forEach(b => b.addEventListener('click', () => {
     const activeNow = b.dataset.active === 'true';
@@ -14586,7 +14583,31 @@ async function renderUsuariosSupabase(c) {
     $('#confirm-toggle-cancel').addEventListener('click', closeModal);
     $('#confirm-toggle-confirm').addEventListener('click', () => { closeModal(); doToggle(); });
   }));
-  $$('button[data-reset]', c).forEach(b => b.addEventListener('click', () => resetPasswordFormSupabase(b.dataset.reset)));
+}
+
+function plannerLocationsFieldHTML(locations, selectedIds = [], id = 'planner-location-field') {
+  const selected = new Set(selectedIds);
+  return `<fieldset id="${id}" class="planner-location-field" hidden disabled>
+    <legend>Ubicaciones asignadas</legend>
+    <div class="planner-location-options">
+      ${locations.map(location => `<label><input type="checkbox" name="location_ids" value="${esc(location.id)}" ${selected.has(location.id) ? 'checked' : ''}/><span>${esc(location.name)}</span></label>`).join('')}
+    </div>
+    <span class="field-hint">Selecciona una o varias ubicaciones maestras. El planificador solo podrá ver y operar equipos de estas ubicaciones.</span>
+  </fieldset>`;
+}
+
+function selectedPlannerLocationIds(form) {
+  return [...form.querySelectorAll('input[name="location_ids"]:checked')].map(input => input.value);
+}
+
+function wirePlannerLocationsField(form, roleSelect, field) {
+  const sync = () => {
+    const planner = roleSelect.value === 'PLANIFICADOR';
+    field.hidden = !planner; field.disabled = !planner;
+    field.querySelectorAll('input').forEach(input => { input.disabled = !planner; });
+  };
+  roleSelect.addEventListener('change', sync);
+  sync();
 }
 
 // Deshabilita el submit mientras la llamada está en vuelo (evita doble
@@ -14624,12 +14645,7 @@ function userFormSupabase(c, locations = []) {
         <span class="field-hint">Sin espacios ni "@" — se usa para generar el acceso interno, nunca se muestra completo.</span>
       </label>
       <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option>${r}</option>`).join('')}</select></label>
-      <label id="planner-location-field" hidden>Ubicación
-        <select name="location_id" disabled>
-          <option value="">— Seleccionar ubicación —</option>
-          ${locations.map(location => `<option value="${esc(location.id)}">${esc(location.name)}</option>`).join('')}
-        </select>
-      </label>
+      ${plannerLocationsFieldHTML(locations)}
       <label>Contraseña temporal (mínimo 8 caracteres)<input required minlength="8" type="password" name="temp_password" autocomplete="new-password"/>
         <span class="field-hint">La persona debería cambiarla apenas entre. Nunca queda guardada en este dispositivo.</span>
       </label>
@@ -14639,20 +14655,14 @@ function userFormSupabase(c, locations = []) {
   const formElement = $('#user-form-sb');
   const roleSelect = formElement.querySelector('[name="role"]');
   const locationField = formElement.querySelector('#planner-location-field');
-  const locationSelect = formElement.querySelector('[name="location_id"]');
-  const syncPlannerLocationField = () => {
-    const planner = roleSelect.value === 'PLANIFICADOR';
-    locationField.hidden = !planner; locationSelect.disabled = !planner; locationSelect.required = planner;
-    if (!planner) locationSelect.value = '';
-  };
-  roleSelect.addEventListener('change', syncPlannerLocationField);
-  syncPlannerLocationField();
+  wirePlannerLocationsField(formElement, roleSelect, locationField);
   formElement.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const form = ev.target;
     const fd = Object.fromEntries(new FormData(form).entries());
-    if (fd.role === 'PLANIFICADOR' && !fd.location_id) {
-      showInAppToast('✗ Selecciona la ubicación asignada al planificador.');
+    fd.location_ids = selectedPlannerLocationIds(form);
+    if (fd.role === 'PLANIFICADOR' && !fd.location_ids.length) {
+      showInAppToast('✗ Selecciona al menos una ubicación asignada al planificador.');
       return;
     }
     // Validación de formulario (nunca sustituye al servidor, solo evita
@@ -14675,6 +14685,48 @@ function userFormSupabase(c, locations = []) {
       } finally {
         fd.temp_password = ''; // limpia la referencia local apenas termina el submit
       }
+    });
+  });
+}
+
+function editUserFormSupabase(u, c, locations = []) {
+  const selectedIds = Array.isArray(u.location_ids) && u.location_ids.length ? u.location_ids : [u.location_id].filter(Boolean);
+  openModal(`Editar usuario · ${esc(u.display_name)}`, `
+    <form id="edit-user-form-sb" class="form-grid">
+      <label>Nombre completo<input required name="display_name" value="${esc(u.display_name)}"/></label>
+      <label>Usuario<input required name="username" pattern="[a-zA-Z0-9._-]+" value="${esc(u.username || u.app_user_id.replace(/^u_/, ''))}" autocomplete="username"/>
+        <span class="field-hint">Cambia el nombre usado para iniciar sesión; el identificador interno e historial permanecen intactos.</span>
+      </label>
+      <label>Rol<select name="role">${Object.keys(PERMISSIONS).map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      ${plannerLocationsFieldHTML(locations, selectedIds, 'edit-planner-location-field')}
+      <label>Nueva contraseña (opcional)<input minlength="8" type="password" name="new_password" autocomplete="new-password"/>
+        <span class="field-hint">Déjala vacía para conservar la contraseña actual.</span>
+      </label>
+      <label>Confirmar nueva contraseña<input minlength="8" type="password" name="new_password_confirm" autocomplete="new-password"/></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-accent">Guardar cambios</button></div>
+    </form>`);
+  const form = $('#edit-user-form-sb');
+  const roleSelect = form.querySelector('[name="role"]');
+  wirePlannerLocationsField(form, roleSelect, form.querySelector('#edit-planner-location-field'));
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const fd = Object.fromEntries(new FormData(form).entries());
+    fd.location_ids = selectedPlannerLocationIds(form);
+    if (fd.role === 'PLANIFICADOR' && !fd.location_ids.length) {
+      showInAppToast('✗ Selecciona al menos una ubicación asignada al planificador.'); return;
+    }
+    if (fd.new_password !== fd.new_password_confirm) {
+      showInAppToast('✗ Las contraseñas no coinciden.'); return;
+    }
+    delete fd.new_password_confirm;
+    await withSubmitGuard(form, 'Guardando…', async () => {
+      try {
+        await Auth.manageUsers('UPDATE_USER', { app_user_id: u.app_user_id, ...fd });
+        showInAppToast('✓ Usuario actualizado correctamente.');
+        closeModal();
+        if (c) renderUsuariosSupabase(c);
+      } catch (e) { showInAppToast('✗ ' + manageUsersErrorMessage(e)); }
+      finally { fd.new_password = ''; }
     });
   });
 }
@@ -17153,10 +17205,7 @@ async function renderConfig() {
       <div class="config-category hidden" id="config-cat-general" data-category="general" role="tabpanel" aria-labelledby="config-tab-general">
     <div class="panel config-narrow">
       <div class="panel-head"><h3>Apariencia</h3></div>
-      <div style="padding:14px">
-        <p class="dim">Color de acento y modo claro/oscuro de la aplicación.</p>
-        <button type="button" class="btn" id="btn-theme">🎨 Cambiar colores</button>
-      </div>
+      <div class="theme-inline-editor">${themePickerHTML()}</div>
     </div>
       </div>
       <div class="config-category hidden" id="config-cat-operacion" data-category="operacion" role="tabpanel" aria-labelledby="config-tab-operacion">
@@ -17383,7 +17432,7 @@ async function renderConfig() {
     ev.target.value = '';
   });
 
-  $('#btn-theme').addEventListener('click', openThemePicker);
+  wireThemePicker(c);
 
   $('#general-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
